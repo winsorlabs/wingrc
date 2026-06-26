@@ -1,133 +1,90 @@
-# CLAUDE.md
+# WinGRC — context for Claude Code
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Read this first, every session. It captures *intent*, not just file structure.
 
-## What this is
+## What WinGRC is
 
-WinGRC is open CMMC scope and documentation tooling for MSPs. The core idea: maintain a **scope graph** (authorized entities in the CUI boundary) as the single source of truth, and project every required CMMC list from it on demand. Entities are never overwritten blindly — every import goes through an explicit reconcile diff that an engineer reviews before applying.
+An open, AGPL-licensed, multitenant CMMC (NIST 800-171 Rev 2 / CMMC L2) GRC
+platform for MSPs. It does what high-priced commercial GRC tools do —
+control-by-control met/not-met, SPRS scoring, AI-drafted implementation
+statements, RACI/CRM, evidence storage, full assessment-bundle export — but
+free, MSP-first, and deployable anywhere (commercial Azure, GCC High, on-prem,
+air-gapped).
 
-The first vertical slice is the **Scope module** (AC.L2-3.1.1 Authorized Entities), covering users, processes, devices, and external services.
+The **magic** is tool-driven control pre-population: select the security tools a
+tenant runs, and the platform pre-populates the controls those products satisfy
+from a curated **baseline library**, then queues only the evidence collection
+still needed. The lists are one *output*, not the product.
 
-## Commands
+> Do NOT over-index on the scope/lists module. That is one input pillar plus one
+> output. The product is the assessment engine described below.
 
-### Backend (run from `backend/`)
+## The five layers
 
-```bash
-# Install with dev deps
-pip install -e ".[dev]"
+1. **Reference (shared across tenants):** the control catalog (800-171A
+   assessment objectives + SPRS point weights) and the **product baseline
+   library** (per-product: which objectives it covers when configured, the
+   assumed config, the evidence spec, the responsibility split).
+2. **Tenant setup:** select tools in place; define scope (spreadsheet upload OR
+   Liongard/RMM API/MCP).
+3. **Assessment core:** per-objective control state (met / not met / partial /
+   N/A / inherited), responsibility (RACI → the MSP-vs-customer CRM), evidence.
+4. **Generation:** AI-drafted implementation statements, grounded in baseline +
+   scope + evidence, human-reviewed.
+5. **Deliverables (the bundle):** point-in-time Lists, SSP, baseline docs,
+   POA&M, CRM, and the SPRS score.
 
-# Run all tests
-pytest -q
+## The magic loop (the first real vertical slice to build)
 
-# Run a single test
-pytest -q tests/test_scope_loop.py::test_reconcile_detects_new_and_missing
+Mark a product in-use → its covered objectives flip to `pending_evidence` →
+evidence tasks queue → AI drafts implementation statements → SPRS recomputes.
+Prove it thin first: one product (Heimdal), one control family (AC), end to end.
 
-# Lint
-ruff check .
+## Hard rules (these define correctness)
 
-# Apply pending migrations
-alembic upgrade head
+- **Candidates, never auto-met.** Imports and document ingestion *propose*; an
+  engineer confirms. Nothing is "met" without confirmed config + attached
+  evidence. An automated feed must never silently move the audit boundary.
+- **Never auto-credit a vendor CRM.** A vendor CRM lists controls the product
+  *touches*, most of which the customer still owns. Read the responsibility
+  text: if the product says "the customer's IdP does this" (e.g., the entire IA
+  family for RocketCyber), classify it `customer_owns` and route it to the
+  product that actually owns it — do NOT credit the vendor. See
+  `baselines/rocketcyber.yaml` for the worked example.
+- **Minimize evidence — this is a first-class requirement.** Evidence sprawl is
+  why MSPs hate GRC tools. One artifact can satisfy many objectives: capture
+  once, reference many. Prefer one authoritative export over many screenshots.
+  Only `provider_satisfies`/`shared` controls generate provider evidence tasks;
+  `customer_owns`/inherited never do. Capture product-level config once and
+  reuse across tenants; re-capture only tenant-specific state. Batch tasks by
+  collection session.
+- **BYO-AI / pluggable provider.** Every AI call routes through a provider
+  abstraction the tenant configures: Anthropic API, Azure OpenAI (GCC High), or
+  a local model (Ollama/vLLM). "Bring your own AI" means bring your own **API
+  key** (or local model) — consumer chat subscriptions (Pro/Plus) can't be used
+  programmatically. CUI-sensitive tenants must be able to keep generation local;
+  never assume CUI may go to a commercial cloud LLM.
+- **Scope = denominator.** Control objectives are evaluated against scoped
+  assets ("AV on all CUI assets" = devices where category = CUI Asset).
 
-# Generate a new migration after model changes
-alembic revision --autogenerate -m "describe change"
-```
+## Data model direction
 
-### CLI (after `pip install -e .` from `backend/`)
+Built: `scope_entity` (the scope graph; lists are views over it). To add:
+control catalog + assessment objectives (+ SPRS weights), product baseline,
+tenant↔product link, control_state (status + responsibility per objective per
+tenant), evidence + evidence_task, implementation_statement. Build on the
+existing single-table-+-JSONB + RLS pattern.
 
-```bash
-wingrc seed --org "Demo Co" --apply ../samples/authorized-entities.example.xlsx
-wingrc scope --org "Demo Co" --type device
-wingrc render --org "Demo Co" 3.1.1c-authorized-devices ./out.xlsx
-wingrc views   # list all available CMMC list view IDs
-```
+## Stack & conventions
 
-### Full stack
+React 19 + Vite (SPA) · FastAPI (Python 3.13) · PostgreSQL 18 + pgvector ·
+SQLAlchemy 2.0 + Alembic · S3-compatible storage. One container image; deploy
+to Docker / Azure Container Apps / GCC High / air-gapped. Keep the domain core
+DB-agnostic and unit-testable (see `backend/app/domain.py`). Tests must pass
+and `ruff check` clean before merge. Work on branches, small commits.
 
-```bash
-cp .env.example .env
-docker compose up --build    # Postgres 18 + MinIO + API (port 8000) + frontend (port 5173)
-docker compose down
-```
+## Current status
 
-### Frontend (from `frontend/`)
-
-```bash
-npm install
-npm run dev      # dev server on port 5173
-npm run build    # tsc + vite build
-```
-
-### Regenerate sample workbook
-
-```bash
-python scripts/make_example_workbook.py   # from repo root
-```
-
-## Architecture
-
-### Data flow
-
-```
-Source (workbook / CSV / Liongard / Datto RMM)
-  └─> importer  ->  List[CanonicalEntity]
-        └─> reconcile()  ->  ReconcileResult  (reviewed by engineer)
-              └─> repo.upsert()  ->  scope_entity table  (Postgres)
-                    └─> render_view()  ->  assessor-ready .xlsx
-```
-
-### Key modules (`backend/app/`)
-
-| File | Role |
-|---|---|
-| `domain.py` | Pure domain core — `CanonicalEntity`, `EntityType`, `ScopeCategory`, `ReconcileResult`. **No DB or web imports.** Unit-testable in isolation. |
-| `catalog.py` | `ListView` definitions — each represents one CMMC list (a filter + column set). Adding a new required list = adding a `ListView` here. |
-| `reconcile.py` | `reconcile(current, incoming)` → `ReconcileResult` diff. Nothing writes to the DB; this is always a pure compare. |
-| `render.py` | `render_view(view, entities, out_path)` → `.xlsx` with provenance header. |
-| `repo.py` | SQLAlchemy ↔ domain adapter. The only file that maps between `ScopeEntity` rows and `CanonicalEntity` objects. |
-| `models.py` | SQLAlchemy 2.0 models: `Organization` and `ScopeEntity`. Everything in one `scope_entity` table — variable attributes in JSONB, structured query fields as real columns. |
-| `main.py` | FastAPI app. Exposes: `GET /health`, `GET /catalog/views`, `GET /orgs/{id}/scope`, `POST /orgs/{id}/imports/workbook/dry-run`, `POST /orgs/{id}/exports/{view_id}`. |
-| `cli.py` | Typer CLI: `seed`, `scope`, `render`, `views`. Uses the same importers/reconcile/render/repo as the API. |
-| `config.py` | Pydantic-settings config. All env vars are `WINGRC_`-prefixed. |
-| `importers/workbook.py` | xlsx importer — parses the four Authorized-Entities tabs into `CanonicalEntity` records. Future importers (CSV, Liongard, Datto RMM) follow the same contract: source rows → `List[CanonicalEntity]`. |
-
-### Database schema
-
-Single `scope_entity` table. Structured query fields (`entity_type`, `scope_category`, `status`, `source`, `org_id`) are real columns with indexes. Variable per-entity payload lives in a JSONB `attributes` column. Per-tenant isolation via `org_id` + Postgres Row-Level Security (set in migrations).
-
-### Natural keys
-
-- **Person:** `"First Name Last Name"` (concatenated)
-- **Process:** `Process Name`
-- **Device:** `Serial # or Asset Tag` (falls back to `Name`)
-- **External Service:** `Name`
-
-Natural keys are normalized to lowercase+stripped for reconciler comparison.
-
-### View IDs (for the CLI and API)
-
-- `3.1.1a-authorized-users`
-- `3.1.1b-auth-processes`
-- `3.1.1c-authorized-devices`
-- `external-services`
-
-### Environment variables
-
-All prefixed `WINGRC_`. Defaults target the docker-compose Postgres instance.
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `WINGRC_DATABASE_URL` | `postgresql+psycopg://wingrc:wingrc@localhost:5432/wingrc` | Connection string |
-| `WINGRC_ENVIRONMENT` | `development` | Runtime environment label |
-| `WINGRC_AI_PROVIDER` | `none` | `none \| anthropic \| azure_openai \| local` (scope module doesn't use AI yet) |
-
-### CI pipeline (`.github/workflows/ci.yml`)
-
-On push/PR to `main`: lint with ruff → test with pytest → build container image → Trivy vulnerability scan → Syft SBOM generation.
-
-## Important patterns
-
-- **Imports never overwrite blindly.** `reconcile()` always runs first and returns a diff. The CLI `--apply` flag and the API's separate apply endpoint are the only paths that write.
-- **Domain core is DB-free.** `domain.py` and `reconcile.py` have no SQLAlchemy or FastAPI imports. Tests for parse/reconcile/render run without a database.
-- **`attributes` round-trips faithfully.** Importers store raw workbook column headers as keys in `attributes`. Renderers read those same keys back out. Don't normalize attribute keys — this is intentional.
-- **Multi-tenant by `org_id`.** Every query scopes to `org_id`. The `get_or_create_org` helper in `repo.py` resolves name → UUID.
-- **Ruff config:** `line-length = 90`, rules `E F I UP B`, target `py313`. Run `ruff check .` before committing.
+Scope module (AC.L2-3.1.1 Authorized Entities) is built and tested: parse →
+reconcile → render, validated on real data. Next: the assessment engine + the
+magic loop, starting from the data-model additions above.
