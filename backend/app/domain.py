@@ -11,11 +11,11 @@ render loop unit-testable without standing up Postgres.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class EntityType(str, Enum):
+class EntityType(StrEnum):
     """The kinds of authorized entity that live in the CUI boundary.
 
     These map directly to the tabs of the Authorized-Entities workbook:
@@ -32,7 +32,7 @@ class EntityType(str, Enum):
     DATA_STORE = "data_store"
 
 
-class ScopeCategory(str, Enum):
+class ScopeCategory(StrEnum):
     """CMMC asset categorization. This is the scoping engine: an entity's
     category decides which lists it appears in and which controls apply.
     """
@@ -47,12 +47,12 @@ class ScopeCategory(str, Enum):
     UNCLASSIFIED = "Unclassified"
 
 
-class EntityStatus(str, Enum):
+class EntityStatus(StrEnum):
     ACTIVE = "active"
     DECOMMISSIONED = "decommissioned"
 
 
-class Source(str, Enum):
+class Source(StrEnum):
     """Where a record came from. Stored per-entity so generated lists are
     defensible: 'this list was generated from live RMM data on <date>'.
     """
@@ -89,7 +89,7 @@ class CanonicalEntity:
         return (self.entity_type.value, self.natural_key.strip().lower())
 
 
-class ChangeType(str, Enum):
+class ChangeType(StrEnum):
     NEW = "new"  # present in incoming, absent in current
     CHANGED = "changed"  # present in both, attributes differ
     MISSING = "missing"  # present in current, absent in incoming

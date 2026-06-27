@@ -5,7 +5,7 @@ objects. The domain core never imports SQLAlchemy; this is the only seam.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -61,7 +61,7 @@ def upsert(session: Session, org_id: uuid.UUID, entity: CanonicalEntity) -> Scop
     row.source = entity.source.value
     row.source_ref = entity.source_ref
     row.attributes = entity.attributes
-    row.last_verified_at = datetime.now(timezone.utc)
+    row.last_verified_at = datetime.now(UTC)
     return row
 
 
