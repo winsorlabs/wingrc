@@ -16,20 +16,20 @@ a typo in an author-written file never silently credits a disclaimed control.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 
-class Classification(str, Enum):
+class Classification(StrEnum):
     PROVIDER_SATISFIES = "provider_satisfies"
     SHARED = "shared"
     CUSTOMER_OWNS = "customer_owns"
 
 
-class CandidateState(str, Enum):
+class CandidateState(StrEnum):
     PENDING_EVIDENCE = "pending_evidence"
     NOT_SATISFIED_BY_PRODUCT = "not_satisfied_by_product"
 
