@@ -29,8 +29,8 @@ from app.models import (
     ControlStateHistory,
     EvidenceTask,
     Framework,
-    OrgProduct,
     Organization,
+    OrgProduct,
     Product,
 )
 
