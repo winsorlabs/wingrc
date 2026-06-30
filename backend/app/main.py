@@ -24,9 +24,11 @@ from .domain import EntityType
 from .importers.workbook import parse_workbook
 from .reconcile import reconcile
 from .render import render_view
+from .routers import assessments
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name, version="0.1.0")
+app.include_router(assessments.router)
 
 
 @app.get("/health")

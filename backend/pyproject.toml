@@ -51,7 +51,11 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.ruff.lint.per-file-ignores]
 "app/cli.py" = ["B008"]
 "app/main.py" = ["B008"]
+"app/routers/assessments.py" = ["B008"]
 
 [tool.pytest.ini_options]
 addopts = "--basetemp=/tmp/pyt-tmp"
 cache_dir = "/tmp/pytest-cache"
+markers = [
+    "integration: requires a running Postgres database (skipped when DB unavailable)",
+]
