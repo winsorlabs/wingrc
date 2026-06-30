@@ -2,7 +2,13 @@
 #
 # STATUS: REVIEWABLE DRAFT â€” all satisfaction_type, cadence, and
 # cadence_responsibility assignments require C3PAO review before use in
-# formal assessments.  is_draft=true on every objective row until confirmed.
+# formal assessments.
+#
+# OBJECTIVE TEXT ACCURACY WARNING: assessment objective keys (a, b, c...)
+# and their text were derived from training-data memory of NIST SP 800-171A
+# Rev 2, NOT by reading the PDF directly.  Objective counts and text will
+# have errors.  Cross-reference every control against 800-171A before use.
+# is_draft=true on every objective row until confirmed.
 #
 # Sources:
 #   NIST SP 800-171 Rev 2  https://doi.org/10.6028/NIST.SP.800-171r2
@@ -61,10 +67,7 @@ controls:
         text: System access is limited to processes acting on behalf of authorized users.
         type: product
       - key: f
-        text: System access is limited to devices (including other systems).
-        type: product
-      - key: g
-        text: System access is limited to the types of transactions and functions that authorized users are permitted to execute.
+        text: System access is limited to authorized devices (including other systems).
         type: product
 
   - id: AC.L2-3.1.2
