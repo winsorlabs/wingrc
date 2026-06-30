@@ -14,13 +14,10 @@ What is proven:
 """
 from __future__ import annotations
 
-from datetime import datetime, UTC
-
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.assessment import OrgProductStatus
 from app.engine import activate_org_product, start_assessment
 from app.models import (
     Assessment,
@@ -406,9 +403,8 @@ def test_start_assessment_auto_fires_for_active_products(
     """start_assessment fires the loop for pre-existing active+configured products."""
     # Activate the product BEFORE the assessment exists
     op = ref["org_product"]
-    op.status = OrgProductStatus.ACTIVE
+    op.status = "active"  # OrgProductStatus.ACTIVE — StrEnum subclasses str
     op.configured = True
-    op.activated_at = datetime.now(UTC)
     db_session.flush()
 
     # Now start an assessment — it should auto-fire the loop
