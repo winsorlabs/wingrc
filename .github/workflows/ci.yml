@@ -29,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build image
-        run: docker build -t wingrc-backend:ci ./backend
+        run: docker build -t wingrc-backend:ci -f backend/Dockerfile .
       - name: Vulnerability scan (Trivy)
         uses: aquasecurity/trivy-action@master
         with:
