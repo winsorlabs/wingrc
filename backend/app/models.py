@@ -149,12 +149,32 @@ class AssessmentObjective(Base):
     NIST 800-171A defines assessment objectives as granular items evaluators
     check. SPRS scoring and gap tracking operate at this level — each objective
     must be met for its parent control to count as satisfied.
+
+    satisfaction_type classifies HOW the objective is satisfied:
+      product            — enforced by a configured security tool
+      document_list      — a scope-graph-generated list (e.g. authorized users)
+      scheduled_operation— a recurring human activity (see cadence fields)
+      narrative          — policy/procedure documentation
+
+    is_draft = True on every seed row until a C3PAO reviews the classification.
     """
 
     __tablename__ = "assessment_objective"
     __table_args__ = (
         UniqueConstraint(
             "control_id", "objective_key", name="uq_objective_identity"
+        ),
+        CheckConstraint(
+            "satisfaction_type IN ('product','document_list','scheduled_operation','narrative')",
+            name="ck_assessment_objective_sat_type",
+        ),
+        CheckConstraint(
+            "cadence IN ('annual','quarterly','monthly') OR cadence IS NULL",
+            name="ck_assessment_objective_cadence",
+        ),
+        CheckConstraint(
+            "cadence_responsibility IN ('msp','customer','shared') OR cadence_responsibility IS NULL",
+            name="ck_assessment_objective_cadence_resp",
         ),
     )
 
@@ -167,6 +187,16 @@ class AssessmentObjective(Base):
     # "a", "b", "c" ... matches objective keys in baseline_control.objectives JSONB
     objective_key: Mapped[str] = mapped_column(String(5))
     text: Mapped[str] = mapped_column(Text)
+
+    # Satisfaction-type tagging (REVIEWABLE DRAFT — requires C3PAO sign-off)
+    satisfaction_type: Mapped[str] = mapped_column(
+        String(25), nullable=False, server_default=text("'narrative'")
+    )
+    # Set only for scheduled_operation objectives
+    cadence: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    cadence_responsibility: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # True until C3PAO has reviewed the type/cadence/responsibility assignment
+    is_draft: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
 
 
 # ---------------------------------------------------------------------------
@@ -557,6 +587,9 @@ class EvidenceTask(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending")
     collection_session: Mapped[str | None] = mapped_column(String(200))
     due_date: Mapped[date | None] = mapped_column(Date)
+    # Staleness deadline for recurring (scheduled_operation) tasks: when the
+    # linked evidence expires and the task must be re-executed.
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_evidence_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("evidence.id"), nullable=True
     )

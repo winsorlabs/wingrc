@@ -1,0 +1,2000 @@
+# NIST SP 800-171 Rev 2 / CMMC Level 2 Control Catalog
+#
+# STATUS: REVIEWABLE DRAFT — all satisfaction_type, cadence, and
+# cadence_responsibility assignments require C3PAO review before use in
+# formal assessments.  is_draft=true on every objective row until confirmed.
+#
+# Sources:
+#   NIST SP 800-171 Rev 2  https://doi.org/10.6028/NIST.SP.800-171r2
+#   NIST SP 800-171A Rev 2 https://doi.org/10.6028/NIST.SP.800-171Ar2
+#   CMMC Assessment Guide Level 2 v2
+#     https://dodcio.defense.gov/Portals/0/Documents/CMMC/AssessmentGuideL2v2.pdf
+#
+# satisfaction_type legend:
+#   product            — enforced / implemented by a configured security tool
+#   document_list      — satisfied by a list generated from scope-graph data
+#   scheduled_operation— a recurring human activity; has cadence + cadence_resp
+#   narrative          — policy, procedure, plan, or configuration description
+#
+# cadence_resp legend:  msp | customer | shared
+#
+# SPRS weight legend (WinGRC draft classification, not DoD DAM):
+#   5 = critical  3 = high  1 = moderate
+#
+# NOTE: 110 practices expected per CMMC L2 / NIST 800-171 Rev 2.
+# Verify enumeration against official CMMC Assessment Guide L2 v2.
+
+framework:
+  key: nist-800-171-r2
+  name: NIST SP 800-171 Rev 2
+  version: r2
+
+controls:
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # AC — Access Control  (3.1.1 – 3.1.22)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  - id: AC.L2-3.1.1
+    seq: 1
+    family: AC
+    title: Authorized Access Control
+    weight: 5
+    source: "NIST SP 800-171 Rev 2 §3.1.1; NIST SP 800-171A 3.1.1; CMMC AG L2 v2 AC.L2-3.1.1"
+    req: >-
+      Limit system access to authorized users, processes acting on behalf of
+      authorized users, and devices (including other systems).
+    objectives:
+      - key: a
+        text: Authorized users of the system are identified.
+        type: document_list
+      - key: b
+        text: Processes acting on behalf of authorized users are identified.
+        type: narrative
+      - key: c
+        text: Devices (and other systems) authorized to connect to the system are identified.
+        type: document_list
+      - key: d
+        text: System access is limited to authorized users.
+        type: product
+      - key: e
+        text: System access is limited to processes acting on behalf of authorized users.
+        type: product
+      - key: f
+        text: System access is limited to devices (including other systems).
+        type: product
+      - key: g
+        text: System access is limited to the types of transactions and functions that authorized users are permitted to execute.
+        type: product
+
+  - id: AC.L2-3.1.2
+    seq: 2
+    family: AC
+    title: Transaction and Function Control
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.1.2; NIST SP 800-171A 3.1.2; CMMC AG L2 v2 AC.L2-3.1.2"
+    req: >-
+      Limit system access to the types of transactions and functions that
+      authorized users are permitted to execute.
+    objectives:
+      - key: a
+        text: The types of transactions and functions that authorized users are permitted to execute are defined.
+        type: narrative
+      - key: b
+        text: System access is limited to the defined types of transactions and functions for authorized users.
+        type: product
+
+  - id: AC.L2-3.1.3
+    seq: 3
+    family: AC
+    title: Control CUI Flow
+    weight: 5
+    source: "NIST SP 800-171 Rev 2 §3.1.3; NIST SP 800-171A 3.1.3; CMMC AG L2 v2 AC.L2-3.1.3"
+    req: >-
+      Control the flow of CUI in accordance with approved authorizations.
+    objectives:
+      - key: a
+        text: Information flow control policies are defined.
+        type: narrative
+      - key: b
+        text: Approved authorizations for controlling the flow of CUI within the system and between interconnected systems are identified.
+        type: narrative
+      - key: c
+        text: CUI flow is controlled in accordance with approved authorizations.
+        type: product
+
+  - id: AC.L2-3.1.4
+    seq: 4
+    family: AC
+    title: Separation of Duties
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.1.4; NIST SP 800-171A 3.1.4; CMMC AG L2 v2 AC.L2-3.1.4"
+    req: >-
+      Separate the duties of individuals to reduce the risk of malevolent
+      activity without collusion.
+    objectives:
+      - key: a
+        text: The duties of individuals requiring separation are defined.
+        type: narrative
+      - key: b
+        text: Responsibilities for duties requiring separation are assigned to separate individuals.
+        type: document_list
+      - key: c
+        text: Access authorizations that support separation of duties are established and enforced.
+        type: product
+
+  - id: AC.L2-3.1.5
+    seq: 5
+    family: AC
+    title: Least Privilege
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.1.5; NIST SP 800-171A 3.1.5; CMMC AG L2 v2 AC.L2-3.1.5"
+    req: >-
+      Employ the principle of least privilege, including for specific security
+      functions and privileged accounts.
+    objectives:
+      - key: a
+        text: Privileged accounts are identified.
+        type: document_list
+      - key: b
+        text: Access to privileged accounts is authorized only to individuals required to perform privileged functions.
+        type: product
+      - key: c
+        text: Privileged functions are identified.
+        type: narrative
+      - key: d
+        text: Security functions assigned to privileged roles are identified.
+        type: narrative
+
+  - id: AC.L2-3.1.6
+    seq: 6
+    family: AC
+    title: Non-Privileged Account Use
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.1.6; NIST SP 800-171A 3.1.6; CMMC AG L2 v2 AC.L2-3.1.6"
+    req: >-
+      Use non-privileged accounts or roles when accessing non-security functions.
+    objectives:
+      - key: a
+        text: Non-security functions accessible from privileged accounts or roles are identified.
+        type: narrative
+      - key: b
+        text: Users are required to use non-privileged accounts when accessing non-security functions.
+        type: product
+
+  - id: AC.L2-3.1.7
+    seq: 7
+    family: AC
+    title: Privileged Functions Audit
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.1.7; NIST SP 800-171A 3.1.7; CMMC AG L2 v2 AC.L2-3.1.7"
+    req: >-
+      Prevent non-privileged users from executing privileged functions and
+      capture the execution of such functions in audit logs.
+    objectives:
+      - key: a
+        text: Privileged functions are defined.
+        type: narrative
+      - key: b
+        text: Non-privileged users are prevented from executing privileged functions.
+        type: product
+      - key: c
+        text: The execution of privileged functions is captured in audit logs.
+        type: product
+
+  - id: AC.L2-3.1.8
+    seq: 8
+    family: AC
+    title: Unsuccessful Logon Attempts
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.1.8; NIST SP 800-171A 3.1.8; CMMC AG L2 v2 AC.L2-3.1.8"
+    req: >-
+      Limit unsuccessful logon attempts.
+    objectives:
+      - key: a
+        text: The means of limiting unsuccessful logon attempts are defined.
+        type: narrative
+      - key: b
+        text: Unsuccessful logon attempts are limited in accordance with defined means.
+        type: product
+
+  - id: AC.L2-3.1.9
+    seq: 9
+    family: AC
+    title: Privacy and Security Notices
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.1.9; NIST SP 800-171A 3.1.9; CMMC AG L2 v2 AC.L2-3.1.9"
+    req: >-
+      Provide privacy and security notices consistent with CUI rules.
+    objectives:
+      - key: a
+        text: Privacy and security notices required by CUI rules are identified, consistent with applicable CUI rules.
+        type: narrative
+      - key: b
+        text: Privacy and security notices are displayed on the system.
+        type: product
+
+  - id: AC.L2-3.1.10
+    seq: 10
+    family: AC
+    title: Session Lock
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.1.10; NIST SP 800-171A 3.1.10; CMMC AG L2 v2 AC.L2-3.1.10"
+    req: >-
+      Use session lock with pattern-hiding displays after a period of inactivity.
+    objectives:
+      - key: a
+        text: The period of inactivity after which a session lock is initiated is defined.
+        type: narrative
+      - key: b
+        text: A session lock is initiated after the defined period of inactivity.
+        type: product
+      - key: c
+        text: The session lock is retained until the user re-establishes access via established identification and authentication procedures.
+        type: product
+
+  - id: AC.L2-3.1.11
+    seq: 11
+    family: AC
+    title: Session Termination
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.1.11; NIST SP 800-171A 3.1.11; CMMC AG L2 v2 AC.L2-3.1.11"
+    req: >-
+      Terminate (automatically) user sessions after a defined condition.
+    objectives:
+      - key: a
+        text: Conditions that require automatic user session termination are defined.
+        type: narrative
+      - key: b
+        text: User sessions are automatically terminated after defined conditions are met.
+        type: product
+
+  - id: AC.L2-3.1.12
+    seq: 12
+    family: AC
+    title: Remote Access Monitoring
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.1.12; NIST SP 800-171A 3.1.12; CMMC AG L2 v2 AC.L2-3.1.12"
+    req: >-
+      Monitor and control remote access sessions.
+    objectives:
+      - key: a
+        text: Remote access sessions are authorized.
+        type: narrative
+      - key: b
+        text: Remote access sessions are monitored.
+        type: product
+      - key: c
+        text: Remote access sessions are controlled.
+        type: product
+
+  - id: AC.L2-3.1.13
+    seq: 13
+    family: AC
+    title: Remote Access Cryptography
+    weight: 5
+    source: "NIST SP 800-171 Rev 2 §3.1.13; NIST SP 800-171A 3.1.13; CMMC AG L2 v2 AC.L2-3.1.13"
+    req: >-
+      Employ cryptographic mechanisms to protect the confidentiality of remote
+      access sessions.
+    objectives:
+      - key: a
+        text: Cryptographic mechanisms to protect the confidentiality of remote access sessions are implemented.
+        type: product
+
+  - id: AC.L2-3.1.14
+    seq: 14
+    family: AC
+    title: Remote Access Control Points
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.1.14; NIST SP 800-171A 3.1.14; CMMC AG L2 v2 AC.L2-3.1.14"
+    req: >-
+      Route remote access via managed access control points.
+    objectives:
+      - key: a
+        text: Remote access is routed through managed access control points.
+        type: product
+
+  - id: AC.L2-3.1.15
+    seq: 15
+    family: AC
+    title: Remote Privileged Commands
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.1.15; NIST SP 800-171A 3.1.15; CMMC AG L2 v2 AC.L2-3.1.15"
+    req: >-
+      Authorize remote execution of privileged commands and access to
+      security-relevant information via remote access only for documented
+      operational needs.
+    objectives:
+      - key: a
+        text: Privileged commands authorized for remote execution are identified and documented.
+        type: narrative
+      - key: b
+        text: Security-relevant information authorized for remote access is identified and documented.
+        type: narrative
+      - key: c
+        text: Remote execution of privileged commands is limited to documented operational needs.
+        type: product
+
+  - id: AC.L2-3.1.16
+    seq: 16
+    family: AC
+    title: Wireless Authorization
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.1.16; NIST SP 800-171A 3.1.16; CMMC AG L2 v2 AC.L2-3.1.16"
+    req: >-
+      Authorize wireless access prior to allowing such connections.
+    objectives:
+      - key: a
+        text: Wireless access points are identified.
+        type: document_list
+      - key: b
+        text: Wireless access to the system is authorized prior to allowing wireless connections.
+        type: narrative
+
+  - id: AC.L2-3.1.17
+    seq: 17
+    family: AC
+    title: Wireless Access Protection
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.1.17; NIST SP 800-171A 3.1.17; CMMC AG L2 v2 AC.L2-3.1.17"
+    req: >-
+      Protect wireless access using authentication and encryption.
+    objectives:
+      - key: a
+        text: Wireless access is protected using authentication.
+        type: product
+      - key: b
+        text: Wireless access is protected using encryption.
+        type: product
+
+  - id: AC.L2-3.1.18
+    seq: 18
+    family: AC
+    title: Mobile Device Control
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.1.18; NIST SP 800-171A 3.1.18; CMMC AG L2 v2 AC.L2-3.1.18"
+    req: >-
+      Control connection of mobile devices.
+    objectives:
+      - key: a
+        text: Mobile devices that process, store, or transmit CUI are identified.
+        type: document_list
+      - key: b
+        text: Connection of mobile devices to the system is controlled.
+        type: product
+
+  - id: AC.L2-3.1.19
+    seq: 19
+    family: AC
+    title: Encrypt CUI on Mobile
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.1.19; NIST SP 800-171A 3.1.19; CMMC AG L2 v2 AC.L2-3.1.19"
+    req: >-
+      Encrypt CUI on mobile devices and mobile computing platforms.
+    objectives:
+      - key: a
+        text: CUI on mobile devices and mobile computing platforms is encrypted.
+        type: product
+
+  - id: AC.L2-3.1.20
+    seq: 20
+    family: AC
+    title: External System Connections
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.1.20; NIST SP 800-171A 3.1.20; CMMC AG L2 v2 AC.L2-3.1.20"
+    req: >-
+      Verify and control/limit connections to external systems.
+    objectives:
+      - key: a
+        text: Connections to external systems are identified.
+        type: document_list
+      - key: b
+        text: The use of external systems by authorized individuals is verified and controlled/limited.
+        type: narrative
+      - key: c
+        text: Individuals authorized to use external systems to access the system are identified.
+        type: document_list
+
+  - id: AC.L2-3.1.21
+    seq: 21
+    family: AC
+    title: Portable Storage on External Systems
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.1.21; NIST SP 800-171A 3.1.21; CMMC AG L2 v2 AC.L2-3.1.21"
+    req: >-
+      Limit use of portable storage devices on external systems.
+    objectives:
+      - key: a
+        text: The use of portable storage devices on external systems is limited or prohibited.
+        type: product
+
+  - id: AC.L2-3.1.22
+    seq: 22
+    family: AC
+    title: Publicly Accessible Systems
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.1.22; NIST SP 800-171A 3.1.22; CMMC AG L2 v2 AC.L2-3.1.22"
+    req: >-
+      Control CUI posted or processed on publicly accessible systems.
+    objectives:
+      - key: a
+        text: Individuals authorized to post information on publicly accessible systems are designated.
+        type: document_list
+      - key: b
+        text: Designated individuals review publicly accessible system content for non-public CUI prior to posting.
+        type: scheduled_operation
+        cadence: quarterly
+        cadence_resp: shared
+      - key: c
+        text: Non-public CUI is removed from publicly accessible systems when discovered.
+        type: narrative
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # AT — Awareness and Training  (3.2.1 – 3.2.3)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  - id: AT.L2-3.2.1
+    seq: 23
+    family: AT
+    title: Security Awareness
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.2.1; NIST SP 800-171A 3.2.1; CMMC AG L2 v2 AT.L2-3.2.1"
+    req: >-
+      Ensure that managers, systems administrators, and users of organizational
+      systems are made aware of the security risks associated with their
+      activities and of the applicable policies, standards, and procedures
+      related to the security of those systems.
+    objectives:
+      - key: a
+        text: Security awareness training content covering associated security risks is identified.
+        type: narrative
+      - key: b
+        text: Security awareness training is provided to all users (managers, admins, and general users) of the system.
+        type: scheduled_operation
+        cadence: annual
+        cadence_resp: msp
+      - key: c
+        text: Security awareness training is provided when required by system changes or on a periodic basis.
+        type: scheduled_operation
+        cadence: annual
+        cadence_resp: msp
+
+  - id: AT.L2-3.2.2
+    seq: 24
+    family: AT
+    title: Role-Based Training
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.2.2; NIST SP 800-171A 3.2.2; CMMC AG L2 v2 AT.L2-3.2.2"
+    req: >-
+      Ensure that personnel are trained to carry out their assigned information
+      security responsibilities.
+    objectives:
+      - key: a
+        text: Individuals with assigned information security responsibilities are identified.
+        type: document_list
+      - key: b
+        text: Role-based security training required for assigned responsibilities is identified.
+        type: narrative
+      - key: c
+        text: Role-based security training is provided to individuals with information security responsibilities.
+        type: scheduled_operation
+        cadence: annual
+        cadence_resp: msp
+
+  - id: AT.L2-3.2.3
+    seq: 25
+    family: AT
+    title: Insider Threat Awareness
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.2.3; NIST SP 800-171A 3.2.3; CMMC AG L2 v2 AT.L2-3.2.3"
+    req: >-
+      Provide security awareness training on recognizing and reporting potential
+      indicators of insider threat.
+    objectives:
+      - key: a
+        text: Potential indicators of insider threat are identified.
+        type: narrative
+      - key: b
+        text: Security awareness training includes recognizing and reporting potential insider threat indicators.
+        type: scheduled_operation
+        cadence: annual
+        cadence_resp: msp
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # AU — Audit and Accountability  (3.3.1 – 3.3.9)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  - id: AU.L2-3.3.1
+    seq: 26
+    family: AU
+    title: System Auditing
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.3.1; NIST SP 800-171A 3.3.1; CMMC AG L2 v2 AU.L2-3.3.1"
+    req: >-
+      Create and retain system audit logs and records to the extent needed to
+      enable the monitoring, analysis, investigation, and reporting of unlawful
+      or unauthorized system activity.
+    objectives:
+      - key: a
+        text: Audit log content required to support the monitoring, analysis, investigation, and reporting of unlawful or unauthorized activity is defined.
+        type: narrative
+      - key: b
+        text: Audit logs are created.
+        type: product
+      - key: c
+        text: Audit logs are retained.
+        type: product
+
+  - id: AU.L2-3.3.2
+    seq: 27
+    family: AU
+    title: User Accountability
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.3.2; NIST SP 800-171A 3.3.2; CMMC AG L2 v2 AU.L2-3.3.2"
+    req: >-
+      Ensure that the actions of individual system users can be uniquely traced
+      to those users, so they can be held accountable for their actions.
+    objectives:
+      - key: a
+        text: The content of audit records needed to support the ability to uniquely trace user actions to those users is defined.
+        type: narrative
+      - key: b
+        text: Audit records contain sufficient information to uniquely trace user actions.
+        type: product
+
+  - id: AU.L2-3.3.3
+    seq: 28
+    family: AU
+    title: Review Audit Logs
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.3.3; NIST SP 800-171A 3.3.3; CMMC AG L2 v2 AU.L2-3.3.3"
+    req: >-
+      Review and update logged events.
+    objectives:
+      - key: a
+        text: Logged events are reviewed and updated on a defined frequency.
+        type: scheduled_operation
+        cadence: quarterly
+        cadence_resp: msp
+      - key: b
+        text: The frequency of reviews and updates to logged events is defined.
+        type: narrative
+
+  - id: AU.L2-3.3.4
+    seq: 29
+    family: AU
+    title: Audit Failure Alerting
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.3.4; NIST SP 800-171A 3.3.4; CMMC AG L2 v2 AU.L2-3.3.4"
+    req: >-
+      Alert in the event of an audit logging process failure.
+    objectives:
+      - key: a
+        text: Personnel to be alerted in the event of an audit logging process failure are identified.
+        type: narrative
+      - key: b
+        text: An alert is generated in the event of an audit logging process failure.
+        type: product
+
+  - id: AU.L2-3.3.5
+    seq: 30
+    family: AU
+    title: Audit Correlation and Reporting
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.3.5; NIST SP 800-171A 3.3.5; CMMC AG L2 v2 AU.L2-3.3.5"
+    req: >-
+      Correlate audit record review, analysis, and reporting processes for
+      investigation and response to indications of unlawful, unauthorized,
+      suspicious, or unusual activity.
+    objectives:
+      - key: a
+        text: Audit record review, analysis, and reporting processes are correlated.
+        type: product
+      - key: b
+        text: Responses to indications of unlawful, unauthorized, suspicious, or unusual activity are implemented.
+        type: narrative
+
+  - id: AU.L2-3.3.6
+    seq: 31
+    family: AU
+    title: Audit Reduction and Reporting
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.3.6; NIST SP 800-171A 3.3.6; CMMC AG L2 v2 AU.L2-3.3.6"
+    req: >-
+      Provide audit record reduction and report generation to support on-demand
+      analysis and reporting.
+    objectives:
+      - key: a
+        text: An audit record reduction capability that supports on-demand analysis is provided.
+        type: product
+      - key: b
+        text: A report generation capability that supports on-demand reporting is provided.
+        type: product
+
+  - id: AU.L2-3.3.7
+    seq: 32
+    family: AU
+    title: Authoritative Time Source
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.3.7; NIST SP 800-171A 3.3.7; CMMC AG L2 v2 AU.L2-3.3.7"
+    req: >-
+      Provide a system capability that compares and synchronizes internal system
+      clocks with an authoritative source to generate time stamps for audit
+      records.
+    objectives:
+      - key: a
+        text: An authoritative source is used for time stamps in audit records.
+        type: product
+      - key: b
+        text: Internal system clocks are compared and synchronized with the authoritative source.
+        type: product
+
+  - id: AU.L2-3.3.8
+    seq: 33
+    family: AU
+    title: Audit Protection
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.3.8; NIST SP 800-171A 3.3.8; CMMC AG L2 v2 AU.L2-3.3.8"
+    req: >-
+      Protect audit information and audit tools from unauthorized access,
+      modification, and deletion.
+    objectives:
+      - key: a
+        text: Audit information is protected from unauthorized access.
+        type: product
+      - key: b
+        text: Audit tools are protected from unauthorized access, modification, and deletion.
+        type: product
+
+  - id: AU.L2-3.3.9
+    seq: 34
+    family: AU
+    title: Privileged Audit Management
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.3.9; NIST SP 800-171A 3.3.9; CMMC AG L2 v2 AU.L2-3.3.9"
+    req: >-
+      Limit management of audit logging to a subset of privileged users.
+    objectives:
+      - key: a
+        text: Privileged users authorized to manage audit logging are identified.
+        type: document_list
+      - key: b
+        text: Management of audit logging is limited to identified privileged users.
+        type: product
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # CM — Configuration Management  (3.4.1 – 3.4.9)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  - id: CM.L2-3.4.1
+    seq: 35
+    family: CM
+    title: Baseline Configurations
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.4.1; NIST SP 800-171A 3.4.1; CMMC AG L2 v2 CM.L2-3.4.1"
+    req: >-
+      Establish and maintain baseline configurations and inventories of
+      organizational systems (including hardware, software, firmware, and
+      documentation) throughout the respective system development life cycles.
+    objectives:
+      - key: a
+        text: A baseline configuration is established for the system.
+        type: narrative
+      - key: b
+        text: The baseline configuration includes hardware, software, firmware, and documentation.
+        type: document_list
+      - key: c
+        text: The baseline configuration is maintained (kept current) throughout the system development life cycle.
+        type: scheduled_operation
+        cadence: annual
+        cadence_resp: msp
+      - key: d
+        text: A system inventory is established and maintained.
+        type: document_list
+
+  - id: CM.L2-3.4.2
+    seq: 36
+    family: CM
+    title: Security Configuration Settings
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.4.2; NIST SP 800-171A 3.4.2; CMMC AG L2 v2 CM.L2-3.4.2"
+    req: >-
+      Establish and enforce security configuration settings for information
+      technology products employed in organizational systems.
+    objectives:
+      - key: a
+        text: Security configuration settings for IT products used in the system are established.
+        type: narrative
+      - key: b
+        text: Security configuration settings are enforced.
+        type: product
+      - key: c
+        text: Deviations from established configuration settings are documented.
+        type: narrative
+
+  - id: CM.L2-3.4.3
+    seq: 37
+    family: CM
+    title: Unauthorized Software Control
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.4.3; NIST SP 800-171A 3.4.3; CMMC AG L2 v2 CM.L2-3.4.3"
+    req: >-
+      Track, review, approve, and log changes to organizational systems.
+    objectives:
+      - key: a
+        text: Changes to the system are tracked.
+        type: product
+      - key: b
+        text: Changes to the system are reviewed.
+        type: narrative
+      - key: c
+        text: Changes to the system are logged.
+        type: product
+
+  - id: CM.L2-3.4.4
+    seq: 38
+    family: CM
+    title: Security Impact Analysis
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.4.4; NIST SP 800-171A 3.4.4; CMMC AG L2 v2 CM.L2-3.4.4"
+    req: >-
+      Analyze the security impact of changes prior to implementation.
+    objectives:
+      - key: a
+        text: The security impact of changes to the system is analyzed prior to implementation.
+        type: narrative
+      - key: b
+        text: Security impact analysis is performed by individuals with information security responsibilities.
+        type: narrative
+
+  - id: CM.L2-3.4.5
+    seq: 39
+    family: CM
+    title: Access Restrictions for Change
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.4.5; NIST SP 800-171A 3.4.5; CMMC AG L2 v2 CM.L2-3.4.5"
+    req: >-
+      Define, document, approve, and enforce physical and logical access
+      restrictions associated with changes to organizational systems.
+    objectives:
+      - key: a
+        text: Physical access restrictions associated with changes to the system are defined and documented.
+        type: narrative
+      - key: b
+        text: Logical access restrictions associated with changes to the system are defined and documented.
+        type: narrative
+      - key: c
+        text: Access restrictions associated with system changes are approved and enforced.
+        type: product
+
+  - id: CM.L2-3.4.6
+    seq: 40
+    family: CM
+    title: Least Functionality
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.4.6; NIST SP 800-171A 3.4.6; CMMC AG L2 v2 CM.L2-3.4.6"
+    req: >-
+      Employ the principle of least functionality by configuring organizational
+      systems to provide only essential capabilities.
+    objectives:
+      - key: a
+        text: Essential system capabilities are defined.
+        type: narrative
+      - key: b
+        text: The system is configured to provide only essential capabilities.
+        type: product
+
+  - id: CM.L2-3.4.7
+    seq: 41
+    family: CM
+    title: Nonessential Capabilities
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.4.7; NIST SP 800-171A 3.4.7; CMMC AG L2 v2 CM.L2-3.4.7"
+    req: >-
+      Restrict, disable, or prevent the use of nonessential programs, functions,
+      ports, protocols, and services.
+    objectives:
+      - key: a
+        text: Nonessential programs, functions, ports, protocols, and services are identified.
+        type: narrative
+      - key: b
+        text: Nonessential programs, functions, ports, protocols, and services are restricted, disabled, or prevented.
+        type: product
+
+  - id: CM.L2-3.4.8
+    seq: 42
+    family: CM
+    title: Application Execution Policy
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.4.8; NIST SP 800-171A 3.4.8; CMMC AG L2 v2 CM.L2-3.4.8"
+    req: >-
+      Apply deny-by-exception (blacklisting) policy to prevent the use of
+      unauthorized software or deny-all, permit-by-exception (whitelisting)
+      policy to allow the execution of authorized software.
+    objectives:
+      - key: a
+        text: A policy governing software allowed or denied on the system (deny-by-exception or deny-all/permit-by-exception) is established.
+        type: narrative
+      - key: b
+        text: The software execution policy is enforced.
+        type: product
+
+  - id: CM.L2-3.4.9
+    seq: 43
+    family: CM
+    title: User-Installed Software
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.4.9; NIST SP 800-171A 3.4.9; CMMC AG L2 v2 CM.L2-3.4.9"
+    req: >-
+      Control and monitor user-installed software.
+    objectives:
+      - key: a
+        text: A policy governing user installation of software is established.
+        type: narrative
+      - key: b
+        text: User-installed software is controlled and monitored.
+        type: product
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # IA — Identification and Authentication  (3.5.1 – 3.5.11)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  - id: IA.L2-3.5.1
+    seq: 44
+    family: IA
+    title: Identify System Users
+    weight: 5
+    source: "NIST SP 800-171 Rev 2 §3.5.1; NIST SP 800-171A 3.5.1; CMMC AG L2 v2 IA.L2-3.5.1"
+    req: >-
+      Identify system users, processes acting on behalf of users, and devices.
+    objectives:
+      - key: a
+        text: System users are identified.
+        type: document_list
+      - key: b
+        text: Processes acting on behalf of users are identified.
+        type: narrative
+      - key: c
+        text: Devices accessing the system are identified.
+        type: document_list
+
+  - id: IA.L2-3.5.2
+    seq: 45
+    family: IA
+    title: Authenticate System Users
+    weight: 5
+    source: "NIST SP 800-171 Rev 2 §3.5.2; NIST SP 800-171A 3.5.2; CMMC AG L2 v2 IA.L2-3.5.2"
+    req: >-
+      Authenticate (or verify) the identities of users, processes, or devices,
+      as a prerequisite to allowing access to organizational systems.
+    objectives:
+      - key: a
+        text: The identity of each user is authenticated prior to allowing system access.
+        type: product
+      - key: b
+        text: The identity of each process acting on behalf of a user is authenticated where technically feasible.
+        type: product
+
+  - id: IA.L2-3.5.3
+    seq: 46
+    family: IA
+    title: Multifactor Authentication
+    weight: 5
+    source: "NIST SP 800-171 Rev 2 §3.5.3; NIST SP 800-171A 3.5.3; CMMC AG L2 v2 IA.L2-3.5.3"
+    req: >-
+      Use multifactor authentication for local and network access to privileged
+      accounts and for network access to non-privileged accounts.
+    objectives:
+      - key: a
+        text: Multifactor authentication is implemented for local access to privileged accounts.
+        type: product
+      - key: b
+        text: Multifactor authentication is implemented for network access to privileged accounts.
+        type: product
+      - key: c
+        text: Multifactor authentication is implemented for network access to non-privileged accounts.
+        type: product
+
+  - id: IA.L2-3.5.4
+    seq: 47
+    family: IA
+    title: Replay-Resistant Authentication
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.5.4; NIST SP 800-171A 3.5.4; CMMC AG L2 v2 IA.L2-3.5.4"
+    req: >-
+      Employ replay-resistant authentication mechanisms for network access to
+      privileged and non-privileged accounts.
+    objectives:
+      - key: a
+        text: Replay-resistant authentication mechanisms for network access to privileged and non-privileged accounts are implemented.
+        type: product
+
+  - id: IA.L2-3.5.5
+    seq: 48
+    family: IA
+    title: Identifier Reuse
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.5.5; NIST SP 800-171A 3.5.5; CMMC AG L2 v2 IA.L2-3.5.5"
+    req: >-
+      Employ identifier management practices that include not reusing identifiers
+      for a defined period.
+    objectives:
+      - key: a
+        text: The period after which an identifier may be reused is defined.
+        type: narrative
+      - key: b
+        text: Identifiers are not reused within the defined period.
+        type: product
+
+  - id: IA.L2-3.5.6
+    seq: 49
+    family: IA
+    title: Identifier Handling
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.5.6; NIST SP 800-171A 3.5.6; CMMC AG L2 v2 IA.L2-3.5.6"
+    req: >-
+      Disable identifiers after a defined inactivity period.
+    objectives:
+      - key: a
+        text: The inactivity period after which an identifier is disabled is defined.
+        type: narrative
+      - key: b
+        text: Identifiers are disabled after the defined inactivity period.
+        type: scheduled_operation
+        cadence: quarterly
+        cadence_resp: msp
+
+  - id: IA.L2-3.5.7
+    seq: 50
+    family: IA
+    title: Password Complexity
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.5.7; NIST SP 800-171A 3.5.7; CMMC AG L2 v2 IA.L2-3.5.7"
+    req: >-
+      Enforce a minimum password complexity and change requirements for passwords
+      used as authenticators.
+    objectives:
+      - key: a
+        text: Password complexity requirements are defined.
+        type: narrative
+      - key: b
+        text: Minimum password complexity requirements are enforced.
+        type: product
+      - key: c
+        text: Password change requirements are defined.
+        type: narrative
+      - key: d
+        text: Password change requirements are enforced.
+        type: product
+
+  - id: IA.L2-3.5.8
+    seq: 51
+    family: IA
+    title: Password Reuse
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.5.8; NIST SP 800-171A 3.5.8; CMMC AG L2 v2 IA.L2-3.5.8"
+    req: >-
+      Prohibit password reuse for a specified number of generations.
+    objectives:
+      - key: a
+        text: The number of password generations for which reuse is prohibited is defined.
+        type: narrative
+      - key: b
+        text: Password reuse is prohibited for the defined number of generations.
+        type: product
+
+  - id: IA.L2-3.5.9
+    seq: 52
+    family: IA
+    title: Temporary Passwords
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.5.9; NIST SP 800-171A 3.5.9; CMMC AG L2 v2 IA.L2-3.5.9"
+    req: >-
+      Allow temporary password use for system logons with an immediate change to
+      a permanent password.
+    objectives:
+      - key: a
+        text: Temporary passwords are required to be immediately changed to permanent passwords at initial logon.
+        type: product
+
+  - id: IA.L2-3.5.10
+    seq: 53
+    family: IA
+    title: Cryptographically Protected Passwords
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.5.10; NIST SP 800-171A 3.5.10; CMMC AG L2 v2 IA.L2-3.5.10"
+    req: >-
+      Store and transmit only cryptographically-protected passwords.
+    objectives:
+      - key: a
+        text: Passwords are stored using cryptographic mechanisms.
+        type: product
+      - key: b
+        text: Passwords are transmitted using cryptographic mechanisms.
+        type: product
+
+  - id: IA.L2-3.5.11
+    seq: 54
+    family: IA
+    title: Obscure Authentication Feedback
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.5.11; NIST SP 800-171A 3.5.11; CMMC AG L2 v2 IA.L2-3.5.11"
+    req: >-
+      Obscure feedback of authentication information.
+    objectives:
+      - key: a
+        text: Authentication feedback is obscured during the authentication process.
+        type: product
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # IR — Incident Response  (3.6.1 – 3.6.3)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  - id: IR.L2-3.6.1
+    seq: 55
+    family: IR
+    title: Incident Handling
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.6.1; NIST SP 800-171A 3.6.1; CMMC AG L2 v2 IR.L2-3.6.1"
+    req: >-
+      Establish an operational incident-handling capability for organizational
+      systems that includes preparation, detection, analysis, containment,
+      recovery, and user response activities.
+    objectives:
+      - key: a
+        text: An operational incident-handling capability is established covering preparation, detection, analysis, containment, recovery, and user response.
+        type: narrative
+      - key: b
+        text: The incident-handling capability is documented in an incident response plan.
+        type: narrative
+      - key: c
+        text: Incidents are tracked.
+        type: product
+
+  - id: IR.L2-3.6.2
+    seq: 56
+    family: IR
+    title: Incident Reporting
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.6.2; NIST SP 800-171A 3.6.2; CMMC AG L2 v2 IR.L2-3.6.2"
+    req: >-
+      Track, document, and report incidents to designated officials and/or
+      authorities both internal and external to the organization.
+    objectives:
+      - key: a
+        text: Incidents are documented.
+        type: narrative
+      - key: b
+        text: Incidents are reported to designated internal and external officials or authorities.
+        type: narrative
+      - key: c
+        text: Reporting time frames for incidents are defined.
+        type: narrative
+
+  - id: IR.L2-3.6.3
+    seq: 57
+    family: IR
+    title: Incident Response Testing
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.6.3; NIST SP 800-171A 3.6.3; CMMC AG L2 v2 IR.L2-3.6.3"
+    req: >-
+      Test the organizational incident response capability.
+    objectives:
+      - key: a
+        text: The incident response capability is tested on a periodic basis.
+        type: scheduled_operation
+        cadence: annual
+        cadence_resp: shared
+      - key: b
+        text: Test results are documented and used to improve the incident response capability.
+        type: narrative
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # MA — Maintenance  (3.7.1 – 3.7.6)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  - id: MA.L2-3.7.1
+    seq: 58
+    family: MA
+    title: Perform Maintenance
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.7.1; NIST SP 800-171A 3.7.1; CMMC AG L2 v2 MA.L2-3.7.1"
+    req: >-
+      Perform maintenance on organizational systems.
+    objectives:
+      - key: a
+        text: System maintenance is performed on a periodic basis.
+        type: scheduled_operation
+        cadence: annual
+        cadence_resp: msp
+      - key: b
+        text: System maintenance is performed using approved tools, techniques, and procedures.
+        type: narrative
+
+  - id: MA.L2-3.7.2
+    seq: 59
+    family: MA
+    title: System Maintenance Control
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.7.2; NIST SP 800-171A 3.7.2; CMMC AG L2 v2 MA.L2-3.7.2"
+    req: >-
+      Provide controls on the tools, techniques, mechanisms, and personnel used
+      to conduct system maintenance.
+    objectives:
+      - key: a
+        text: Maintenance tools, techniques, and mechanisms used for system maintenance are identified and controlled.
+        type: narrative
+      - key: b
+        text: Maintenance personnel are identified and controlled.
+        type: document_list
+
+  - id: MA.L2-3.7.3
+    seq: 60
+    family: MA
+    title: Equipment Sanitation
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.7.3; NIST SP 800-171A 3.7.3; CMMC AG L2 v2 MA.L2-3.7.3"
+    req: >-
+      Ensure equipment removed for off-site maintenance is sanitized.
+    objectives:
+      - key: a
+        text: Equipment to be removed for off-site maintenance is sanitized to remove all CUI.
+        type: narrative
+      - key: b
+        text: Sanitization of removed equipment is verified.
+        type: narrative
+
+  - id: MA.L2-3.7.4
+    seq: 61
+    family: MA
+    title: Non-Local Maintenance
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.7.4; NIST SP 800-171A 3.7.4; CMMC AG L2 v2 MA.L2-3.7.4"
+    req: >-
+      Check media containing diagnostic and test programs for malicious code
+      before the media are used in organizational systems.
+    objectives:
+      - key: a
+        text: Media containing diagnostic and test programs are checked for malicious code before use.
+        type: product
+      - key: b
+        text: The use of media containing diagnostic and test programs is controlled.
+        type: narrative
+
+  - id: MA.L2-3.7.5
+    seq: 62
+    family: MA
+    title: Two-Factor Maintenance Auth
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.7.5; NIST SP 800-171A 3.7.5; CMMC AG L2 v2 MA.L2-3.7.5"
+    req: >-
+      Require MFA to establish nonlocal maintenance sessions via external networks
+      and terminate such connections when nonlocal maintenance is complete.
+    objectives:
+      - key: a
+        text: Multifactor authentication is required to establish nonlocal maintenance sessions via external networks.
+        type: product
+      - key: b
+        text: Nonlocal maintenance sessions are terminated when complete.
+        type: product
+
+  - id: MA.L2-3.7.6
+    seq: 63
+    family: MA
+    title: Maintenance Personnel
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.7.6; NIST SP 800-171A 3.7.6; CMMC AG L2 v2 MA.L2-3.7.6"
+    req: >-
+      Supervise the maintenance activities of personnel without required access
+      authorization.
+    objectives:
+      - key: a
+        text: Maintenance personnel without required access authorization are identified.
+        type: document_list
+      - key: b
+        text: Maintenance activities of personnel without required access authorization are supervised.
+        type: narrative
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # MP — Media Protection  (3.8.1 – 3.8.9)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  - id: MP.L2-3.8.1
+    seq: 64
+    family: MP
+    title: Media Protection
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.8.1; NIST SP 800-171A 3.8.1; CMMC AG L2 v2 MP.L2-3.8.1"
+    req: >-
+      Protect (i.e., physically control and securely store) system media
+      containing CUI, both paper and digital.
+    objectives:
+      - key: a
+        text: System media containing CUI (paper and digital) is physically controlled and securely stored.
+        type: narrative
+      - key: b
+        text: System media containing CUI is protected until destroyed or sanitized using approved procedures.
+        type: narrative
+
+  - id: MP.L2-3.8.2
+    seq: 65
+    family: MP
+    title: Media Access
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.8.2; NIST SP 800-171A 3.8.2; CMMC AG L2 v2 MP.L2-3.8.2"
+    req: >-
+      Limit access to CUI on system media to authorized users.
+    objectives:
+      - key: a
+        text: Users authorized to access CUI on system media are identified.
+        type: document_list
+      - key: b
+        text: Access to CUI on system media is limited to authorized users.
+        type: product
+
+  - id: MP.L2-3.8.3
+    seq: 66
+    family: MP
+    title: Media Sanitization
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.8.3; NIST SP 800-171A 3.8.3; CMMC AG L2 v2 MP.L2-3.8.3"
+    req: >-
+      Sanitize or destroy system media before disposal or reuse.
+    objectives:
+      - key: a
+        text: System media containing CUI is sanitized or destroyed before disposal or reuse.
+        type: narrative
+      - key: b
+        text: Sanitization and destruction of media is documented.
+        type: narrative
+
+  - id: MP.L2-3.8.4
+    seq: 67
+    family: MP
+    title: Media Marking
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.8.4; NIST SP 800-171A 3.8.4; CMMC AG L2 v2 MP.L2-3.8.4"
+    req: >-
+      Mark media with necessary CUI markings and distribution limitations.
+    objectives:
+      - key: a
+        text: System media requiring CUI markings and distribution limitations is identified.
+        type: narrative
+      - key: b
+        text: System media containing CUI is marked with necessary CUI markings and distribution limitations.
+        type: narrative
+
+  - id: MP.L2-3.8.5
+    seq: 68
+    family: MP
+    title: Media Accountability
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.8.5; NIST SP 800-171A 3.8.5; CMMC AG L2 v2 MP.L2-3.8.5"
+    req: >-
+      Control access to media containing CUI and maintain accountability for
+      media during transport outside of controlled areas.
+    objectives:
+      - key: a
+        text: Access to media containing CUI is controlled.
+        type: product
+      - key: b
+        text: Accountability is maintained for media containing CUI during transport outside controlled areas.
+        type: narrative
+      - key: c
+        text: Individuals transporting media containing CUI are identified.
+        type: document_list
+
+  - id: MP.L2-3.8.6
+    seq: 69
+    family: MP
+    title: Media Encryption in Transit
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.8.6; NIST SP 800-171A 3.8.6; CMMC AG L2 v2 MP.L2-3.8.6"
+    req: >-
+      Implement cryptographic mechanisms to protect the confidentiality of CUI
+      during transport unless otherwise protected by alternative physical
+      safeguards.
+    objectives:
+      - key: a
+        text: Cryptographic mechanisms to protect the confidentiality of CUI during transport are implemented, or alternative physical safeguards are in place.
+        type: product
+
+  - id: MP.L2-3.8.7
+    seq: 70
+    family: MP
+    title: Removable Media
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.8.7; NIST SP 800-171A 3.8.7; CMMC AG L2 v2 MP.L2-3.8.7"
+    req: >-
+      Control the use of removable media on system components.
+    objectives:
+      - key: a
+        text: The use of removable media on system components is controlled.
+        type: product
+      - key: b
+        text: The types of removable media permitted for use are defined.
+        type: narrative
+
+  - id: MP.L2-3.8.8
+    seq: 71
+    family: MP
+    title: Prohibit Unidentified Portable Storage
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.8.8; NIST SP 800-171A 3.8.8; CMMC AG L2 v2 MP.L2-3.8.8"
+    req: >-
+      Prohibit the use of portable storage devices when such devices have no
+      identifiable owner.
+    objectives:
+      - key: a
+        text: Use of portable storage devices without an identifiable owner is prohibited.
+        type: product
+
+  - id: MP.L2-3.8.9
+    seq: 72
+    family: MP
+    title: Backup CUI Confidentiality
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.8.9; NIST SP 800-171A 3.8.9; CMMC AG L2 v2 MP.L2-3.8.9"
+    req: >-
+      Protect the confidentiality of backup CUI at storage locations.
+    objectives:
+      - key: a
+        text: Backup CUI storage locations are identified.
+        type: document_list
+      - key: b
+        text: The confidentiality of backup CUI at storage locations is protected.
+        type: product
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # PE — Physical Protection  (3.9.1 – 3.9.2)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  - id: PE.L2-3.9.1
+    seq: 73
+    family: PE
+    title: Limit Physical Access
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.9.1; NIST SP 800-171A 3.9.1; CMMC AG L2 v2 PE.L2-3.9.1"
+    req: >-
+      Limit physical access to organizational systems to authorized individuals.
+    objectives:
+      - key: a
+        text: Authorized individuals requiring physical access to organizational systems are identified.
+        type: document_list
+      - key: b
+        text: Physical access to organizational systems is limited to authorized individuals.
+        type: narrative
+      - key: c
+        text: Physical access records are maintained and reviewed.
+        type: scheduled_operation
+        cadence: quarterly
+        cadence_resp: msp
+
+  - id: PE.L2-3.9.2
+    seq: 74
+    family: PE
+    title: Monitor Physical Facility
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.9.2; NIST SP 800-171A 3.9.2; CMMC AG L2 v2 PE.L2-3.9.2"
+    req: >-
+      Protect and monitor the physical facility and support infrastructure for
+      organizational systems.
+    objectives:
+      - key: a
+        text: The physical facility and support infrastructure are protected.
+        type: narrative
+      - key: b
+        text: The physical facility and support infrastructure are monitored.
+        type: product
+      - key: c
+        text: Monitoring of the physical facility is reviewed on a periodic basis.
+        type: scheduled_operation
+        cadence: quarterly
+        cadence_resp: msp
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # PS — Personnel Security  (3.10.1 – 3.10.2)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  - id: PS.L2-3.10.1
+    seq: 75
+    family: PS
+    title: Screen Personnel
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.10.1; NIST SP 800-171A 3.10.1; CMMC AG L2 v2 PS.L2-3.10.1"
+    req: >-
+      Screen individuals prior to authorizing access to organizational systems
+      containing CUI.
+    objectives:
+      - key: a
+        text: Criteria for screening individuals prior to access authorization are defined.
+        type: narrative
+      - key: b
+        text: Individuals are screened prior to being authorized access to systems containing CUI.
+        type: scheduled_operation
+        cadence: annual
+        cadence_resp: customer
+
+  - id: PS.L2-3.10.2
+    seq: 76
+    family: PS
+    title: CUI Protection After Termination
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.10.2; NIST SP 800-171A 3.10.2; CMMC AG L2 v2 PS.L2-3.10.2"
+    req: >-
+      Ensure that CUI is protected during and after personnel actions such as
+      terminations and transfers.
+    objectives:
+      - key: a
+        text: Individuals who are terminated or transferred are identified.
+        type: narrative
+      - key: b
+        text: CUI access is revoked upon termination or transfer.
+        type: narrative
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # RA — Risk Assessment  (3.11.1 – 3.11.3)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  - id: RA.L2-3.11.1
+    seq: 77
+    family: RA
+    title: Risk Assessment
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.11.1; NIST SP 800-171A 3.11.1; CMMC AG L2 v2 RA.L2-3.11.1"
+    req: >-
+      Periodically assess the risk to organizational operations (including
+      mission, functions, image, or reputation), organizational assets, and
+      individuals, resulting from the operation of organizational systems and the
+      associated processing, storage, or transmission of CUI.
+    objectives:
+      - key: a
+        text: The frequency of risk assessments is defined.
+        type: narrative
+      - key: b
+        text: Risk assessments are conducted in accordance with the defined frequency.
+        type: scheduled_operation
+        cadence: annual
+        cadence_resp: shared
+      - key: c
+        text: Risk assessment results are documented.
+        type: narrative
+      - key: d
+        text: Risk assessment results are used to update the risk management program.
+        type: narrative
+
+  - id: RA.L2-3.11.2
+    seq: 78
+    family: RA
+    title: Vulnerability Scanning
+    weight: 5
+    source: "NIST SP 800-171 Rev 2 §3.11.2; NIST SP 800-171A 3.11.2; CMMC AG L2 v2 RA.L2-3.11.2"
+    req: >-
+      Scan for vulnerabilities in organizational systems and applications
+      periodically and when new vulnerabilities affecting those systems and
+      applications are identified.
+    objectives:
+      - key: a
+        text: The frequency of vulnerability scanning is defined.
+        type: narrative
+      - key: b
+        text: Vulnerability scans of systems and applications are performed in accordance with the defined frequency.
+        type: scheduled_operation
+        cadence: monthly
+        cadence_resp: msp
+      - key: c
+        text: Vulnerability scans are performed when new vulnerabilities potentially affecting the system are identified.
+        type: scheduled_operation
+        cadence: monthly
+        cadence_resp: msp
+
+  - id: RA.L2-3.11.3
+    seq: 79
+    family: RA
+    title: Vulnerability Remediation
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.11.3; NIST SP 800-171A 3.11.3; CMMC AG L2 v2 RA.L2-3.11.3"
+    req: >-
+      Remediate vulnerabilities in accordance with risk assessments.
+    objectives:
+      - key: a
+        text: Vulnerabilities identified during scanning are remediated in accordance with risk assessments.
+        type: scheduled_operation
+        cadence: monthly
+        cadence_resp: msp
+      - key: b
+        text: Vulnerability remediation is tracked and documented.
+        type: narrative
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # CA — Security Assessment  (3.12.1 – 3.12.4)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  - id: CA.L2-3.12.1
+    seq: 80
+    family: CA
+    title: Security Control Assessment
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.12.1; NIST SP 800-171A 3.12.1; CMMC AG L2 v2 CA.L2-3.12.1"
+    req: >-
+      Periodically assess the security controls in organizational systems to
+      determine if the controls are effective in their application.
+    objectives:
+      - key: a
+        text: The security controls in the system are assessed periodically.
+        type: scheduled_operation
+        cadence: annual
+        cadence_resp: shared
+      - key: b
+        text: Assessment findings are documented.
+        type: narrative
+      - key: c
+        text: Assessment results are used to inform risk decisions.
+        type: narrative
+
+  - id: CA.L2-3.12.2
+    seq: 81
+    family: CA
+    title: Plan of Action
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.12.2; NIST SP 800-171A 3.12.2; CMMC AG L2 v2 CA.L2-3.12.2"
+    req: >-
+      Develop and implement plans of action designed to correct deficiencies and
+      reduce or eliminate vulnerabilities in organizational systems.
+    objectives:
+      - key: a
+        text: Plans of action are developed to correct deficiencies and reduce or eliminate vulnerabilities identified during security assessments.
+        type: narrative
+      - key: b
+        text: Plans of action are implemented.
+        type: narrative
+      - key: c
+        text: Plans of action are updated to reflect progress and changes in remediation.
+        type: scheduled_operation
+        cadence: quarterly
+        cadence_resp: shared
+
+  - id: CA.L2-3.12.3
+    seq: 82
+    family: CA
+    title: Ongoing Security Monitoring
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.12.3; NIST SP 800-171A 3.12.3; CMMC AG L2 v2 CA.L2-3.12.3"
+    req: >-
+      Monitor security controls on an ongoing basis to ensure the continued
+      effectiveness of the controls.
+    objectives:
+      - key: a
+        text: Security controls are monitored on an ongoing basis.
+        type: scheduled_operation
+        cadence: quarterly
+        cadence_resp: msp
+      - key: b
+        text: The results of ongoing monitoring are used to determine security control effectiveness.
+        type: narrative
+
+  - id: CA.L2-3.12.4
+    seq: 83
+    family: CA
+    title: System Security Plan
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.12.4; NIST SP 800-171A 3.12.4; CMMC AG L2 v2 CA.L2-3.12.4"
+    req: >-
+      Develop, document, and periodically update system security plans that
+      describe system boundaries, system environments of operation, how security
+      requirements are implemented, and the relationships with or connections to
+      other systems.
+    objectives:
+      - key: a
+        text: A system security plan is developed and documented.
+        type: narrative
+      - key: b
+        text: The system security plan describes system boundaries, environment of operation, implementation of requirements, and connections to other systems.
+        type: narrative
+      - key: c
+        text: The system security plan is periodically reviewed and updated.
+        type: scheduled_operation
+        cadence: annual
+        cadence_resp: shared
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # SC — System and Communications Protection  (3.13.1 – 3.13.16)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  - id: SC.L2-3.13.1
+    seq: 84
+    family: SC
+    title: Boundary Protection
+    weight: 5
+    source: "NIST SP 800-171 Rev 2 §3.13.1; NIST SP 800-171A 3.13.1; CMMC AG L2 v2 SC.L2-3.13.1"
+    req: >-
+      Monitor, control, and protect communications (i.e., information
+      transmitted or received by organizational systems) at the external
+      boundaries and key internal boundaries of the organizational system.
+    objectives:
+      - key: a
+        text: The external boundaries and key internal boundaries of the system where communications are monitored, controlled, and protected are identified.
+        type: document_list
+      - key: b
+        text: Communications are monitored at the identified external and key internal boundaries.
+        type: product
+      - key: c
+        text: Communications are controlled at the identified external and key internal boundaries.
+        type: product
+      - key: d
+        text: Communications are protected at the identified external and key internal boundaries.
+        type: product
+
+  - id: SC.L2-3.13.2
+    seq: 85
+    family: SC
+    title: Security Engineering
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.13.2; NIST SP 800-171A 3.13.2; CMMC AG L2 v2 SC.L2-3.13.2"
+    req: >-
+      Employ architectural designs, software development techniques, and systems
+      engineering principles that promote effective information security within
+      organizational systems.
+    objectives:
+      - key: a
+        text: Security is considered in the design, development, and modification of the system and system components.
+        type: narrative
+      - key: b
+        text: Security engineering principles are documented and applied.
+        type: narrative
+
+  - id: SC.L2-3.13.3
+    seq: 86
+    family: SC
+    title: Security Function Isolation
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.13.3; NIST SP 800-171A 3.13.3; CMMC AG L2 v2 SC.L2-3.13.3"
+    req: >-
+      Separate user functionality from system management functionality.
+    objectives:
+      - key: a
+        text: User functionality and system management functionality are identified and separated.
+        type: product
+
+  - id: SC.L2-3.13.4
+    seq: 87
+    family: SC
+    title: Shared Resource Control
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.13.4; NIST SP 800-171A 3.13.4; CMMC AG L2 v2 SC.L2-3.13.4"
+    req: >-
+      Prevent unauthorized and unintended information transfer via shared system
+      resources.
+    objectives:
+      - key: a
+        text: Unauthorized and unintended information transfer via shared system resources is prevented.
+        type: product
+
+  - id: SC.L2-3.13.5
+    seq: 88
+    family: SC
+    title: Network Segmentation
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.13.5; NIST SP 800-171A 3.13.5; CMMC AG L2 v2 SC.L2-3.13.5"
+    req: >-
+      Implement subnetworks for publicly accessible system components that are
+      physically or logically separated from internal networks.
+    objectives:
+      - key: a
+        text: Publicly accessible system components are identified.
+        type: document_list
+      - key: b
+        text: Subnetworks for publicly accessible system components are physically or logically separated from internal networks.
+        type: product
+
+  - id: SC.L2-3.13.6
+    seq: 89
+    family: SC
+    title: Network Deny by Default
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.13.6; NIST SP 800-171A 3.13.6; CMMC AG L2 v2 SC.L2-3.13.6"
+    req: >-
+      Deny network communications traffic by default and allow network
+      communications traffic by exception (i.e., deny all, permit by exception).
+    objectives:
+      - key: a
+        text: Network communications traffic is denied by default.
+        type: product
+      - key: b
+        text: Exceptions to deny-by-default are defined and documented.
+        type: narrative
+
+  - id: SC.L2-3.13.7
+    seq: 90
+    family: SC
+    title: Split Tunneling
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.13.7; NIST SP 800-171A 3.13.7; CMMC AG L2 v2 SC.L2-3.13.7"
+    req: >-
+      Prevent remote devices from simultaneously establishing connections with
+      the system and with resources in other domains (i.e., split tunneling).
+    objectives:
+      - key: a
+        text: Split tunneling on remote devices connected to the system is prevented.
+        type: product
+
+  - id: SC.L2-3.13.8
+    seq: 91
+    family: SC
+    title: CUI Encryption in Transit
+    weight: 5
+    source: "NIST SP 800-171 Rev 2 §3.13.8; NIST SP 800-171A 3.13.8; CMMC AG L2 v2 SC.L2-3.13.8"
+    req: >-
+      Implement cryptographic mechanisms to prevent unauthorized disclosure of
+      CUI during transmission unless otherwise protected by alternative physical
+      safeguards.
+    objectives:
+      - key: a
+        text: Cryptographic mechanisms to prevent unauthorized disclosure of CUI during transmission are implemented, or alternative physical safeguards are in place.
+        type: product
+
+  - id: SC.L2-3.13.9
+    seq: 92
+    family: SC
+    title: Network Connection Termination
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.13.9; NIST SP 800-171A 3.13.9; CMMC AG L2 v2 SC.L2-3.13.9"
+    req: >-
+      Terminate network connections after a defined period of inactivity.
+    objectives:
+      - key: a
+        text: The period of network connection inactivity after which the connection is terminated is defined.
+        type: narrative
+      - key: b
+        text: Network connections are terminated after the defined period of inactivity.
+        type: product
+
+  - id: SC.L2-3.13.10
+    seq: 93
+    family: SC
+    title: Cryptographic Key Management
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.13.10; NIST SP 800-171A 3.13.10; CMMC AG L2 v2 SC.L2-3.13.10"
+    req: >-
+      Establish and manage cryptographic keys for cryptography employed in
+      organizational systems.
+    objectives:
+      - key: a
+        text: Cryptographic keys used by the system are identified.
+        type: document_list
+      - key: b
+        text: Cryptographic keys are managed (generated, distributed, stored, accessed, retired/destroyed) using defined processes.
+        type: narrative
+      - key: c
+        text: Cryptographic key management processes are documented.
+        type: narrative
+
+  - id: SC.L2-3.13.11
+    seq: 94
+    family: SC
+    title: FIPS-Validated Cryptography
+    weight: 5
+    source: "NIST SP 800-171 Rev 2 §3.13.11; NIST SP 800-171A 3.13.11; CMMC AG L2 v2 SC.L2-3.13.11"
+    req: >-
+      Employ FIPS-validated cryptography when used to protect the
+      confidentiality of CUI.
+    objectives:
+      - key: a
+        text: FIPS-validated cryptography is employed when used to protect the confidentiality of CUI.
+        type: product
+
+  - id: SC.L2-3.13.12
+    seq: 95
+    family: SC
+    title: Collaborative Computing
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.13.12; NIST SP 800-171A 3.13.12; CMMC AG L2 v2 SC.L2-3.13.12"
+    req: >-
+      Prohibit remote activation of collaborative computing devices and provide
+      indication of use to users present at the device.
+    objectives:
+      - key: a
+        text: Remote activation of collaborative computing devices is prohibited.
+        type: product
+      - key: b
+        text: An indication of use is provided to users present at the collaborative computing device.
+        type: product
+
+  - id: SC.L2-3.13.13
+    seq: 96
+    family: SC
+    title: Mobile Code
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.13.13; NIST SP 800-171A 3.13.13; CMMC AG L2 v2 SC.L2-3.13.13"
+    req: >-
+      Control and monitor the use of mobile code.
+    objectives:
+      - key: a
+        text: The use of mobile code in the system is controlled.
+        type: product
+      - key: b
+        text: The use of mobile code in the system is monitored.
+        type: product
+
+  - id: SC.L2-3.13.14
+    seq: 97
+    family: SC
+    title: VoIP Control
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.13.14; NIST SP 800-171A 3.13.14; CMMC AG L2 v2 SC.L2-3.13.14"
+    req: >-
+      Control and monitor the use of Voice over Internet Protocol (VoIP)
+      technologies.
+    objectives:
+      - key: a
+        text: The use of VoIP technologies in the system is controlled.
+        type: product
+      - key: b
+        text: The use of VoIP technologies in the system is monitored.
+        type: product
+
+  - id: SC.L2-3.13.15
+    seq: 98
+    family: SC
+    title: Communications Session Authenticity
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.13.15; NIST SP 800-171A 3.13.15; CMMC AG L2 v2 SC.L2-3.13.15"
+    req: >-
+      Protect the authenticity of communications sessions.
+    objectives:
+      - key: a
+        text: The authenticity of communications sessions is protected.
+        type: product
+
+  - id: SC.L2-3.13.16
+    seq: 99
+    family: SC
+    title: CUI at Rest
+    weight: 5
+    source: "NIST SP 800-171 Rev 2 §3.13.16; NIST SP 800-171A 3.13.16; CMMC AG L2 v2 SC.L2-3.13.16"
+    req: >-
+      Protect the confidentiality of CUI at rest.
+    objectives:
+      - key: a
+        text: The confidentiality of CUI at rest is protected.
+        type: product
+      - key: b
+        text: CUI storage locations (at rest) are identified.
+        type: document_list
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # SI — System and Information Integrity  (3.14.1 – 3.14.7)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  - id: SI.L2-3.14.1
+    seq: 100
+    family: SI
+    title: Flaw Remediation
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.14.1; NIST SP 800-171A 3.14.1; CMMC AG L2 v2 SI.L2-3.14.1"
+    req: >-
+      Identify, report, and correct information and information system flaws in
+      a timely manner.
+    objectives:
+      - key: a
+        text: System flaws are identified.
+        type: product
+      - key: b
+        text: System flaws are reported to appropriate personnel.
+        type: narrative
+      - key: c
+        text: System flaws are corrected in a timely manner.
+        type: scheduled_operation
+        cadence: monthly
+        cadence_resp: msp
+
+  - id: SI.L2-3.14.2
+    seq: 101
+    family: SI
+    title: Malicious Code Protection
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.14.2; NIST SP 800-171A 3.14.2; CMMC AG L2 v2 SI.L2-3.14.2"
+    req: >-
+      Provide protection from malicious code at appropriate locations within
+      organizational systems.
+    objectives:
+      - key: a
+        text: Malicious code protection mechanisms are employed at appropriate system locations.
+        type: product
+      - key: b
+        text: Malicious code protection mechanisms detect and eradicate malicious code.
+        type: product
+
+  - id: SI.L2-3.14.3
+    seq: 102
+    family: SI
+    title: Security Alerts
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.14.3; NIST SP 800-171A 3.14.3; CMMC AG L2 v2 SI.L2-3.14.3"
+    req: >-
+      Monitor system security alerts and advisories and take action in response.
+    objectives:
+      - key: a
+        text: System security alerts and advisories are monitored.
+        type: product
+      - key: b
+        text: Actions are taken in response to security alerts and advisories.
+        type: narrative
+
+  - id: SI.L2-3.14.4
+    seq: 103
+    family: SI
+    title: Malicious Code Update
+    weight: 1
+    source: "NIST SP 800-171 Rev 2 §3.14.4; NIST SP 800-171A 3.14.4; CMMC AG L2 v2 SI.L2-3.14.4"
+    req: >-
+      Update malicious code protection mechanisms when new releases are
+      available.
+    objectives:
+      - key: a
+        text: Malicious code protection mechanisms are updated when new releases are available.
+        type: scheduled_operation
+        cadence: monthly
+        cadence_resp: msp
+      - key: b
+        text: Updates to malicious code protection are deployed on a defined schedule.
+        type: product
+
+  - id: SI.L2-3.14.5
+    seq: 104
+    family: SI
+    title: System Scanning
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.14.5; NIST SP 800-171A 3.14.5; CMMC AG L2 v2 SI.L2-3.14.5"
+    req: >-
+      Perform periodic scans of organizational systems and real-time scans of
+      files from external sources as files are downloaded, opened, or executed.
+    objectives:
+      - key: a
+        text: Periodic scans of the system are performed.
+        type: scheduled_operation
+        cadence: monthly
+        cadence_resp: msp
+      - key: b
+        text: Real-time scans of files from external sources are performed as files are downloaded, opened, or executed.
+        type: product
+
+  - id: SI.L2-3.14.6
+    seq: 105
+    family: SI
+    title: Security Monitoring
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.14.6; NIST SP 800-171A 3.14.6; CMMC AG L2 v2 SI.L2-3.14.6"
+    req: >-
+      Monitor organizational systems, including inbound and outbound
+      communications traffic, to detect attacks and indicators of potential
+      attacks.
+    objectives:
+      - key: a
+        text: Monitoring of the system to detect attacks and indicators of potential attacks is implemented.
+        type: product
+      - key: b
+        text: Inbound and outbound communications traffic is monitored.
+        type: product
+      - key: c
+        text: Monitoring results are reviewed.
+        type: scheduled_operation
+        cadence: quarterly
+        cadence_resp: msp
+
+  - id: SI.L2-3.14.7
+    seq: 106
+    family: SI
+    title: Identify Unauthorized Use
+    weight: 3
+    source: "NIST SP 800-171 Rev 2 §3.14.7; NIST SP 800-171A 3.14.7; CMMC AG L2 v2 SI.L2-3.14.7"
+    req: >-
+      Identify unauthorized use of organizational systems.
+    objectives:
+      - key: a
+        text: Unauthorized use of the system is identified.
+        type: product
+      - key: b
+        text: Authorized uses of the system are defined to enable identification of unauthorized use.
+        type: narrative

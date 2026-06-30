@@ -20,6 +20,7 @@ from .domain import ChangeType, EntityType
 from .importers.workbook import parse_workbook
 from .reconcile import reconcile
 from .render import render_view
+from .seeds.catalog import seed_catalog
 
 app = typer.Typer(help="WinGRC — open CMMC scope and documentation tooling.")
 
@@ -87,6 +88,33 @@ def render(
         entities = repo.list_entities(session, org_row.id, view.entity_type)
         path = render_view(view, entities, out)
         typer.echo(f"Wrote {path}")
+    finally:
+        session.close()
+
+
+@app.command(name="seed-catalog")
+def seed_catalog_cmd(
+    db_url: str = typer.Option(None, "--db-url", help="Override DATABASE_URL"),
+) -> None:
+    """Load the CMMC L2 control catalog into the database (idempotent)."""
+    import os
+
+    if db_url:
+        os.environ["DATABASE_URL"] = db_url
+
+    from .db import SessionLocal as _SL  # re-import to pick up env override
+
+    session = _SL()
+    try:
+        result = seed_catalog(session)
+        session.commit()
+        typer.echo(
+            f"Catalog seeded: framework {result['framework_id']}, "
+            f"{result['controls']} controls, {result['objectives']} objectives."
+        )
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
