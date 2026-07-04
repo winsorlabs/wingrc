@@ -197,7 +197,7 @@ class AssessmentObjective(Base):
     cadence: Mapped[str | None] = mapped_column(String(20), nullable=True)
     cadence_responsibility: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # True until C3PAO has reviewed the type/cadence/responsibility assignment
-    is_draft: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
+    is_draft: Mapped[bool] = mapped_column(Boolean, server_default="true")
 
 
 # ---------------------------------------------------------------------------
