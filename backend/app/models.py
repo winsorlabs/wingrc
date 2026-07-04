@@ -191,7 +191,7 @@ class AssessmentObjective(Base):
 
     # Satisfaction-type tagging (REVIEWABLE DRAFT — requires C3PAO sign-off)
     satisfaction_type: Mapped[str] = mapped_column(
-        String(25), nullable=False, server_default=text("'narrative'")
+        String(25), nullable=False, server_default="'narrative'"
     )
     # Set only for scheduled_operation objectives
     cadence: Mapped[str | None] = mapped_column(String(20), nullable=True)
