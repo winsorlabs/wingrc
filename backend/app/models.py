@@ -173,7 +173,8 @@ class AssessmentObjective(Base):
             name="ck_assessment_objective_cadence",
         ),
         CheckConstraint(
-            "cadence_responsibility IN ('msp','customer','shared') OR cadence_responsibility IS NULL",
+            "cadence_responsibility IN ('msp','customer','shared')"
+            " OR cadence_responsibility IS NULL",
             name="ck_assessment_objective_cadence_resp",
         ),
     )

@@ -104,6 +104,9 @@ def test_seed_families_present(db_session):
         row[0]
         for row in db_session.query(Control.family).distinct()
     }
-    expected_families = {"AC", "AT", "AU", "CM", "IA", "IR", "MA", "MP", "PE", "PS", "RA", "CA", "SC", "SI"}
+    expected_families = {
+        "AC", "AT", "AU", "CM", "IA", "IR", "MA", "MP",
+        "PE", "PS", "RA", "CA", "SC", "SI",
+    }
     missing = expected_families - families
     assert not missing, f"Missing control families: {missing}"
