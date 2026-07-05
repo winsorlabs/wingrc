@@ -40,10 +40,12 @@ services:
       WINGRC_DATABASE_URL: postgresql+psycopg://wingrc:wingrc@db:5432/wingrc
     ports:
       - "8000:8000"
-    # Run migrations, then serve.
+    volumes:
+      - ./backend:/app
+    # --reload picks up host edits without a rebuild (volume mount keeps /app in sync).
     command: >
       sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+             exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
   frontend:
     build: ./frontend

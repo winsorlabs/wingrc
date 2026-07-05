@@ -64,6 +64,57 @@ wingrc render --org "Demo Co" 3.1.1c-authorized-devices ./devices.xlsx
 `samples/authorized-entities.example.xlsx` contains fictional data only. Point
 the importer at your own workbook to populate a real environment.
 
+## Development
+
+### First run
+```bash
+docker compose up --build   # builds the image, starts Postgres + MinIO + backend + frontend
+```
+
+The backend container mounts `./backend` into `/app`, so Python edits on the
+host are live inside the container without a rebuild.  Uvicorn runs with
+`--reload`, so it picks up file changes automatically.
+
+Migrations run automatically at container startup (`alembic upgrade head` is
+baked into the CMD).  After adding a new migration file, restart the backend
+service to apply it:
+
+```bash
+docker compose restart backend
+```
+
+Or apply it without restarting:
+
+```bash
+docker compose exec backend alembic upgrade head
+```
+
+### Day-to-day
+```bash
+docker compose up           # no rebuild needed for Python/YAML changes
+docker compose exec backend pytest -q                    # unit tests
+docker compose exec backend pytest -q -m integration    # requires DB
+docker compose exec backend wingrc seed-catalog         # load CMMC catalog
+docker compose exec backend ruff check .                # lint
+```
+
+### Adding a migration
+```bash
+# Edit models.py, then autogenerate a revision:
+docker compose exec backend alembic revision --autogenerate -m "describe the change"
+# Review the generated file in backend/alembic/versions/, then restart to apply.
+docker compose restart backend
+```
+
+### Running without Docker (local Postgres)
+```bash
+cd backend
+pip install -e ".[dev]"
+export WINGRC_DATABASE_URL=postgresql+psycopg://wingrc:wingrc@localhost:5432/wingrc
+alembic upgrade head
+uvicorn app.main:app --reload
+```
+
 ## Repo layout
 ```
 backend/      FastAPI app, domain core, importers, reconcile, render, CLI, migrations
