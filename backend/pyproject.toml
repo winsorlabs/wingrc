@@ -48,6 +48,9 @@ cache-dir = "/tmp/ruff-cache"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
 [tool.ruff.lint.per-file-ignores]
 "app/cli.py" = ["B008"]
 "app/main.py" = ["B008"]
