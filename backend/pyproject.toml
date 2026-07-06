@@ -52,6 +52,7 @@ select = ["E", "F", "I", "UP", "B"]
 "app/cli.py" = ["B008"]
 "app/main.py" = ["B008"]
 "app/routers/assessments.py" = ["B008"]
+"app/routers/orgs.py" = ["B008"]
 
 [tool.pytest.ini_options]
 addopts = "--basetemp=/tmp/pyt-tmp"
