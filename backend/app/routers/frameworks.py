@@ -6,7 +6,7 @@ GET /frameworks  — list all seeded frameworks so the frontend can resolve
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import date
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
