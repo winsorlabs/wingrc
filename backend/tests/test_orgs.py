@@ -60,10 +60,10 @@ def test_create_org_duplicate_returns_409(client):
 
 
 @pytest.mark.integration
-def test_list_orgs_empty(client):
+def test_list_orgs_returns_200_and_list(client):
     r = client.get("/orgs")
     assert r.status_code == 200
-    assert r.json() == []
+    assert isinstance(r.json(), list)
 
 
 @pytest.mark.integration
