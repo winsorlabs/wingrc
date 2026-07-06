@@ -19,6 +19,19 @@ class Settings(BaseSettings):
     # generation local. Not exercised by the scope module yet.
     ai_provider: str = "none"  # one of: none | anthropic | azure_openai | local
 
+    # Allowed CORS origins.  In production set WINGRC_CORS_ORIGINS to a JSON
+    # array of the exact origins that should be permitted, e.g.:
+    #   WINGRC_CORS_ORIGINS='["https://app.example.com"]'
+    # The defaults cover local and LAN dev (frontend :5173) plus the API
+    # server itself (:8000) so Swagger /docs try-it-out works from any of
+    # those origins without extra config.
+    cors_origins: list[str] = [
+        "http://localhost:5173",
+        "http://10.10.24.35:5173",
+        "http://localhost:8000",
+        "http://10.10.24.35:8000",
+    ]
+
 
 @lru_cache
 def get_settings() -> Settings:

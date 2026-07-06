@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -28,6 +29,12 @@ from .routers import assessments, orgs
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name, version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(orgs.router)
 app.include_router(assessments.router)
 
