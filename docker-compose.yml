@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:18
+    restart: unless-stopped
     environment:
       POSTGRES_USER: wingrc
       POSTGRES_PASSWORD: wingrc
@@ -19,6 +20,7 @@ services:
   # Blob or AWS S3 in the cloud; MinIO keeps self-host and air-gapped simple.
   minio:
     image: minio/minio:latest
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: wingrc
@@ -33,6 +35,7 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
@@ -49,6 +52,7 @@ services:
 
   frontend:
     build: ./frontend
+    restart: unless-stopped
     depends_on:
       - backend
     ports:
