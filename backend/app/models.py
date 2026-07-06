@@ -700,6 +700,90 @@ class PoamItem(Base):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# RACI layer: contacts and per-objective responsibility assignments
+# ---------------------------------------------------------------------------
+
+
+class Contact(Base):
+    """A named person appearing in RACI matrices and CRM documents.
+
+    Scoped per tenant (org_id).  The same individual at two different orgs is
+    two rows — no cross-tenant identity.  Unique on (org_id, email).
+
+    affiliation records the party they represent: the MSP, the customer, a
+    sub-MSP (MSSP), a government body, or other.  This drives the smart-default
+    logic in the RACI UI: magic-loop-set responsibility ('provider_satisfies' →
+    MSP contact, 'customer_owns' → customer contact) pre-suggests a contact
+    without auto-assigning one.
+    """
+
+    __tablename__ = "contact"
+    __table_args__ = (
+        UniqueConstraint("org_id", "email", name="uq_contact_org_email"),
+        CheckConstraint(
+            "affiliation IN ('msp','customer','mssp','government','other')",
+            name="ck_contact_affiliation",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(200))
+    email: Mapped[str] = mapped_column(String(320))
+    phone: Mapped[str | None] = mapped_column(String(50))
+    affiliation: Mapped[str] = mapped_column(String(20))
+    role_title: Mapped[str | None] = mapped_column(String(200))
+    contract_ref: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class RaciAssignment(Base):
+    """Per-objective RACI assignment: one contact holds one letter on one control_state.
+
+    Storage is per-objective rather than per-control because the magic loop sets
+    responsibility at the objective level (e.g. AC.L2-3.1.1[a]/[b] customer-owned,
+    [c] MSP-owned).  The bulk-assign UX (future slice) writes multiple rows at once
+    as a convenience; it does not change this table's grain.
+
+    UNIQUE(control_state_id, contact_id, raci_letter) prevents exact duplicates
+    while allowing one person to hold both R and A on the same objective.
+    """
+
+    __tablename__ = "raci_assignment"
+    __table_args__ = (
+        UniqueConstraint(
+            "control_state_id", "contact_id", "raci_letter",
+            name="uq_raci_assignment",
+        ),
+        CheckConstraint("raci_letter IN ('A','R','C','I')", name="ck_raci_letter"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    control_state_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("control_state.id", ondelete="CASCADE"),
+        index=True,
+    )
+    contact_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("contact.id", ondelete="CASCADE"),
+        index=True,
+    )
+    raci_letter: Mapped[str] = mapped_column(String(1))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class ImplementationStatement(Base):
     """SSP narrative paragraph for one control within one assessment.
 

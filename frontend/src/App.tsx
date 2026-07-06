@@ -1,32 +1,43 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { AssessmentBoard } from "./components/AssessmentBoard";
+import { OrgPicker } from "./components/OrgPicker";
+import type { Assessment, Org } from "./types";
 
-type View = { id: string; title: string; control_ids: string[]; entity_type: string };
+type Screen = "orgs" | "board";
 
-// Minimal pilot shell: confirm the API is alive and list the CMMC views the
-// scope graph can project. The real UI (scope browser, import-reconcile,
-// bundle generation) builds out from here.
 export function App() {
-  const [health, setHealth] = useState<string>("checking…");
-  const [views, setViews] = useState<View[]>([]);
+  const [screen, setScreen] = useState<Screen>("orgs");
+  const [org, setOrg] = useState<Org | null>(null);
+  const [assessment, setAssessment] = useState<Assessment | null>(null);
 
-  useEffect(() => {
-    fetch("/api/health").then((r) => r.json()).then((d) => setHealth(d.status)).catch(() => setHealth("unreachable"));
-    fetch("/api/catalog/views").then((r) => r.json()).then(setViews).catch(() => setViews([]));
-  }, []);
+  function enterBoard(o: Org, a: Assessment) {
+    setOrg(o);
+    setAssessment(a);
+    setScreen("board");
+  }
+
+  function goBack() {
+    setScreen("orgs");
+  }
 
   return (
-    <main style={{ fontFamily: "system-ui, sans-serif", maxWidth: 720, margin: "3rem auto", padding: "0 1rem" }}>
-      <h1>WinGRC</h1>
-      <p>Open CMMC scope and documentation tooling. API: <strong>{health}</strong></p>
-      <h2>Available list views</h2>
-      <ul>
-        {views.map((v) => (
-          <li key={v.id}>
-            <strong>{v.title}</strong> — {v.control_ids.join(", ")} ({v.entity_type})
-          </li>
-        ))}
-        {views.length === 0 && <li>No views loaded (is the backend running?).</li>}
-      </ul>
-    </main>
+    <>
+      <header className="app-header">
+        <h1>WinGRC</h1>
+        {screen === "board" && org && assessment && (
+          <nav className="breadcrumb">
+            <span>›</span>
+            <a onClick={goBack}>{org.name}</a>
+            <span>›</span>
+            <span>{assessment.name}</span>
+          </nav>
+        )}
+      </header>
+
+      {screen === "orgs" && <OrgPicker onEnterBoard={enterBoard} />}
+      {screen === "board" && org && assessment && (
+        <AssessmentBoard org={org} assessment={assessment} />
+      )}
+    </>
   );
 }

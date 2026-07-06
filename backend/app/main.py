@@ -25,7 +25,7 @@ from .domain import EntityType
 from .importers.workbook import parse_workbook
 from .reconcile import reconcile
 from .render import render_view
-from .routers import assessments, orgs
+from .routers import assessments, frameworks, orgs
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name, version="0.1.0")
@@ -35,6 +35,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(frameworks.router)
 app.include_router(orgs.router)
 app.include_router(assessments.router)
 
