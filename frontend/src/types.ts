@@ -27,6 +27,7 @@ export interface ControlStateRow {
   id: string;
   objective_id: string;
   control_id: string;
+  control_db_id: string;
   family: string;
   control_title: string;
   objective_key: string;

@@ -71,6 +71,7 @@ class ActivateOut(BaseModel):
 _VALID_STATUSES = frozenset(
     {"met", "not_met", "partial", "pending_evidence", "not_applicable", "inherited"}
 )
+_VALID_STMT_STATUSES = frozenset({"draft", "reviewed", "approved"})
 
 
 class PatchControlStateIn(BaseModel):
@@ -82,10 +83,22 @@ class PatchControlStateOut(BaseModel):
     status: str
 
 
+class StatementOut(BaseModel):
+    id: uuid.UUID | None = None
+    body: str
+    status: str | None = None
+
+
+class UpsertStatementIn(BaseModel):
+    body: str
+    status: str = "draft"
+
+
 class ControlStateOut(BaseModel):
     id: uuid.UUID
     objective_id: uuid.UUID
     control_id: str
+    control_db_id: uuid.UUID
     family: str
     control_title: str
     objective_key: str
@@ -194,6 +207,7 @@ def list_control_states(
             id=cs.id,
             objective_id=cs.objective_id,
             control_id=ctrl.control_id,
+            control_db_id=ctrl.id,
             family=ctrl.family,
             control_title=ctrl.title,
             objective_key=obj.objective_key,
@@ -244,3 +258,74 @@ def patch_control_state(
     cs.status = body.status
     session.commit()
     return PatchControlStateOut(id=cs.id, status=cs.status)
+
+
+@router.get(
+    "/assessments/{assessment_id}/controls/{control_db_id}/statement",
+    response_model=StatementOut,
+)
+def get_statement(
+    org_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    control_db_id: uuid.UUID,
+    session: Session = Depends(get_session),
+) -> StatementOut:
+    assessment = session.get(Assessment, assessment_id)
+    if assessment is None or assessment.org_id != org_id:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    ctrl = session.get(Control, control_db_id)
+    if ctrl is None or ctrl.framework_id != assessment.framework_id:
+        raise HTTPException(status_code=404, detail="Control not found")
+    stmt = session.scalars(
+        select(ImplementationStatement).where(
+            ImplementationStatement.assessment_id == assessment_id,
+            ImplementationStatement.control_id == control_db_id,
+        )
+    ).first()
+    if stmt is None:
+        return StatementOut(id=None, body="", status=None)
+    return StatementOut(id=stmt.id, body=stmt.body, status=stmt.status)
+
+
+@router.put(
+    "/assessments/{assessment_id}/controls/{control_db_id}/statement",
+    response_model=StatementOut,
+)
+def upsert_statement(
+    org_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    control_db_id: uuid.UUID,
+    body: UpsertStatementIn,
+    session: Session = Depends(get_session),
+) -> StatementOut:
+    if body.status not in _VALID_STMT_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid status {body.status!r}. Must be one of: {sorted(_VALID_STMT_STATUSES)}",
+        )
+    assessment = session.get(Assessment, assessment_id)
+    if assessment is None or assessment.org_id != org_id:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    ctrl = session.get(Control, control_db_id)
+    if ctrl is None or ctrl.framework_id != assessment.framework_id:
+        raise HTTPException(status_code=404, detail="Control not found")
+    stmt = session.scalars(
+        select(ImplementationStatement).where(
+            ImplementationStatement.assessment_id == assessment_id,
+            ImplementationStatement.control_id == control_db_id,
+        )
+    ).first()
+    if stmt is None:
+        stmt = ImplementationStatement(
+            org_id=org_id,
+            control_id=control_db_id,
+            assessment_id=assessment_id,
+            body=body.body,
+            status=body.status,
+        )
+        session.add(stmt)
+    else:
+        stmt.body = body.body
+        stmt.status = body.status
+    session.commit()
+    return StatementOut(id=stmt.id, body=stmt.body, status=stmt.status)

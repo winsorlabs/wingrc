@@ -1,9 +1,18 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Assessment, ControlStateRow, Org } from "../types";
+import { ControlDrawer } from "./ControlDrawer";
 import { FamilySection } from "./FamilySection";
 
-const FAMILY_ORDER = ["AC", "AT", "AU", "CM", "IA", "IR", "MA", "MP", "PS", "PE", "RA", "CA", "SC", "SI"];
+const FAMILY_ORDER = [
+  "AC", "AT", "AU", "CM", "IA", "IR", "MA", "MP", "PS", "PE", "RA", "CA", "SC", "SI",
+];
+
+interface DrawerControl {
+  dbId: string;
+  controlId: string;
+  title: string;
+}
 
 interface Props {
   org: Org;
@@ -14,6 +23,7 @@ export function AssessmentBoard({ org, assessment }: Props) {
   const [rows, setRows] = useState<ControlStateRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [drawerControl, setDrawerControl] = useState<DrawerControl | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -30,6 +40,18 @@ export function AssessmentBoard({ org, assessment }: Props) {
     );
   }
 
+  function handleOpenDrawer(dbId: string, controlId: string, title: string) {
+    setDrawerControl({ dbId, controlId, title });
+  }
+
+  function handleStatementSave(controlDbId: string, newStatus: string) {
+    setRows((prev) =>
+      prev.map((r) =>
+        r.control_db_id === controlDbId ? { ...r, statement_status: newStatus } : r
+      )
+    );
+  }
+
   if (loading) return <div className="loading">Loading control states…</div>;
   if (error) return <div className="error-msg">Error: {error}</div>;
 
@@ -42,29 +64,48 @@ export function AssessmentBoard({ org, assessment }: Props) {
   const families = FAMILY_ORDER.filter((f) => byFamily[f]);
 
   return (
-    <div className="board">
-      <div className="board-topbar">
-        <div>
-          <div className="board-title">{assessment.name}</div>
-          <div className="board-meta">{org.name} · {assessment.status} · SPRS: {assessment.sprs_score ?? "—"}</div>
+    <>
+      <div className="board">
+        <div className="board-topbar">
+          <div>
+            <div className="board-title">{assessment.name}</div>
+            <div className="board-meta">
+              {org.name} · {assessment.status} · SPRS: {assessment.sprs_score ?? "—"}
+            </div>
+          </div>
+          <div className="board-meta">{met} / {rows.length} objectives met</div>
         </div>
-        <div className="board-meta">{met} / {rows.length} objectives met</div>
+
+        {families.map((family) => (
+          <FamilySection
+            key={family}
+            family={family}
+            rows={byFamily[family]}
+            orgId={org.id}
+            assessmentId={assessment.id}
+            onStatusChange={handleStatusChange}
+            onOpenDrawer={handleOpenDrawer}
+          />
+        ))}
+
+        {families.length === 0 && (
+          <div className="empty">
+            No control states found — start the assessment to seed them.
+          </div>
+        )}
       </div>
 
-      {families.map((family) => (
-        <FamilySection
-          key={family}
-          family={family}
-          rows={byFamily[family]}
+      {drawerControl && (
+        <ControlDrawer
           orgId={org.id}
           assessmentId={assessment.id}
-          onStatusChange={handleStatusChange}
+          controlDbId={drawerControl.dbId}
+          controlId={drawerControl.controlId}
+          controlTitle={drawerControl.title}
+          onClose={() => setDrawerControl(null)}
+          onSave={handleStatementSave}
         />
-      ))}
-
-      {families.length === 0 && (
-        <div className="empty">No control states found — start the assessment to seed them.</div>
       )}
-    </div>
+    </>
   );
 }

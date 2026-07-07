@@ -25,9 +25,17 @@ interface Props {
   orgId: string;
   assessmentId: string;
   onStatusChange: (id: string, newStatus: string) => void;
+  onOpenDrawer: (controlDbId: string, controlId: string, title: string) => void;
 }
 
-export function FamilySection({ family, rows, orgId, assessmentId, onStatusChange }: Props) {
+export function FamilySection({
+  family,
+  rows,
+  orgId,
+  assessmentId,
+  onStatusChange,
+  onOpenDrawer,
+}: Props) {
   const [open, setOpen] = useState(true);
 
   const met = rows.filter((r) => r.status === "met").length;
@@ -57,11 +65,13 @@ export function FamilySection({ family, rows, orgId, assessmentId, onStatusChang
             <ControlSection
               key={controlId}
               controlId={controlId}
+              controlDbId={objs[0].control_db_id}
               title={objs[0].control_title}
               objectives={objs}
               orgId={orgId}
               assessmentId={assessmentId}
               onStatusChange={onStatusChange}
+              onOpenDrawer={onOpenDrawer}
             />
           ))}
         </div>

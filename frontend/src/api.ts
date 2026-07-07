@@ -41,6 +41,23 @@ export const api = {
       `/orgs/${orgId}/assessments/${assessmentId}/control-states/${controlStateId}`,
       { method: "PATCH", body: JSON.stringify({ status }) }
     ),
+
+  getStatement: (orgId: string, assessmentId: string, controlDbId: string) =>
+    req<{ id: string | null; body: string; status: string | null }>(
+      `/orgs/${orgId}/assessments/${assessmentId}/controls/${controlDbId}/statement`
+    ),
+
+  putStatement: (
+    orgId: string,
+    assessmentId: string,
+    controlDbId: string,
+    stmtBody: string,
+    status: string
+  ) =>
+    req<{ id: string; body: string; status: string }>(
+      `/orgs/${orgId}/assessments/${assessmentId}/controls/${controlDbId}/statement`,
+      { method: "PUT", body: JSON.stringify({ body: stmtBody, status }) }
+    ),
 };
 
 const CACHE_PREFIX = "wingrc_assessment_";
