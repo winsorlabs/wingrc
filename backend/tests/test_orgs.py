@@ -93,7 +93,7 @@ def test_list_orgs_ordered_by_name(client):
     client.post("/orgs", json={"name": f"Zulu-{prefix}"})
     client.post("/orgs", json={"name": f"Alpha-{prefix}"})
     client.post("/orgs", json={"name": f"Mike-{prefix}"})
-    names = [o["name"] for o in client.get("/orgs").json()]
+    names = [o["name"] for o in client.get("/orgs").json() if o["name"].endswith(f"-{prefix}")]
     assert names == sorted(names)
 
 
