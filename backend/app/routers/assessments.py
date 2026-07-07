@@ -299,9 +299,10 @@ def upsert_statement(
     session: Session = Depends(get_session),
 ) -> StatementOut:
     if body.status not in _VALID_STMT_STATUSES:
+        valid = sorted(_VALID_STMT_STATUSES)
         raise HTTPException(
             status_code=422,
-            detail=f"Invalid status {body.status!r}. Must be one of: {sorted(_VALID_STMT_STATUSES)}",
+            detail=f"Invalid status {body.status!r}. Must be one of: {valid}",
         )
     assessment = session.get(Assessment, assessment_id)
     if assessment is None or assessment.org_id != org_id:
