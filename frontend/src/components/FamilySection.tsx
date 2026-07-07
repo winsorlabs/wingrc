@@ -22,9 +22,12 @@ const FAMILY_NAMES: Record<string, string> = {
 interface Props {
   family: string;
   rows: ControlStateRow[];
+  orgId: string;
+  assessmentId: string;
+  onStatusChange: (id: string, newStatus: string) => void;
 }
 
-export function FamilySection({ family, rows }: Props) {
+export function FamilySection({ family, rows, orgId, assessmentId, onStatusChange }: Props) {
   const [open, setOpen] = useState(true);
 
   const met = rows.filter((r) => r.status === "met").length;
@@ -56,6 +59,9 @@ export function FamilySection({ family, rows }: Props) {
               controlId={controlId}
               title={objs[0].control_title}
               objectives={objs}
+              orgId={orgId}
+              assessmentId={assessmentId}
+              onStatusChange={onStatusChange}
             />
           ))}
         </div>

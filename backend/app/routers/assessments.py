@@ -23,7 +23,14 @@ from sqlalchemy.orm import Session
 
 from ..db import get_session
 from ..engine import activate_org_product, start_assessment
-from ..models import Assessment, AssessmentObjective, Control, ControlState, ImplementationStatement
+from ..models import (
+    Assessment,
+    AssessmentObjective,
+    Control,
+    ControlState,
+    ControlStateHistory,
+    ImplementationStatement,
+)
 
 router = APIRouter(prefix="/orgs/{org_id}", tags=["assessments"])
 
@@ -59,6 +66,20 @@ class ActivateIn(BaseModel):
 class ActivateOut(BaseModel):
     objectives_updated: int
     tasks_created: int
+
+
+_VALID_STATUSES = frozenset(
+    {"met", "not_met", "partial", "pending_evidence", "not_applicable", "inherited"}
+)
+
+
+class PatchControlStateIn(BaseModel):
+    status: str
+
+
+class PatchControlStateOut(BaseModel):
+    id: uuid.UUID
+    status: str
 
 
 class ControlStateOut(BaseModel):
@@ -185,3 +206,41 @@ def list_control_states(
         )
         for cs, obj, ctrl, imp_stmt in session.execute(stmt).all()
     ]
+
+
+@router.patch(
+    "/assessments/{assessment_id}/control-states/{control_state_id}",
+    response_model=PatchControlStateOut,
+)
+def patch_control_state(
+    org_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    control_state_id: uuid.UUID,
+    body: PatchControlStateIn,
+    session: Session = Depends(get_session),
+) -> PatchControlStateOut:
+    if body.status not in _VALID_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid status {body.status!r}. Must be one of: {sorted(_VALID_STATUSES)}",
+        )
+
+    assessment = session.get(Assessment, assessment_id)
+    if assessment is None or assessment.org_id != org_id:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+
+    cs = session.get(ControlState, control_state_id)
+    if cs is None or cs.assessment_id != assessment_id:
+        raise HTTPException(status_code=404, detail="Control state not found")
+
+    history = ControlStateHistory(
+        control_state_id=cs.id,
+        previous_status=cs.status,
+        new_status=body.status,
+        previous_responsibility=cs.responsibility,
+        new_responsibility=cs.responsibility,
+    )
+    session.add(history)
+    cs.status = body.status
+    session.commit()
+    return PatchControlStateOut(id=cs.id, status=cs.status)

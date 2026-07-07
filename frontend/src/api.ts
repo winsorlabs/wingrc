@@ -30,6 +30,17 @@ export const api = {
     req<ControlStateRow[]>(
       `/orgs/${orgId}/assessments/${assessmentId}/control-states`
     ),
+
+  patchControlState: (
+    orgId: string,
+    assessmentId: string,
+    controlStateId: string,
+    status: string
+  ) =>
+    req<{ id: string; status: string }>(
+      `/orgs/${orgId}/assessments/${assessmentId}/control-states/${controlStateId}`,
+      { method: "PATCH", body: JSON.stringify({ status }) }
+    ),
 };
 
 const CACHE_PREFIX = "wingrc_assessment_";

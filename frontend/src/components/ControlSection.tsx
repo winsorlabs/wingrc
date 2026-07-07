@@ -7,10 +7,21 @@ interface Props {
   controlId: string;
   title: string;
   objectives: ControlStateRow[];
+  orgId: string;
+  assessmentId: string;
+  onStatusChange: (id: string, newStatus: string) => void;
   defaultOpen?: boolean;
 }
 
-export function ControlSection({ controlId, title, objectives, defaultOpen = false }: Props) {
+export function ControlSection({
+  controlId,
+  title,
+  objectives,
+  orgId,
+  assessmentId,
+  onStatusChange,
+  defaultOpen = false,
+}: Props) {
   const [open, setOpen] = useState(defaultOpen);
   const statementStatus = objectives[0]?.statement_status ?? null;
 
@@ -25,7 +36,13 @@ export function ControlSection({ controlId, title, objectives, defaultOpen = fal
       {open && (
         <div className="control-body">
           {objectives.map((row) => (
-            <ObjectiveRow key={row.id} row={row} />
+            <ObjectiveRow
+              key={row.id}
+              row={row}
+              orgId={orgId}
+              assessmentId={assessmentId}
+              onStatusChange={onStatusChange}
+            />
           ))}
         </div>
       )}

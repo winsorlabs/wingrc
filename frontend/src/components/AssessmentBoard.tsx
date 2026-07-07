@@ -24,6 +24,12 @@ export function AssessmentBoard({ org, assessment }: Props) {
       .finally(() => setLoading(false));
   }, [org.id, assessment.id]);
 
+  function handleStatusChange(id: string, newStatus: string) {
+    setRows((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, status: newStatus } : r))
+    );
+  }
+
   if (loading) return <div className="loading">Loading control states…</div>;
   if (error) return <div className="error-msg">Error: {error}</div>;
 
@@ -46,7 +52,14 @@ export function AssessmentBoard({ org, assessment }: Props) {
       </div>
 
       {families.map((family) => (
-        <FamilySection key={family} family={family} rows={byFamily[family]} />
+        <FamilySection
+          key={family}
+          family={family}
+          rows={byFamily[family]}
+          orgId={org.id}
+          assessmentId={assessment.id}
+          onStatusChange={handleStatusChange}
+        />
       ))}
 
       {families.length === 0 && (
