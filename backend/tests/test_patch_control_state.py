@@ -32,7 +32,7 @@ def client(db_session):
 
 
 def _seed(db_session) -> dict:
-    """Seed the minimal chain: org → framework → control → objective → assessment → control_state."""
+    """Seed org → framework → control → objective → assessment → control_state."""
     org = Organization(name=f"PatchTestOrg-{uuid.uuid4().hex}")
     db_session.add(org)
     db_session.flush()
