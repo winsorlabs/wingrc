@@ -87,11 +87,19 @@ def test_seed_is_idempotent(db_session):
     assert r1["objectives"] == r2["objectives"]
     assert r1["framework_id"] == r2["framework_id"]
 
-    total_controls = db_session.query(Control).count()
+    fw_id = r1["framework_id"]
+    total_controls = (
+        db_session.query(Control).filter(Control.framework_id == fw_id).count()
+    )
     assert total_controls == r1["controls"], (
         f"Duplicate controls created: DB has {total_controls}, expected {r1['controls']}"
     )
-    total_objectives = db_session.query(AssessmentObjective).count()
+    total_objectives = (
+        db_session.query(AssessmentObjective)
+        .join(Control, AssessmentObjective.control_id == Control.id)
+        .filter(Control.framework_id == fw_id)
+        .count()
+    )
     assert total_objectives == r1["objectives"], (
         f"Duplicate objectives created: DB has {total_objectives}, expected {r1['objectives']}"
     )
