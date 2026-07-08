@@ -1,6 +1,6 @@
 """Re-key implementation_statement to per-objective; add guidance to assessment_objective.
 
-Revision ID: 0005_statement_per_objective_and_guidance
+Revision ID: 0005_objective_guidance
 Revises: 0004_contacts_raci
 Create Date: 2026-07-07
 
@@ -27,7 +27,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import UUID
 
-revision: str = "0005_statement_per_objective_and_guidance"
+revision: str = "0005_objective_guidance"
 down_revision: str | None = "0004_contacts_raci"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
