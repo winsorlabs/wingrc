@@ -47,4 +47,5 @@ export interface StatementRow {
   objective_guidance: string | null;
   body: string;
   status: string | null;
+  control_discussion: string | null;
 }

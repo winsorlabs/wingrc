@@ -43,6 +43,7 @@ def _seed(db_session) -> dict:
         family="AC",
         title="Test control",
         requirement_text="Test requirement",
+        discussion="Access control policies limit system access to authorized entities.",
         sprs_weight=1,
         sequence_order=1,
     )
@@ -122,6 +123,17 @@ def test_get_statements_returns_guidance(client, db_session):
     obj_c_item = next(i for i in items if i["objective_key"] == "c")
     assert obj_a_item["objective_guidance"] == "Examine: access control policy; list of users."
     assert obj_c_item["objective_guidance"] is None
+
+
+@pytest.mark.integration
+def test_get_statements_returns_control_discussion(client, db_session):
+    d = _seed(db_session)
+    items = client.get(_base_url(d)).json()
+    assert all(
+        item["control_discussion"]
+        == "Access control policies limit system access to authorized entities."
+        for item in items
+    )
 
 
 # ---------------------------------------------------------------------------

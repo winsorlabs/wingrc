@@ -55,6 +55,7 @@ export function ControlDrawer({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [openGuidance, setOpenGuidance] = useState<Record<string, boolean>>({});
+  const [showDiscussion, setShowDiscussion] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -137,6 +138,19 @@ export function ControlDrawer({
           <div className="loading">Loading&#x2026;</div>
         ) : (
           <div className="drawer-scroll">
+            {items[0]?.control_discussion && (
+              <div className="drawer-control-discussion">
+                <button
+                  className="drawer-guidance-toggle"
+                  onClick={() => setShowDiscussion((v) => !v)}
+                >
+                  {showDiscussion ? "Hide discussion" : "About this control"}
+                </button>
+                {showDiscussion && (
+                  <div className="drawer-guidance-text">{items[0].control_discussion}</div>
+                )}
+              </div>
+            )}
             {items.map((item) => (
               <div key={item.objective_id} className="drawer-objective">
                 <div className="drawer-obj-header">

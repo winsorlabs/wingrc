@@ -91,6 +91,7 @@ class StatementOut(BaseModel):
     objective_guidance: str | None = None
     body: str
     status: str | None = None
+    control_discussion: str | None = None
 
 
 class UpsertStatementIn(BaseModel):
@@ -308,6 +309,7 @@ def get_statements(
             objective_guidance=o.guidance,
             body=existing[o.id].body if o.id in existing else "",
             status=existing[o.id].status if o.id in existing else None,
+            control_discussion=ctrl.discussion,
         )
         for o in objectives
     ]

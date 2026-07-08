@@ -395,6 +395,13 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 }
 .drawer-guidance-toggle:hover { text-decoration: underline; }
 
+.drawer-control-discussion {
+  padding: 0.5rem 1.25rem 0;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
 .drawer-guidance-text {
   font-size: 0.78rem;
   color: var(--muted);
