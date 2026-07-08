@@ -1,4 +1,4 @@
-import type { Assessment, ControlStateRow, Framework, Org, StatementRow } from "./types";
+import type { Assessment, ControlStateRow, Framework, Org, ProductRow, StatementRow } from "./types";
 
 const BASE = "/api";
 
@@ -56,6 +56,15 @@ export const api = {
     req<StatementRow[]>(
       `/orgs/${orgId}/assessments/${assessmentId}/controls/${controlDbId}/statements`,
       { method: "PUT", body: JSON.stringify(items) }
+    ),
+
+  getProducts: (orgId: string, assessmentId: string) =>
+    req<ProductRow[]>(`/orgs/${orgId}/assessments/${assessmentId}/products`),
+
+  activateProduct: (orgId: string, assessmentId: string, productId: string) =>
+    req<{ objectives_updated: number; tasks_created: number }>(
+      `/orgs/${orgId}/assessments/${assessmentId}/products/${productId}/activate`,
+      { method: "POST", body: JSON.stringify({}) }
     ),
 };
 

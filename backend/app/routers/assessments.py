@@ -18,7 +18,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..db import get_session
@@ -26,10 +26,13 @@ from ..engine import activate_org_product, start_assessment
 from ..models import (
     Assessment,
     AssessmentObjective,
+    BaselineControl,
     Control,
     ControlState,
     ControlStateHistory,
     ImplementationStatement,
+    OrgProduct,
+    Product,
 )
 
 router = APIRouter(prefix="/orgs/{org_id}", tags=["assessments"])
@@ -66,6 +69,20 @@ class ActivateIn(BaseModel):
 class ActivateOut(BaseModel):
     objectives_updated: int
     tasks_created: int
+
+
+class ProductOut(BaseModel):
+    id: uuid.UUID
+    key: str
+    name: str
+    provider: str
+    category: str
+    role: str
+    is_active: bool
+    activated_at: datetime | None = None
+    provider_satisfies_count: int
+    shared_count: int
+    customer_owns_count: int
 
 
 _VALID_STATUSES = frozenset(
@@ -112,6 +129,7 @@ class ControlStateOut(BaseModel):
     status: str
     responsibility: str
     sourced_from_product_id: uuid.UUID | None = None
+    sourced_from_product_key: str | None = None
     statement_status: str | None = None
     evidence_count: int = 0
 
@@ -179,6 +197,77 @@ def activate_product(
 
 
 @router.get(
+    "/assessments/{assessment_id}/products",
+    response_model=list[ProductOut],
+)
+def list_products_for_assessment(
+    org_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    session: Session = Depends(get_session),
+) -> list[ProductOut]:
+    assessment = session.get(Assessment, assessment_id)
+    if assessment is None or assessment.org_id != org_id:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+
+    products = session.scalars(
+        select(Product)
+        .where(Product.framework_id == assessment.framework_id)
+        .order_by(Product.name)
+    ).all()
+
+    if not products:
+        return []
+
+    product_ids = [p.id for p in products]
+
+    # Aggregate classification counts per product in one query
+    coverage_rows = session.execute(
+        select(
+            BaselineControl.product_id,
+            BaselineControl.classification,
+            func.count().label("cnt"),
+        )
+        .where(BaselineControl.product_id.in_(product_ids))
+        .group_by(BaselineControl.product_id, BaselineControl.classification)
+    ).all()
+    coverage: dict[uuid.UUID, dict[str, int]] = {}
+    for row in coverage_rows:
+        coverage.setdefault(row.product_id, {})[row.classification] = row.cnt
+
+    # Per-org activation status
+    org_products = {
+        op.product_id: op
+        for op in session.scalars(
+            select(OrgProduct).where(
+                OrgProduct.org_id == org_id,
+                OrgProduct.product_id.in_(product_ids),
+            )
+        ).all()
+    }
+
+    out: list[ProductOut] = []
+    for p in products:
+        op = org_products.get(p.id)
+        c = coverage.get(p.id, {})
+        out.append(
+            ProductOut(
+                id=p.id,
+                key=p.key,
+                name=p.name,
+                provider=p.provider,
+                category=p.category,
+                role=p.role,
+                is_active=op is not None and op.status == "active",
+                activated_at=op.activated_at if op is not None else None,
+                provider_satisfies_count=c.get("provider_satisfies", 0),
+                shared_count=c.get("shared", 0),
+                customer_owns_count=c.get("customer_owns", 0),
+            )
+        )
+    return out
+
+
+@router.get(
     "/assessments/{assessment_id}/control-states",
     response_model=list[ControlStateOut],
 )
@@ -193,7 +282,7 @@ def list_control_states(
         raise HTTPException(status_code=404, detail="Assessment not found")
 
     stmt = (
-        select(ControlState, AssessmentObjective, Control, ImplementationStatement)
+        select(ControlState, AssessmentObjective, Control, ImplementationStatement, Product)
         .join(AssessmentObjective, ControlState.objective_id == AssessmentObjective.id)
         .join(Control, AssessmentObjective.control_id == Control.id)
         .outerjoin(
@@ -201,6 +290,7 @@ def list_control_states(
             (ImplementationStatement.objective_id == AssessmentObjective.id)
             & (ImplementationStatement.assessment_id == assessment_id),
         )
+        .outerjoin(Product, ControlState.sourced_from_product_id == Product.id)
         .where(ControlState.assessment_id == assessment_id)
         .where(ControlState.org_id == org_id)
         .order_by(Control.sequence_order, AssessmentObjective.objective_key)
@@ -221,10 +311,11 @@ def list_control_states(
             status=cs.status,
             responsibility=cs.responsibility,
             sourced_from_product_id=cs.sourced_from_product_id,
+            sourced_from_product_key=prod.key if prod is not None else None,
             statement_status=imp_stmt.status if imp_stmt is not None else None,
             evidence_count=0,
         )
-        for cs, obj, ctrl, imp_stmt in session.execute(stmt).all()
+        for cs, obj, ctrl, imp_stmt, prod in session.execute(stmt).all()
     ]
 
 

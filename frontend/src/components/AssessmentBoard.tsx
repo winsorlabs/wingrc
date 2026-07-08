@@ -3,6 +3,7 @@ import { api } from "../api";
 import type { Assessment, ControlStateRow, Org } from "../types";
 import { ControlDrawer } from "./ControlDrawer";
 import { FamilySection } from "./FamilySection";
+import { ProductsPanel } from "./ProductsPanel";
 
 const FAMILY_ORDER = [
   "AC", "AT", "AU", "CM", "IA", "IR", "MA", "MP", "PS", "PE", "RA", "CA", "SC", "SI",
@@ -24,6 +25,7 @@ export function AssessmentBoard({ org, assessment }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [drawerControl, setDrawerControl] = useState<DrawerControl | null>(null);
+  const [showTools, setShowTools] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -42,6 +44,16 @@ export function AssessmentBoard({ org, assessment }: Props) {
 
   function handleOpenDrawer(dbId: string, controlId: string, title: string) {
     setDrawerControl({ dbId, controlId, title });
+  }
+
+  function handleProductActivated() {
+    setShowTools(false);
+    setLoading(true);
+    api
+      .getControlStates(org.id, assessment.id)
+      .then(setRows)
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false));
   }
 
   function handleStatementSave(updates: Array<{ objectiveId: string; status: string }>) {
@@ -76,7 +88,12 @@ export function AssessmentBoard({ org, assessment }: Props) {
               {org.name} · {assessment.status} · SPRS: {assessment.sprs_score ?? "—"}
             </div>
           </div>
-          <div className="board-meta">{met} / {rows.length} objectives met</div>
+          <div className="board-topbar-right">
+            <div className="board-meta">{met} / {rows.length} objectives met</div>
+            <button className="btn-ghost btn-sm" onClick={() => setShowTools(true)}>
+              Tools &#x2699;
+            </button>
+          </div>
         </div>
 
         {families.map((family) => (
@@ -97,6 +114,15 @@ export function AssessmentBoard({ org, assessment }: Props) {
           </div>
         )}
       </div>
+
+      {showTools && (
+        <ProductsPanel
+          orgId={org.id}
+          assessmentId={assessment.id}
+          onClose={() => setShowTools(false)}
+          onActivated={handleProductActivated}
+        />
+      )}
 
       {drawerControl && (
         <ControlDrawer

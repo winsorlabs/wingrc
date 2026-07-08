@@ -35,8 +35,23 @@ export interface ControlStateRow {
   status: string;
   responsibility: string;
   sourced_from_product_id: string | null;
+  sourced_from_product_key: string | null;
   statement_status: string | null;
   evidence_count: number;
+}
+
+export interface ProductRow {
+  id: string;
+  key: string;
+  name: string;
+  provider: string;
+  category: string;
+  role: string;
+  is_active: boolean;
+  activated_at: string | null;
+  provider_satisfies_count: number;
+  shared_count: number;
+  customer_owns_count: number;
 }
 
 export interface StatementRow {

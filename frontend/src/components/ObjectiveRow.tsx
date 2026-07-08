@@ -68,6 +68,14 @@ export function ObjectiveRow({ row, orgId, assessmentId, onStatusChange }: Props
       <span className="obj-key">[{row.objective_key}]</span>
       <span className="obj-text">{row.objective_text}</span>
       <span className="obj-badges">
+        {row.sourced_from_product_key && (
+          <span
+            className={`source-badge source-badge-${row.responsibility === "shared" ? "shared" : "provider"}`}
+            title={`Sourced from ${row.sourced_from_product_key}`}
+          >
+            {row.sourced_from_product_key}
+          </span>
+        )}
         <span className="status-picker" ref={dropdownRef}>
           <button
             className={`badge ${badgeClass} badge-btn${saving ? " badge-saving" : ""}`}
