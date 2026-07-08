@@ -362,7 +362,7 @@ def upsert_statements(
         ).all()
         existing = {r.objective_id: r for r in rows}
 
-    result: list[StatementOut] = []
+    saved: list[ImplementationStatement] = []
     for item in items:
         if item.objective_id in existing:
             stmt = existing[item.objective_id]
@@ -377,17 +377,20 @@ def upsert_statements(
                 status=item.status,
             )
             session.add(stmt)
-        obj = objectives[item.objective_id]
-        result.append(
-            StatementOut(
-                id=stmt.id,
-                objective_id=item.objective_id,
-                objective_key=obj.objective_key,
-                objective_text=obj.text,
-                objective_guidance=obj.guidance,
-                body=stmt.body,
-                status=stmt.status,
-            )
-        )
+        saved.append(stmt)
+
+    session.flush()  # populate DB-generated UUIDs before building the response
     session.commit()
-    return result
+
+    return [
+        StatementOut(
+            id=stmt.id,
+            objective_id=stmt.objective_id,
+            objective_key=objectives[stmt.objective_id].objective_key,
+            objective_text=objectives[stmt.objective_id].text,
+            objective_guidance=objectives[stmt.objective_id].guidance,
+            body=stmt.body,
+            status=stmt.status,
+        )
+        for stmt in saved
+    ]
