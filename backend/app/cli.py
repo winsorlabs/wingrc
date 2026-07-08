@@ -12,12 +12,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import typer
+from sqlalchemy import text
 
 from . import repo
 from .catalog import ALL_VIEWS, VIEWS_BY_ID
 from .db import SessionLocal
 from .domain import ChangeType, EntityType
 from .importers.workbook import parse_workbook
+from .models import Organization
 from .reconcile import reconcile
 from .render import render_view
 from .seeds.catalog import seed_catalog
@@ -117,6 +119,169 @@ def seed_catalog_cmd(
         raise
     finally:
         session.close()
+
+
+@app.command(name="reset-dev")
+def reset_dev(
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompt"),
+) -> None:
+    """Restore the dev DB to a clean state: CMMC L2 catalog + 'Acme MSP' org only.
+
+    Deletes all test-framework rows and test-org rows that integration tests
+    leave behind when they commit against the dev database.  Safe to run
+    repeatedly; the catalog seed step is idempotent.
+
+    NEVER run this against a production database.
+    """
+    from sqlalchemy import select
+
+    session = SessionLocal()
+    try:
+        if not yes:
+            db_url = session.get_bind().url  # type: ignore[attr-defined]
+            typer.echo(f"Target database: {db_url}")
+            typer.echo(
+                "This will DELETE all test data, keeping only:\n"
+                "  • framework 'nist-800-171-r2' (CMMC L2)\n"
+                "  • org 'Acme MSP'"
+            )
+            typer.confirm("Proceed?", abort=True)
+
+        deleted = _reset_dev(session)
+
+        # Ensure the canonical org exists
+        acme = session.scalars(
+            select(Organization).where(Organization.name == "Acme MSP")
+        ).first()
+        if acme is None:
+            session.add(Organization(name="Acme MSP"))
+            session.flush()
+            typer.echo("Created 'Acme MSP' org.")
+
+        # Re-seed catalog (idempotent — updates discussion/guidance text)
+        result = seed_catalog(session)
+        session.commit()
+
+        typer.echo(
+            f"\nDev DB reset complete.\n"
+            f"  Catalog: {result['controls']} controls, {result['objectives']} objectives\n"
+            f"  Rows deleted: {deleted}"
+        )
+
+        # Verification queries
+        ctrl_count = session.execute(text("SELECT count(*) FROM control")).scalar()
+        fw_count = session.execute(text("SELECT count(*) FROM framework")).scalar()
+        org_count = session.execute(text("SELECT count(*) FROM organization")).scalar()
+        typer.echo(
+            f"\nVerification:\n"
+            f"  frameworks : {fw_count}  (expected 1)\n"
+            f"  controls   : {ctrl_count}  (expected 110)\n"
+            f"  orgs       : {org_count}  (expected 1)"
+        )
+        if fw_count != 1 or ctrl_count != 110:
+            typer.echo("WARNING: counts unexpected — check catalog YAML.")
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def _reset_dev(session) -> dict[str, int]:
+    """Delete all test-generated rows in FK-safe order.
+
+    Keeps: framework key='nist-800-171-r2' and org name='Acme MSP'.
+    Everything else is considered test pollution and removed.
+
+    Returns a dict of {table: rows_deleted} for reporting.
+    """
+    # Helper that executes a DELETE and returns the rowcount.
+    def _del(sql: str, params: dict | None = None) -> int:
+        r = session.execute(text(sql), params or {})
+        session.flush()
+        return r.rowcount
+
+    deleted: dict[str, int] = {}
+
+    # ------------------------------------------------------------------ #
+    # Tier 1 — junction/leaf tables: no other table FKs point at them     #
+    # ------------------------------------------------------------------ #
+    deleted["raci_assignment"] = _del("DELETE FROM raci_assignment")
+    deleted["evidence_state_link"] = _del("DELETE FROM evidence_state_link")
+
+    # ------------------------------------------------------------------ #
+    # Tier 2 — tables that reference control_state                        #
+    # ------------------------------------------------------------------ #
+    deleted["control_state_history"] = _del("DELETE FROM control_state_history")
+    deleted["evidence_task"] = _del("DELETE FROM evidence_task")
+    deleted["finding"] = _del("DELETE FROM finding")
+    deleted["poa_m_item"] = _del("DELETE FROM poa_m_item")
+    deleted["implementation_statement"] = _del("DELETE FROM implementation_statement")
+
+    # ------------------------------------------------------------------ #
+    # Tier 3 — core assessment tables                                     #
+    # ------------------------------------------------------------------ #
+    deleted["control_state"] = _del("DELETE FROM control_state")
+    deleted["assessment"] = _del("DELETE FROM assessment")
+    deleted["org_product"] = _del("DELETE FROM org_product")
+    deleted["evidence"] = _del("DELETE FROM evidence")
+
+    # ------------------------------------------------------------------ #
+    # Tier 4 — baseline library rows tied to non-CMMC-L2 frameworks      #
+    # ------------------------------------------------------------------ #
+    _KEEP_FW = "SELECT id FROM framework WHERE key = 'nist-800-171-r2'"
+
+    deleted["baseline_evidence_spec (test fw)"] = _del(
+        f"DELETE FROM baseline_evidence_spec WHERE baseline_control_id IN ("
+        f"  SELECT bc.id FROM baseline_control bc"
+        f"  JOIN product p ON bc.product_id = p.id"
+        f"  WHERE p.framework_id NOT IN ({_KEEP_FW})"
+        f")"
+    )
+    deleted["baseline_control (test fw)"] = _del(
+        f"DELETE FROM baseline_control WHERE product_id IN ("
+        f"  SELECT id FROM product WHERE framework_id NOT IN ({_KEEP_FW})"
+        f")"
+    )
+    deleted["product (test fw)"] = _del(
+        f"DELETE FROM product WHERE framework_id NOT IN ({_KEEP_FW})"
+    )
+
+    # ------------------------------------------------------------------ #
+    # Tier 5 — test framework catalog rows                                #
+    # ------------------------------------------------------------------ #
+    _TEST_FW = "SELECT id FROM framework WHERE key != 'nist-800-171-r2'"
+
+    deleted["assessment_objective (test fw)"] = _del(
+        f"DELETE FROM assessment_objective WHERE control_id IN ("
+        f"  SELECT id FROM control WHERE framework_id IN ({_TEST_FW})"
+        f")"
+    )
+    deleted["control (test fw)"] = _del(
+        f"DELETE FROM control WHERE framework_id IN ({_TEST_FW})"
+    )
+    deleted["framework (test)"] = _del(
+        "DELETE FROM framework WHERE key != 'nist-800-171-r2'"
+    )
+
+    # ------------------------------------------------------------------ #
+    # Tier 6 — test org data (Contact has ON DELETE CASCADE on org_id,   #
+    #           but we delete explicitly for clarity and scope_entity     #
+    #           has no FK so must be done manually)                       #
+    # ------------------------------------------------------------------ #
+    _TEST_ORGS = "SELECT id FROM organization WHERE name != 'Acme MSP'"
+
+    deleted["contact (test orgs)"] = _del(
+        f"DELETE FROM contact WHERE org_id IN ({_TEST_ORGS})"
+    )
+    deleted["scope_entity (test orgs)"] = _del(
+        f"DELETE FROM scope_entity WHERE org_id IN ({_TEST_ORGS})"
+    )
+    deleted["organization (test)"] = _del(
+        "DELETE FROM organization WHERE name != 'Acme MSP'"
+    )
+
+    return deleted
 
 
 @app.command()
