@@ -6,6 +6,8 @@ Run with:  pytest tests/test_catalog_seed.py -m integration -v
 from __future__ import annotations
 
 import pytest
+import yaml
+from pathlib import Path
 
 from app.models import AssessmentObjective, Control, Framework
 from app.seeds.catalog import seed_catalog
@@ -103,6 +105,40 @@ def test_seed_is_idempotent(db_session):
     assert total_objectives == r1["objectives"], (
         f"Duplicate objectives created: DB has {total_objectives}, expected {r1['objectives']}"
     )
+
+
+@pytest.mark.integration
+def test_guidance_text_loads_clean(db_session):
+    """All YAML text fields (discussion, guidance, req, title) are ASCII-printable.
+
+    Allowed: codepoints 32-126 plus newline, carriage return, and tab.
+    Disallowed: smart quotes, em-dashes, mojibake, non-printable bytes.
+    """
+    _YAML_PATH = Path(__file__).parent.parent / "app" / "seeds" / "cmmc_l2.yaml"
+    raw = _YAML_PATH.read_text(encoding="utf-8")
+
+    bad: list[tuple[int, str]] = []
+    for lineno, line in enumerate(raw.splitlines(), start=1):
+        for col, ch in enumerate(line, start=1):
+            if ord(ch) > 126 or (ord(ch) < 32 and ch not in "\n\r\t"):
+                bad.append((lineno, f"col {col}: U+{ord(ch):04X} {ch!r}"))
+
+    assert not bad, (
+        f"Non-ASCII-printable characters found in cmmc_l2.yaml "
+        f"(first 5):\n" + "\n".join(f"  line {ln}: {desc}" for ln, desc in bad[:5])
+    )
+
+
+@pytest.mark.integration
+def test_guidance_seeded_for_some_objectives(db_session):
+    """At least some objectives have guidance populated after seeding."""
+    seed_catalog(db_session)
+    with_guidance = (
+        db_session.query(AssessmentObjective)
+        .filter(AssessmentObjective.guidance.isnot(None))
+        .count()
+    )
+    assert with_guidance > 0, "No objectives have guidance text after seeding"
 
 
 @pytest.mark.integration

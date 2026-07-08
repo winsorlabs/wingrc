@@ -109,7 +109,7 @@ def _upsert_control(
             requirement_text=data["req"],
             sprs_weight=data.get("weight", 1),
             sequence_order=data.get("seq", seq),
-            discussion=data.get("source"),
+            discussion=data.get("discussion"),
         )
         session.add(ctrl)
     else:
@@ -118,7 +118,7 @@ def _upsert_control(
         ctrl.requirement_text = data["req"]
         ctrl.sprs_weight = data.get("weight", 1)
         ctrl.sequence_order = data.get("seq", seq)
-        ctrl.discussion = data.get("source")
+        ctrl.discussion = data.get("discussion")
     return ctrl
 
 
@@ -136,6 +136,7 @@ def _upsert_objective(
     sat_type = data.get("type", "narrative")
     cadence = data.get("cadence")
     cadence_resp = data.get("cadence_resp")
+    guidance = data.get("guidance")
     if obj is None:
         obj = AssessmentObjective(
             id=uuid.uuid4(),
@@ -146,6 +147,7 @@ def _upsert_objective(
             cadence=cadence,
             cadence_responsibility=cadence_resp,
             is_draft=True,
+            guidance=guidance,
         )
         session.add(obj)
     else:
@@ -154,4 +156,5 @@ def _upsert_objective(
         obj.cadence = cadence
         obj.cadence_responsibility = cadence_resp
         obj.is_draft = True
+        obj.guidance = guidance
     return obj

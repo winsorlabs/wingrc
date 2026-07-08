@@ -1,4 +1,4 @@
-"""Integration tests for GET/PUT .../controls/{id}/statement endpoints."""
+"""Integration tests for GET/PUT .../controls/{id}/statements (batch, per-objective)."""
 from __future__ import annotations
 
 import uuid
@@ -28,7 +28,7 @@ def client(db_session):
 
 
 def _seed(db_session) -> dict:
-    """Seed org → framework → control → objective → assessment."""
+    """Seed org -> framework -> control -> 3 objectives -> assessment."""
     org = Organization(name=f"StmtTestOrg-{uuid.uuid4().hex}")
     db_session.add(org)
     db_session.flush()
@@ -49,10 +49,24 @@ def _seed(db_session) -> dict:
     db_session.add(ctrl)
     db_session.flush()
 
-    obj = AssessmentObjective(
-        control_id=ctrl.id, objective_key="a", text="Test objective"
+    obj_a = AssessmentObjective(
+        control_id=ctrl.id,
+        objective_key="a",
+        text="Authorized users are identified.",
+        guidance="Examine: access control policy; list of users.",
     )
-    db_session.add(obj)
+    obj_b = AssessmentObjective(
+        control_id=ctrl.id,
+        objective_key="b",
+        text="Authorized devices are identified.",
+        guidance="Examine: device inventory; network diagrams.",
+    )
+    obj_c = AssessmentObjective(
+        control_id=ctrl.id,
+        objective_key="c",
+        text="System access is limited to authorized users.",
+    )
+    db_session.add_all([obj_a, obj_b, obj_c])
     db_session.flush()
 
     assessment = Assessment(
@@ -63,62 +77,91 @@ def _seed(db_session) -> dict:
     db_session.add(assessment)
     db_session.flush()
 
-    return {"org": org, "fw": fw, "ctrl": ctrl, "obj": obj, "assessment": assessment}
+    return {
+        "org": org,
+        "fw": fw,
+        "ctrl": ctrl,
+        "obj_a": obj_a,
+        "obj_b": obj_b,
+        "obj_c": obj_c,
+        "assessment": assessment,
+    }
 
 
-def _url(d: dict) -> str:
+def _base_url(d: dict) -> str:
     return (
         f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}"
-        f"/controls/{d['ctrl'].id}/statement"
+        f"/controls/{d['ctrl'].id}/statements"
     )
 
 
 # ---------------------------------------------------------------------------
-# GET — no statement yet
+# GET — no statements yet
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.integration
-def test_get_statement_empty(client, db_session):
+def test_get_statements_empty(client, db_session):
     d = _seed(db_session)
-    r = client.get(_url(d))
+    r = client.get(_base_url(d))
     assert r.status_code == 200
-    body = r.json()
-    assert body["id"] is None
-    assert body["body"] == ""
-    assert body["status"] is None
+    items = r.json()
+    assert len(items) == 3
+    assert all(item["id"] is None for item in items)
+    assert all(item["body"] == "" for item in items)
+    assert all(item["status"] is None for item in items)
+    keys = [item["objective_key"] for item in items]
+    assert keys == ["a", "b", "c"]
+
+
+@pytest.mark.integration
+def test_get_statements_returns_guidance(client, db_session):
+    d = _seed(db_session)
+    items = client.get(_base_url(d)).json()
+    obj_a_item = next(i for i in items if i["objective_key"] == "a")
+    obj_c_item = next(i for i in items if i["objective_key"] == "c")
+    assert obj_a_item["objective_guidance"] == "Examine: access control policy; list of users."
+    assert obj_c_item["objective_guidance"] is None
 
 
 # ---------------------------------------------------------------------------
-# PUT — create
+# PUT — create batch
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.integration
-def test_put_creates_statement(client, db_session):
+def test_put_creates_statements(client, db_session):
     d = _seed(db_session)
-    r = client.put(_url(d), json={"body": "We implement this via...", "status": "draft"})
+    payload = [
+        {"objective_id": str(d["obj_a"].id), "body": "We identify users via AD.", "status": "draft"},
+        {"objective_id": str(d["obj_b"].id), "body": "Devices are in CMDB.", "status": "reviewed"},
+    ]
+    r = client.put(_base_url(d), json=payload)
     assert r.status_code == 200
-    body = r.json()
-    assert body["id"] is not None
-    assert body["body"] == "We implement this via..."
-    assert body["status"] == "draft"
+    items = r.json()
+    assert len(items) == 2
+    assert items[0]["body"] == "We identify users via AD."
+    assert items[0]["status"] == "draft"
+    assert items[1]["body"] == "Devices are in CMDB."
+    assert items[1]["status"] == "reviewed"
+    assert all(item["id"] is not None for item in items)
 
 
 @pytest.mark.integration
 def test_put_all_valid_statuses(client, db_session):
+    d = _seed(db_session)
     for status in ("draft", "reviewed", "approved"):
-        d = _seed(db_session)
-        r = client.put(_url(d), json={"body": "text", "status": status})
+        payload = [{"objective_id": str(d["obj_a"].id), "body": "text", "status": status}]
+        r = client.put(_base_url(d), json=payload)
         assert r.status_code == 200
-        assert r.json()["status"] == status
+        assert r.json()[0]["status"] == status
 
 
 @pytest.mark.integration
 def test_put_invalid_status_returns_422(client, db_session):
     d = _seed(db_session)
-    r = client.put(_url(d), json={"body": "text", "status": "unknown"})
-    assert r.status_code == 422
+    payload = [{"objective_id": str(d["obj_a"].id), "body": "text", "status": "invalid"}]
+    assert client.put(_base_url(d), json=payload).status_code == 422
 
 
 # ---------------------------------------------------------------------------
@@ -127,37 +170,46 @@ def test_put_invalid_status_returns_422(client, db_session):
 
 
 @pytest.mark.integration
-def test_get_after_put_returns_saved_data(client, db_session):
+def test_get_after_put_reflects_saved_data(client, db_session):
     d = _seed(db_session)
-    client.put(_url(d), json={"body": "Our approach is...", "status": "reviewed"})
-    r = client.get(_url(d))
-    assert r.status_code == 200
-    body = r.json()
-    assert body["body"] == "Our approach is..."
-    assert body["status"] == "reviewed"
+    payload = [
+        {"objective_id": str(d["obj_a"].id), "body": "Our approach is...", "status": "reviewed"},
+        {"objective_id": str(d["obj_b"].id), "body": "Devices tracked in...", "status": "draft"},
+    ]
+    client.put(_base_url(d), json=payload)
+
+    items = client.get(_base_url(d)).json()
+    by_key = {i["objective_key"]: i for i in items}
+    assert by_key["a"]["body"] == "Our approach is..."
+    assert by_key["a"]["status"] == "reviewed"
+    assert by_key["b"]["body"] == "Devices tracked in..."
+    assert by_key["c"]["body"] == ""
+    assert by_key["c"]["status"] is None
 
 
 # ---------------------------------------------------------------------------
-# PUT idempotency — second PUT updates in place, no duplicate row
+# PUT idempotency
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.integration
 def test_put_is_idempotent(client, db_session):
     d = _seed(db_session)
-    r1 = client.put(_url(d), json={"body": "Version 1", "status": "draft"})
-    r2 = client.put(_url(d), json={"body": "Version 2", "status": "reviewed"})
-    assert r1.json()["id"] == r2.json()["id"]
+    p1 = [{"objective_id": str(d["obj_a"].id), "body": "Version 1", "status": "draft"}]
+    p2 = [{"objective_id": str(d["obj_a"].id), "body": "Version 2", "status": "approved"}]
+    r1 = client.put(_base_url(d), json=p1)
+    r2 = client.put(_base_url(d), json=p2)
+    assert r1.json()[0]["id"] == r2.json()[0]["id"]
 
     rows = db_session.scalars(
         select(ImplementationStatement).where(
             ImplementationStatement.assessment_id == d["assessment"].id,
-            ImplementationStatement.control_id == d["ctrl"].id,
+            ImplementationStatement.objective_id == d["obj_a"].id,
         )
     ).all()
     assert len(rows) == 1
     assert rows[0].body == "Version 2"
-    assert rows[0].status == "reviewed"
+    assert rows[0].status == "approved"
 
 
 # ---------------------------------------------------------------------------
@@ -171,18 +223,45 @@ def test_put_statement_does_not_modify_control_state(client, db_session):
     cs = ControlState(
         assessment_id=d["assessment"].id,
         org_id=d["org"].id,
-        objective_id=d["obj"].id,
+        objective_id=d["obj_a"].id,
         status="not_met",
         responsibility="customer_owns",
     )
     db_session.add(cs)
     db_session.flush()
 
-    client.put(_url(d), json={"body": "Some statement", "status": "approved"})
+    payload = [{"objective_id": str(d["obj_a"].id), "body": "Some statement", "status": "approved"}]
+    client.put(_base_url(d), json=payload)
 
     db_session.expire(cs)
     assert cs.status == "not_met"
     assert cs.responsibility == "customer_owns"
+
+
+# ---------------------------------------------------------------------------
+# Partial-save: PUT for subset of objectives leaves others untouched
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_put_partial_subset_does_not_affect_others(client, db_session):
+    d = _seed(db_session)
+    # Write obj_a
+    client.put(
+        _base_url(d),
+        json=[{"objective_id": str(d["obj_a"].id), "body": "A only", "status": "draft"}],
+    )
+    # Write obj_b separately, not obj_a again
+    client.put(
+        _base_url(d),
+        json=[{"objective_id": str(d["obj_b"].id), "body": "B only", "status": "reviewed"}],
+    )
+
+    items = client.get(_base_url(d)).json()
+    by_key = {i["objective_key"]: i for i in items}
+    assert by_key["a"]["body"] == "A only"
+    assert by_key["b"]["body"] == "B only"
+    assert by_key["c"]["body"] == ""
 
 
 # ---------------------------------------------------------------------------
@@ -193,30 +272,22 @@ def test_put_statement_does_not_modify_control_state(client, db_session):
 @pytest.mark.integration
 def test_get_wrong_org_returns_404(client, db_session):
     d = _seed(db_session)
-    url = (
-        f"/orgs/{uuid.uuid4()}/assessments/{d['assessment'].id}"
-        f"/controls/{d['ctrl'].id}/statement"
-    )
+    url = f"/orgs/{uuid.uuid4()}/assessments/{d['assessment'].id}/controls/{d['ctrl'].id}/statements"
     assert client.get(url).status_code == 404
 
 
 @pytest.mark.integration
 def test_put_wrong_org_returns_404(client, db_session):
     d = _seed(db_session)
-    url = (
-        f"/orgs/{uuid.uuid4()}/assessments/{d['assessment'].id}"
-        f"/controls/{d['ctrl'].id}/statement"
-    )
-    assert client.put(url, json={"body": "x", "status": "draft"}).status_code == 404
+    url = f"/orgs/{uuid.uuid4()}/assessments/{d['assessment'].id}/controls/{d['ctrl'].id}/statements"
+    payload = [{"objective_id": str(d["obj_a"].id), "body": "x", "status": "draft"}]
+    assert client.put(url, json=payload).status_code == 404
 
 
 @pytest.mark.integration
 def test_get_wrong_assessment_returns_404(client, db_session):
     d = _seed(db_session)
-    url = (
-        f"/orgs/{d['org'].id}/assessments/{uuid.uuid4()}"
-        f"/controls/{d['ctrl'].id}/statement"
-    )
+    url = f"/orgs/{d['org'].id}/assessments/{uuid.uuid4()}/controls/{d['ctrl'].id}/statements"
     assert client.get(url).status_code == 404
 
 
@@ -239,6 +310,7 @@ def test_put_control_wrong_framework_returns_404(client, db_session):
     db_session.flush()
     url = (
         f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}"
-        f"/controls/{other_ctrl.id}/statement"
+        f"/controls/{other_ctrl.id}/statements"
     )
-    assert client.put(url, json={"body": "x", "status": "draft"}).status_code == 404
+    payload = [{"objective_id": str(d["obj_a"].id), "body": "x", "status": "draft"}]
+    assert client.put(url, json=payload).status_code == 404

@@ -44,10 +44,13 @@ export function AssessmentBoard({ org, assessment }: Props) {
     setDrawerControl({ dbId, controlId, title });
   }
 
-  function handleStatementSave(controlDbId: string, newStatus: string) {
+  function handleStatementSave(updates: Array<{ objectiveId: string; status: string }>) {
+    const byId = Object.fromEntries(updates.map((u) => [u.objectiveId, u.status]));
     setRows((prev) =>
       prev.map((r) =>
-        r.control_db_id === controlDbId ? { ...r, statement_status: newStatus } : r
+        byId[r.objective_id] !== undefined
+          ? { ...r, statement_status: byId[r.objective_id] }
+          : r
       )
     );
   }

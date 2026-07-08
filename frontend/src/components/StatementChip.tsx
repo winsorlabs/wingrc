@@ -1,16 +1,17 @@
 interface Props {
-  status: string | null;
+  count: number;
+  total: number;
+  worstStatus: string | null;
 }
 
-export function StatementChip({ status }: Props) {
-  if (!status) {
-    return <span className="stmt-chip">no statement</span>;
+export function StatementChip({ count, total, worstStatus }: Props) {
+  if (count === 0) {
+    return <span className="stmt-chip">no statements</span>;
   }
+  const label = count === total ? `${total}/${total}` : `${count}/${total}`;
   return (
-    <span className={`stmt-chip ${status}`}>
-      {status === "draft" && "Draft"}
-      {status === "reviewed" && "Reviewed"}
-      {status === "approved" && "Approved"}
+    <span className={`stmt-chip ${worstStatus ?? ""}`}>
+      {label} &middot; {worstStatus}
     </span>
   );
 }

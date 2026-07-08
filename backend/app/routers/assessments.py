@@ -85,11 +85,16 @@ class PatchControlStateOut(BaseModel):
 
 class StatementOut(BaseModel):
     id: uuid.UUID | None = None
+    objective_id: uuid.UUID
+    objective_key: str
+    objective_text: str
+    objective_guidance: str | None = None
     body: str
     status: str | None = None
 
 
 class UpsertStatementIn(BaseModel):
+    objective_id: uuid.UUID
     body: str
     status: str = "draft"
 
@@ -192,7 +197,7 @@ def list_control_states(
         .join(Control, AssessmentObjective.control_id == Control.id)
         .outerjoin(
             ImplementationStatement,
-            (ImplementationStatement.control_id == Control.id)
+            (ImplementationStatement.objective_id == AssessmentObjective.id)
             & (ImplementationStatement.assessment_id == assessment_id),
         )
         .where(ControlState.assessment_id == assessment_id)
@@ -261,48 +266,70 @@ def patch_control_state(
 
 
 @router.get(
-    "/assessments/{assessment_id}/controls/{control_db_id}/statement",
-    response_model=StatementOut,
+    "/assessments/{assessment_id}/controls/{control_db_id}/statements",
+    response_model=list[StatementOut],
 )
-def get_statement(
+def get_statements(
     org_id: uuid.UUID,
     assessment_id: uuid.UUID,
     control_db_id: uuid.UUID,
     session: Session = Depends(get_session),
-) -> StatementOut:
+) -> list[StatementOut]:
     assessment = session.get(Assessment, assessment_id)
     if assessment is None or assessment.org_id != org_id:
         raise HTTPException(status_code=404, detail="Assessment not found")
     ctrl = session.get(Control, control_db_id)
     if ctrl is None or ctrl.framework_id != assessment.framework_id:
         raise HTTPException(status_code=404, detail="Control not found")
-    stmt = session.scalars(
-        select(ImplementationStatement).where(
-            ImplementationStatement.assessment_id == assessment_id,
-            ImplementationStatement.control_id == control_db_id,
+
+    objectives = session.scalars(
+        select(AssessmentObjective)
+        .where(AssessmentObjective.control_id == control_db_id)
+        .order_by(AssessmentObjective.objective_key)
+    ).all()
+
+    obj_ids = [o.id for o in objectives]
+    existing: dict[uuid.UUID, ImplementationStatement] = {}
+    if obj_ids:
+        rows = session.scalars(
+            select(ImplementationStatement).where(
+                ImplementationStatement.assessment_id == assessment_id,
+                ImplementationStatement.objective_id.in_(obj_ids),
+            )
+        ).all()
+        existing = {r.objective_id: r for r in rows}
+
+    return [
+        StatementOut(
+            id=existing[o.id].id if o.id in existing else None,
+            objective_id=o.id,
+            objective_key=o.objective_key,
+            objective_text=o.text,
+            objective_guidance=o.guidance,
+            body=existing[o.id].body if o.id in existing else "",
+            status=existing[o.id].status if o.id in existing else None,
         )
-    ).first()
-    if stmt is None:
-        return StatementOut(id=None, body="", status=None)
-    return StatementOut(id=stmt.id, body=stmt.body, status=stmt.status)
+        for o in objectives
+    ]
 
 
 @router.put(
-    "/assessments/{assessment_id}/controls/{control_db_id}/statement",
-    response_model=StatementOut,
+    "/assessments/{assessment_id}/controls/{control_db_id}/statements",
+    response_model=list[StatementOut],
 )
-def upsert_statement(
+def upsert_statements(
     org_id: uuid.UUID,
     assessment_id: uuid.UUID,
     control_db_id: uuid.UUID,
-    body: UpsertStatementIn,
+    items: list[UpsertStatementIn],
     session: Session = Depends(get_session),
-) -> StatementOut:
-    if body.status not in _VALID_STMT_STATUSES:
+) -> list[StatementOut]:
+    invalid = [i for i in items if i.status not in _VALID_STMT_STATUSES]
+    if invalid:
         valid = sorted(_VALID_STMT_STATUSES)
         raise HTTPException(
             status_code=422,
-            detail=f"Invalid status {body.status!r}. Must be one of: {valid}",
+            detail=f"Invalid status {invalid[0].status!r}. Must be one of: {valid}",
         )
     assessment = session.get(Assessment, assessment_id)
     if assessment is None or assessment.org_id != org_id:
@@ -310,23 +337,57 @@ def upsert_statement(
     ctrl = session.get(Control, control_db_id)
     if ctrl is None or ctrl.framework_id != assessment.framework_id:
         raise HTTPException(status_code=404, detail="Control not found")
-    stmt = session.scalars(
-        select(ImplementationStatement).where(
-            ImplementationStatement.assessment_id == assessment_id,
-            ImplementationStatement.control_id == control_db_id,
+
+    obj_ids = [i.objective_id for i in items]
+    objectives = {
+        o.id: o
+        for o in session.scalars(
+            select(AssessmentObjective).where(
+                AssessmentObjective.control_id == control_db_id,
+                AssessmentObjective.id.in_(obj_ids),
+            )
+        ).all()
+    }
+    for item in items:
+        if item.objective_id not in objectives:
+            raise HTTPException(status_code=404, detail=f"Objective {item.objective_id} not found")
+
+    existing: dict[uuid.UUID, ImplementationStatement] = {}
+    if obj_ids:
+        rows = session.scalars(
+            select(ImplementationStatement).where(
+                ImplementationStatement.assessment_id == assessment_id,
+                ImplementationStatement.objective_id.in_(obj_ids),
+            )
+        ).all()
+        existing = {r.objective_id: r for r in rows}
+
+    result: list[StatementOut] = []
+    for item in items:
+        if item.objective_id in existing:
+            stmt = existing[item.objective_id]
+            stmt.body = item.body
+            stmt.status = item.status
+        else:
+            stmt = ImplementationStatement(
+                org_id=org_id,
+                objective_id=item.objective_id,
+                assessment_id=assessment_id,
+                body=item.body,
+                status=item.status,
+            )
+            session.add(stmt)
+        obj = objectives[item.objective_id]
+        result.append(
+            StatementOut(
+                id=stmt.id,
+                objective_id=item.objective_id,
+                objective_key=obj.objective_key,
+                objective_text=obj.text,
+                objective_guidance=obj.guidance,
+                body=stmt.body,
+                status=stmt.status,
+            )
         )
-    ).first()
-    if stmt is None:
-        stmt = ImplementationStatement(
-            org_id=org_id,
-            control_id=control_db_id,
-            assessment_id=assessment_id,
-            body=body.body,
-            status=body.status,
-        )
-        session.add(stmt)
-    else:
-        stmt.body = body.body
-        stmt.status = body.status
     session.commit()
-    return StatementOut(id=stmt.id, body=stmt.body, status=stmt.status)
+    return result

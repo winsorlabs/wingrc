@@ -351,6 +351,72 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
   margin-left: auto;
 }
 
+/* ── Drawer scroll area ── */
+.drawer-scroll {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Per-objective block inside drawer ── */
+.drawer-objective {
+  padding: 0.75rem 1.25rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.drawer-objective:last-of-type { border-bottom: none; }
+
+.drawer-obj-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin-bottom: 0.35rem;
+  flex-wrap: wrap;
+}
+.drawer-obj-key {
+  font-family: monospace;
+  font-size: 0.775rem;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.drawer-obj-text {
+  font-size: 0.82rem;
+  flex: 1;
+  line-height: 1.4;
+}
+.drawer-guidance-toggle {
+  background: transparent;
+  border: none;
+  font-size: 0.72rem;
+  color: var(--primary);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+.drawer-guidance-toggle:hover { text-decoration: underline; }
+
+.drawer-guidance-text {
+  font-size: 0.78rem;
+  color: var(--muted);
+  background: var(--bg);
+  border-left: 3px solid var(--border);
+  padding: 0.35rem 0.6rem;
+  margin-bottom: 0.4rem;
+  line-height: 1.5;
+}
+
+.drawer-obj-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.drawer-textarea-sm {
+  flex: unset;
+  margin: 0;
+  min-height: unset;
+}
+
 /* ── Statement chip ── */
 .stmt-chip {
   display: inline-flex; align-items: center; gap: 0.2rem;

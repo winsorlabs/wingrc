@@ -198,6 +198,7 @@ class AssessmentObjective(Base):
     cadence_responsibility: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # True until C3PAO has reviewed the type/cadence/responsibility assignment
     is_draft: Mapped[bool] = mapped_column(Boolean, server_default="true")
+    guidance: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 # ---------------------------------------------------------------------------
@@ -785,20 +786,18 @@ class RaciAssignment(Base):
 
 
 class ImplementationStatement(Base):
-    """SSP narrative paragraph for one control within one assessment.
+    """SSP narrative paragraph for one assessment objective within one assessment.
 
-    Intentionally per-control, not per-objective: SSP authors write one
-    coherent paragraph per NIST 800-171 practice. Evidence compliance state
-    is tracked per-objective in control_state; this record holds the human- or
-    AI-generated narrative that explains HOW the org satisfies the practice.
-
-    See assessment.py design note 3 for the full rationale.
+    Keyed per-objective so each [a]/[b]/[c] sub-requirement can have its own
+    paragraph. At SSP-publish time, paragraphs combine per control preserving
+    the [a]/[b] labels. Evidence compliance state is tracked separately in
+    control_state; this record holds only the human- or AI-generated narrative.
     """
 
     __tablename__ = "implementation_statement"
     __table_args__ = (
         UniqueConstraint(
-            "assessment_id", "control_id", name="uq_implementation_statement_identity"
+            "assessment_id", "objective_id", name="uq_implementation_statement_identity"
         ),
         CheckConstraint(
             "status IN ('draft', 'reviewed', 'approved')",
@@ -812,8 +811,10 @@ class ImplementationStatement(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("organization.id"), index=True
     )
-    control_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("control.id"), index=True
+    objective_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("assessment_objective.id", ondelete="CASCADE"),
+        index=True,
     )
     assessment_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("assessment.id"), nullable=True, index=True

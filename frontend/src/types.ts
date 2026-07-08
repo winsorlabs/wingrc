@@ -38,3 +38,13 @@ export interface ControlStateRow {
   statement_status: string | null;
   evidence_count: number;
 }
+
+export interface StatementRow {
+  id: string | null;
+  objective_id: string;
+  objective_key: string;
+  objective_text: string;
+  objective_guidance: string | null;
+  body: string;
+  status: string | null;
+}

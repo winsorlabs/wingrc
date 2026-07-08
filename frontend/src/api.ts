@@ -1,4 +1,4 @@
-import type { Assessment, ControlStateRow, Framework, Org } from "./types";
+import type { Assessment, ControlStateRow, Framework, Org, StatementRow } from "./types";
 
 const BASE = "/api";
 
@@ -42,21 +42,20 @@ export const api = {
       { method: "PATCH", body: JSON.stringify({ status }) }
     ),
 
-  getStatement: (orgId: string, assessmentId: string, controlDbId: string) =>
-    req<{ id: string | null; body: string; status: string | null }>(
-      `/orgs/${orgId}/assessments/${assessmentId}/controls/${controlDbId}/statement`
+  getStatements: (orgId: string, assessmentId: string, controlDbId: string) =>
+    req<StatementRow[]>(
+      `/orgs/${orgId}/assessments/${assessmentId}/controls/${controlDbId}/statements`
     ),
 
-  putStatement: (
+  putStatements: (
     orgId: string,
     assessmentId: string,
     controlDbId: string,
-    stmtBody: string,
-    status: string
+    items: Array<{ objective_id: string; body: string; status: string }>
   ) =>
-    req<{ id: string; body: string; status: string }>(
-      `/orgs/${orgId}/assessments/${assessmentId}/controls/${controlDbId}/statement`,
-      { method: "PUT", body: JSON.stringify({ body: stmtBody, status }) }
+    req<StatementRow[]>(
+      `/orgs/${orgId}/assessments/${assessmentId}/controls/${controlDbId}/statements`,
+      { method: "PUT", body: JSON.stringify(items) }
     ),
 };
 

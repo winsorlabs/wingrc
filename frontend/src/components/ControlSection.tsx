@@ -15,6 +15,8 @@ interface Props {
   defaultOpen?: boolean;
 }
 
+const STATUS_RANK: Record<string, number> = { draft: 1, reviewed: 2, approved: 3 };
+
 export function ControlSection({
   controlId,
   controlDbId,
@@ -27,7 +29,17 @@ export function ControlSection({
   defaultOpen = false,
 }: Props) {
   const [open, setOpen] = useState(defaultOpen);
-  const statementStatus = objectives[0]?.statement_status ?? null;
+
+  const stmtStatuses = objectives
+    .map((r) => r.statement_status)
+    .filter((s): s is string => s !== null);
+  const stmtCount = stmtStatuses.length;
+  const worstStatus =
+    stmtCount > 0
+      ? stmtStatuses.reduce((worst, s) =>
+          (STATUS_RANK[s] ?? 0) < (STATUS_RANK[worst] ?? 0) ? s : worst
+        )
+      : null;
 
   return (
     <div className="control-section">
@@ -35,7 +47,7 @@ export function ControlSection({
         <span className={`chevron ${open ? "open" : ""}`}>▶</span>
         <span className="control-id">{controlId}</span>
         <span className="control-title">{title}</span>
-        <StatementChip status={statementStatus} />
+        <StatementChip count={stmtCount} total={objectives.length} worstStatus={worstStatus} />
         <button
           className="edit-stmt-btn"
           aria-label="Edit implementation statement"
