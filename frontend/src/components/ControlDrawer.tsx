@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { StatementRow } from "../types";
+import { EvidenceSection } from "./EvidenceSection";
 
 const STMT_STATUSES = [
   { value: "draft", label: "Draft" },
@@ -10,6 +11,7 @@ const STMT_STATUSES = [
 
 interface StatementItem {
   objective_id: string;
+  control_state_id: string | null;
   objective_key: string;
   objective_text: string;
   objective_guidance: string | null;
@@ -26,11 +28,13 @@ interface Props {
   controlTitle: string;
   onClose: () => void;
   onSave: (updates: Array<{ objectiveId: string; status: string }>) => void;
+  onEvidenceChanged?: () => void;
 }
 
 function fromRow(row: StatementRow): StatementItem {
   return {
     objective_id: row.objective_id,
+    control_state_id: row.control_state_id,
     objective_key: row.objective_key,
     objective_text: row.objective_text,
     objective_guidance: row.objective_guidance,
@@ -48,6 +52,7 @@ export function ControlDrawer({
   controlTitle,
   onClose,
   onSave,
+  onEvidenceChanged,
 }: Props) {
   const [items, setItems] = useState<StatementItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,6 +61,8 @@ export function ControlDrawer({
   const [saved, setSaved] = useState(false);
   const [openGuidance, setOpenGuidance] = useState<Record<string, boolean>>({});
   const [showDiscussion, setShowDiscussion] = useState(false);
+  const [evidenceCounts, setEvidenceCounts] = useState<Record<string, number>>({});
+  const [evidenceDirty, setEvidenceDirty] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -118,18 +125,28 @@ export function ControlDrawer({
     }
   }
 
+  function handleEvidenceCountChange(objectiveId: string, count: number) {
+    setEvidenceCounts((prev) => ({ ...prev, [objectiveId]: count }));
+    setEvidenceDirty(true);
+  }
+
+  function handleClose() {
+    if (evidenceDirty && onEvidenceChanged) onEvidenceChanged();
+    onClose();
+  }
+
   const hasAnyBody = items.some((it) => it.body.trim() !== "");
   const hasEmptyItems = items.some((it) => it.body.trim() === "");
 
   return (
-    <div className="drawer-overlay" onClick={onClose}>
+    <div className="drawer-overlay" onClick={handleClose}>
       <aside className="drawer" onClick={(e) => e.stopPropagation()}>
         <div className="drawer-header">
           <div>
             <div className="drawer-control-id">{controlId}</div>
             <div className="drawer-control-title">{controlTitle}</div>
           </div>
-          <button className="drawer-close" onClick={onClose} aria-label="Close">
+          <button className="drawer-close" onClick={handleClose} aria-label="Close">
             &#x2715;
           </button>
         </div>
@@ -193,6 +210,14 @@ export function ControlDrawer({
                     ))}
                   </select>
                 </div>
+                {item.control_state_id && (
+                  <EvidenceSection
+                    orgId={orgId}
+                    assessmentId={assessmentId}
+                    controlStateId={item.control_state_id}
+                    onCountChange={(count) => handleEvidenceCountChange(item.objective_id, count)}
+                  />
+                )}
               </div>
             ))}
 

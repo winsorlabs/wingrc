@@ -19,6 +19,14 @@ class Settings(BaseSettings):
     # generation local. Not exercised by the scope module yet.
     ai_provider: str = "none"  # one of: none | anthropic | azure_openai | local
 
+    # S3-compatible object storage for evidence artifacts.
+    # Set storage_endpoint to activate MinIOClient; leave unset to use NullStorageClient.
+    storage_endpoint: str | None = None
+    storage_access_key: str = "wingrc"
+    storage_secret_key: str = "wingrc-dev-secret"
+    storage_bucket: str = "evidence"
+    storage_region: str = "us-east-1"
+
     # Allowed CORS origins.  In production set WINGRC_CORS_ORIGINS to a JSON
     # array of the exact origins that should be permitted, e.g.:
     #   WINGRC_CORS_ORIGINS='["https://app.example.com"]'

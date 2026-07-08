@@ -1,4 +1,4 @@
-import type { Assessment, ControlStateRow, Framework, Org, ProductRow, StatementRow } from "./types";
+import type { Assessment, ControlStateRow, EvidenceRow, Framework, Org, ProductRow, StatementRow } from "./types";
 
 const BASE = "/api";
 
@@ -66,6 +66,42 @@ export const api = {
       `/orgs/${orgId}/assessments/${assessmentId}/products/${productId}/activate`,
       { method: "POST", body: JSON.stringify({}) }
     ),
+
+  listEvidence: (orgId: string, assessmentId: string, controlStateId: string) =>
+    req<EvidenceRow[]>(
+      `/orgs/${orgId}/assessments/${assessmentId}/control-states/${controlStateId}/evidence`
+    ),
+
+  uploadEvidence: async (
+    orgId: string,
+    assessmentId: string,
+    controlStateId: string,
+    file: File,
+    artifactType: string
+  ): Promise<EvidenceRow> => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("artifact_type", artifactType);
+    const r = await fetch(
+      `/api/orgs/${orgId}/assessments/${assessmentId}/control-states/${controlStateId}/evidence`,
+      { method: "POST", body: form }
+    );
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json() as Promise<EvidenceRow>;
+  },
+
+  deleteEvidence: async (
+    orgId: string,
+    assessmentId: string,
+    controlStateId: string,
+    evidenceId: string
+  ): Promise<void> => {
+    const r = await fetch(
+      `/api/orgs/${orgId}/assessments/${assessmentId}/control-states/${controlStateId}/evidence/${evidenceId}`,
+      { method: "DELETE" }
+    );
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  },
 };
 
 const CACHE_PREFIX = "wingrc_assessment_";

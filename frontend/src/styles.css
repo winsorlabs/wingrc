@@ -604,3 +604,141 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
   font-size: 0.72rem;
   color: #dc3545;
 }
+
+/* ── Evidence section (inside control drawer, per objective) ── */
+.ev-section {
+  margin-top: 0.5rem;
+  border-top: 1px solid #f0f0f0;
+  padding-top: 0.4rem;
+}
+
+.ev-section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.25rem;
+}
+
+.ev-section-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.ev-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.3rem;
+  border-radius: 8px;
+  background: var(--primary);
+  color: white;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.ev-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.35rem;
+}
+
+.ev-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  min-width: 0;
+}
+
+.ev-type-chip {
+  display: inline-block;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  background: var(--na-bg);
+  color: var(--na-fg);
+  flex-shrink: 0;
+}
+
+.ev-title {
+  flex: 1;
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.ev-size {
+  font-size: 0.68rem;
+  color: var(--muted);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.ev-download {
+  font-size: 0.85rem;
+  color: var(--primary);
+  text-decoration: none;
+  flex-shrink: 0;
+  line-height: 1;
+  padding: 0.1rem;
+}
+.ev-download:hover { color: var(--primary-hover); }
+
+.ev-remove {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 0.7rem;
+  cursor: pointer;
+  padding: 0.1rem 0.2rem;
+  flex-shrink: 0;
+  line-height: 1;
+  border-radius: 3px;
+}
+.ev-remove:hover { background: #fee2e2; color: #dc3545; }
+
+.ev-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.ev-file-input {
+  display: none;
+}
+
+.ev-hint {
+  font-size: 0.68rem;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.ev-status {
+  font-size: 0.75rem;
+  color: var(--muted);
+  padding: 0.15rem 0;
+}
+
+.ev-empty {
+  margin-bottom: 0.35rem;
+}
+
+.ev-error {
+  font-size: 0.72rem;
+  color: #dc3545;
+  margin-top: 0.25rem;
+}

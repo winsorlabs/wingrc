@@ -56,6 +56,13 @@ export function AssessmentBoard({ org, assessment }: Props) {
       .finally(() => setLoading(false));
   }
 
+  function handleEvidenceChanged() {
+    api
+      .getControlStates(org.id, assessment.id)
+      .then(setRows)
+      .catch((e: Error) => setError(e.message));
+  }
+
   function handleStatementSave(updates: Array<{ objectiveId: string; status: string }>) {
     const byId = Object.fromEntries(updates.map((u) => [u.objectiveId, u.status]));
     setRows((prev) =>
@@ -133,6 +140,7 @@ export function AssessmentBoard({ org, assessment }: Props) {
           controlTitle={drawerControl.title}
           onClose={() => setDrawerControl(null)}
           onSave={handleStatementSave}
+          onEvidenceChanged={handleEvidenceChanged}
         />
       )}
     </>

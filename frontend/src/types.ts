@@ -57,10 +57,21 @@ export interface ProductRow {
 export interface StatementRow {
   id: string | null;
   objective_id: string;
+  control_state_id: string | null;
   objective_key: string;
   objective_text: string;
   objective_guidance: string | null;
   body: string;
   status: string | null;
   control_discussion: string | null;
+}
+
+export interface EvidenceRow {
+  id: string;
+  title: string;
+  artifact_type: string;
+  mime_type: string | null;
+  file_size_bytes: number | null;
+  collected_at: string;
+  download_url: string;
 }

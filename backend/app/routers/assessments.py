@@ -30,6 +30,7 @@ from ..models import (
     Control,
     ControlState,
     ControlStateHistory,
+    EvidenceStateLink,
     ImplementationStatement,
     OrgProduct,
     Product,
@@ -103,6 +104,7 @@ class PatchControlStateOut(BaseModel):
 class StatementOut(BaseModel):
     id: uuid.UUID | None = None
     objective_id: uuid.UUID
+    control_state_id: uuid.UUID | None = None
     objective_key: str
     objective_text: str
     objective_guidance: str | None = None
@@ -281,8 +283,22 @@ def list_control_states(
     if assessment is None or assessment.org_id != org_id:
         raise HTTPException(status_code=404, detail="Assessment not found")
 
+    ev_count_sq = (
+        select(func.count(EvidenceStateLink.id))
+        .where(EvidenceStateLink.control_state_id == ControlState.id)
+        .correlate(ControlState)
+        .scalar_subquery()
+    )
+
     stmt = (
-        select(ControlState, AssessmentObjective, Control, ImplementationStatement, Product)
+        select(
+            ControlState,
+            AssessmentObjective,
+            Control,
+            ImplementationStatement,
+            Product,
+            ev_count_sq.label("evidence_count"),
+        )
         .join(AssessmentObjective, ControlState.objective_id == AssessmentObjective.id)
         .join(Control, AssessmentObjective.control_id == Control.id)
         .outerjoin(
@@ -313,9 +329,9 @@ def list_control_states(
             sourced_from_product_id=cs.sourced_from_product_id,
             sourced_from_product_key=prod.key if prod is not None else None,
             statement_status=imp_stmt.status if imp_stmt is not None else None,
-            evidence_count=0,
+            evidence_count=ev_count or 0,
         )
-        for cs, obj, ctrl, imp_stmt, prod in session.execute(stmt).all()
+        for cs, obj, ctrl, imp_stmt, prod, ev_count in session.execute(stmt).all()
     ]
 
 
@@ -391,10 +407,23 @@ def get_statements(
         ).all()
         existing = {r.objective_id: r for r in rows}
 
+    states_by_obj: dict[uuid.UUID, ControlState] = {}
+    if obj_ids:
+        states_by_obj = {
+            cs.objective_id: cs
+            for cs in session.scalars(
+                select(ControlState).where(
+                    ControlState.assessment_id == assessment_id,
+                    ControlState.objective_id.in_(obj_ids),
+                )
+            ).all()
+        }
+
     return [
         StatementOut(
             id=existing[o.id].id if o.id in existing else None,
             objective_id=o.id,
+            control_state_id=states_by_obj[o.id].id if o.id in states_by_obj else None,
             objective_key=o.objective_key,
             objective_text=o.text,
             objective_guidance=o.guidance,
@@ -475,10 +504,24 @@ def upsert_statements(
     session.flush()  # populate DB-generated UUIDs before building the response
     session.commit()
 
+    upsert_obj_ids = [stmt.objective_id for stmt in saved]
+    upsert_states: dict[uuid.UUID, ControlState] = {
+        cs.objective_id: cs
+        for cs in session.scalars(
+            select(ControlState).where(
+                ControlState.assessment_id == assessment_id,
+                ControlState.objective_id.in_(upsert_obj_ids),
+            )
+        ).all()
+    }
+
     return [
         StatementOut(
             id=stmt.id,
             objective_id=stmt.objective_id,
+            control_state_id=upsert_states[stmt.objective_id].id
+            if stmt.objective_id in upsert_states
+            else None,
             objective_key=objectives[stmt.objective_id].objective_key,
             objective_text=objectives[stmt.objective_id].text,
             objective_guidance=objectives[stmt.objective_id].guidance,

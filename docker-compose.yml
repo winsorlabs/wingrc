@@ -41,6 +41,9 @@ services:
         condition: service_healthy
     environment:
       WINGRC_DATABASE_URL: postgresql+psycopg://wingrc:wingrc@db:5432/wingrc
+      WINGRC_STORAGE_ENDPOINT: http://minio:9000
+      WINGRC_STORAGE_ACCESS_KEY: wingrc
+      WINGRC_STORAGE_SECRET_KEY: wingrc-dev-secret
     ports:
       - "8000:8000"
     volumes:
