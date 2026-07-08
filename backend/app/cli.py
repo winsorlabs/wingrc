@@ -22,6 +22,7 @@ from .importers.workbook import parse_workbook
 from .models import Organization
 from .reconcile import reconcile
 from .render import render_view
+from .seeds.baselines import seed_baselines
 from .seeds.catalog import seed_catalog
 
 app = typer.Typer(help="WinGRC — open CMMC scope and documentation tooling.")
@@ -227,24 +228,20 @@ def _reset_dev(session) -> dict[str, int]:
     deleted["evidence"] = _del("DELETE FROM evidence")
 
     # ------------------------------------------------------------------ #
-    # Tier 4 — baseline library rows tied to non-CMMC-L2 frameworks      #
+    # Tier 4 — FK safety: remove baseline rows that reference controls    #
+    # belonging to test frameworks (those controls are deleted in Tier 5) #
+    # Product rows are reference data — they are NOT deleted here.        #
     # ------------------------------------------------------------------ #
     _KEEP_FW = "SELECT id FROM framework WHERE key = 'nist-800-171-r2'"
+    _TEST_CTRL = f"SELECT id FROM control WHERE framework_id NOT IN ({_KEEP_FW})"
 
-    deleted["baseline_evidence_spec (test fw)"] = _del(
+    deleted["baseline_evidence_spec (test ctrl)"] = _del(
         f"DELETE FROM baseline_evidence_spec WHERE baseline_control_id IN ("
-        f"  SELECT bc.id FROM baseline_control bc"
-        f"  JOIN product p ON bc.product_id = p.id"
-        f"  WHERE p.framework_id NOT IN ({_KEEP_FW})"
+        f"  SELECT id FROM baseline_control WHERE control_id IN ({_TEST_CTRL})"
         f")"
     )
-    deleted["baseline_control (test fw)"] = _del(
-        f"DELETE FROM baseline_control WHERE product_id IN ("
-        f"  SELECT id FROM product WHERE framework_id NOT IN ({_KEEP_FW})"
-        f")"
-    )
-    deleted["product (test fw)"] = _del(
-        f"DELETE FROM product WHERE framework_id NOT IN ({_KEEP_FW})"
+    deleted["baseline_control (test ctrl)"] = _del(
+        f"DELETE FROM baseline_control WHERE control_id IN ({_TEST_CTRL})"
     )
 
     # ------------------------------------------------------------------ #
@@ -282,6 +279,36 @@ def _reset_dev(session) -> dict[str, int]:
     )
 
     return deleted
+
+
+@app.command(name="seed-baselines")
+def seed_baselines_cmd(
+    db_url: str = typer.Option(None, "--db-url", help="Override DATABASE_URL"),
+) -> None:
+    """Load product baselines from baselines/*.yaml into the database (idempotent)."""
+    import os
+
+    if db_url:
+        os.environ["DATABASE_URL"] = db_url
+
+    from .db import SessionLocal as _SL
+
+    session = _SL()
+    try:
+        result = seed_baselines(session)
+        session.commit()
+        typer.echo(
+            f"Baselines seeded: {result['products']} products, "
+            f"{result['baseline_controls']} baseline controls, "
+            f"{result['evidence_specs']} evidence specs."
+        )
+        if result["missing_controls"]:
+            typer.echo(f"  Missing controls (not in catalog): {result['missing_controls']}")
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 @app.command()

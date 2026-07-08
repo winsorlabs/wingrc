@@ -107,9 +107,10 @@ def _seed_rocketcyber(db_session) -> dict:
     db_session.add_all([au_a, ia_a])
     db_session.flush()
 
+    test_key = f"rc-test-{uuid.uuid4().hex[:8]}"
     product = Product(
         framework_id=fw.id,
-        key="rocketcyber",
+        key=test_key,
         name="RocketCyber Managed SIEM + SOC",
         provider="Kaseya",
         category="ESP",
@@ -198,7 +199,7 @@ def test_list_products_shows_rocketcyber(client, db_session):
     products = r.json()
     assert len(products) == 1
     p = products[0]
-    assert p["key"] == "rocketcyber"
+    assert p["key"] == d["product"].key
     assert p["name"] == "RocketCyber Managed SIEM + SOC"
     assert p["provider"] == "Kaseya"
     assert p["is_active"] is False
@@ -236,7 +237,7 @@ def test_control_states_include_product_key_after_activate(client, db_session):
     by_ctrl = {row["control_id"] + "[" + row["objective_key"] + "]": row for row in rows}
 
     au = by_ctrl["AU.L2-3.3.1[a]"]
-    assert au["sourced_from_product_key"] == "rocketcyber"
+    assert au["sourced_from_product_key"] == d["product"].key
 
     ia = by_ctrl["IA.L2-3.5.1[a]"]
     assert ia["sourced_from_product_key"] is None
@@ -273,7 +274,7 @@ def test_activate_rocketcyber_au_pending_evidence_not_met(client, db_session):
         f"AU objective must be pending_evidence after activation, got {au['status']!r}"
     )
     assert au["responsibility"] == "provider_satisfies"
-    assert au["sourced_from_product_key"] == "rocketcyber"
+    assert au["sourced_from_product_key"] == d["product"].key
     assert au["status"] != "met", "Activation must never produce 'met' — evidence required first"
 
 
