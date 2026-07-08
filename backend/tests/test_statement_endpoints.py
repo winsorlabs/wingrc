@@ -133,7 +133,8 @@ def test_get_statements_returns_guidance(client, db_session):
 def test_put_creates_statements(client, db_session):
     d = _seed(db_session)
     payload = [
-        {"objective_id": str(d["obj_a"].id), "body": "We identify users via AD.", "status": "draft"},
+        {"objective_id": str(d["obj_a"].id), "body": "We identify users via AD.",
+         "status": "draft"},
         {"objective_id": str(d["obj_b"].id), "body": "Devices are in CMDB.", "status": "reviewed"},
     ]
     r = client.put(_base_url(d), json=payload)
@@ -272,14 +273,20 @@ def test_put_partial_subset_does_not_affect_others(client, db_session):
 @pytest.mark.integration
 def test_get_wrong_org_returns_404(client, db_session):
     d = _seed(db_session)
-    url = f"/orgs/{uuid.uuid4()}/assessments/{d['assessment'].id}/controls/{d['ctrl'].id}/statements"
+    url = (
+        f"/orgs/{uuid.uuid4()}/assessments/{d['assessment'].id}"
+        f"/controls/{d['ctrl'].id}/statements"
+    )
     assert client.get(url).status_code == 404
 
 
 @pytest.mark.integration
 def test_put_wrong_org_returns_404(client, db_session):
     d = _seed(db_session)
-    url = f"/orgs/{uuid.uuid4()}/assessments/{d['assessment'].id}/controls/{d['ctrl'].id}/statements"
+    url = (
+        f"/orgs/{uuid.uuid4()}/assessments/{d['assessment'].id}"
+        f"/controls/{d['ctrl'].id}/statements"
+    )
     payload = [{"objective_id": str(d["obj_a"].id), "body": "x", "status": "draft"}]
     assert client.put(url, json=payload).status_code == 404
 

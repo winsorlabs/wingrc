@@ -5,9 +5,9 @@ Run with:  pytest tests/test_catalog_seed.py -m integration -v
 """
 from __future__ import annotations
 
-import pytest
-import yaml
 from pathlib import Path
+
+import pytest
 
 from app.models import AssessmentObjective, Control, Framework
 from app.seeds.catalog import seed_catalog
@@ -124,8 +124,8 @@ def test_guidance_text_loads_clean(db_session):
                 bad.append((lineno, f"col {col}: U+{ord(ch):04X} {ch!r}"))
 
     assert not bad, (
-        f"Non-ASCII-printable characters found in cmmc_l2.yaml "
-        f"(first 5):\n" + "\n".join(f"  line {ln}: {desc}" for ln, desc in bad[:5])
+        "Non-ASCII-printable characters found in cmmc_l2.yaml "
+        "(first 5):\n" + "\n".join(f"  line {ln}: {desc}" for ln, desc in bad[:5])
     )
 
 
