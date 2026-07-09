@@ -195,3 +195,104 @@ def test_patch_control_state_not_in_assessment_returns_404(client, db_session):
     url = f"/orgs/{d['org'].id}/assessments/{assessment2.id}/control-states/{d['cs'].id}"
     r = client.patch(url, json={"status": "met"})
     assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# SPRS recomputation on PATCH
+# ---------------------------------------------------------------------------
+
+
+def _seed_two_objectives(db_session) -> dict:
+    """Seed one control (weight=3) with two objectives and two control_states."""
+    org = Organization(name=f"SprsTestOrg-{uuid.uuid4().hex}")
+    db_session.add(org)
+    db_session.flush()
+
+    fw = Framework(key=f"fw-{uuid.uuid4().hex}", name="SPRS FW", version="r2")
+    db_session.add(fw)
+    db_session.flush()
+
+    ctrl = Control(
+        framework_id=fw.id,
+        control_id=f"AU.L2-{uuid.uuid4().hex[:6]}",
+        family="AU",
+        title="SPRS test control",
+        requirement_text="SPRS test requirement",
+        sprs_weight=3,
+        sequence_order=1,
+    )
+    db_session.add(ctrl)
+    db_session.flush()
+
+    obj_a = AssessmentObjective(control_id=ctrl.id, objective_key="a", text="Objective a")
+    obj_b = AssessmentObjective(control_id=ctrl.id, objective_key="b", text="Objective b")
+    db_session.add_all([obj_a, obj_b])
+    db_session.flush()
+
+    assessment = Assessment(
+        org_id=org.id, framework_id=fw.id, name="SPRS Assessment"
+    )
+    db_session.add(assessment)
+    db_session.flush()
+
+    cs_a = ControlState(
+        assessment_id=assessment.id, org_id=org.id,
+        objective_id=obj_a.id, status="not_met", responsibility="customer_owns",
+    )
+    cs_b = ControlState(
+        assessment_id=assessment.id, org_id=org.id,
+        objective_id=obj_b.id, status="not_met", responsibility="customer_owns",
+    )
+    db_session.add_all([cs_a, cs_b])
+    db_session.flush()
+
+    return {"org": org, "assessment": assessment, "ctrl": ctrl, "cs_a": cs_a, "cs_b": cs_b}
+
+
+@pytest.mark.integration
+def test_sprs_recomputed_when_sole_objective_marked_met(client, db_session):
+    d = _seed(db_session)
+    url = f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/control-states/{d['cs'].id}"
+    r = client.patch(url, json={"status": "met"})
+    assert r.status_code == 200
+    assert r.json()["sprs_score"] == 110
+
+
+@pytest.mark.integration
+def test_sprs_recomputed_when_sole_objective_marked_inherited(client, db_session):
+    d = _seed(db_session)
+    url = f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/control-states/{d['cs'].id}"
+    r = client.patch(url, json={"status": "inherited"})
+    assert r.status_code == 200
+    assert r.json()["sprs_score"] == 110
+
+
+@pytest.mark.integration
+def test_sprs_deducts_when_objective_partial(client, db_session):
+    # partial ≠ met; full weight (1) deducted → 109
+    d = _seed(db_session)
+    url = f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/control-states/{d['cs'].id}"
+    r = client.patch(url, json={"status": "partial"})
+    assert r.json()["sprs_score"] == 109
+
+
+@pytest.mark.integration
+def test_sprs_deducts_full_weight_when_one_of_two_objectives_not_met(client, db_session):
+    # control weight = 3; obj_a → met, obj_b still not_met → full 3 deducted → 107
+    d = _seed_two_objectives(db_session)
+    url_a = (
+        f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}"
+        f"/control-states/{d['cs_a'].id}"
+    )
+    r = client.patch(url_a, json={"status": "met"})
+    assert r.json()["sprs_score"] == 107  # obj_b still not_met → deduct 3
+
+
+@pytest.mark.integration
+def test_sprs_no_deduction_when_all_objectives_met(client, db_session):
+    # Both objectives met → control satisfied → no deduction → 110
+    d = _seed_two_objectives(db_session)
+    base = f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/control-states"
+    client.patch(f"{base}/{d['cs_a'].id}", json={"status": "met"})
+    r = client.patch(f"{base}/{d['cs_b'].id}", json={"status": "met"})
+    assert r.json()["sprs_score"] == 110

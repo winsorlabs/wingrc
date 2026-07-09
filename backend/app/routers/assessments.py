@@ -22,7 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..db import get_session
-from ..engine import activate_org_product, start_assessment
+from ..engine import activate_org_product, recompute_sprs, start_assessment
 from ..models import (
     Assessment,
     AssessmentObjective,
@@ -102,6 +102,7 @@ class PatchControlStateIn(BaseModel):
 class PatchControlStateOut(BaseModel):
     id: uuid.UUID
     status: str
+    sprs_score: int | None = None
 
 
 class StatementOut(BaseModel):
@@ -137,6 +138,7 @@ class ControlStateOut(BaseModel):
     sourced_from_product_key: str | None = None
     statement_status: str | None = None
     evidence_count: int = 0
+    sprs_weight: int = 1
 
 
 # ---------------------------------------------------------------------------
@@ -353,6 +355,7 @@ def list_control_states(
             sourced_from_product_key=prod.key if prod is not None else None,
             statement_status=imp_stmt.status if imp_stmt is not None else None,
             evidence_count=ev_count or 0,
+            sprs_weight=ctrl.sprs_weight,
         )
         for cs, obj, ctrl, imp_stmt, prod, ev_count in session.execute(stmt).all()
     ]
@@ -392,8 +395,9 @@ def patch_control_state(
     )
     session.add(history)
     cs.status = body.status
+    score = recompute_sprs(session, assessment_id)
     session.commit()
-    return PatchControlStateOut(id=cs.id, status=cs.status)
+    return PatchControlStateOut(id=cs.id, status=cs.status, sprs_score=score)
 
 
 @router.get(

@@ -38,6 +38,7 @@ export interface ControlStateRow {
   sourced_from_product_key: string | null;
   statement_status: string | null;
   evidence_count: number;
+  sprs_weight: number;
 }
 
 export interface ProductRow {

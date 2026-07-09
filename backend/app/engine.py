@@ -18,7 +18,13 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .assessment import ControlStatus, OrgProductStatus, Responsibility, magic_loop_updates
+from .assessment import (
+    ControlStatus,
+    OrgProductStatus,
+    Responsibility,
+    compute_sprs,
+    magic_loop_updates,
+)
 from .models import (
     Assessment,
     AssessmentObjective,
@@ -31,6 +37,46 @@ from .models import (
     OrgProduct,
     Product,
 )
+
+
+def recompute_sprs(session: Session, assessment_id: uuid.UUID) -> int:
+    """Recompute and persist SPRS score for one assessment.
+
+    Queries all control_state rows, runs the objective→control rollup via
+    compute_sprs(), writes the result to assessment.sprs_score, and flushes.
+    Returns the computed integer score.
+    """
+    rows = session.execute(
+        select(
+            ControlState.objective_id,
+            ControlState.status,
+            Control.control_id,
+            Control.sprs_weight,
+        )
+        .join(AssessmentObjective, ControlState.objective_id == AssessmentObjective.id)
+        .join(Control, AssessmentObjective.control_id == Control.id)
+        .where(ControlState.assessment_id == assessment_id)
+    ).all()
+
+    control_weights: dict[str, int] = {}
+    objectives_by_control: dict[str, list[str]] = {}
+    objective_statuses: dict[str, str] = {}
+
+    for row in rows:
+        obj_id_str = str(row.objective_id)
+        ctrl_id = row.control_id
+        control_weights[ctrl_id] = row.sprs_weight
+        objectives_by_control.setdefault(ctrl_id, []).append(obj_id_str)
+        objective_statuses[obj_id_str] = row.status
+
+    score = compute_sprs(control_weights, objectives_by_control, objective_statuses)
+
+    assessment = session.get(Assessment, assessment_id)
+    if assessment is not None:
+        assessment.sprs_score = score
+        session.flush()
+
+    return score
 
 
 def start_assessment(
@@ -73,7 +119,7 @@ def start_assessment(
     for op in active_products:
         _run_loop(session, org_id, op.product_id, assessment.id)
 
-    session.flush()
+    recompute_sprs(session, assessment.id)
     return assessment
 
 
@@ -108,7 +154,9 @@ def activate_org_product(
         op.configuration_notes = configuration_notes
     session.flush()
 
-    return _run_loop(session, org_id, product_id, assessment_id)
+    result = _run_loop(session, org_id, product_id, assessment_id)
+    recompute_sprs(session, assessment_id)
+    return result
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,23 @@ const FAMILY_ORDER = [
   "AC", "AT", "AU", "CM", "IA", "IR", "MA", "MP", "PS", "PE", "RA", "CA", "SC", "SI",
 ];
 
+function computeSprsLive(rows: ControlStateRow[]): number {
+  const controls: Record<string, { weight: number; statuses: string[] }> = {};
+  for (const row of rows) {
+    if (!controls[row.control_id]) {
+      controls[row.control_id] = { weight: row.sprs_weight, statuses: [] };
+    }
+    controls[row.control_id].statuses.push(row.status);
+  }
+  let deductions = 0;
+  for (const { weight, statuses } of Object.values(controls)) {
+    if (!statuses.every((s) => s === "met" || s === "inherited")) {
+      deductions += weight;
+    }
+  }
+  return 110 - deductions;
+}
+
 interface DrawerControl {
   dbId: string;
   controlId: string;
@@ -83,6 +100,7 @@ export function AssessmentBoard({ org, assessment }: Props) {
   }, {});
 
   const met = rows.filter((r) => r.status === "met").length;
+  const sprs = rows.length > 0 ? computeSprsLive(rows) : (assessment.sprs_score ?? "—");
   const families = FAMILY_ORDER.filter((f) => byFamily[f]);
 
   return (
@@ -92,7 +110,7 @@ export function AssessmentBoard({ org, assessment }: Props) {
           <div>
             <div className="board-title">{assessment.name}</div>
             <div className="board-meta">
-              {org.name} · {assessment.status} · SPRS: {assessment.sprs_score ?? "—"}
+              {org.name} · {assessment.status} · SPRS: {sprs}
             </div>
           </div>
           <div className="board-topbar-right">
