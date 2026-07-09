@@ -102,6 +102,17 @@ export const api = {
     );
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   },
+
+  addReferences: (
+    orgId: string,
+    assessmentId: string,
+    controlStateId: string,
+    refs: Array<{ title: string; location: string; artifact_type: string }>
+  ) =>
+    req<EvidenceRow[]>(
+      `/orgs/${orgId}/assessments/${assessmentId}/control-states/${controlStateId}/evidence/references`,
+      { method: "POST", body: JSON.stringify(refs) }
+    ),
 };
 
 const CACHE_PREFIX = "wingrc_assessment_";

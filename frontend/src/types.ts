@@ -70,8 +70,11 @@ export interface EvidenceRow {
   id: string;
   title: string;
   artifact_type: string;
+  kind: string;
+  reference_location: string | null;
+  note: string | null;
   mime_type: string | null;
   file_size_bytes: number | null;
   collected_at: string;
-  download_url: string;
+  download_url: string | null;
 }

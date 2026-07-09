@@ -742,3 +742,74 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
   color: #dc3545;
   margin-top: 0.25rem;
 }
+
+.ev-item--ref {
+  border-style: dashed;
+  background: #faf8ff;
+}
+
+.ev-ref-chip {
+  display: inline-block;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  background: #ede9fe;
+  color: #6d28d9;
+  flex-shrink: 0;
+}
+
+.ev-item-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.08rem;
+}
+
+.ev-ref-location {
+  font-size: 0.65rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ev-ref-location a { color: var(--primary); text-decoration: none; }
+.ev-ref-location a:hover { text-decoration: underline; }
+
+.ev-add-loc-form {
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  margin-bottom: 0.35rem;
+  background: var(--bg);
+}
+
+.ev-add-loc-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.3rem;
+}
+
+.ev-add-loc-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.78rem;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: white;
+  color: var(--text);
+}
+.ev-add-loc-input::placeholder { color: var(--muted); }
+.ev-add-loc-input:focus { outline: none; border-color: var(--primary); }
+
+.ev-add-loc-input--loc { flex: 2; }
+
+.ev-add-loc-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
