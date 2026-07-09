@@ -228,26 +228,34 @@ def _reset_dev(session) -> dict[str, int]:
     deleted["evidence"] = _del("DELETE FROM evidence")
 
     # ------------------------------------------------------------------ #
-    # Tier 4 — FK safety: remove baseline rows that reference controls    #
-    # belonging to test frameworks (those controls are deleted in Tier 5) #
-    # Product rows are reference data — they are NOT deleted here.        #
+    # Tier 4 — FK safety: remove baseline rows and test products before   #
+    # deleting test framework catalog rows in Tier 5.                     #
+    # "Test products" = any product whose framework_id points at a non-   #
+    # production framework (created by integration tests).                #
     # ------------------------------------------------------------------ #
     _KEEP_FW = "SELECT id FROM framework WHERE key = 'nist-800-171-r2'"
+    _TEST_FW = "SELECT id FROM framework WHERE key != 'nist-800-171-r2'"
     _TEST_CTRL = f"SELECT id FROM control WHERE framework_id NOT IN ({_KEEP_FW})"
+    _TEST_PRODS = f"SELECT id FROM product WHERE framework_id IN ({_TEST_FW})"
 
-    deleted["baseline_evidence_spec (test ctrl)"] = _del(
+    deleted["baseline_evidence_spec (test)"] = _del(
         f"DELETE FROM baseline_evidence_spec WHERE baseline_control_id IN ("
-        f"  SELECT id FROM baseline_control WHERE control_id IN ({_TEST_CTRL})"
+        f"  SELECT id FROM baseline_control"
+        f"  WHERE control_id IN ({_TEST_CTRL}) OR product_id IN ({_TEST_PRODS})"
         f")"
     )
-    deleted["baseline_control (test ctrl)"] = _del(
-        f"DELETE FROM baseline_control WHERE control_id IN ({_TEST_CTRL})"
+    deleted["baseline_control (test)"] = _del(
+        f"DELETE FROM baseline_control"
+        f" WHERE control_id IN ({_TEST_CTRL}) OR product_id IN ({_TEST_PRODS})"
+    )
+    # Products that reference test frameworks must go before the framework rows.
+    deleted["product (test fw)"] = _del(
+        f"DELETE FROM product WHERE framework_id IN ({_TEST_FW})"
     )
 
     # ------------------------------------------------------------------ #
     # Tier 5 — test framework catalog rows                                #
     # ------------------------------------------------------------------ #
-    _TEST_FW = "SELECT id FROM framework WHERE key != 'nist-800-171-r2'"
 
     deleted["assessment_objective (test fw)"] = _del(
         f"DELETE FROM assessment_objective WHERE control_id IN ("

@@ -1,69 +1,102 @@
 """pytest fixtures for integration tests.
 
-Integration tests require a Postgres instance dedicated to testing.
-They MUST NOT run against the dev or production database.
+Tests run against a dedicated wingrc_test database — never the dev DB.
+The conftest auto-creates and migrates wingrc_test on session start (idempotent).
 
-Set WINGRC_TEST_DATABASE_URL to a test-only database URL:
-    export WINGRC_TEST_DATABASE_URL=postgresql+psycopg://wingrc:wingrc@localhost:5432/wingrc_test
+Default test DB (docker-compose): postgresql+psycopg://wingrc:wingrc@db:5432/wingrc_test
+Override via WINGRC_TEST_DATABASE_URL.
 
-The test DB must already have the Alembic schema applied:
-    WINGRC_DATABASE_URL=$WINGRC_TEST_DATABASE_URL alembic upgrade head
-
-If WINGRC_TEST_DATABASE_URL is not set, integration tests are skipped.
-Do NOT fall back to WINGRC_DATABASE_URL — that is the dev/prod database.
-
-Run:
-    WINGRC_TEST_DATABASE_URL=... pytest tests/ -m integration -q
+Run in-container:
+    docker compose exec backend pytest tests/ -q
 """
 from __future__ import annotations
 
 import os
+from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 
 import pytest
+from alembic import command as alembic_cmd
+from alembic.config import Config as AlembicConfig
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
+_ALEMBIC_INI = str(Path(__file__).resolve().parents[1] / "alembic.ini")
+_DEFAULT_TEST_URL = "postgresql+psycopg://wingrc:wingrc@db:5432/wingrc_test"
+_DEFAULT_DEV_URL = "postgresql+psycopg://wingrc:wingrc@db:5432/wingrc"
 
-def _test_db_url() -> str | None:
-    return os.environ.get("WINGRC_TEST_DATABASE_URL")
+
+def _test_db_url() -> str:
+    return os.environ.get("WINGRC_TEST_DATABASE_URL", _DEFAULT_TEST_URL)
+
+
+def _ensure_test_db(test_url: str) -> None:
+    """Create the test DB if absent and apply Alembic migrations (idempotent)."""
+    parsed = urlparse(test_url)
+    db_name = parsed.path.lstrip("/")
+    maintenance_url = urlunparse(parsed._replace(path="/postgres"))
+
+    # CREATE DATABASE must run outside a transaction (AUTOCOMMIT).
+    maint_engine = create_engine(maintenance_url, isolation_level="AUTOCOMMIT", pool_pre_ping=True)
+    with maint_engine.connect() as conn:
+        exists = conn.scalar(
+            text("SELECT 1 FROM pg_database WHERE datname = :name"), {"name": db_name}
+        )
+        if not exists:
+            conn.execute(text(f'CREATE DATABASE "{db_name}"'))
+    maint_engine.dispose()
+
+    # env.py calls get_settings().database_url at import time and overrides the
+    # alembic config URL.  Temporarily redirect WINGRC_DATABASE_URL to the test
+    # DB so Alembic migrates the right target, then restore.
+    from app.config import get_settings
+
+    old_val = os.environ.get("WINGRC_DATABASE_URL")
+    os.environ["WINGRC_DATABASE_URL"] = test_url
+    get_settings.cache_clear()
+    try:
+        cfg = AlembicConfig(_ALEMBIC_INI)
+        alembic_cmd.upgrade(cfg, "head")
+    finally:
+        if old_val is None:
+            os.environ.pop("WINGRC_DATABASE_URL", None)
+        else:
+            os.environ["WINGRC_DATABASE_URL"] = old_val
+        get_settings.cache_clear()
 
 
 @pytest.fixture(scope="session")
 def db_engine():
-    url = _test_db_url()
-    if not url:
-        pytest.skip(
-            "WINGRC_TEST_DATABASE_URL not set — integration tests require a dedicated "
-            "test database. Set this variable to a test-only DB URL and apply migrations."
+    test_url = _test_db_url()
+    dev_url = os.environ.get("WINGRC_DATABASE_URL", _DEFAULT_DEV_URL)
+
+    if test_url == dev_url:
+        pytest.fail(
+            "WINGRC_TEST_DATABASE_URL must differ from WINGRC_DATABASE_URL — "
+            "tests must never write to the dev/prod database."
         )
-    engine = create_engine(url, pool_pre_ping=True, future=True)
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-    except Exception as exc:
-        pytest.skip(f"Test database not reachable ({exc})")
+
+    _ensure_test_db(test_url)
+
+    engine = create_engine(test_url, pool_pre_ping=True, future=True)
     yield engine
     engine.dispose()
 
 
 @pytest.fixture
 def db_session(db_engine):
-    """Function-scoped session that rolls back every write after the test.
+    """Function-scoped session that always rolls back after each test.
 
-    Uses SA 2.0's correct pattern: pass the Connection as a positional argument
-    (not bind=) with join_transaction_mode="create_savepoint".  This makes
-    session.commit() release a savepoint rather than commit the outer
-    transaction, so all writes are rolled back when the outer transaction exits.
-
-    The bind= keyword form is deprecated in SA 2.0 and does not reliably join
-    the external transaction — it can grab a new pool connection and commit for
-    real, which is the bug this fixture corrects.
+    SA 2.0 caveat: `with conn.begin():` COMMITS on normal exit — its __exit__
+    calls self.commit() when no exception is raised (type_ is None). Use
+    explicit trans.rollback() in finally instead to guarantee rollback
+    regardless of test outcome.
     """
     with db_engine.connect() as conn:
-        with conn.begin():
-            sess = Session(conn, join_transaction_mode="create_savepoint")
-            try:
-                yield sess
-            finally:
-                sess.close()
-        # conn.begin().__exit__ without commit → ROLLBACK — no writes reach the DB
+        trans = conn.begin()
+        sess = Session(conn, join_transaction_mode="create_savepoint")
+        try:
+            yield sess
+        finally:
+            sess.close()
+            trans.rollback()
