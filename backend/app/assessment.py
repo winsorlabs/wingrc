@@ -157,7 +157,11 @@ def compute_sprs(
         objective_statuses:     {objective_id: ControlStatus value}
 
     Returns:
-        Integer SPRS score. Max is 110; minimum is typically -203.
+        Integer SPRS score. Max is 110; minimum is -204 (all 110 controls unmet:
+        44×5 + 14×3 + 52×1 = 314 max deduction). Source: DoD SP 800-171
+        Assessment Methodology v1.2.1 (Jun 2020). Note: 3.5.3 (MFA) and
+        3.13.11 (FIPS crypto) have partial-credit rules (−3 if partial, −5 if
+        absent) not captured by this flat model; both are stored at weight=5.
 
     A control is fully satisfied iff ALL its objectives have status in
     {met, inherited}. Any other status causes the full sprs_weight to deduct.
