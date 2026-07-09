@@ -22,29 +22,38 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 _ALEMBIC_INI = str(Path(__file__).resolve().parents[1] / "alembic.ini")
-_DEFAULT_TEST_URL = "postgresql+psycopg://wingrc:wingrc@db:5432/wingrc_test"
 _DEFAULT_DEV_URL = "postgresql+psycopg://wingrc:wingrc@db:5432/wingrc"
 
 
-def _test_db_url() -> str:
-    return os.environ.get("WINGRC_TEST_DATABASE_URL", _DEFAULT_TEST_URL)
+def _test_db_url() -> str | None:
+    return os.environ.get("WINGRC_TEST_DATABASE_URL")
 
 
 def _ensure_test_db(test_url: str) -> None:
-    """Create the test DB if absent and apply Alembic migrations (idempotent)."""
+    """Create the test DB if absent and apply Alembic migrations (idempotent).
+
+    Skips (via pytest.skip) if the postgres host is unreachable — this keeps
+    CI pipelines that have no DB service from erroring out.
+    """
+    from sqlalchemy.exc import OperationalError
+
     parsed = urlparse(test_url)
     db_name = parsed.path.lstrip("/")
     maintenance_url = urlunparse(parsed._replace(path="/postgres"))
 
     # CREATE DATABASE must run outside a transaction (AUTOCOMMIT).
     maint_engine = create_engine(maintenance_url, isolation_level="AUTOCOMMIT", pool_pre_ping=True)
-    with maint_engine.connect() as conn:
-        exists = conn.scalar(
-            text("SELECT 1 FROM pg_database WHERE datname = :name"), {"name": db_name}
-        )
-        if not exists:
-            conn.execute(text(f'CREATE DATABASE "{db_name}"'))
-    maint_engine.dispose()
+    try:
+        with maint_engine.connect() as conn:
+            exists = conn.scalar(
+                text("SELECT 1 FROM pg_database WHERE datname = :name"), {"name": db_name}
+            )
+            if not exists:
+                conn.execute(text(f'CREATE DATABASE "{db_name}"'))
+    except OperationalError as exc:
+        pytest.skip(f"Test database not reachable — skipping integration tests ({exc})")
+    finally:
+        maint_engine.dispose()
 
     # env.py calls get_settings().database_url at import time and overrides the
     # alembic config URL.  Temporarily redirect WINGRC_DATABASE_URL to the test
@@ -68,8 +77,13 @@ def _ensure_test_db(test_url: str) -> None:
 @pytest.fixture(scope="session")
 def db_engine():
     test_url = _test_db_url()
-    dev_url = os.environ.get("WINGRC_DATABASE_URL", _DEFAULT_DEV_URL)
+    if not test_url:
+        pytest.skip(
+            "WINGRC_TEST_DATABASE_URL not set — integration tests require a dedicated "
+            "test database. Set this variable to a test-only DB URL."
+        )
 
+    dev_url = os.environ.get("WINGRC_DATABASE_URL", _DEFAULT_DEV_URL)
     if test_url == dev_url:
         pytest.fail(
             "WINGRC_TEST_DATABASE_URL must differ from WINGRC_DATABASE_URL — "
