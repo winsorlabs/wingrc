@@ -366,7 +366,8 @@ def test_add_references_batch(client, db_session):
 def test_add_reference_unix_path(client, db_session):
     d = _seed(db_session)
     r = client.post(_refs_url(d), json=[
-        {"title": "Unix path", "location": "/mnt/nas/cmmc/evidence.pdf", "artifact_type": "document"}
+        {"title": "Unix path", "location": "/mnt/nas/cmmc/evidence.pdf",
+         "artifact_type": "document"}
     ])
     assert r.status_code == 201
     assert r.json()[0]["reference_location"] == "/mnt/nas/cmmc/evidence.pdf"
@@ -421,7 +422,8 @@ def test_download_reference_returns_404(client, db_session):
     """References have no stored file — download endpoint must 404."""
     d = _seed(db_session)
     ref = client.post(_refs_url(d), json=[
-        {"title": "SP link", "location": "https://sp.example.com/doc.pdf", "artifact_type": "document"}
+        {"title": "SP link", "location": "https://sp.example.com/doc.pdf",
+         "artifact_type": "document"}
     ])
     ev_id = ref.json()[0]["id"]
     r = client.get(_download_url(d, ev_id), follow_redirects=False)
