@@ -498,12 +498,15 @@ class ControlStateHistory(Base):
 
 
 class Evidence(Base):
-    """One collected evidence artifact (S3 reference).
+    """One collected evidence artifact — either a stored file or a location reference.
+
+    kind='file'      — bytes stored in S3; storage_key is set.
+    kind='reference' — a URL or filesystem path; reference_location is set,
+                       storage_key is NULL (nothing uploaded).
 
     An artifact is stored once and can satisfy multiple control objectives via
-    EvidenceStateLink — this is evidence minimization at the data layer.
-    customer_owns objectives never receive evidence tasks, so there is no path
-    for a customer_owns objective to gain evidence here.
+    EvidenceStateLink (evidence minimization). Any control_state may have
+    evidence attached regardless of responsibility value.
     """
 
     __tablename__ = "evidence"
@@ -511,6 +514,10 @@ class Evidence(Base):
         CheckConstraint(
             "artifact_type IN ('screenshot', 'export', 'document', 'link', 'policy')",
             name="ck_evidence_artifact_type",
+        ),
+        CheckConstraint(
+            "kind IN ('file', 'reference')",
+            name="ck_evidence_kind",
         ),
     )
 
@@ -522,11 +529,15 @@ class Evidence(Base):
     )
     title: Mapped[str] = mapped_column(String(400))
     description: Mapped[str | None] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(
+        String(10), nullable=False, server_default=text("'file'")
+    )
     artifact_type: Mapped[str] = mapped_column(String(20))
     storage_key: Mapped[str | None] = mapped_column(Text)
     storage_url: Mapped[str | None] = mapped_column(Text)
     mime_type: Mapped[str | None] = mapped_column(String(100))
     file_size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    reference_location: Mapped[str | None] = mapped_column(Text, nullable=True)
     collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     source_product_id: Mapped[uuid.UUID | None] = mapped_column(
