@@ -310,3 +310,170 @@ def test_list_products_wrong_org_returns_404(client, db_session):
         f"/orgs/{uuid.uuid4()}/assessments/{d['assessment'].id}/products"
     )
     assert client.get(url).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# 4. coverage_basis: platform_only controls must NOT activate
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_platform_only_controls_excluded_from_activation(client, db_session):
+    """A provider_satisfies control with coverage_basis=platform_only must NOT
+    flip to pending_evidence when the product is activated.
+
+    This guards the core correctness invariant: vendor CRMs often claim controls
+    that only apply to their own platform (e.g. AC.L2-3.1.11 session termination
+    for the vendor's web console). Those must be excluded from the magic loop so
+    the customer's assessment does not show false pending_evidence for controls
+    the product does not perform in the customer's environment.
+    """
+    org = Organization(name=f"PlatOnlyOrg-{uuid.uuid4().hex[:6]}")
+    fw = Framework(key=f"fw-plat-{uuid.uuid4().hex[:6]}", name="NIST r2", version="r2")
+    db_session.add_all([org, fw])
+    db_session.flush()
+
+    # Two controls: AU (customer_system) and AC.3.1.11 (platform_only)
+    au_ctrl = Control(
+        framework_id=fw.id, control_id="AU.L2-3.3.1", family="AU",
+        title="Event Logging", requirement_text="Create audit records.",
+        sprs_weight=3, sequence_order=1,
+    )
+    ac_ctrl = Control(
+        framework_id=fw.id, control_id="AC.L2-3.1.11", family="AC",
+        title="Session Termination", requirement_text="Terminate sessions.",
+        sprs_weight=1, sequence_order=2,
+    )
+    db_session.add_all([au_ctrl, ac_ctrl])
+    db_session.flush()
+
+    au_a = AssessmentObjective(control_id=au_ctrl.id, objective_key="a", text="Events logged.")
+    ac_a = AssessmentObjective(
+        control_id=ac_ctrl.id, objective_key="a", text="Sessions terminated."
+    )
+    db_session.add_all([au_a, ac_a])
+    db_session.flush()
+
+    product = Product(
+        framework_id=fw.id, key=f"rc-plat-{uuid.uuid4().hex[:8]}",
+        name="RC Platform Test", provider="Kaseya", category="ESP",
+        asset_type="SPA", role="Test product.",
+    )
+    db_session.add(product)
+    db_session.flush()
+
+    bc_au = BaselineControl(
+        product_id=product.id, control_id=au_ctrl.id, objectives=["a"],
+        classification="provider_satisfies", coverage_basis="customer_system",
+        candidate_state="pending_evidence",
+    )
+    bc_ac = BaselineControl(
+        product_id=product.id, control_id=ac_ctrl.id, objectives=["a"],
+        classification="provider_satisfies", coverage_basis="platform_only",
+        candidate_state="pending_evidence",
+    )
+    db_session.add_all([bc_au, bc_ac])
+    db_session.flush()
+
+    assessment = start_assessment(
+        db_session, org_id=org.id, framework_id=fw.id, name="Platform Only Test"
+    )
+    db_session.flush()
+
+    activate_url = (
+        f"/orgs/{org.id}/assessments/{assessment.id}/products/{product.id}/activate"
+    )
+    r = client.post(activate_url)
+    assert r.status_code == 200
+    result = r.json()
+    assert result["objectives_updated"] == 1, (
+        f"Only 1 objective (AU, customer_system) should activate; "
+        f"got {result['objectives_updated']}"
+    )
+
+    states_url = f"/orgs/{org.id}/assessments/{assessment.id}/control-states"
+    rows = client.get(states_url).json()
+    by_ctrl = {row["control_id"] + "[" + row["objective_key"] + "]": row for row in rows}
+
+    au = by_ctrl["AU.L2-3.3.1[a]"]
+    assert au["status"] == "pending_evidence", (
+        f"AU (customer_system) must be pending_evidence after activation, got {au['status']!r}"
+    )
+
+    ac = by_ctrl["AC.L2-3.1.11[a]"]
+    assert ac["status"] == "not_met", (
+        f"AC.L2-3.1.11 (platform_only) must stay not_met after activation, got {ac['status']!r}"
+    )
+    assert ac["responsibility"] == "customer_owns", (
+        f"platform_only control must stay customer_owns, got {ac['responsibility']!r}"
+    )
+    assert ac["sourced_from_product_key"] is None, (
+        "platform_only control must have no product source"
+    )
+
+
+@pytest.mark.integration
+def test_coverage_basis_counts_in_product_list(client, db_session):
+    """Products endpoint reports coverage_basis breakdown correctly."""
+    org = Organization(name=f"BasisCountOrg-{uuid.uuid4().hex[:6]}")
+    fw = Framework(key=f"fw-basis-{uuid.uuid4().hex[:6]}", name="NIST r2", version="r2")
+    db_session.add_all([org, fw])
+    db_session.flush()
+
+    ctrls = []
+    for i, cid in enumerate(["AU.L2-3.3.1", "AU.L2-3.3.2", "AC.L2-3.1.11", "IA.L2-3.5.1"]):
+        c = Control(
+            framework_id=fw.id, control_id=cid, family=cid[:2],
+            title=cid, requirement_text=".", sprs_weight=1, sequence_order=i,
+        )
+        db_session.add(c)
+        ctrls.append(c)
+    db_session.flush()
+
+    for c in ctrls:
+        db_session.add(AssessmentObjective(control_id=c.id, objective_key="a", text="."))
+    db_session.flush()
+
+    product = Product(
+        framework_id=fw.id, key=f"basis-test-{uuid.uuid4().hex[:8]}",
+        name="Basis Test Product", provider="Test", category="ESP",
+        asset_type="SPA", role="Test.",
+    )
+    db_session.add(product)
+    db_session.flush()
+
+    # 2 customer_system, 1 platform_only, 1 customer_owns (no coverage_basis)
+    db_session.add(BaselineControl(
+        product_id=product.id, control_id=ctrls[0].id, objectives=["a"],
+        classification="provider_satisfies", coverage_basis="customer_system",
+        candidate_state="pending_evidence",
+    ))
+    db_session.add(BaselineControl(
+        product_id=product.id, control_id=ctrls[1].id, objectives=["a"],
+        classification="provider_satisfies", coverage_basis="customer_system",
+        candidate_state="pending_evidence",
+    ))
+    db_session.add(BaselineControl(
+        product_id=product.id, control_id=ctrls[2].id, objectives=["a"],
+        classification="provider_satisfies", coverage_basis="platform_only",
+        candidate_state="pending_evidence",
+    ))
+    db_session.add(BaselineControl(
+        product_id=product.id, control_id=ctrls[3].id, objectives=["a"],
+        classification="customer_owns", candidate_state="not_satisfied_by_product",
+    ))
+    db_session.flush()
+
+    assessment = start_assessment(
+        db_session, org_id=org.id, framework_id=fw.id, name="Basis Count Test"
+    )
+    db_session.flush()
+
+    r = client.get(f"/orgs/{org.id}/assessments/{assessment.id}/products")
+    assert r.status_code == 200
+    p = r.json()[0]
+
+    assert p["customer_system_count"] == 2
+    assert p["platform_only_count"] == 1
+    assert p["assists_count"] == 0
+    assert p["customer_owns_count"] == 1

@@ -20,13 +20,14 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from ..models import (
     BaselineControl,
     BaselineEvidenceSpec,
     Control,
+    EvidenceTask,
     Framework,
     Product,
 )
@@ -143,6 +144,7 @@ def _seed_product(
                     control_id=ctrl.id,
                     objectives=entry.get("objectives") or [],
                     classification=entry["classification"],
+                    coverage_basis=entry.get("coverage_basis", "customer_system"),
                     candidate_state=entry.get("candidate_state", "not_satisfied_by_product"),
                     provider_contribution=entry.get("provider_contribution"),
                     customer_action=entry.get("customer_action"),
@@ -154,6 +156,7 @@ def _seed_product(
             else:
                 bc.objectives = entry.get("objectives") or []
                 bc.classification = entry["classification"]
+                bc.coverage_basis = entry.get("coverage_basis", "customer_system")
                 bc.candidate_state = entry.get("candidate_state", "not_satisfied_by_product")
                 bc.provider_contribution = entry.get("provider_contribution")
                 bc.customer_action = entry.get("customer_action")
@@ -162,14 +165,25 @@ def _seed_product(
                 bc.batch_group_id = batch_id
             session.flush()
 
-            # Delete-and-replace specs: no natural key to upsert by
-            for s in session.scalars(
+            # Delete-and-replace specs: no natural key to upsert by.
+            # Nullify evidence_task.baseline_spec_id FK first — those tasks
+            # survive reseed (they record what was collected) but lose the
+            # spec pointer that will be replaced with a fresh row.
+            old_specs = session.scalars(
                 select(BaselineEvidenceSpec).where(
                     BaselineEvidenceSpec.baseline_control_id == bc.id
                 )
-            ).all():
-                session.delete(s)
-            session.flush()
+            ).all()
+            if old_specs:
+                old_ids = [s.id for s in old_specs]
+                session.execute(
+                    update(EvidenceTask)
+                    .where(EvidenceTask.baseline_spec_id.in_(old_ids))
+                    .values(baseline_spec_id=None)
+                )
+                for s in old_specs:
+                    session.delete(s)
+                session.flush()
 
             for ev in entry.get("evidence") or []:
                 session.add(

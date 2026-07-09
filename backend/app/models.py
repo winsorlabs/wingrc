@@ -256,6 +256,10 @@ class BaselineControl(Base):
             "candidate_state IN ('pending_evidence', 'not_satisfied_by_product')",
             name="ck_baseline_control_candidate_state",
         ),
+        CheckConstraint(
+            "coverage_basis IN ('customer_system', 'platform_only', 'assists')",
+            name="ck_baseline_control_coverage_basis",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -280,6 +284,15 @@ class BaselineControl(Base):
     # Groups rows that originated from one batch YAML entry
     batch_group_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True, index=True
+    )
+    # WHERE the vendor's coverage applies: on the customer's CUI systems
+    # (customer_system), only on the vendor's own platform (platform_only),
+    # or partial/capability-only (assists). platform_only entries are excluded
+    # from magic-loop activation — they are vendor self-attestation, not
+    # customer-system coverage.
+    coverage_basis: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="customer_system",
+        server_default=text("'customer_system'")
     )
 
 

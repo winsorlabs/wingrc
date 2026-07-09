@@ -35,6 +35,7 @@ controls:
   - control: AC.L2-3.1.1
     objectives: [a, b, c, d, e, f]
     classification: shared
+    coverage_basis: platform_only
     provider_contribution: "SSO (KaseyaOne) + RBAC for portal access; agents scope reachable systems."
     customer_action: "Bind SSO to customer IdP; provision users there; deploy agents only to authorized systems."
     scope_note: "Satisfies access control FOR the RocketCyber platform. Customer CUI assets need their own AC controls."
@@ -46,6 +47,7 @@ controls:
   - control: AC.L2-3.1.2
     objectives: [a, b]
     classification: shared
+    coverage_basis: platform_only
     provider_contribution: "Default roles (Owner, Incident Responder, Reviewer) with scoped permissions."
     customer_action: "Assign users to roles per operational need."
     evidence:
@@ -55,6 +57,7 @@ controls:
   - control: AC.L2-3.1.5
     objectives: [a, b, c, d]
     classification: shared
+    coverage_basis: platform_only
     provider_contribution: "RBAC supports least privilege; portal use designated a security function."
     customer_action: "Identify privileged accounts; assign per least privilege."
     candidate_state: pending_evidence
@@ -68,6 +71,7 @@ controls:
   - control: AC.L2-3.1.11
     objectives: [a, b]
     classification: provider_satisfies
+    coverage_basis: platform_only
     provider_contribution: "Configurable session-termination-on-inactivity setting in the portal."
     customer_action: "Set the inactivity threshold value."
     evidence:
@@ -78,6 +82,7 @@ controls:
   - control: AT.L2-3.2.2
     objectives: [c]                       # [a],[b] are customer-owned (role definition/assignment)
     classification: shared
+    coverage_basis: platform_only
     provider_contribution: "Provides product training material (KB) that may support customer training."
     customer_action: "Define security roles, assign personnel, ensure training completion."
     evidence:
@@ -88,6 +93,7 @@ controls:
   - control: AU.L2-3.3.1
     objectives: [a, b, c, d, e, f]
     classification: provider_satisfies
+    coverage_basis: customer_system
     provider_contribution: "Portal generates audit records for defined event types; 1-year retention."
     customer_action: "Configure agents to capture required event types/fields on customer systems."
     evidence:
@@ -98,12 +104,14 @@ controls:
   - control: AU.L2-3.3.2
     objectives: [a, b]
     classification: provider_satisfies
+    coverage_basis: customer_system
     provider_contribution: "Records include user identifiers, timestamps, contextual metadata (user-to-action traceability)."
     candidate_state: pending_evidence
 
   - control: AU.L2-3.3.3
     objectives: [a, b, c]
     classification: shared
+    coverage_basis: customer_system
     provider_contribution: "Annual review of portal event types; updates configuration on findings."
     customer_action: "Define and run periodic review of agent-captured event types (Audit Log Process Review Procedure)."
     candidate_state: pending_evidence
@@ -111,6 +119,7 @@ controls:
   - control: AU.L2-3.3.8
     objectives: [a, b, c, d, e, f]
     classification: provider_satisfies
+    coverage_basis: customer_system
     provider_contribution: "RBAC + encryption, write-once + integrity checks, retention/privilege controls on portal logs."
     customer_action: "Protect customer-side/system-generated logs equivalently."
     candidate_state: pending_evidence
@@ -119,6 +128,7 @@ controls:
   - control: CM.L2-3.4.2
     objectives: [a, b]
     classification: shared
+    coverage_basis: platform_only
     provider_contribution: "Exposes configurable security settings; mechanisms support enforcement."
     customer_action: "Establish and enforce the security configuration (this baseline doc is the artifact)."
     evidence:
@@ -140,6 +150,7 @@ controls:
   - control: IR.L2-3.6.1
     objectives: [a, b, c, d, e, f, g]
     classification: provider_satisfies
+    coverage_basis: customer_system
     provider_contribution: "24/7 SOC: preparation, detection, analysis, containment guidance, recovery recommendations."
     customer_action: "Deploy/configure agents; execute containment in own environment; coordinate response."
     evidence:
@@ -151,6 +162,7 @@ controls:
   - control: MA.L2-3.7.1
     objectives: [a]
     classification: shared
+    coverage_basis: platform_only
     provider_contribution: "Auto-updates the agent as lifecycle management."
     customer_action: "Maintain the host (OS patching, host-level security)."
     candidate_state: pending_evidence
@@ -159,6 +171,7 @@ controls:
   - control: SC.L2-3.13.15
     objectives: [a]
     classification: provider_satisfies
+    coverage_basis: platform_only
     provider_contribution: "Secure, authenticated comms agent<->portal and customer<->portal."
     customer_action: "None unless integrating third-party systems/proxies."
     candidate_state: pending_evidence
@@ -167,6 +180,7 @@ controls:
   - control: SI.L2-3.14.1
     objectives: [a, b, c, d, e, f]
     classification: shared
+    coverage_basis: platform_only
     provider_contribution: "Identifies/reports/remediates flaws in the agent on defined SLAs; auto-updates agent."
     customer_action: "Identify/report/remediate flaws in host systems on own timelines."
     candidate_state: pending_evidence
@@ -174,6 +188,7 @@ controls:
   - control: SI.L2-3.14.6
     objectives: [a, b, c]
     classification: provider_satisfies
+    coverage_basis: customer_system
     provider_contribution: "SOC continuously monitors agent telemetry; inbound/outbound firewall traffic when fed."
     customer_action: "Install/configure agents; route firewall logs to RocketCyber."
     evidence:

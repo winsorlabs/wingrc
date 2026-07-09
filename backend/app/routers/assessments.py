@@ -84,6 +84,9 @@ class ProductOut(BaseModel):
     provider_satisfies_count: int
     shared_count: int
     customer_owns_count: int
+    customer_system_count: int
+    assists_count: int
+    platform_only_count: int
 
 
 _VALID_STATUSES = frozenset(
@@ -236,6 +239,22 @@ def list_products_for_assessment(
     for row in coverage_rows:
         coverage.setdefault(row.product_id, {})[row.classification] = row.cnt
 
+    # Aggregate coverage_basis counts (non-customer_owns only — basis is
+    # only meaningful for controls where the vendor claims involvement)
+    basis_rows = session.execute(
+        select(
+            BaselineControl.product_id,
+            BaselineControl.coverage_basis,
+            func.count().label("cnt"),
+        )
+        .where(BaselineControl.product_id.in_(product_ids))
+        .where(BaselineControl.classification != "customer_owns")
+        .group_by(BaselineControl.product_id, BaselineControl.coverage_basis)
+    ).all()
+    basis: dict[uuid.UUID, dict[str, int]] = {}
+    for row in basis_rows:
+        basis.setdefault(row.product_id, {})[row.coverage_basis] = row.cnt
+
     # Per-org activation status
     org_products = {
         op.product_id: op
@@ -251,6 +270,7 @@ def list_products_for_assessment(
     for p in products:
         op = org_products.get(p.id)
         c = coverage.get(p.id, {})
+        b = basis.get(p.id, {})
         out.append(
             ProductOut(
                 id=p.id,
@@ -264,6 +284,9 @@ def list_products_for_assessment(
                 provider_satisfies_count=c.get("provider_satisfies", 0),
                 shared_count=c.get("shared", 0),
                 customer_owns_count=c.get("customer_owns", 0),
+                customer_system_count=b.get("customer_system", 0),
+                assists_count=b.get("assists", 0),
+                platform_only_count=b.get("platform_only", 0),
             )
         )
     return out

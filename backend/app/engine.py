@@ -157,11 +157,14 @@ def _run_loop(
     if product is None:
         raise ValueError(f"Product {product_id} not found")
 
-    # --- baseline controls for this product (exclude customer_owns) ---
+    # --- baseline controls for this product ---
+    # Exclude customer_owns (vendor disclaims) and platform_only (vendor covers
+    # its own platform, not the customer's CUI systems).
     baseline_controls = session.scalars(
         select(BaselineControl)
         .where(BaselineControl.product_id == product_id)
         .where(BaselineControl.classification != "customer_owns")
+        .where(BaselineControl.coverage_basis != "platform_only")
     ).all()
 
     if not baseline_controls:
