@@ -346,7 +346,7 @@ def test_magic_loop_seeds_evidence_tasks(db_session: Session, ref: dict):
     t = tasks[0]
     assert t.title == "Portal user/role list"
     assert t.artifact_type == "export"
-    assert t.status == "pending"
+    assert t.status == "open"
     assert t.collection_session == "Test Portal — initial collection"
     assert t.baseline_spec_id == ref["spec"].id
     assert t.org_id == ref["org"].id
