@@ -18,7 +18,7 @@ from sqlalchemy import select
 
 from app.db import get_session
 from app.main import app
-from app.models import Assessment, Control, Framework, Organization
+from app.models import Assessment, Control, Organization
 from app.seeds.catalog import seed_catalog
 
 
