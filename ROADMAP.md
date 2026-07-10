@@ -69,3 +69,113 @@ compliance judgment, not a product decision. Before building:
 - POA&M view: flag ineligible controls visually; aggregate banner when
   conditional certification criteria are (not) met
 - Deliverable: include eligibility determination in the assessment bundle export
+
+---
+
+## C — Assessment presentation layer and visual polish
+
+**When:** After evidence-tasks and bundle export are complete — this layer
+visualizes a stable, fully-populated data model. Building it early would mean
+designing against incomplete data.
+
+**What:** A dedicated dashboard/summary view for a completed or in-progress
+assessment, plus a general visual-polish pass across all existing screens.
+
+---
+
+### C.1 — SPRS gauge
+
+A single-number gauge showing the live SPRS score on a −204 to 110 scale.
+
+- **Scale:** −204 (all controls unmet) to 110 (fully met). Not red-to-green
+  — color alone misrepresents regulatory meaning.
+- **Meaningful threshold lines:**
+  - **88** — conditional-certification floor per 32 CFR Part 170. Below this,
+    no POA&M plan qualifies for conditional CMMC Level 2 certification. This is
+    the primary regulatory target; mark it prominently.
+  - **110** — perfect score; mark as the upper bound.
+  - Optionally mark **0** as a visual midpoint (neither fully clean nor worst
+    case), but 88 is the line that matters to the customer.
+- **Display:** score displayed numerically inside the gauge arc. Label the 88
+  and 110 lines. The gauge should communicate urgency (below 88 = not
+  conditionally certifiable) without implying a binary pass/fail.
+- **Data source:** `assessment.sprs_score` (persisted) + live recompute on
+  load via the same `computeSprsLive` rollup already in use. No new endpoint
+  needed.
+
+---
+
+### C.2 — Family radar / spider chart
+
+14-axis radar chart, one axis per NIST 800-171 control family (AC, AT, AU,
+CM, IA, IR, MA, MP, PS, PE, RA, CA, SC, SI).
+
+- **Each axis:** percentage of controls in that family that are fully met
+  (all objectives ∈ {met, inherited}), using the same all-objectives-met
+  rollup as SPRS scoring. This keeps the chart and the score consistent.
+- **Purpose:** spatial visualization of where the deficiencies are concentrated.
+  A family that is a small slice visually signals where work is needed; a full
+  polygon means no gaps. This is faster to read than scrolling 14 family
+  sections.
+- **Rendering:** SVG-based; no charting library dependency if feasible (keeps
+  the bundle small). If a library is needed, evaluate lightweight options
+  (e.g. Recharts RadarChart) — avoid pulling in a full charting suite for one
+  chart type.
+- **Data source:** same `ControlStateRow[]` already loaded for the board —
+  no additional API calls.
+
+---
+
+### C.3 — Assessment progress dashboard
+
+A summary panel showing the current state of the assessment across four
+dimensions:
+
+1. **Overall completion:** `N / 110 controls fully met` + percentage bar.
+   "Fully met" = same all-objectives rollup.
+
+2. **Progress by weight tier:** three rows matching the board's tier summary,
+   but laid out more prominently with counts and percentages:
+   - 5-pt: N / 44 controls met (these are the certification-critical ones)
+   - 3-pt: N / 14 controls met
+   - 1-pt: N / 52 controls met
+
+3. **Evidence status:** outstanding vs. collected evidence tasks (from
+   `evidence_task` rows). Requires `evidence_task` data to be meaningful;
+   placeholder until that feature is built.
+   - Tasks pending / in-progress / completed / waived
+   - Evidence artifacts attached (count of `evidence` rows linked to this
+     assessment via `evidence_state_link`)
+
+4. **Controls by responsibility:** breakdown of the 110 controls by
+   responsibility assignment — `customer_owns` / `provider_satisfies` /
+   `shared`. Shows how much of the assessment burden falls on the MSP vs.
+   the customer. Useful for the CRM deliverable.
+   Count at the control level (a control's responsibility = the most
+   restrictive responsibility among its objectives, or the plurality — define
+   the rollup rule when building).
+
+---
+
+### C.4 — Visual polish pass
+
+At the same time as C.1–C.3, do a targeted pass on the existing screens:
+
+- Typography, spacing, and color consistency across the board, drawer, and
+  evidence sections.
+- Mobile/narrow-viewport behavior for the filter bar and tier summary.
+- Accessibility: keyboard navigation for filter chips, ARIA labels on the
+  gauge and radar chart, sufficient contrast on status badges.
+- Empty-state illustrations or copy for the case where no assessment exists
+  yet, and for a freshly seeded board (all not_met, no products activated).
+
+**Do not polish prematurely** — wait for the data model and feature set to
+stabilize so the polish pass doesn't need to be redone.
+
+---
+
+### Sequencing note
+
+Build order within C: C.1 (gauge) first — smallest scope, highest visual
+impact. C.2 (radar) second. C.3 (dashboard) third — depends on evidence-task
+data being present. C.4 (polish) last, as a sweep across all screens together.
