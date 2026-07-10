@@ -43,6 +43,11 @@ services:
       WINGRC_DATABASE_URL: postgresql+psycopg://wingrc:wingrc@db:5432/wingrc
       WINGRC_TEST_DATABASE_URL: postgresql+psycopg://wingrc:wingrc@db:5432/wingrc_test
       WINGRC_STORAGE_ENDPOINT: http://minio:9000
+      # Set WINGRC_STORAGE_PUBLIC_ENDPOINT in your host .env to the LAN/public
+      # address browsers use to reach MinIO (e.g. http://10.10.24.35:9000).
+      # Without it, presigned URLs contain the internal 'minio' hostname which
+      # browsers can't resolve.
+      WINGRC_STORAGE_PUBLIC_ENDPOINT: ${WINGRC_STORAGE_PUBLIC_ENDPOINT:-}
       WINGRC_STORAGE_ACCESS_KEY: wingrc
       WINGRC_STORAGE_SECRET_KEY: wingrc-dev-secret
       PYTHONPATH: /app

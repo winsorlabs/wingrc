@@ -43,7 +43,14 @@ class NullStorageClient(StorageClient):
 
 
 class MinIOClient(StorageClient):
-    """S3-compatible client via boto3.  Auto-creates the bucket on first use."""
+    """S3-compatible client via boto3.  Auto-creates the bucket on first use.
+
+    Two boto3 clients are created when public_endpoint is set:
+      _s3      — internal endpoint; used for upload/delete (backend→MinIO traffic)
+      _s3_pub  — public endpoint; used for presigned URL generation so URLs
+                 contain a host browsers can resolve (e.g. LAN IP, not 'minio')
+    When public_endpoint is None, _s3_pub falls back to _s3.
+    """
 
     def __init__(
         self,
@@ -52,18 +59,23 @@ class MinIOClient(StorageClient):
         secret_key: str,
         bucket: str,
         region: str,
+        public_endpoint: str | None = None,
     ) -> None:
         import boto3  # lazy — only installed when storage is configured
         from botocore.client import Config
 
         self._bucket = bucket
-        self._s3 = boto3.client(
-            "s3",
-            endpoint_url=endpoint,
+        client_kwargs: dict = dict(
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,
             region_name=region,
             config=Config(signature_version="s3v4"),
+        )
+        self._s3 = boto3.client("s3", endpoint_url=endpoint, **client_kwargs)
+        self._s3_pub = (
+            boto3.client("s3", endpoint_url=public_endpoint, **client_kwargs)
+            if public_endpoint
+            else self._s3
         )
         self._ensure_bucket()
 
@@ -82,7 +94,7 @@ class MinIOClient(StorageClient):
         )
 
     def presigned_url(self, key: str, expires_in: int = 300) -> str:
-        return self._s3.generate_presigned_url(
+        return self._s3_pub.generate_presigned_url(
             "get_object",
             Params={"Bucket": self._bucket, "Key": key},
             ExpiresIn=expires_in,
@@ -104,6 +116,7 @@ def _build_client() -> StorageClient:
             secret_key=s.storage_secret_key,
             bucket=s.storage_bucket,
             region=s.storage_region,
+            public_endpoint=s.storage_public_endpoint,
         )
     return NullStorageClient()
 

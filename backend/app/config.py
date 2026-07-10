@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     # S3-compatible object storage for evidence artifacts.
     # Set storage_endpoint to activate MinIOClient; leave unset to use NullStorageClient.
     storage_endpoint: str | None = None
+    # Public/browser-facing endpoint for presigned URLs.  The backend reaches MinIO
+    # via storage_endpoint (internal Docker DNS); browsers need the LAN/public address.
+    # If unset, presigned URLs use storage_endpoint (fine for same-host dev).
+    storage_public_endpoint: str | None = None
     storage_access_key: str = "wingrc"
     storage_secret_key: str = "wingrc-dev-secret"
     storage_bucket: str = "evidence"
