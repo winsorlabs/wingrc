@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import uuid
 
-import pytest
 from fastapi.testclient import TestClient
+import pytest
 from sqlalchemy import func, select
 
 from app.db import get_session
@@ -246,7 +246,9 @@ def test_artifact_dedup_same_key_creates_one_task(db_session, seeded):
     db_session.add_all([spec1, spec2])
     db_session.flush()
 
-    activate_org_product(db_session, org_id=org.id, product_id=product.id, assessment_id=assessment.id)
+    activate_org_product(
+        db_session, org_id=org.id, product_id=product.id, assessment_id=assessment.id
+    )
 
     # Only one task should exist for the shared artifact key
     matching_tasks = db_session.scalars(
@@ -309,7 +311,7 @@ def test_collection_session_from_kb_reference(db_session, scenario):
 
 @pytest.mark.integration
 def test_reactivate_no_duplicate_tasks(db_session, scenario):
-    result1 = _activate(db_session, scenario)
+    _activate(db_session, scenario)
     count_after_first = _task_count(db_session, scenario["assessment"].id)
     links_after_first = _link_count(db_session, scenario["assessment"].id)
 
