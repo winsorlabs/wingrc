@@ -503,6 +503,7 @@ def deactivate_org_product(
                 context=deactivation_ctx,
             )
             cs.status = ControlStatus.NEEDS_REVIEW
+            cs.sourced_from_product_id = None
             auto_states.append(cs)
             controls_flagged += 1
         else:
