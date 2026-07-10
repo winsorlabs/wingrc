@@ -135,9 +135,8 @@ export function ContactDrawer({ orgId, contact, onClose, onSaved, onDeleted }: P
   }
 
   return (
-    <>
-      <div className="drawer-overlay" onClick={onClose} />
-      <div className="drawer">
+    <div className="drawer-overlay" onClick={onClose}>
+      <div className="drawer" onClick={(e) => e.stopPropagation()}>
         <div className="drawer-header">
           <h3>{isNew ? "Add Contact" : "Edit Contact"}</h3>
           <button className="drawer-close" onClick={onClose} aria-label="Close">×</button>
@@ -214,6 +213,6 @@ export function ContactDrawer({ orgId, contact, onClose, onSaved, onDeleted }: P
           </button>
         </div>
       </div>
-    </>
+    </div>
   );
 }
