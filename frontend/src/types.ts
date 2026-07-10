@@ -101,3 +101,77 @@ export interface EvidenceRow {
   collected_at: string;
   download_url: string | null;
 }
+
+export interface OrgProfile {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string | null;
+  cage_code: string | null;
+  uei: string | null;
+  year_established: number | null;
+  industry: string | null;
+  address_line1: string | null;
+  address_line2: string | null;
+  city: string | null;
+  state_or_province: string | null;
+  postal_code: string | null;
+  country: string | null;
+  phone_primary: string | null;
+  phone_secondary: string | null;
+  website: string | null;
+  logo_storage_key: string | null;
+  logo_url: string | null;
+}
+
+export interface StorageLocation {
+  type: string;
+  description: string;
+}
+
+export interface ExternalConnection {
+  name: string;
+  direction: string;
+  purpose: string;
+}
+
+export interface SystemDescriptionData {
+  id: string;
+  org_id: string;
+  system_name: string;
+  system_type: string;
+  operational_status: string;
+  system_description: string | null;
+  cui_categories: string[];
+  cui_storage_locations: StorageLocation[];
+  authorization_boundary_description: string | null;
+  external_connections: ExternalConnection[];
+  cui_flow_description: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContactDocRole {
+  role: string;
+  notes: string | null;
+}
+
+export interface Contact {
+  id: string;
+  org_id: string;
+  name: string;
+  email: string;
+  affiliation: string;
+  phone: string | null;
+  role_title: string | null;
+  contract_ref: string | null;
+  notes: string | null;
+  documentation_roles: ContactDocRole[];
+  created_at: string;
+}
+
+export interface OnboardingStatus {
+  profile: { complete: boolean; missing_fields: string[] };
+  system_description: { complete: boolean };
+  personnel: { complete: boolean; contact_count: number; roles_covered: string[] };
+}

@@ -4,9 +4,11 @@ import type { Assessment, Framework, Org } from "../types";
 
 interface Props {
   onEnterBoard: (org: Org, assessment: Assessment) => void;
+  onEnterOnboarding: (org: Org) => void;
+  onOpenSettings: (org: Org) => void;
 }
 
-export function OrgPicker({ onEnterBoard }: Props) {
+export function OrgPicker({ onEnterBoard, onEnterOnboarding, onOpenSettings }: Props) {
   const [orgs, setOrgs] = useState<Org[]>([]);
   const [selectedOrg, setSelectedOrg] = useState<Org | null>(null);
   const [assessments, setAssessments] = useState<Assessment[]>([]);
@@ -41,7 +43,8 @@ export function OrgPicker({ onEnterBoard }: Props) {
       const org = await api.createOrg(newOrgName.trim());
       setOrgs((prev) => [...prev, org]);
       setNewOrgName("");
-      selectOrg(org);
+      // After creation, launch onboarding wizard
+      onEnterOnboarding(org);
     } catch {
       setError("Failed to create org");
     } finally {
@@ -86,6 +89,16 @@ export function OrgPicker({ onEnterBoard }: Props) {
               onClick={() => selectOrg(org)}
             >
               <span className="item-name">{org.name}</span>
+              <div className="org-row-actions">
+                <button
+                  className="btn-ghost btn-xs"
+                  title="Org settings"
+                  onClick={(e) => { e.stopPropagation(); onOpenSettings(org); }}
+                  aria-label="Settings"
+                >
+                  ⚙
+                </button>
+              </div>
             </li>
           ))}
           {orgs.length === 0 && (

@@ -1,4 +1,4 @@
-import type { Assessment, ControlStateRow, EvidenceRow, EvidenceTaskRow, Framework, Org, ProductRow, StatementRow } from "./types";
+import type { Assessment, Contact, ControlStateRow, EvidenceRow, EvidenceTaskRow, Framework, OnboardingStatus, Org, OrgProfile, ProductRow, StatementRow, SystemDescriptionData } from "./types";
 
 const BASE = "/api";
 
@@ -128,6 +128,77 @@ export const api = {
       `/orgs/${orgId}/assessments/${assessmentId}/control-states/${controlStateId}/evidence/references`,
       { method: "POST", body: JSON.stringify(refs) }
     ),
+
+  // ── Org profile ──────────────────────────────────────────────────────────
+  getOrgProfile: (orgId: string) =>
+    req<OrgProfile>(`/orgs/${orgId}/profile`),
+
+  patchOrgProfile: (orgId: string, data: Partial<Omit<OrgProfile, "id" | "name" | "created_at" | "updated_at" | "logo_storage_key" | "logo_url">>) =>
+    req<OrgProfile>(`/orgs/${orgId}/profile`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  uploadLogo: async (orgId: string, file: File): Promise<{ logo_storage_key: string; logo_url: string }> => {
+    const form = new FormData();
+    form.append("file", file);
+    const r = await fetch(`/api/orgs/${orgId}/logo`, { method: "POST", body: form });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json() as Promise<{ logo_storage_key: string; logo_url: string }>;
+  },
+
+  // ── System description ────────────────────────────────────────────────────
+  getSystemDescription: async (orgId: string): Promise<SystemDescriptionData | null> => {
+    const r = await fetch(`/api/orgs/${orgId}/system-description`, {
+      headers: { "Content-Type": "application/json" },
+    });
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json() as Promise<SystemDescriptionData>;
+  },
+
+  putSystemDescription: (orgId: string, data: Omit<SystemDescriptionData, "id" | "org_id" | "created_at" | "updated_at">) =>
+    req<SystemDescriptionData>(`/orgs/${orgId}/system-description`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  // ── Onboarding status ─────────────────────────────────────────────────────
+  getOnboardingStatus: (orgId: string) =>
+    req<OnboardingStatus>(`/orgs/${orgId}/onboarding-status`),
+
+  // ── Contacts ──────────────────────────────────────────────────────────────
+  getContacts: (orgId: string) =>
+    req<Contact[]>(`/orgs/${orgId}/contacts`),
+
+  createContact: (
+    orgId: string,
+    data: { name: string; email: string; affiliation: string; phone?: string | null; role_title?: string | null; contract_ref?: string | null; notes?: string | null }
+  ) =>
+    req<Contact>(`/orgs/${orgId}/contacts`, { method: "POST", body: JSON.stringify(data) }),
+
+  patchContact: (
+    orgId: string,
+    contactId: string,
+    data: Partial<{ name: string; email: string; affiliation: string; phone: string | null; role_title: string | null; contract_ref: string | null; notes: string | null }>
+  ) =>
+    req<Contact>(`/orgs/${orgId}/contacts/${contactId}`, { method: "PATCH", body: JSON.stringify(data) }),
+
+  deleteContact: async (orgId: string, contactId: string): Promise<void> => {
+    const r = await fetch(`/api/orgs/${orgId}/contacts/${contactId}`, { method: "DELETE" });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  },
+
+  addContactRole: (orgId: string, contactId: string, role: string) =>
+    req<{ id: string; contact_id: string; role: string; notes: string | null; created_at: string }>(
+      `/orgs/${orgId}/contacts/${contactId}/roles`,
+      { method: "POST", body: JSON.stringify({ role }) }
+    ),
+
+  removeContactRole: async (orgId: string, contactId: string, role: string): Promise<void> => {
+    const r = await fetch(`/api/orgs/${orgId}/contacts/${contactId}/roles/${role}`, { method: "DELETE" });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  },
 };
 
 const CACHE_PREFIX = "wingrc_assessment_";
