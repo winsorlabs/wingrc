@@ -104,7 +104,8 @@ class SystemDescription(Base):
             name="ck_system_description_type",
         ),
         CheckConstraint(
-            "operational_status IN ('operational','under_development','undergoing_major_modification')",
+            "operational_status IN ('operational','under_development',"
+            "'undergoing_major_modification')",
             name="ck_system_description_op_status",
         ),
     )

@@ -231,7 +231,11 @@ def create_contact(
         action="contact.create",
         entity_type="contact",
         entity_id=contact.id,
-        after_value={"name": contact.name, "email": contact.email, "affiliation": contact.affiliation},
+        after_value={
+            "name": contact.name,
+            "email": contact.email,
+            "affiliation": contact.affiliation,
+        },
         context={"via": "api"},
     )
     session.commit()

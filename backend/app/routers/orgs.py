@@ -23,7 +23,12 @@ from sqlalchemy.orm import Session
 
 from ..audit import log_event
 from ..db import get_session
-from ..models import Contact, ContactDocumentationRole, Organization, SystemDescription
+from ..models import (
+    Contact,
+    ContactDocumentationRole,
+    Organization,
+    SystemDescription,
+)
 from ..storage import StorageClient, get_storage_client
 
 router = APIRouter(prefix="/orgs", tags=["orgs"])
@@ -321,7 +326,9 @@ async def upload_logo(
             detail=f"Logo exceeds {_IMAGE_MAX_BYTES // (1024 * 1024)} MB limit",
         )
     if not _verify_image_bytes(data, mime):
-        raise HTTPException(status_code=422, detail="File content does not match declared MIME type")
+        raise HTTPException(
+            status_code=422, detail="File content does not match declared MIME type"
+        )
 
     ext = _IMAGE_MIME_TO_EXT[mime]
     new_key = f"{org_id}/logos/{uuid.uuid4()}{ext}"
@@ -421,8 +428,6 @@ def upsert_system_description(
 def get_onboarding_status(
     org_id: uuid.UUID, session: Session = Depends(get_session)
 ) -> OnboardingStatus:
-    from ..models import Contact, ContactDocumentationRole
-
     org = _get_org(session, org_id)
 
     # Profile completeness

@@ -21,7 +21,6 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.audit import log_event
 from app.db import get_session
 from app.main import app
 from app.models import (

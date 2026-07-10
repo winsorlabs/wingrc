@@ -77,7 +77,8 @@ def upgrade() -> None:
             name="ck_system_description_type",
         ),
         sa.CheckConstraint(
-            "operational_status IN ('operational','under_development','undergoing_major_modification')",
+            "operational_status IN ('operational','under_development',"
+            "'undergoing_major_modification')",
             name="ck_system_description_op_status",
         ),
         sa.UniqueConstraint("org_id", name="uq_system_description_org"),
