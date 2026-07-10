@@ -578,9 +578,12 @@ class EvidenceStateLink(Base):
 class EvidenceTask(Base):
     """Queued evidence collection task created by the magic loop.
 
-    One task per baseline_evidence_spec per active product's provider_satisfies
-    and shared controls. customer_owns controls get no tasks — evidence
-    minimization enforced at the magic-loop layer.
+    One task per unique artifact (keyed on title+artifact_type) per assessment.
+    Links to one or more control_states via EvidenceTaskStateLink — one artifact
+    can satisfy multiple objectives (evidence minimization). customer_owns and
+    platform_only controls never generate tasks.
+
+    status vocabulary: open → collected → na (not applicable / waived)
     """
 
     __tablename__ = "evidence_task"
@@ -590,7 +593,7 @@ class EvidenceTask(Base):
             name="ck_evidence_task_artifact_type",
         ),
         CheckConstraint(
-            "status IN ('pending', 'in_progress', 'completed', 'skipped', 'waived')",
+            "status IN ('open', 'collected', 'na')",
             name="ck_evidence_task_status",
         ),
     )
@@ -604,20 +607,15 @@ class EvidenceTask(Base):
     assessment_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("assessment.id"), nullable=True, index=True
     )
-    control_state_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("control_state.id"), nullable=True, index=True
-    )
     baseline_spec_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("baseline_evidence_spec.id"), nullable=True
     )
     title: Mapped[str] = mapped_column(String(400))
     description: Mapped[str | None] = mapped_column(Text)
     artifact_type: Mapped[str] = mapped_column(String(20))
-    status: Mapped[str] = mapped_column(String(20), default="pending")
+    status: Mapped[str] = mapped_column(String(20), default="open")
     collection_session: Mapped[str | None] = mapped_column(String(200))
     due_date: Mapped[date | None] = mapped_column(Date)
-    # Staleness deadline for recurring (scheduled_operation) tasks: when the
-    # linked evidence expires and the task must be re-executed.
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_evidence_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("evidence.id"), nullable=True
@@ -627,6 +625,32 @@ class EvidenceTask(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class EvidenceTaskStateLink(Base):
+    """Many-to-many join: one evidence task can satisfy multiple control objectives.
+
+    Mirrors EvidenceStateLink (evidence artifact → many control_states) but at the
+    task level. Created by the magic loop alongside the task; never mutated.
+    """
+
+    __tablename__ = "evidence_task_state_link"
+    __table_args__ = (
+        UniqueConstraint("task_id", "control_state_id", name="uq_evidence_task_state_link"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("evidence_task.id"), index=True
+    )
+    control_state_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("control_state.id"), index=True
+    )
+    linked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
 
 

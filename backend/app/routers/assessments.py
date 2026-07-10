@@ -27,10 +27,13 @@ from ..models import (
     Assessment,
     AssessmentObjective,
     BaselineControl,
+    BaselineEvidenceSpec,
     Control,
     ControlState,
     ControlStateHistory,
     EvidenceStateLink,
+    EvidenceTask,
+    EvidenceTaskStateLink,
     ImplementationStatement,
     OrgProduct,
     Product,
@@ -121,6 +124,25 @@ class UpsertStatementIn(BaseModel):
     objective_id: uuid.UUID
     body: str
     status: str = "draft"
+
+
+class EvidenceTaskStateRef(BaseModel):
+    control_state_id: uuid.UUID
+    objective_id: uuid.UUID
+    control_id: str
+    objective_key: str
+
+
+class EvidenceTaskOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    artifact_type: str
+    status: str
+    collection_session: str | None = None
+    baseline_spec_id: uuid.UUID | None = None
+    source_product_key: str | None = None
+    source_product_name: str | None = None
+    linked_states: list[EvidenceTaskStateRef] = []
 
 
 class ControlStateOut(BaseModel):
@@ -360,6 +382,100 @@ def list_control_states(
             is_level_1=ctrl.is_level_1,
         )
         for cs, obj, ctrl, imp_stmt, prod, ev_count in session.execute(stmt).all()
+    ]
+
+
+@router.get(
+    "/assessments/{assessment_id}/evidence-tasks",
+    response_model=list[EvidenceTaskOut],
+)
+def list_evidence_tasks(
+    org_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    session: Session = Depends(get_session),
+) -> list[EvidenceTaskOut]:
+    assessment = session.get(Assessment, assessment_id)
+    if assessment is None or assessment.org_id != org_id:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+
+    tasks = session.scalars(
+        select(EvidenceTask)
+        .where(
+            EvidenceTask.assessment_id == assessment_id,
+            EvidenceTask.org_id == org_id,
+        )
+        .order_by(EvidenceTask.collection_session, EvidenceTask.created_at)
+    ).all()
+
+    if not tasks:
+        return []
+
+    task_ids = [t.id for t in tasks]
+
+    # Load all links with control/objective info in one query
+    link_rows = session.execute(
+        select(
+            EvidenceTaskStateLink.task_id,
+            EvidenceTaskStateLink.control_state_id,
+            ControlState.objective_id,
+            AssessmentObjective.objective_key,
+            Control.control_id,
+        )
+        .join(ControlState, EvidenceTaskStateLink.control_state_id == ControlState.id)
+        .join(AssessmentObjective, ControlState.objective_id == AssessmentObjective.id)
+        .join(Control, AssessmentObjective.control_id == Control.id)
+        .where(EvidenceTaskStateLink.task_id.in_(task_ids))
+        .order_by(Control.sequence_order, AssessmentObjective.objective_key)
+    ).all()
+
+    links_by_task: dict[uuid.UUID, list[EvidenceTaskStateRef]] = {}
+    for row in link_rows:
+        links_by_task.setdefault(row.task_id, []).append(
+            EvidenceTaskStateRef(
+                control_state_id=row.control_state_id,
+                objective_id=row.objective_id,
+                control_id=row.control_id,
+                objective_key=row.objective_key,
+            )
+        )
+
+    # Resolve source product via baseline_spec → baseline_control → product
+    spec_ids = [t.baseline_spec_id for t in tasks if t.baseline_spec_id is not None]
+    product_by_spec: dict[uuid.UUID, tuple[str, str]] = {}
+    if spec_ids:
+        for row in session.execute(
+            select(
+                BaselineEvidenceSpec.id.label("spec_id"),
+                Product.key.label("product_key"),
+                Product.name.label("product_name"),
+            )
+            .join(BaselineControl, BaselineEvidenceSpec.baseline_control_id == BaselineControl.id)
+            .join(Product, BaselineControl.product_id == Product.id)
+            .where(BaselineEvidenceSpec.id.in_(spec_ids))
+        ).all():
+            product_by_spec[row.spec_id] = (row.product_key, row.product_name)
+
+    return [
+        EvidenceTaskOut(
+            id=t.id,
+            title=t.title,
+            artifact_type=t.artifact_type,
+            status=t.status,
+            collection_session=t.collection_session,
+            baseline_spec_id=t.baseline_spec_id,
+            source_product_key=(
+                product_by_spec[t.baseline_spec_id][0]
+                if t.baseline_spec_id in product_by_spec
+                else None
+            ),
+            source_product_name=(
+                product_by_spec[t.baseline_spec_id][1]
+                if t.baseline_spec_id in product_by_spec
+                else None
+            ),
+            linked_states=links_by_task.get(t.id, []),
+        )
+        for t in tasks
     ]
 
 

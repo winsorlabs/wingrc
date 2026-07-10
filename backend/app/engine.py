@@ -34,6 +34,7 @@ from .models import (
     ControlState,
     ControlStateHistory,
     EvidenceTask,
+    EvidenceTaskStateLink,
     OrgProduct,
     Product,
 )
@@ -301,20 +302,48 @@ def _run_loop(
     session.add_all(history_rows)
     session.flush()
 
-    # --- seed evidence tasks (deduplicated) ---
-    existing_spec_ids: set[uuid.UUID] = {
-        t.baseline_spec_id
-        for t in session.scalars(
-            select(EvidenceTask).where(
-                EvidenceTask.assessment_id == assessment_id,
-                EvidenceTask.org_id == org_id,
-                EvidenceTask.baseline_spec_id.is_not(None),
-            )
-        ).all()
+    # --- seed evidence tasks (deduplicated, multi-objective links) ---
+    #
+    # Dedup strategy:
+    #   1. By baseline_spec_id: a previously seeded spec never creates a new task
+    #      (idempotency on re-activation).
+    #   2. By (title.lower(), artifact_type): if two specs describe the same
+    #      artifact, they share one task (evidence minimisation across controls).
+    #   3. Within-run: new tasks created this call are tracked so a second spec
+    #      with the same artifact key reuses rather than duplicates.
+    #
+    # Existing task status is NEVER modified — a 'collected' task stays collected.
+    # Only new control_state links are added for gaps.
+
+    existing_tasks = session.scalars(
+        select(EvidenceTask).where(
+            EvidenceTask.assessment_id == assessment_id,
+            EvidenceTask.org_id == org_id,
+        )
+    ).all()
+
+    task_by_spec_id: dict[uuid.UUID, EvidenceTask] = {
+        t.baseline_spec_id: t
+        for t in existing_tasks
         if t.baseline_spec_id is not None
     }
+    task_by_artifact_key: dict[tuple[str, str], EvidenceTask] = {
+        (t.title.strip().lower(), t.artifact_type): t
+        for t in existing_tasks
+    }
 
-    collection_session = f"{product.name} — initial collection"
+    existing_link_keys: set[tuple[uuid.UUID, uuid.UUID]] = set()
+    if existing_tasks:
+        existing_link_keys = {
+            (lnk.task_id, lnk.control_state_id)
+            for lnk in session.scalars(
+                select(EvidenceTaskStateLink).where(
+                    EvidenceTaskStateLink.task_id.in_([t.id for t in existing_tasks])
+                )
+            ).all()
+        }
+
+    new_task_by_artifact_key: dict[tuple[str, str], EvidenceTask] = {}
     tasks_created = 0
 
     for bc in baseline_controls:
@@ -327,33 +356,46 @@ def _run_loop(
             .where(BaselineEvidenceSpec.baseline_control_id == bc.id)
         ).all()
 
-        # Find the control_state to link this task to (first objective of the control)
-        linked_cs_id: uuid.UUID | None = None
-        if bc.objectives:
-            first_obj_id_str = objective_lookup.get((bc_ctrl_str, bc.objectives[0]))
-            if first_obj_id_str:
-                cs = existing_states.get(uuid.UUID(first_obj_id_str))
-                if cs:
-                    linked_cs_id = cs.id
-
         for spec in specs:
-            if spec.id in existing_spec_ids:
-                continue  # already seeded; skip to keep activate idempotent
+            artifact_key = (spec.artifact_description.strip().lower(), spec.evidence_type)
+            session_label = spec.kb_reference or f"{product.name} — initial collection"
 
-            session.add(
-                EvidenceTask(
+            task = (
+                task_by_spec_id.get(spec.id)
+                or task_by_artifact_key.get(artifact_key)
+                or new_task_by_artifact_key.get(artifact_key)
+            )
+
+            if task is None:
+                task = EvidenceTask(
                     org_id=org_id,
                     assessment_id=assessment_id,
-                    control_state_id=linked_cs_id,
                     baseline_spec_id=spec.id,
                     title=spec.artifact_description,
                     artifact_type=spec.evidence_type,
-                    status="pending",
-                    collection_session=collection_session,
+                    status="open",
+                    collection_session=session_label,
                 )
-            )
-            existing_spec_ids.add(spec.id)
-            tasks_created += 1
+                session.add(task)
+                session.flush()
+                new_task_by_artifact_key[artifact_key] = task
+                tasks_created += 1
+
+            # Link to every covered objective (not just the first)
+            for obj_key in (bc.objectives or []):
+                obj_id_str = objective_lookup.get((bc_ctrl_str, obj_key))
+                if not obj_id_str:
+                    continue
+                cs = existing_states.get(uuid.UUID(obj_id_str))
+                if cs is None:
+                    continue
+                link_key = (task.id, cs.id)
+                if link_key not in existing_link_keys:
+                    session.add(EvidenceTaskStateLink(
+                        task_id=task.id,
+                        control_state_id=cs.id,
+                    ))
+                    existing_link_keys.add(link_key)
 
     session.flush()
     return {"objectives_updated": objectives_updated, "tasks_created": tasks_created}
