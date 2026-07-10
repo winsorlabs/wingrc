@@ -216,16 +216,20 @@ def test_artifact_dedup_same_key_creates_one_task(db_session, seeded):
         select(Product).where(Product.key == "rocketcyber")
     ).first()
 
-    # Find two different controls that the product covers — attach identical evidence specs
+    # Find two different non-platform controls the product covers.
+    # Must exclude platform_only: the engine filters those out of baseline_controls,
+    # so their objectives are never added to objective_lookup and no links would be
+    # created for a BC that is platform_only — breaking the cross-BC link assertion.
     bcs = db_session.scalars(
         select(BaselineControl)
         .where(
             BaselineControl.product_id == product.id,
             BaselineControl.classification == "provider_satisfies",
+            BaselineControl.coverage_basis != "platform_only",
         )
         .limit(2)
     ).all()
-    assert len(bcs) >= 2, "Need at least 2 provider_satisfies baseline_controls"
+    assert len(bcs) >= 2, "Need at least 2 non-platform provider_satisfies baseline_controls"
 
     # Temporarily add duplicate-artifact specs to the second BC
     shared_artifact = "shared-dedup-artifact"
@@ -290,17 +294,19 @@ def test_artifact_dedup_same_key_creates_one_task(db_session, seeded):
 def test_collection_session_from_kb_reference(db_session, scenario):
     _activate(db_session, scenario)
 
+    # "Configuring the Syslog Collector" is the kb_reference on AU.L2-3.3.1
+    # (provider_satisfies, customer_system) — guaranteed to produce tasks.
+    # "Identity and Access Management" is platform_only and excluded by the engine.
     tasks = db_session.scalars(
         select(EvidenceTask).where(
             EvidenceTask.assessment_id == scenario["assessment"].id,
-            EvidenceTask.collection_session == "Identity and Access Management",
+            EvidenceTask.collection_session == "Configuring the Syslog Collector",
         )
     ).all()
-    # The rocketcyber baseline has several specs with kb: "Identity and Access Management"
     assert len(tasks) > 0, (
-        "Expected tasks with collection_session='Identity and Access Management'"
+        "Expected tasks with collection_session='Configuring the Syslog Collector'"
     )
-    assert all(t.collection_session == "Identity and Access Management" for t in tasks)
+    assert all(t.collection_session == "Configuring the Syslog Collector" for t in tasks)
 
 
 # ---------------------------------------------------------------------------

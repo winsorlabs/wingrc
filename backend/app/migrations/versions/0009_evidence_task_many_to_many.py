@@ -63,19 +63,25 @@ def upgrade() -> None:
     op.drop_index("ix_evidence_task_control_state_id", table_name="evidence_task")
     op.drop_column("evidence_task", "control_state_id")
 
-    # 4. Migrate status values to new vocabulary
+    # 4. Drop the old CHECK constraint BEFORE migrating values — PostgreSQL
+    #    validates the constraint on every updated row, so the UPDATE would fail
+    #    if the old constraint is still present when we write 'open'.
+    op.drop_constraint("ck_evidence_task_status", "evidence_task")
+
+    # 5. Migrate status values to new vocabulary.
+    #    ELSE status preserves rows already in the new vocabulary (e.g. 'open'
+    #    rows written by engine.py before this migration ran).
     op.execute("""
         UPDATE evidence_task
         SET status = CASE
             WHEN status IN ('pending', 'in_progress') THEN 'open'
             WHEN status = 'completed'                 THEN 'collected'
             WHEN status IN ('skipped', 'waived')      THEN 'na'
-            ELSE 'open'
+            ELSE status
         END
     """)
 
-    # 5. Replace the status CHECK constraint
-    op.drop_constraint("ck_evidence_task_status", "evidence_task")
+    # 6. Add the new CHECK constraint now that all rows carry valid values.
     op.create_check_constraint(
         "ck_evidence_task_status",
         "evidence_task",
@@ -84,15 +90,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Restore status constraint
+    # Drop new constraint first, then migrate values, then restore old constraint.
+    # Adding the old constraint before migrating would fail because existing rows
+    # carry 'open'/'collected'/'na' which the old constraint rejects.
     op.drop_constraint("ck_evidence_task_status", "evidence_task")
-    op.create_check_constraint(
-        "ck_evidence_task_status",
-        "evidence_task",
-        "status IN ('pending', 'in_progress', 'completed', 'skipped', 'waived')",
-    )
 
-    # Migrate status back
     op.execute("""
         UPDATE evidence_task
         SET status = CASE
@@ -102,6 +104,12 @@ def downgrade() -> None:
             ELSE 'pending'
         END
     """)
+
+    op.create_check_constraint(
+        "ck_evidence_task_status",
+        "evidence_task",
+        "status IN ('pending', 'in_progress', 'completed', 'skipped', 'waived')",
+    )
 
     # Restore singular FK column
     op.add_column(
