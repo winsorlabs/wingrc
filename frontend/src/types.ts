@@ -74,6 +74,7 @@ export interface EvidenceTaskRow {
   baseline_spec_id: string | null;
   source_product_key: string | null;
   source_product_name: string | null;
+  cadence: string | null;
   linked_states: EvidenceTaskStateRef[];
 }
 

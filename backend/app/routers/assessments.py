@@ -155,10 +155,13 @@ class EvidenceTaskOut(BaseModel):
     title: str
     artifact_type: str
     status: str
+    is_archived: bool = False
+    archived_at: datetime | None = None
     collection_session: str | None = None
     baseline_spec_id: uuid.UUID | None = None
     source_product_key: str | None = None
     source_product_name: str | None = None
+    cadence: str | None = None
     linked_states: list[EvidenceTaskStateRef] = []
 
 
@@ -429,13 +432,14 @@ def list_evidence_tasks(
 
     task_ids = [t.id for t in tasks]
 
-    # Load all links with control/objective info in one query
+    # Load all links with control/objective info (including cadence) in one query
     link_rows = session.execute(
         select(
             EvidenceTaskStateLink.task_id,
             EvidenceTaskStateLink.control_state_id,
             ControlState.objective_id,
             AssessmentObjective.objective_key,
+            AssessmentObjective.cadence,
             Control.control_id,
         )
         .join(ControlState, EvidenceTaskStateLink.control_state_id == ControlState.id)
@@ -446,6 +450,8 @@ def list_evidence_tasks(
     ).all()
 
     links_by_task: dict[uuid.UUID, list[EvidenceTaskStateRef]] = {}
+    # First non-null cadence wins for a given task (all linked objectives typically share one)
+    cadence_by_task: dict[uuid.UUID, str | None] = {}
     for row in link_rows:
         links_by_task.setdefault(row.task_id, []).append(
             EvidenceTaskStateRef(
@@ -455,6 +461,8 @@ def list_evidence_tasks(
                 objective_key=row.objective_key,
             )
         )
+        if cadence_by_task.get(row.task_id) is None and row.cadence is not None:
+            cadence_by_task[row.task_id] = row.cadence
 
     # Resolve source product via baseline_spec → baseline_control → product
     spec_ids = [t.baseline_spec_id for t in tasks if t.baseline_spec_id is not None]
@@ -478,6 +486,8 @@ def list_evidence_tasks(
             title=t.title,
             artifact_type=t.artifact_type,
             status=t.status,
+            is_archived=t.is_archived,
+            archived_at=t.archived_at,
             collection_session=t.collection_session,
             baseline_spec_id=t.baseline_spec_id,
             source_product_key=(
@@ -490,6 +500,7 @@ def list_evidence_tasks(
                 if t.baseline_spec_id in product_by_spec
                 else None
             ),
+            cadence=cadence_by_task.get(t.id),
             linked_states=links_by_task.get(t.id, []),
         )
         for t in tasks

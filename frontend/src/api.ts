@@ -129,6 +129,35 @@ export const api = {
       { method: "POST", body: JSON.stringify(refs) }
     ),
 
+  uploadTaskEvidence: async (
+    orgId: string,
+    assessmentId: string,
+    taskId: string,
+    file: File,
+    artifactType: string
+  ): Promise<EvidenceRow> => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("artifact_type", artifactType);
+    const r = await fetch(
+      `/api/orgs/${orgId}/assessments/${assessmentId}/evidence-tasks/${taskId}/collect`,
+      { method: "POST", body: form }
+    );
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json() as Promise<EvidenceRow>;
+  },
+
+  addTaskReference: (
+    orgId: string,
+    assessmentId: string,
+    taskId: string,
+    ref: { title: string; location: string; artifact_type: string }
+  ) =>
+    req<EvidenceRow>(
+      `/orgs/${orgId}/assessments/${assessmentId}/evidence-tasks/${taskId}/collect/reference`,
+      { method: "POST", body: JSON.stringify(ref) }
+    ),
+
   // ── Org profile ──────────────────────────────────────────────────────────
   getOrgProfile: (orgId: string) =>
     req<OrgProfile>(`/orgs/${orgId}/profile`),

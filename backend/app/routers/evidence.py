@@ -35,6 +35,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..audit import log_event
 from ..db import get_session
 from ..models import (
     Assessment,
@@ -43,6 +44,8 @@ from ..models import (
     ControlState,
     Evidence,
     EvidenceStateLink,
+    EvidenceTask,
+    EvidenceTaskStateLink,
 )
 from ..storage import StorageClient, get_storage_client
 
@@ -618,4 +621,236 @@ def get_evidence_manifest(
         org_id=org_id,
         generated_at=datetime.now(UTC),
         objectives=[ManifestObjective(**obj) for obj in objectives_map.values()],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task-based evidence collection (fan-out to all linked control states)
+# ---------------------------------------------------------------------------
+
+
+def _get_task_for_collect(
+    session: Session,
+    org_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    task_id: uuid.UUID,
+) -> EvidenceTask:
+    """Load and validate an evidence task for a collect operation."""
+    _check_assessment(session, org_id, assessment_id)
+    task = session.get(EvidenceTask, task_id)
+    if task is None or task.assessment_id != assessment_id or task.org_id != org_id:
+        raise HTTPException(status_code=404, detail="Evidence task not found")
+    if task.is_archived:
+        raise HTTPException(status_code=422, detail="Cannot collect evidence for an archived task")
+    return task
+
+
+def _fan_out_evidence(
+    session: Session,
+    task: EvidenceTask,
+    ev: Evidence,
+) -> int:
+    """Create EvidenceStateLink for every control_state the task covers.
+
+    Returns the number of links created. Does NOT touch ControlState.status —
+    evidence attachment is a candidate; a human confirms Met separately.
+    """
+    task_links = session.scalars(
+        select(EvidenceTaskStateLink).where(EvidenceTaskStateLink.task_id == task.id)
+    ).all()
+
+    created = 0
+    for lnk in task_links:
+        # UNIQUE constraint guards duplicates; skip if already linked
+        existing = session.scalars(
+            select(EvidenceStateLink).where(
+                EvidenceStateLink.evidence_id == ev.id,
+                EvidenceStateLink.control_state_id == lnk.control_state_id,
+            )
+        ).first()
+        if existing is None:
+            session.add(EvidenceStateLink(evidence_id=ev.id, control_state_id=lnk.control_state_id))
+            created += 1
+
+    # Mark task collected — only change to task state; ControlState is untouched
+    task.status = "collected"
+    task.completed_evidence_id = ev.id
+    return created
+
+
+@router.post(
+    "/assessments/{assessment_id}/evidence-tasks/{task_id}/collect",
+    response_model=EvidenceOut,
+    status_code=201,
+)
+async def collect_task_evidence_file(
+    org_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    task_id: uuid.UUID,
+    file: UploadFile = File(...),
+    artifact_type: str = Form("document"),
+    title: str | None = Form(None),
+    session: Session = Depends(get_session),
+    storage: StorageClient = Depends(get_storage_client),
+) -> EvidenceOut:
+    """Upload a file to satisfy an evidence task.
+
+    Creates one Evidence row, links it to every control_state the task covers
+    (fan-out via EvidenceStateLink), and marks the task 'collected'.
+
+    Invariant: ControlState.status is never modified here — evidence is a
+    candidate; an engineer confirms Met separately in the control drawer.
+    """
+    task = _get_task_for_collect(session, org_id, assessment_id, task_id)
+
+    if artifact_type not in {"screenshot", "export", "document", "link", "policy"}:
+        raise HTTPException(
+            status_code=422,
+            detail="artifact_type must be one of: document, export, link, policy, screenshot",
+        )
+
+    data = await file.read()
+    if len(data) > _MAX_FILE_BYTES:
+        raise HTTPException(status_code=413, detail="File exceeds 50 MB limit")
+
+    raw_name = _safe_filename(file.filename or "upload")
+    ext = os.path.splitext(raw_name)[1].lower()
+
+    if ext not in _ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=415,
+            detail=f"File extension {ext!r} not permitted. Allowed: {sorted(_ALLOWED_EXTENSIONS)}",
+        )
+
+    mime = (
+        file.content_type
+        or mimetypes.guess_type(raw_name)[0]
+        or "application/octet-stream"
+    )
+
+    if mime not in _ALLOWED_MIME_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Content-Type {mime!r} not permitted. Allowed: {sorted(_ALLOWED_MIME_TYPES)}",
+        )
+
+    if not _verify_magic_bytes(data, mime):
+        raise HTTPException(
+            status_code=415,
+            detail=f"File bytes do not match declared Content-Type {mime!r}",
+        )
+
+    display_title = title or raw_name
+    evidence_id = uuid.uuid4()
+    storage_key = f"{org_id}/evidence/{evidence_id}/{evidence_id}{ext}"
+    storage.upload_file(storage_key, data, mime)
+
+    ev = Evidence(
+        id=evidence_id,
+        org_id=org_id,
+        kind="file",
+        title=display_title,
+        artifact_type=artifact_type,
+        storage_key=storage_key,
+        mime_type=mime,
+        file_size_bytes=len(data),
+        collected_at=datetime.now(UTC),
+    )
+    session.add(ev)
+    session.flush()
+
+    links_created = _fan_out_evidence(session, task, ev)
+
+    log_event(
+        session,
+        org_id=org_id,
+        action="evidence_task.collect",
+        entity_type="evidence_task",
+        entity_id=task.id,
+        after_value={
+            "evidence_id": str(ev.id),
+            "kind": "file",
+            "title": display_title,
+            "links_created": links_created,
+        },
+        context={"via": "api"},
+    )
+    session.commit()
+
+    return EvidenceOut(
+        id=ev.id,
+        kind="file",
+        title=ev.title,
+        artifact_type=ev.artifact_type,
+        mime_type=ev.mime_type,
+        file_size_bytes=ev.file_size_bytes,
+        download_url=storage.presigned_url(storage_key),
+        reference_location=None,
+        note=None,
+        collected_at=ev.collected_at,
+    )
+
+
+@router.post(
+    "/assessments/{assessment_id}/evidence-tasks/{task_id}/collect/reference",
+    response_model=EvidenceOut,
+    status_code=201,
+)
+def collect_task_evidence_reference(
+    org_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    task_id: uuid.UUID,
+    ref: ReferenceIn,
+    session: Session = Depends(get_session),
+) -> EvidenceOut:
+    """Add a location reference to satisfy an evidence task.
+
+    Creates one Evidence row (kind='reference'), links it to every control_state
+    the task covers, and marks the task 'collected'.
+
+    Invariant: ControlState.status is never modified here.
+    """
+    task = _get_task_for_collect(session, org_id, assessment_id, task_id)
+
+    now = datetime.now(UTC)
+    ev = Evidence(
+        org_id=org_id,
+        kind="reference",
+        title=ref.title,
+        artifact_type=ref.artifact_type,
+        reference_location=ref.location,
+        collected_at=now,
+    )
+    session.add(ev)
+    session.flush()
+
+    links_created = _fan_out_evidence(session, task, ev)
+
+    log_event(
+        session,
+        org_id=org_id,
+        action="evidence_task.collect",
+        entity_type="evidence_task",
+        entity_id=task.id,
+        after_value={
+            "evidence_id": str(ev.id),
+            "kind": "reference",
+            "title": ref.title,
+            "links_created": links_created,
+        },
+        context={"via": "api"},
+    )
+    session.commit()
+
+    return EvidenceOut(
+        id=ev.id,
+        kind="reference",
+        title=ev.title,
+        artifact_type=ev.artifact_type,
+        mime_type=None,
+        file_size_bytes=None,
+        download_url=None,
+        reference_location=ref.location,
+        note=_REFERENCE_NOTE,
+        collected_at=ev.collected_at,
     )

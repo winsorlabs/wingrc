@@ -1212,4 +1212,38 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
   background: none; cursor: pointer; color: var(--text);
 }
 .btn-xs:hover { background: var(--surface); }
+.btn-xs.active { background: #e0e7ff; border-color: #c7d2fe; color: #3730a3; }
+.btn-xs:disabled { opacity: 0.5; cursor: default; }
+
+/* ── Cadence badge ───────────────────────────────────────────────────────── */
+.cadence-badge {
+  padding: 0.1rem 0.4rem; border-radius: 4px;
+  font-size: 0.67rem; font-weight: 600;
+  background: #fef9c3; color: #713f12;
+  border: 1px solid #fde68a;
+}
+
+/* ── Task card: badge row + collect actions ──────────────────────────────── */
+.task-card-badges { display: flex; align-items: center; gap: 0.25rem; flex-shrink: 0; }
+
+.task-collect-actions { display: flex; gap: 0.3rem; margin-left: auto; }
+
+.task-collect-error {
+  font-size: 0.75rem; color: #842029;
+  background: #fdecea; border: 1px solid #f5c6cb;
+  border-radius: 4px; padding: 0.3rem 0.5rem;
+}
+
+/* ── Inline reference form ───────────────────────────────────────────────── */
+.task-ref-form {
+  display: flex; flex-direction: column; gap: 0.4rem;
+  padding: 0.6rem; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 5px;
+}
+.task-ref-form input {
+  padding: 0.35rem 0.5rem; border: 1px solid var(--border); border-radius: 4px;
+  font-size: 0.82rem; background: var(--surface); color: var(--text); font-family: inherit;
+}
+.task-ref-form input:focus { outline: none; border-color: var(--primary); }
+.task-ref-form-actions { display: flex; justify-content: flex-end; gap: 0.4rem; }
 

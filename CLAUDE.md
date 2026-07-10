@@ -85,6 +85,28 @@ and `ruff check` clean before merge. Work on branches, small commits.
 
 ## Current status
 
-Scope module (AC.L2-3.1.1 Authorized Entities) is built and tested: parse →
-reconcile → render, validated on real data. Next: the assessment engine + the
-magic loop, starting from the data-model additions above.
+Scope module, assessment engine, magic loop, evidence collection, onboarding
+wizard (org profile / system description / contacts), and evidence task
+collection (fan-out) are all built and tested. Next slices: RACI assignment UI,
+AI-drafted implementation statements, SPRS score display, bundle export.
+
+## Roadmap (do not build until the prerequisite slice ships)
+
+### Evidence task enhancements (post-onboarding personnel slice)
+
+**(a) Task assignment to contacts** — add `assigned_to UUID FK → contact` to
+`evidence_task`. Unblocked once the personnel repository (contacts CRUD) exists
+(now done — migration 0013, contacts router). When auth lands the assignee
+becomes a real login target for "my tasks" filtering and email notification.
+Schema change is one nullable column + one index; no migration needed until auth
+slotted.
+
+**(b) Recurrence engine** — `EvidenceTask` already carries `cadence` (via
+`AssessmentObjective.cadence`: annual/quarterly/monthly) and `due_date`.
+The recurrence engine auto-regenerates a new task when the current one is
+marked collected and the next due date is within the collection window. Tracks
+`last_completed_at`, `next_due_at`; flags tasks as overdue or at-risk in the
+UI. Part of the continuous-compliance-engine slice. Pushes recurring tickets
+to PSA (Autotask) via an outbound webhook. Prerequisites: task assignment
+(assignee receives the regenerated task), auth (so overdue tasks page the
+right person).
