@@ -64,6 +64,78 @@ class Organization(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    # Profile fields (added migration 0011) — all nullable; incomplete profile is valid
+    cage_code: Mapped[str | None] = mapped_column(String(10))
+    uei: Mapped[str | None] = mapped_column(String(20))
+    year_established: Mapped[int | None] = mapped_column(SmallInteger)
+    industry: Mapped[str | None] = mapped_column(String(100))
+    address_line1: Mapped[str | None] = mapped_column(String(200))
+    address_line2: Mapped[str | None] = mapped_column(String(200))
+    city: Mapped[str | None] = mapped_column(String(100))
+    state_or_province: Mapped[str | None] = mapped_column(String(100))
+    postal_code: Mapped[str | None] = mapped_column(String(20))
+    country: Mapped[str | None] = mapped_column(String(60), server_default=text("'US'"))
+    phone_primary: Mapped[str | None] = mapped_column(String(50))
+    phone_secondary: Mapped[str | None] = mapped_column(String(50))
+    website: Mapped[str | None] = mapped_column(String(400))
+    logo_storage_key: Mapped[str | None] = mapped_column(Text)
+
+
+class SystemDescription(Base):
+    """SSP Section 1 narrative for an org's information system.
+
+    One row per org (enforced by UNIQUE org_id). The record is persistent and
+    mutable. Bundle export snapshots current state at generation time so dated
+    bundles remain accurate after subsequent edits.
+
+    Structured fields rather than one blob so individual sections render into
+    discrete SSP subsections without re-parsing.
+    """
+
+    __tablename__ = "system_description"
+    __table_args__ = (
+        UniqueConstraint("org_id", name="uq_system_description_org"),
+        CheckConstraint(
+            "system_type IN ('major_application','general_support_system','minor_application')",
+            name="ck_system_description_type",
+        ),
+        CheckConstraint(
+            "operational_status IN ('operational','under_development','undergoing_major_modification')",
+            name="ck_system_description_op_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id", ondelete="CASCADE"), index=True
+    )
+    system_name: Mapped[str] = mapped_column(String(400))
+    system_type: Mapped[str] = mapped_column(String(40))
+    operational_status: Mapped[str] = mapped_column(String(40))
+    system_description: Mapped[str | None] = mapped_column(Text)
+    cui_categories: Mapped[list] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb")
+    )
+    cui_storage_locations: Mapped[list] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb")
+    )
+    authorization_boundary_description: Mapped[str | None] = mapped_column(Text)
+    external_connections: Mapped[list] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb")
+    )
+    cui_flow_description: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class ScopeEntity(Base):
@@ -799,6 +871,49 @@ class Contact(Base):
     affiliation: Mapped[str] = mapped_column(String(20))
     role_title: Mapped[str | None] = mapped_column(String(200))
     contract_ref: Mapped[str | None] = mapped_column(String(200))
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class ContactDocumentationRole(Base):
+    """Documentation role tags for a contact.
+
+    Many-to-many: one person can hold multiple roles (e.g. President +
+    authorizing_official, IT admin + CUI user).
+
+    These are DOCUMENTATION roles that answer "who appears in which SSP
+    section / CRM row?" — not platform-access roles. The link to future
+    authenticated user accounts runs auth→contact, not contact→auth:
+    the user table will carry a nullable contact_id FK; this table never
+    references user.
+
+    Vocabulary matches ck_contact_doc_role CHECK in migration 0013.
+    """
+
+    __tablename__ = "contact_documentation_role"
+    __table_args__ = (
+        UniqueConstraint(
+            "contact_id", "role", name="uq_contact_documentation_role"
+        ),
+        CheckConstraint(
+            "role IN ('it_admin','security_officer','system_owner','authorizing_official',"
+            "'president','cui_user','assessor','mssp','consultant','other')",
+            name="ck_contact_doc_role",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    contact_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("contact.id", ondelete="CASCADE"),
+        index=True,
+    )
+    role: Mapped[str] = mapped_column(String(40))
+    notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
