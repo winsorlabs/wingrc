@@ -8,6 +8,7 @@ controls:
   family: AC
   title: Authorized Access Control
   weight: 5
+  level: 1
   source: "NIST SP 800-171 Rev 2 \xA73.1.1; NIST SP 800-171A 3.1.1; CMMC AG L2 v2 AC.L2-3.1.1"
   req: Limit system access to authorized users, processes acting on behalf of authorized users, and devices
     (including other systems).
@@ -45,6 +46,7 @@ controls:
   family: AC
   title: Transaction and Function Control
   weight: 5
+  level: 1
   source: "NIST SP 800-171 Rev 2 \xA73.1.2; NIST SP 800-171A 3.1.2; CMMC AG L2 v2 AC.L2-3.1.2"
   req: Limit system access to the types of transactions and functions that authorized users are permitted
     to execute.
@@ -480,6 +482,7 @@ controls:
   family: AC
   title: External System Connections
   weight: 1
+  level: 1
   source: "NIST SP 800-171 Rev 2 \xA73.1.20; NIST SP 800-171A 3.1.20; CMMC AG L2 v2 AC.L2-3.1.20"
   req: Verify and control/limit connections to external systems.
   objectives:
@@ -537,6 +540,7 @@ controls:
   family: AC
   title: Publicly Accessible Systems
   weight: 1
+  level: 1
   source: "NIST SP 800-171 Rev 2 \xA73.1.22; NIST SP 800-171A 3.1.22; CMMC AG L2 v2 AC.L2-3.1.22"
   req: Control CUI posted or processed on publicly accessible systems.
   objectives:
@@ -1167,6 +1171,7 @@ controls:
   family: IA
   title: Identify System Users
   weight: 5
+  level: 1
   source: "NIST SP 800-171 Rev 2 \xA73.5.1; NIST SP 800-171A 3.5.1; CMMC AG L2 v2 IA.L2-3.5.1"
   req: Identify system users, processes acting on behalf of users, and devices.
   objectives:
@@ -1189,6 +1194,7 @@ controls:
   family: IA
   title: Authenticate System Users
   weight: 5
+  level: 1
   source: "NIST SP 800-171 Rev 2 \xA73.5.2; NIST SP 800-171A 3.5.2; CMMC AG L2 v2 IA.L2-3.5.2"
   req: Authenticate (or verify) the identities of users, processes, or devices, as a prerequisite to allowing
     access to organizational systems.
@@ -1673,6 +1679,7 @@ controls:
   family: MP
   title: Media Sanitization
   weight: 5
+  level: 1
   source: "NIST SP 800-171 Rev 2 \xA73.8.3; NIST SP 800-171A 3.8.3; CMMC AG L2 v2 MP.L2-3.8.3"
   req: Sanitize or destroy system media before disposal or reuse.
   objectives:
@@ -1852,6 +1859,7 @@ controls:
   family: PE
   title: Limit Physical Access
   weight: 5
+  level: 1
   source: "NIST SP 800-171 Rev 2 \xA73.10.1; NIST SP 800-171A 3.10.1; CMMC AG L2 v2 PE.L2-3.10.1"
   req: Limit physical access to organizational systems to authorized individuals, processes, and equipment.
   objectives:
@@ -1910,6 +1918,7 @@ controls:
   family: PE
   title: Escort Visitors
   weight: 1
+  level: 1
   source: "NIST SP 800-171 Rev 2 \xA73.10.3; NIST SP 800-171A 3.10.3; CMMC AG L2 v2 PE.L2-3.10.3"
   req: Escort visitors and monitor visitor activity.
   objectives:
@@ -1929,6 +1938,7 @@ controls:
   family: PE
   title: Physical Access Audit Logs
   weight: 1
+  level: 1
   source: "NIST SP 800-171 Rev 2 \xA73.10.4; NIST SP 800-171A 3.10.4; CMMC AG L2 v2 PE.L2-3.10.4"
   req: Maintain audit logs of physical access.
   objectives:
@@ -1947,6 +1957,7 @@ controls:
   family: PE
   title: Physical Access Device Control
   weight: 1
+  level: 1
   source: "NIST SP 800-171 Rev 2 \xA73.10.5; NIST SP 800-171A 3.10.5; CMMC AG L2 v2 PE.L2-3.10.5"
   req: Control and manage physical access devices.
   objectives:
@@ -2193,6 +2204,7 @@ controls:
   family: SC
   title: Boundary Protection
   weight: 5
+  level: 1
   source: "NIST SP 800-171 Rev 2 \xA73.13.1; NIST SP 800-171A 3.13.1; CMMC AG L2 v2 SC.L2-3.13.1"
   req: Monitor, control, and protect communications (i.e., information transmitted or received by organizational
     systems) at the external boundaries and key internal boundaries of the organizational system.
@@ -2309,6 +2321,7 @@ controls:
   family: SC
   title: Network Segmentation
   weight: 5
+  level: 1
   source: "NIST SP 800-171 Rev 2 \xA73.13.5; NIST SP 800-171A 3.13.5; CMMC AG L2 v2 SC.L2-3.13.5"
   req: Implement subnetworks for publicly accessible system components that are physically or logically
     separated from internal networks.
@@ -2562,6 +2575,7 @@ controls:
   family: SI
   title: Flaw Remediation
   weight: 5
+  level: 1
   source: "NIST SP 800-171 Rev 2 \xA73.14.1; NIST SP 800-171A 3.14.1; CMMC AG L2 v2 SI.L2-3.14.1"
   req: Identify, report, and correct information and information system flaws in a timely manner.
   objectives:
@@ -2597,6 +2611,7 @@ controls:
   family: SI
   title: Malicious Code Protection
   weight: 5
+  level: 1
   source: "NIST SP 800-171 Rev 2 \xA73.14.2; NIST SP 800-171A 3.14.2; CMMC AG L2 v2 SI.L2-3.14.2"
   req: Provide protection from malicious code at appropriate locations within organizational systems.
   objectives:
@@ -2642,6 +2657,7 @@ controls:
   family: SI
   title: Malicious Code Update
   weight: 5
+  level: 1
   source: "NIST SP 800-171 Rev 2 \xA73.14.4; NIST SP 800-171A 3.14.4; CMMC AG L2 v2 SI.L2-3.14.4"
   req: Update malicious code protection mechanisms when new releases are available.
   objectives:
@@ -2662,6 +2678,7 @@ controls:
   family: SI
   title: System Scanning
   weight: 3
+  level: 1
   source: "NIST SP 800-171 Rev 2 \xA73.14.5; NIST SP 800-171A 3.14.5; CMMC AG L2 v2 SI.L2-3.14.5"
   req: Perform periodic scans of organizational systems and real-time scans of files from external sources
     as files are downloaded, opened, or executed.

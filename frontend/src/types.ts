@@ -39,6 +39,7 @@ export interface ControlStateRow {
   statement_status: string | null;
   evidence_count: number;
   sprs_weight: number;
+  is_level_1: boolean;
 }
 
 export interface ProductRow {

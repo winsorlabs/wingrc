@@ -140,6 +140,9 @@ class Control(Base):
     discussion: Mapped[str | None] = mapped_column(Text)
     # SPRS deduction weight per CMMC scoring: 1 (moderate), 3 (high), 5 (critical)
     sprs_weight: Mapped[int] = mapped_column(SmallInteger, default=1)
+    # True if this practice is also a CMMC Level 1 (FAR 52.204-21) requirement.
+    # Source: CMMC Model v2.0 / 32 CFR Part 170 Final Rule (Oct 2024). Reviewable.
+    is_level_1: Mapped[bool] = mapped_column(Boolean, default=False)
     sequence_order: Mapped[int] = mapped_column(Integer, default=0)
 
 

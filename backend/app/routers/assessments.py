@@ -139,6 +139,7 @@ class ControlStateOut(BaseModel):
     statement_status: str | None = None
     evidence_count: int = 0
     sprs_weight: int = 1
+    is_level_1: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +357,7 @@ def list_control_states(
             statement_status=imp_stmt.status if imp_stmt is not None else None,
             evidence_count=ev_count or 0,
             sprs_weight=ctrl.sprs_weight,
+            is_level_1=ctrl.is_level_1,
         )
         for cs, obj, ctrl, imp_stmt, prod, ev_count in session.execute(stmt).all()
     ]

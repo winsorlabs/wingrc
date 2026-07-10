@@ -99,6 +99,7 @@ def _upsert_control(
             Control.control_id == data["id"],
         )
     ).first()
+    is_level_1 = data.get("level", 2) == 1
     if ctrl is None:
         ctrl = Control(
             id=uuid.uuid4(),
@@ -108,6 +109,7 @@ def _upsert_control(
             title=data["title"],
             requirement_text=data["req"],
             sprs_weight=data.get("weight", 1),
+            is_level_1=is_level_1,
             sequence_order=data.get("seq", seq),
             discussion=data.get("discussion"),
         )
@@ -117,6 +119,7 @@ def _upsert_control(
         ctrl.title = data["title"]
         ctrl.requirement_text = data["req"]
         ctrl.sprs_weight = data.get("weight", 1)
+        ctrl.is_level_1 = is_level_1
         ctrl.sequence_order = data.get("seq", seq)
         ctrl.discussion = data.get("discussion")
     return ctrl
