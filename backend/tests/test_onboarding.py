@@ -118,7 +118,7 @@ def test_org_profile_get_returns_defaults(client, db_session):
     assert data["id"] == str(org.id)
     assert data["name"] == org.name
     assert data["address_line1"] is None
-    assert data["country"] is None  # server_default fires on DB insert, not Python
+    assert data["country"] == "US"  # server_default 'US' fires on DB INSERT
 
 
 def test_org_profile_patch_updates_fields(client, db_session):
