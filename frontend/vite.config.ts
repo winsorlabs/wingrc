@@ -8,4 +8,7 @@ export default defineConfig({
     // Proxy API calls to the backend during local dev.
     proxy: { "/api": { target: "http://backend:8000", changeOrigin: true, rewrite: (p) => p.replace(/^\/api/, "") } },
   },
+  test: {
+    environment: "node",
+  },
 });

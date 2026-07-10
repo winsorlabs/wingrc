@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { applyFilters, clearFilters, filtersActive, toggleSetItem } from "../lib/filters";
+import type { FilterOpts } from "../lib/filters";
 import type { Assessment, ControlStateRow, Org } from "../types";
 import { ControlDrawer } from "./ControlDrawer";
 import { FamilySection } from "./FamilySection";
@@ -39,10 +41,7 @@ interface TierSummary {
   total: number;
 }
 
-function computeTierSummary(
-  rows: ControlStateRow[],
-  weight: number,
-): TierSummary {
+function computeTierSummary(rows: ControlStateRow[], weight: number): TierSummary {
   const controls: Record<string, string[]> = {};
   for (const row of rows) {
     if (row.sprs_weight !== weight) continue;
@@ -53,30 +52,6 @@ function computeTierSummary(
     if (statuses.every((s) => s === "met" || s === "inherited")) met++;
   }
   return { met, total: Object.keys(controls).length };
-}
-
-// ---------------------------------------------------------------------------
-// Filter helpers
-// ---------------------------------------------------------------------------
-
-type WeightFilter = 1 | 3 | 5 | null;
-type LevelFilter = "l1" | "l2only" | null;
-
-function applyFilters(
-  rows: ControlStateRow[],
-  weight: WeightFilter,
-  level: LevelFilter,
-  status: string | null,
-  resp: string | null,
-): ControlStateRow[] {
-  return rows.filter((r) => {
-    if (weight !== null && r.sprs_weight !== weight) return false;
-    if (level === "l1" && !r.is_level_1) return false;
-    if (level === "l2only" && r.is_level_1) return false;
-    if (status !== null && r.status !== status) return false;
-    if (resp !== null && r.responsibility !== resp) return false;
-    return true;
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -110,9 +85,7 @@ function TierBar({ label, summary }: TierBarProps) {
   return (
     <div className="tier-bar">
       <span className="tier-bar-label">{label}</span>
-      <span className="tier-bar-counts">
-        {summary.met} / {summary.total}
-      </span>
+      <span className="tier-bar-counts">{summary.met} / {summary.total}</span>
       <div className="tier-bar-track">
         <div className="tier-bar-fill" style={{ width: `${pct}%` }} />
       </div>
@@ -142,11 +115,7 @@ export function AssessmentBoard({ org, assessment }: Props) {
   const [drawerControl, setDrawerControl] = useState<DrawerControl | null>(null);
   const [showTools, setShowTools] = useState(false);
 
-  // Filters
-  const [weightFilter, setWeightFilter] = useState<WeightFilter>(null);
-  const [levelFilter, setLevelFilter] = useState<LevelFilter>(null);
-  const [statusFilter, setStatusFilter] = useState<string | null>(null);
-  const [respFilter, setRespFilter] = useState<string | null>(null);
+  const [filters, setFilters] = useState<FilterOpts>(clearFilters());
   const [sortByWeight, setSortByWeight] = useState(false);
 
   useEffect(() => {
@@ -159,9 +128,7 @@ export function AssessmentBoard({ org, assessment }: Props) {
   }, [org.id, assessment.id]);
 
   function handleStatusChange(id: string, newStatus: string) {
-    setRows((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, status: newStatus } : r))
-    );
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, status: newStatus } : r)));
   }
 
   function handleOpenDrawer(dbId: string, controlId: string, title: string) {
@@ -189,9 +156,7 @@ export function AssessmentBoard({ org, assessment }: Props) {
     const byId = Object.fromEntries(updates.map((u) => [u.objectiveId, u.status]));
     setRows((prev) =>
       prev.map((r) =>
-        byId[r.objective_id] !== undefined
-          ? { ...r, statement_status: byId[r.objective_id] }
-          : r
+        byId[r.objective_id] !== undefined ? { ...r, statement_status: byId[r.objective_id] } : r
       )
     );
   }
@@ -199,17 +164,15 @@ export function AssessmentBoard({ org, assessment }: Props) {
   if (loading) return <div className="loading">Loading control states…</div>;
   if (error) return <div className="error-msg">Error: {error}</div>;
 
-  // SPRS always from all rows
+  // SPRS and tier summaries always from ALL rows
   const sprs = rows.length > 0 ? computeSprsLive(rows) : (assessment.sprs_score ?? "—");
   const met = rows.filter((r) => r.status === "met").length;
-
-  // Tier summaries always from all rows
   const tier5 = computeTierSummary(rows, 5);
   const tier3 = computeTierSummary(rows, 3);
   const tier1 = computeTierSummary(rows, 1);
 
-  // Filtered + sorted display rows
-  const filtered = applyFilters(rows, weightFilter, levelFilter, statusFilter, respFilter);
+  // Filtered + optionally sorted display rows
+  const filtered = applyFilters(rows, filters);
   const displayRows = sortByWeight
     ? [...filtered].sort((a, b) => b.sprs_weight - a.sprs_weight || a.control_id.localeCompare(b.control_id))
     : filtered;
@@ -218,25 +181,9 @@ export function AssessmentBoard({ org, assessment }: Props) {
     (acc[row.family] ??= []).push(row);
     return acc;
   }, {});
-
   const families = FAMILY_ORDER.filter((f) => byFamily[f]);
 
-  const filtersActive =
-    weightFilter !== null || levelFilter !== null || statusFilter !== null || respFilter !== null;
-
-  // Toggle helpers for single-select chip groups
-  function toggleWeight(w: WeightFilter) {
-    setWeightFilter((prev) => (prev === w ? null : w));
-  }
-  function toggleLevel(l: LevelFilter) {
-    setLevelFilter((prev) => (prev === l ? null : l));
-  }
-  function toggleStatus(s: string) {
-    setStatusFilter((prev) => (prev === s ? null : s));
-  }
-  function toggleResp(r: string) {
-    setRespFilter((prev) => (prev === r ? null : r));
-  }
+  const hasFilters = filtersActive(filters);
 
   return (
     <>
@@ -268,30 +215,73 @@ export function AssessmentBoard({ org, assessment }: Props) {
 
         {/* ── Filter bar ── */}
         <div className="filter-bar">
+          {/* Weight: multi-select, OR within group */}
           <div className="filter-group">
             <span className="filter-group-label">Weight</span>
-            <Chip label="5-pt" active={weightFilter === 5} onClick={() => toggleWeight(5)} />
-            <Chip label="3-pt" active={weightFilter === 3} onClick={() => toggleWeight(3)} />
-            <Chip label="1-pt" active={weightFilter === 1} onClick={() => toggleWeight(1)} />
+            {([5, 3, 1] as const).map((w) => (
+              <Chip
+                key={w}
+                label={`${w}-pt`}
+                active={filters.weights.has(w)}
+                onClick={() => setFilters((f) => ({ ...f, weights: toggleSetItem(f.weights, w) }))}
+              />
+            ))}
           </div>
+
+          {/* Level: single toggle — "L1" or all */}
           <div className="filter-group">
             <span className="filter-group-label">Level</span>
-            <Chip label="L1 only" active={levelFilter === "l1"} onClick={() => toggleLevel("l1")} />
-            <Chip label="L2 above L1" active={levelFilter === "l2only"} onClick={() => toggleLevel("l2only")} />
+            <Chip
+              label="L1 only"
+              active={filters.l1Only}
+              onClick={() => setFilters((f) => ({ ...f, l1Only: !f.l1Only }))}
+            />
           </div>
+
+          {/* Status: multi-select, OR within group */}
           <div className="filter-group">
             <span className="filter-group-label">Status</span>
-            <Chip label="Not met" active={statusFilter === "not_met"} onClick={() => toggleStatus("not_met")} />
-            <Chip label="Partial" active={statusFilter === "partial"} onClick={() => toggleStatus("partial")} />
-            <Chip label="Pending" active={statusFilter === "pending_evidence"} onClick={() => toggleStatus("pending_evidence")} />
-            <Chip label="Met" active={statusFilter === "met"} onClick={() => toggleStatus("met")} />
+            {(
+              [
+                ["not_met", "Not met"],
+                ["partial", "Partial"],
+                ["pending_evidence", "Pending"],
+                ["met", "Met"],
+              ] as const
+            ).map(([val, label]) => (
+              <Chip
+                key={val}
+                label={label}
+                active={filters.statuses.has(val)}
+                onClick={() =>
+                  setFilters((f) => ({ ...f, statuses: toggleSetItem(f.statuses, val) }))
+                }
+              />
+            ))}
           </div>
+
+          {/* Responsibility: multi-select, OR within group */}
           <div className="filter-group">
             <span className="filter-group-label">Resp.</span>
-            <Chip label="Customer" active={respFilter === "customer_owns"} onClick={() => toggleResp("customer_owns")} />
-            <Chip label="Provider" active={respFilter === "provider_satisfies"} onClick={() => toggleResp("provider_satisfies")} />
-            <Chip label="Shared" active={respFilter === "shared"} onClick={() => toggleResp("shared")} />
+            {(
+              [
+                ["customer_owns", "Customer"],
+                ["provider_satisfies", "Provider"],
+                ["shared", "Shared"],
+              ] as const
+            ).map(([val, label]) => (
+              <Chip
+                key={val}
+                label={label}
+                active={filters.resps.has(val)}
+                onClick={() =>
+                  setFilters((f) => ({ ...f, resps: toggleSetItem(f.resps, val) }))
+                }
+              />
+            ))}
           </div>
+
+          {/* Sort + Clear */}
           <div className="filter-group filter-group--sort">
             <button
               className={`filter-chip filter-chip--sort${sortByWeight ? " filter-chip--active" : ""}`}
@@ -299,15 +289,10 @@ export function AssessmentBoard({ org, assessment }: Props) {
             >
               Weight ↓
             </button>
-            {filtersActive && (
+            {hasFilters && (
               <button
                 className="filter-chip filter-chip--clear"
-                onClick={() => {
-                  setWeightFilter(null);
-                  setLevelFilter(null);
-                  setStatusFilter(null);
-                  setRespFilter(null);
-                }}
+                onClick={() => setFilters(clearFilters())}
               >
                 Clear
               </button>
@@ -335,9 +320,7 @@ export function AssessmentBoard({ org, assessment }: Props) {
         )}
 
         {rows.length > 0 && families.length === 0 && (
-          <div className="empty">
-            No controls match the active filters.
-          </div>
+          <div className="empty">No controls match the active filters.</div>
         )}
       </div>
 
