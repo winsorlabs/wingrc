@@ -348,3 +348,118 @@ compliance platform.
 **Sequencing:** build after D (connector layer) and after the evidence-task
 system is stable. The `scheduled_operation` schema fields are already present —
 no data-model prerequisite for the control-derived source.
+
+---
+
+## H — Append-only system audit log
+
+**What:** A central audit mechanism every mutating operation flows through.
+Records timestamp, actor, action type, entity (table + ID), before/after values,
+and freeform context/metadata. Append-only — rows are never updated or deleted.
+Exportable for assessors and assessor evidence packages.
+
+**Why this now, not later:** the existing `control_state_history` table already
+implements this pattern for one entity type. Generalising it to a single audit
+log before more features land is far cheaper than retrofitting it into a dozen
+existing endpoints after the fact. Every new mutating operation — deactivation,
+evidence attach/detach, statement edits, archive actions — should flow through
+the audit log from day one.
+
+**What it captures (non-exhaustive):**
+- Control state changes (mark-met, mark-partial, mark-not_met, needs_review)
+- Evidence attached, detached, archived
+- Product activated, deactivated, decommissioned
+- Evidence task status changes (open → collected → na, archived)
+- Implementation statement created, updated
+- Assessment started, submitted, closed
+- Scope entity added, updated, removed
+
+**Schema sketch:**
+```
+audit_log
+  id            UUID PK
+  org_id        UUID FK → organization   (null for platform-level events)
+  actor         text    NOT NULL         ("system" until auth exists; then user ID)
+  actor_type    text    NOT NULL         ("system" | "user" | "api_key")
+  action        text    NOT NULL         (e.g. "control_state.update", "evidence.attach")
+  entity_type   text    NOT NULL         (table name: "control_state", "evidence_task", …)
+  entity_id     UUID    NOT NULL
+  before_value  JSONB                    (prior state snapshot; null on create)
+  after_value   JSONB                    (new state snapshot; null on delete)
+  context       JSONB                    (arbitrary metadata: assessment_id, product_name, …)
+  created_at    timestamptz NOT NULL DEFAULT now()
+```
+
+No UPDATE or DELETE privileges on this table for the application role.
+
+**Actor field:** wire `actor = "system"` and `actor_type = "system"` from day
+one. When auth lands (item I below), the real user identity drops in with no
+schema change.
+
+**Implementation pattern:**
+- A thin `audit.log_event(session, ...)` helper called from the engine and
+  router layer — not a middleware that auto-captures everything blindly.
+  Explicit logging at each mutating site is more precise and readable.
+- `control_state_history` remains as-is for now (it carries domain-specific
+  fields like `change_reason`). New operations flow to `audit_log`. A future
+  consolidation pass may merge them.
+
+**Tamper-evidence note (hardening, not now):** for deployments where the audit
+log must be tamper-evident to an external assessor, add hash-chaining:
+each row hashes its own content plus the previous row's hash (a la certificate
+transparency). This turns any post-facto modification into a detectable break.
+Implement this as a hardening pass after the basic log is stable and proven —
+not on the initial build, where the overhead would slow development without yet
+having the underlying log to protect.
+
+**Export:** a `GET /orgs/{org_id}/audit-log` endpoint returning paginated log
+rows, filterable by entity type, action, and time range. Included in the
+assessment bundle export as an assessor-facing evidence artifact.
+
+**Sequencing:** build into each new mutating feature from here forward. Retrofit
+the existing control-state and evidence endpoints in the same sprint that adds
+the `audit_log` table. The table is cheap to add; the discipline of calling
+`log_event()` is the lasting investment.
+
+---
+
+## I — Authentication, users, and RBAC
+
+**Status: major dedicated slice — do NOT rush.**
+
+This is security-critical for a compliance tool holding CUI-adjacent data. It
+deserves a focused design sprint, independent of feature velocity.
+
+**Roles:**
+- **MSP User** — platform operator; manages multiple tenant orgs; can activate
+  products, run the magic loop, and manage evidence across all their client orgs.
+- **Org User** — scoped to a single tenant; can view and update controls, attach
+  evidence, and write implementation statements for their own org only.
+- **Assessor** — read-only access to one or more assessments; can view all data
+  for an assessment but cannot mutate state; audit log export available.
+
+**Constraints:**
+- Multi-tenant user scoping: a user's effective permissions are always evaluated
+  against the org context of the request. A user with MSP-level access to org A
+  has no access to org B's data unless explicitly granted.
+- CUI handling: credential storage and session management must comply with the
+  sensitivity level of the data. No plain-text token storage; rotate-able
+  credentials; session expiry appropriate to the deployment environment.
+- Vetted library over hand-rolling: do not build JWT validation, password
+  hashing, or session management from scratch. Evaluate `fastapi-users` or a
+  comparable library with an active maintenance record.
+- GCC High / air-gapped: the auth layer must work in deployments without
+  commercial identity providers. Local account support is required alongside
+  any SSO / OAuth integration.
+
+**What lands when auth ships:**
+- The `audit_log.actor` field carries real user identity (no schema change needed
+  if the actor field was wired as "system" placeholders).
+- `org_id` scoping in every endpoint is enforced via the session's user context,
+  not just a path parameter (the path parameter becomes a claim check).
+- RBAC guards on the router layer (FastAPI dependency injection).
+
+**Sequencing:** after the core assessment engine, evidence system, and audit log
+are stable. Retrofitting auth into an already-working system is manageable;
+retrofitting it into an actively shifting schema is painful. Ship the audit log
+(H) first so real user identities drop into an already-wired actor field.
