@@ -162,7 +162,8 @@ export function EvidenceTasksPanel({ orgId, assessmentId, onClose }: Props) {
 
   return (
     <div className="panel-overlay" onClick={onClose}>
-      {/* Hidden file input — shared across all tasks */}
+      <aside className="products-panel tasks-panel" onClick={(e) => e.stopPropagation()}>
+      {/* Hidden file input INSIDE the aside — programmatic .click() bubbles to aside, not overlay */}
       <input
         ref={fileInputRef}
         type="file"
@@ -170,8 +171,6 @@ export function EvidenceTasksPanel({ orgId, assessmentId, onClose }: Props) {
         accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.zip"
         onChange={handleFileSelected}
       />
-
-      <aside className="products-panel tasks-panel" onClick={(e) => e.stopPropagation()}>
         <div className="products-panel-header">
           <span className="products-panel-title">Evidence Tasks</span>
           <button className="drawer-close" onClick={onClose} aria-label="Close">
