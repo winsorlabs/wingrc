@@ -310,3 +310,41 @@ SSP appendix.
 **Sequencing:** build after evidence-tasks (F depends on the objective-linking
 pattern being established). Template body editing and versioning are in scope;
 a full document-authoring UI is a later pass.
+
+---
+
+## G — Ongoing Compliance Tasks (continuous compliance engine)
+
+**What:** Shift the tool from point-in-time assessment to continuous compliance
+maintenance. Generate recurring compliance tasks (weekly / monthly / quarterly)
+that require human action — periodic asset reviews, audit-log spot-checks,
+access recertification, etc.
+
+**Two sources of recurring tasks:**
+
+1. **Control-derived:** recurring activities mandated by the framework. Anchor on
+   the existing `satisfaction_type = scheduled_operation` objectives and their
+   `cadence` / `cadence_responsibility` fields (already in the schema) — this
+   feature builds directly on that foundation.
+
+2. **Document-derived (AI-assisted):** ingest the company's own policies,
+   procedures, and plans; extract the recurring commitments they make ("we review
+   firewall rules quarterly"); and generate tasks to hold them accountable to what
+   they said they'd do. Directly attacks the most common CMMC finding: "policy
+   says X, no evidence X was done." AI proposes the schedule; a human confirms —
+   never silently invents obligations.
+
+**Engine needs:**
+- `cadence`, `last_completed`, `next_due`, and overdue / at-risk flagging.
+  Reuse the `evidence.expires_at` staleness concept applied to activities.
+- An overdue task is a live audit risk surfaced before an assessor finds it.
+- Completion produces evidence-of-activity that feeds back into the assessment.
+
+**Delivery:** push tasks to the PSA (Autotask) as tickets via the same connector
+layer as automated evidence collection (feature D); completion flows back
+automatically. This turns WinGRC from an assessment tool into a continuous
+compliance platform.
+
+**Sequencing:** build after D (connector layer) and after the evidence-task
+system is stable. The `scheduled_operation` schema fields are already present —
+no data-model prerequisite for the control-derived source.
