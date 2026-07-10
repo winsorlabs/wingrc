@@ -25,6 +25,7 @@ from .assessment import (
     compute_sprs,
     magic_loop_updates,
 )
+from .audit import log_event
 from .models import (
     Assessment,
     AssessmentObjective,
@@ -33,6 +34,7 @@ from .models import (
     Control,
     ControlState,
     ControlStateHistory,
+    EvidenceStateLink,
     EvidenceTask,
     EvidenceTaskStateLink,
     OrgProduct,
@@ -399,3 +401,187 @@ def _run_loop(
 
     session.flush()
     return {"objectives_updated": objectives_updated, "tasks_created": tasks_created}
+
+
+def deactivate_org_product(
+    session: Session,
+    org_id: uuid.UUID,
+    product_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+) -> dict:
+    """Decommission a product and revert/archive its automatic contributions.
+
+    Implements "machine's work is reversible; human work is permanent":
+      - Auto-flipped control states (pending_evidence + sourced from this product)
+        → needs_review. Human-touched states (any other status) → sourced cleared only.
+      - Evidence-state links on auto-flipped states → archived (is_archived=True).
+      - Evidence tasks from this product → archived; open ones also closed (na).
+      - OrgProduct → decommissioned with deactivated_at timestamp.
+      - SPRS recomputed (needs_review does not satisfy, so score reflects lost coverage).
+
+    Every step is audited via log_event() with context["via"]="product_deactivation"
+    so audit entries carry clear causal intent, not just raw field diffs.
+
+    Returns {"controls_flagged": N, "tasks_archived": N, "evidence_links_archived": N}.
+    """
+    product = session.get(Product, product_id)
+    if product is None:
+        raise ValueError(f"Product {product_id} not found")
+
+    op = session.scalars(
+        select(OrgProduct).where(
+            OrgProduct.org_id == org_id,
+            OrgProduct.product_id == product_id,
+        )
+    ).first()
+    if op is None:
+        raise ValueError("OrgProduct not found")
+
+    now = datetime.now(UTC)
+    deactivation_ctx: dict = {
+        "via": "product_deactivation",
+        "product_name": product.name,
+        "product_key": product.key,
+        "assessment_id": str(assessment_id),
+    }
+
+    # 1. Decommission OrgProduct
+    op.status = OrgProductStatus.DECOMMISSIONED
+    op.deactivated_at = now
+    session.flush()
+
+    log_event(
+        session,
+        org_id=org_id,
+        action="org_product.deactivate",
+        entity_type="org_product",
+        entity_id=op.id,
+        before_value={"status": "active"},
+        after_value={"status": "decommissioned"},
+        context=deactivation_ctx,
+    )
+
+    # 2. Classify control_states sourced from this product
+    sourced_states = session.scalars(
+        select(ControlState).where(
+            ControlState.assessment_id == assessment_id,
+            ControlState.sourced_from_product_id == product_id,
+        )
+    ).all()
+
+    auto_states: list[ControlState] = []
+    history_rows: list[ControlStateHistory] = []
+    controls_flagged = 0
+
+    for cs in sourced_states:
+        if cs.status == ControlStatus.PENDING_EVIDENCE:
+            # Auto-flipped, not yet human-reviewed → needs_review
+            history_rows.append(
+                ControlStateHistory(
+                    control_state_id=cs.id,
+                    previous_status=cs.status,
+                    new_status=ControlStatus.NEEDS_REVIEW,
+                    previous_responsibility=cs.responsibility,
+                    new_responsibility=cs.responsibility,
+                    change_reason=f"Satisfying tool deactivated: {product.name}",
+                )
+            )
+            log_event(
+                session,
+                org_id=org_id,
+                action="control_state.update",
+                entity_type="control_state",
+                entity_id=cs.id,
+                before_value={
+                    "status": cs.status,
+                    "sourced_from_product_id": str(product_id),
+                },
+                after_value={
+                    "status": ControlStatus.NEEDS_REVIEW,
+                    "sourced_from_product_id": None,
+                },
+                context=deactivation_ctx,
+            )
+            cs.status = ControlStatus.NEEDS_REVIEW
+            auto_states.append(cs)
+            controls_flagged += 1
+        else:
+            # Human-touched: clear provenance pointer, preserve status
+            cs.sourced_from_product_id = None
+
+    session.add_all(history_rows)
+    session.flush()
+
+    # 3. Archive evidence_state_link rows on auto-flipped states
+    evidence_links_archived = 0
+    if auto_states:
+        auto_state_ids = [cs.id for cs in auto_states]
+        link_rows = session.scalars(
+            select(EvidenceStateLink).where(
+                EvidenceStateLink.control_state_id.in_(auto_state_ids),
+                EvidenceStateLink.is_archived.is_(False),
+            )
+        ).all()
+
+        for lnk in link_rows:
+            lnk.is_archived = True
+            lnk.archived_at = now
+            lnk.archived_by_product = product_id
+
+            log_event(
+                session,
+                org_id=org_id,
+                action="evidence_state_link.archive",
+                entity_type="evidence_state_link",
+                entity_id=lnk.id,
+                before_value={"is_archived": False},
+                after_value={"is_archived": True, "archived_by_product": str(product_id)},
+                context={**deactivation_ctx, "control_state_id": str(lnk.control_state_id)},
+            )
+            evidence_links_archived += 1
+
+    session.flush()
+
+    # 4. Archive evidence tasks from this product (baseline_spec → baseline_control → product)
+    tasks = session.scalars(
+        select(EvidenceTask)
+        .join(BaselineEvidenceSpec, EvidenceTask.baseline_spec_id == BaselineEvidenceSpec.id)
+        .join(BaselineControl, BaselineEvidenceSpec.baseline_control_id == BaselineControl.id)
+        .where(
+            EvidenceTask.assessment_id == assessment_id,
+            EvidenceTask.org_id == org_id,
+            BaselineControl.product_id == product_id,
+            EvidenceTask.is_archived.is_(False),
+        )
+    ).all()
+
+    tasks_archived = 0
+    for task in tasks:
+        prev_status = task.status
+        task.is_archived = True
+        task.archived_at = now
+        if task.status == "open":
+            task.status = "na"
+
+        log_event(
+            session,
+            org_id=org_id,
+            action="evidence_task.archive",
+            entity_type="evidence_task",
+            entity_id=task.id,
+            before_value={"status": prev_status, "is_archived": False},
+            after_value={"status": task.status, "is_archived": True},
+            context={**deactivation_ctx, "collection_session": task.collection_session},
+        )
+        tasks_archived += 1
+
+    session.flush()
+
+    # 5. Recompute SPRS — needs_review does not satisfy, score drops
+    recompute_sprs(session, assessment_id)
+
+    return {
+        "controls_flagged": controls_flagged,
+        "tasks_archived": tasks_archived,
+        "evidence_links_archived": evidence_links_archived,
+    }

@@ -9,6 +9,7 @@ export const STATUSES = [
   { value: "pending_evidence", label: "Pending Evidence" },
   { value: "not_applicable", label: "Not Applicable" },
   { value: "inherited", label: "Inherited" },
+  { value: "needs_review", label: "Needs Review" },
 ] as const;
 
 const STATUS_CLASS: Record<string, string> = {
@@ -18,6 +19,7 @@ const STATUS_CLASS: Record<string, string> = {
   pending_evidence: "badge-pending",
   not_applicable: "badge-na",
   inherited: "badge-inherited",
+  needs_review: "badge-needs-review",
 };
 
 const RESP_LABEL: Record<string, string> = {

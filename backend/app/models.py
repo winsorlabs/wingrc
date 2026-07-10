@@ -361,6 +361,7 @@ class OrgProduct(Base):
     configured: Mapped[bool] = mapped_column(Boolean, default=False)
     configuration_notes: Mapped[str | None] = mapped_column(Text)
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -435,7 +436,7 @@ class ControlState(Base):
         ),
         CheckConstraint(
             "status IN ('not_met', 'pending_evidence', 'partial', 'met',"
-            " 'not_applicable', 'inherited')",
+            " 'not_applicable', 'inherited', 'needs_review')",
             name="ck_control_state_status",
         ),
         CheckConstraint(
@@ -573,6 +574,11 @@ class EvidenceStateLink(Base):
     linked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    is_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archived_by_product: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("product.id"), nullable=True
+    )
 
 
 class EvidenceTask(Base):
@@ -620,6 +626,8 @@ class EvidenceTask(Base):
     completed_evidence_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("evidence.id"), nullable=True
     )
+    is_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -884,4 +892,56 @@ class ImplementationStatement(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Audit log: append-only compliance event record
+# ---------------------------------------------------------------------------
+
+
+class AuditLog(Base):
+    """Append-only record of every meaningful compliance mutation.
+
+    Rows are NEVER updated or deleted by application code. DB-level hardening
+    (REVOKE UPDATE, DELETE ON audit_log FROM <app_role>) is a pending
+    deployment step — see migration 0010 comments.
+
+    actor = "system" until authentication lands (roadmap item I). The field
+    is wired now so real user identity drops in with no schema change.
+
+    Scoped mutations logged here (signal, not firehose):
+      control_state.update        — status change (mark-met, needs_review, etc.)
+      evidence_state_link.archive — link archived during deactivation
+      evidence_task.update        — task status change
+      evidence_task.archive       — task archived during deactivation
+      org_product.activate        — product activated (magic loop fired)
+      org_product.deactivate      — product decommissioned
+      implementation_statement.upsert — statement created or updated
+
+    NOT logged: _seed_control_states() bulk insert, internal flush/sync.
+    """
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), nullable=True, index=True
+    )
+    actor: Mapped[str] = mapped_column(
+        String(200), nullable=False, server_default=text("'system'")
+    )
+    actor_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'system'")
+    )
+    action: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    entity_type: Mapped[str] = mapped_column(String(60), nullable=False)
+    entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    before_value: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    after_value: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    context: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -8,9 +8,10 @@ interface Props {
   assessmentId: string;
   onClose: () => void;
   onActivated: () => void;
+  onDeactivated: () => void;
 }
 
-export function ProductsPanel({ orgId, assessmentId, onClose, onActivated }: Props) {
+export function ProductsPanel({ orgId, assessmentId, onClose, onActivated, onDeactivated }: Props) {
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -30,6 +31,11 @@ export function ProductsPanel({ orgId, assessmentId, onClose, onActivated }: Pro
   function handleActivated() {
     load();
     onActivated();
+  }
+
+  function handleDeactivated() {
+    load();
+    onDeactivated();
   }
 
   return (
@@ -62,6 +68,7 @@ export function ProductsPanel({ orgId, assessmentId, onClose, onActivated }: Pro
                 orgId={orgId}
                 assessmentId={assessmentId}
                 onActivated={handleActivated}
+                onDeactivated={handleDeactivated}
               />
             ))}
           </div>

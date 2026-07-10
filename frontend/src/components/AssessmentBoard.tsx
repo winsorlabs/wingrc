@@ -4,6 +4,7 @@ import { applyFilters, clearFilters, filtersActive, toggleSetItem } from "../lib
 import type { FilterOpts } from "../lib/filters";
 import type { Assessment, ControlStateRow, Org } from "../types";
 import { ControlDrawer } from "./ControlDrawer";
+import { EvidenceTasksPanel } from "./EvidenceTasksPanel";
 import { FamilySection } from "./FamilySection";
 import { ProductsPanel } from "./ProductsPanel";
 
@@ -114,6 +115,7 @@ export function AssessmentBoard({ org, assessment }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [drawerControl, setDrawerControl] = useState<DrawerControl | null>(null);
   const [showTools, setShowTools] = useState(false);
+  const [showTasks, setShowTasks] = useState(false);
 
   const [filters, setFilters] = useState<FilterOpts>(clearFilters());
   const [sortByWeight, setSortByWeight] = useState(false);
@@ -135,14 +137,22 @@ export function AssessmentBoard({ org, assessment }: Props) {
     setDrawerControl({ dbId, controlId, title });
   }
 
-  function handleProductActivated() {
-    setShowTools(false);
+  function refreshControlStates() {
     setLoading(true);
     api
       .getControlStates(org.id, assessment.id)
       .then(setRows)
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
+  }
+
+  function handleProductActivated() {
+    setShowTools(false);
+    refreshControlStates();
+  }
+
+  function handleProductDeactivated() {
+    refreshControlStates();
   }
 
   function handleEvidenceChanged() {
@@ -198,6 +208,9 @@ export function AssessmentBoard({ org, assessment }: Props) {
           </div>
           <div className="board-topbar-right">
             <div className="board-meta">{met} / {rows.length} objectives met</div>
+            <button className="btn-ghost btn-sm" onClick={() => setShowTasks(true)}>
+              Tasks
+            </button>
             <button className="btn-ghost btn-sm" onClick={() => setShowTools(true)}>
               Tools &#x2699;
             </button>
@@ -324,12 +337,21 @@ export function AssessmentBoard({ org, assessment }: Props) {
         )}
       </div>
 
+      {showTasks && (
+        <EvidenceTasksPanel
+          orgId={org.id}
+          assessmentId={assessment.id}
+          onClose={() => setShowTasks(false)}
+        />
+      )}
+
       {showTools && (
         <ProductsPanel
           orgId={org.id}
           assessmentId={assessment.id}
           onClose={() => setShowTools(false)}
           onActivated={handleProductActivated}
+          onDeactivated={handleProductDeactivated}
         />
       )}
 

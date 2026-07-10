@@ -7,10 +7,12 @@ interface Props {
   orgId: string;
   assessmentId: string;
   onActivated: () => void;
+  onDeactivated: () => void;
 }
 
-export function ProductCard({ product, orgId, assessmentId, onActivated }: Props) {
+export function ProductCard({ product, orgId, assessmentId, onActivated, onDeactivated }: Props) {
   const [activating, setActivating] = useState(false);
+  const [deactivating, setDeactivating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleActivate() {
@@ -23,6 +25,19 @@ export function ProductCard({ product, orgId, assessmentId, onActivated }: Props
       setError((e as Error).message);
     } finally {
       setActivating(false);
+    }
+  }
+
+  async function handleDeactivate() {
+    setDeactivating(true);
+    setError(null);
+    try {
+      await api.deactivateProduct(orgId, assessmentId, product.id);
+      onDeactivated();
+    } catch (e: unknown) {
+      setError((e as Error).message);
+    } finally {
+      setDeactivating(false);
     }
   }
 
@@ -58,7 +73,16 @@ export function ProductCard({ product, orgId, assessmentId, onActivated }: Props
 
       <div className="product-card-footer">
         {product.is_active ? (
-          <span className="product-active-label">Active — pending evidence</span>
+          <>
+            <span className="product-active-label">Active — pending evidence</span>
+            <button
+              className="btn-ghost btn-sm product-deactivate-btn"
+              onClick={handleDeactivate}
+              disabled={deactivating}
+            >
+              {deactivating ? "Deactivating…" : "Deactivate"}
+            </button>
+          </>
         ) : (
           <button
             className="btn-primary btn-sm"

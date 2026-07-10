@@ -22,7 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..db import get_session
-from ..engine import activate_org_product, recompute_sprs, start_assessment
+from ..engine import activate_org_product, deactivate_org_product, recompute_sprs, start_assessment
 from ..models import (
     Assessment,
     AssessmentObjective,
@@ -93,8 +93,9 @@ class ProductOut(BaseModel):
 
 
 _VALID_STATUSES = frozenset(
-    {"met", "not_met", "partial", "pending_evidence", "not_applicable", "inherited"}
+    {"met", "not_met", "partial", "pending_evidence", "not_applicable", "inherited", "needs_review"}
 )
+_VALID_TASK_STATUSES = frozenset({"open", "collected", "na"})
 _VALID_STMT_STATUSES = frozenset({"draft", "reviewed", "approved"})
 
 
@@ -124,6 +125,22 @@ class UpsertStatementIn(BaseModel):
     objective_id: uuid.UUID
     body: str
     status: str = "draft"
+
+
+class PatchEvidenceTaskIn(BaseModel):
+    status: str
+
+
+class PatchEvidenceTaskOut(BaseModel):
+    id: uuid.UUID
+    status: str
+    is_archived: bool
+
+
+class DeactivateOut(BaseModel):
+    controls_flagged: int
+    tasks_archived: int
+    evidence_links_archived: int
 
 
 class EvidenceTaskStateRef(BaseModel):
@@ -477,6 +494,76 @@ def list_evidence_tasks(
         )
         for t in tasks
     ]
+
+
+@router.patch(
+    "/assessments/{assessment_id}/evidence-tasks/{task_id}",
+    response_model=PatchEvidenceTaskOut,
+)
+def patch_evidence_task(
+    org_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    task_id: uuid.UUID,
+    body: PatchEvidenceTaskIn,
+    session: Session = Depends(get_session),
+) -> PatchEvidenceTaskOut:
+    if body.status not in _VALID_TASK_STATUSES:
+        valid = sorted(_VALID_TASK_STATUSES)
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid status {body.status!r}. Must be one of: {valid}",
+        )
+
+    assessment = session.get(Assessment, assessment_id)
+    if assessment is None or assessment.org_id != org_id:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+
+    task = session.get(EvidenceTask, task_id)
+    if task is None or task.assessment_id != assessment_id or task.org_id != org_id:
+        raise HTTPException(status_code=404, detail="Evidence task not found")
+
+    if task.is_archived:
+        raise HTTPException(
+            status_code=422,
+            detail="Cannot update an archived evidence task",
+        )
+
+    task.status = body.status
+    session.commit()
+    return PatchEvidenceTaskOut(id=task.id, status=task.status, is_archived=task.is_archived)
+
+
+@router.post(
+    "/assessments/{assessment_id}/products/{product_id}/deactivate",
+    response_model=DeactivateOut,
+)
+def deactivate_product(
+    org_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    product_id: uuid.UUID,
+    session: Session = Depends(get_session),
+) -> DeactivateOut:
+    assessment = session.get(Assessment, assessment_id)
+    if assessment is None or assessment.org_id != org_id:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+
+    op = session.scalars(
+        select(OrgProduct).where(
+            OrgProduct.org_id == org_id,
+            OrgProduct.product_id == product_id,
+        )
+    ).first()
+    if op is None or op.status != "active":
+        raise HTTPException(status_code=404, detail="Active product not found")
+
+    result = deactivate_org_product(
+        session,
+        org_id=org_id,
+        product_id=product_id,
+        assessment_id=assessment_id,
+    )
+    session.commit()
+    return DeactivateOut(**result)
 
 
 @router.patch(

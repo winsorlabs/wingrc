@@ -56,6 +56,27 @@ export interface ProductRow {
   customer_owns_count: number;
 }
 
+export interface EvidenceTaskStateRef {
+  control_state_id: string;
+  objective_id: string;
+  control_id: string;
+  objective_key: string;
+}
+
+export interface EvidenceTaskRow {
+  id: string;
+  title: string;
+  artifact_type: string;
+  status: string;
+  is_archived: boolean;
+  archived_at: string | null;
+  collection_session: string | null;
+  baseline_spec_id: string | null;
+  source_product_key: string | null;
+  source_product_name: string | null;
+  linked_states: EvidenceTaskStateRef[];
+}
+
 export interface StatementRow {
   id: string | null;
   objective_id: string;

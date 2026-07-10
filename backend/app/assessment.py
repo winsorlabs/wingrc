@@ -60,6 +60,7 @@ class ControlStatus(StrEnum):
     MET = "met"
     NOT_APPLICABLE = "not_applicable"
     INHERITED = "inherited"
+    NEEDS_REVIEW = "needs_review"
 
 
 class Responsibility(StrEnum):

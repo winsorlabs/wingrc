@@ -1,4 +1,4 @@
-import type { Assessment, ControlStateRow, EvidenceRow, Framework, Org, ProductRow, StatementRow } from "./types";
+import type { Assessment, ControlStateRow, EvidenceRow, EvidenceTaskRow, Framework, Org, ProductRow, StatementRow } from "./types";
 
 const BASE = "/api";
 
@@ -65,6 +65,21 @@ export const api = {
     req<{ objectives_updated: number; tasks_created: number }>(
       `/orgs/${orgId}/assessments/${assessmentId}/products/${productId}/activate`,
       { method: "POST", body: JSON.stringify({}) }
+    ),
+
+  deactivateProduct: (orgId: string, assessmentId: string, productId: string) =>
+    req<{ controls_flagged: number; tasks_archived: number; evidence_links_archived: number }>(
+      `/orgs/${orgId}/assessments/${assessmentId}/products/${productId}/deactivate`,
+      { method: "POST", body: JSON.stringify({}) }
+    ),
+
+  getEvidenceTasks: (orgId: string, assessmentId: string) =>
+    req<EvidenceTaskRow[]>(`/orgs/${orgId}/assessments/${assessmentId}/evidence-tasks`),
+
+  patchEvidenceTask: (orgId: string, assessmentId: string, taskId: string, status: string) =>
+    req<{ id: string; status: string; is_archived: boolean }>(
+      `/orgs/${orgId}/assessments/${assessmentId}/evidence-tasks/${taskId}`,
+      { method: "PATCH", body: JSON.stringify({ status }) }
     ),
 
   listEvidence: (orgId: string, assessmentId: string, controlStateId: string) =>
