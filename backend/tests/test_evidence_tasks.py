@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app.db import get_session
-from app.engine import _seed_control_states, activate_org_product
+from app.engine import activate_org_product, _seed_control_states
 from app.main import app
 from app.models import (
     Assessment,
