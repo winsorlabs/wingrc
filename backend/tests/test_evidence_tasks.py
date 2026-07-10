@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app.db import get_session
