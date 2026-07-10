@@ -179,3 +179,134 @@ stabilize so the polish pass doesn't need to be redone.
 Build order within C: C.1 (gauge) first — smallest scope, highest visual
 impact. C.2 (radar) second. C.3 (dashboard) third — depends on evidence-task
 data being present. C.4 (polish) last, as a sweep across all screens together.
+
+---
+
+## D — Automated evidence collection via tool integrations
+
+**What:** Extend the evidence-task system so tasks can be satisfied by
+connectors pulling from tool APIs or MCP servers, not just manual upload or
+reference. The connector fills the existing `evidence_task` / `evidence` models
+— same data model, different collection path.
+
+**Tools (priority order):**
+1. **Liongard** — existing pipeline experience; populates scope lists
+   (users, hardware, software) that feed document-type objectives. First.
+2. **Datto RMM** — asset/policy data for scope and CM/SI objectives. Second.
+3. **RocketCyber / Kaseya SIEM** — log retention, event coverage; satisfies
+   AU-family tasks directly.
+4. **Heimdal** — EDR telemetry; SI.3.14.x monitoring objectives.
+5. **Senteon** — configuration hardening; CM-family baselines.
+6. **CyberHoot** — security awareness training records; AT.3.2.x.
+7. **RoboShadow** — vulnerability/asset scan; RA and SI objectives.
+8. **Microsoft 365** — identity, MFA, conditional access; IA-family evidence.
+9. **Domotz** — network topology; AC and SC scoping evidence.
+
+**Architecture:**
+- A connector is a Python class implementing a minimal interface:
+  `collect(task: EvidenceTask, credentials: dict) -> Evidence`. It runs in
+  the tenant's environment with the MSP's own API keys — never platform keys.
+- Connector output writes into the existing `evidence` + `evidence_state_link`
+  tables and marks the task `collected`. No new schema required for the first
+  connectors.
+- Credentials are stored in the tenant's own vault (or passed via config); the
+  platform never holds third-party API keys.
+
+**Constraints:**
+- BYO-credentials: MSP supplies their own API keys via tenant config. The
+  platform operator has no access to customer tool credentials.
+- CUI data-handling: connectors must support a local-execution mode for
+  CUI-sensitive tenants (air-gapped or GCC High deployments). Data must not
+  transit a commercial cloud on its way from the tool to the evidence store.
+- Per-connector effort: each tool API is bespoke. Stub the interface first;
+  build connectors independently as separate, testable units.
+- Liongard and Datto RMM share scope-list patterns with the existing scope
+  module — reuse that parsing logic rather than duplicating it.
+
+**Not in scope:** auto-confirming control_state status from connector output.
+A connector populates evidence; an engineer still confirms the state. This
+preserves the "candidates, never auto-met" rule from CLAUDE.md.
+
+---
+
+## E — Objective tips (MSP-flavored evidence examples)
+
+**What:** A per-objective advisory field giving concrete, MSP-scaled examples
+of what satisfies the objective: e.g., "Excel sheet mapping user accounts to
+job role" for AC.L2-3.1.1[a], or "Screenshot of Entra ID conditional access
+policy" for IA.L2-3.5.3. Shown in the objective panel next to statement and
+evidence entry.
+
+**Why:** The official Discussion text in NIST 800-171A is written for C3PAO
+evaluators, not MSP engineers doing their first self-assessment. Tips translate
+requirements into the MSP's tool vocabulary and scale (10–200 endpoints, not
+enterprise data centers).
+
+**Data model:**
+- `assessment_objective.tips: text | null` — nullable free-text column on the
+  existing objective row. One tips field per objective; no new table needed.
+- Migration: add column. Seed: populate hand-authored tips for the highest-value
+  objectives first (5-pt controls, L1 controls, any objective where evidence
+  type is "screenshot" and the target tool is common in the MSP stack).
+
+**Display:** rendered as an advisory callout in the ControlDrawer objective
+panel, visually distinct from the compliance Discussion text. Label clearly as
+"Tip" or "MSP guidance" — not a compliance determination.
+
+**Future evolution:** AI-generation from objective text + active tool stack
+(e.g., "Given you run RocketCyber and Entra ID, here's what AU.L2-3.3.1[a]
+looks like in your environment"). Hand-authored tips ship first; AI-generated
+tips are a later refinement using the same field.
+
+**Review bar:** advisory content, not a compliance determination. Internal
+review before shipping; no C3PAO sign-off required for the initial set.
+
+---
+
+## F — Template document library
+
+**What:** A library of reusable policy, procedure, plan, and list templates,
+each with a stable document ID (e.g. `AC-POL-001`). Templates tag to the
+objectives they satisfy (many-to-many). Selecting a template from the library
+attaches it to all its tagged objectives simultaneously, speeding statement
+and evidence preparation.
+
+**Document IDs:** stable, versionable identifiers scoped to the tenant's
+library (`<family>-<type>-<seq>`, e.g. `AC-POL-001`, `IA-PROC-002`). IDs
+appear on the document itself and in the assessment bundle export, keying
+deliverables back to objectives.
+
+**Objective tagging (many-to-many):** one template satisfies multiple
+objectives (e.g., an Access Control Policy covers AC.L2-3.1.1 through
+AC.L2-3.1.22); one objective may be addressed by multiple templates. Reuses
+the same dedup pattern as evidence minimization.
+
+**Data model sketch:**
+```
+template_document
+  id              UUID PK
+  org_id          UUID FK (tenant-scoped; shared MSP seed rows use a null org_id)
+  doc_id          text        e.g. "AC-POL-001"
+  doc_type        text        policy | procedure | plan | list | template
+  title           text
+  body            text        Markdown or rich text
+  version         text
+  reviewed_at     datetime
+
+template_objective_link
+  template_id     UUID FK → template_document
+  objective_id    UUID FK → assessment_objective
+  UNIQUE(template_id, objective_id)
+```
+
+**Seed library:** ship the MSP's existing template set (Winsors Labs baseline
+docs) as the initial seed, tagged to their objectives. This makes the feature
+immediately useful without requiring the MSP to author from scratch.
+
+**Bundle export integration:** when generating the assessment bundle, include
+tagged templates by document ID, mapped to the objectives they satisfy in the
+SSP appendix.
+
+**Sequencing:** build after evidence-tasks (F depends on the objective-linking
+pattern being established). Template body editing and versioning are in scope;
+a full document-authoring UI is a later pass.
