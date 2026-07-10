@@ -1,16 +1,25 @@
-"""Integration tests: product deactivation + audit log.
+"""Integration tests: product deactivation + reactivation + audit log.
 
-Verifies:
+Deactivation — provenance-based (not status-based):
   - OrgProduct → decommissioned with deactivated_at set
-  - Auto-flipped (pending_evidence) control states → needs_review
-  - Human-touched states (any other status) → sourced cleared, status preserved
+  - ALL control states with sourced_from_product_id == product → needs_review
+    (pending_evidence, partial, AND met — provenance is the signal, not status)
+  - States with sourced_from_product_id IS NULL (independent) → untouched
+  - Evidence-state links on ALL tool-sourced states → archived with product pointer
+  - Evidence-state links on independent states → NOT archived
   - Open evidence tasks → archived + closed (na)
   - Collected evidence tasks → archived, status preserved
-  - Evidence-state links on auto-flipped states → archived with product pointer
-  - Evidence-state links on human-touched states → untouched
   - SPRS drops after deactivation (needs_review ≠ met)
   - Deactivation writes audit entries: actor, action, before/after, context
-  - Audit entries carry via="product_deactivation" context
+
+Reactivation — restore archived evidence → needs_review:
+  - Archived tasks restored (na→open; collected stays collected)
+  - Archived evidence-state links restored (is_archived=False, archived_by cleared)
+  - States with restored evidence → needs_review (not pending_evidence)
+  - States with no prior archived evidence → pending_evidence (first activation)
+  - End-to-end: activate → collect → deactivate → reactivate → needs_review
+
+Other:
   - PATCH /evidence-tasks rejects archived tasks (422)
   - Audit log rows are insert-only (no UPDATE/DELETE paths in audit.py)
 
@@ -216,14 +225,16 @@ def test_deactivate_does_not_touch_customer_owns(db_session: Session, ref: dict)
 
 
 # ---------------------------------------------------------------------------
-# 3. Human-touched states: sourced cleared, status preserved
+# 3. Provenance-based reversal: tool-sourced met reverts; independent met survives
 # ---------------------------------------------------------------------------
 
 
-def test_deactivate_preserves_manual_status(db_session: Session, ref: dict):
+def test_deactivate_reverts_tool_sourced_met_to_needs_review(
+    db_session: Session, ref: dict
+):
+    """A state manually marked met still reverts if sourced_from_product_id is set."""
     a, _ = _setup(db_session, ref)
 
-    # Simulate a human marking the auto-flipped state as met
     ac_state = db_session.scalars(
         select(ControlState).where(
             ControlState.assessment_id == a.id,
@@ -231,15 +242,43 @@ def test_deactivate_preserves_manual_status(db_session: Session, ref: dict):
         )
     ).first()
     assert ac_state is not None
+    assert ac_state.sourced_from_product_id == ref["product"].id
+
+    # Human marks it met — but sourced pointer is still from this product
     ac_state.status = "met"
     db_session.flush()
 
     result = deactivate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
 
     db_session.refresh(ac_state)
-    assert ac_state.status == "met"
+    assert ac_state.status == "needs_review"
     assert ac_state.sourced_from_product_id is None
-    assert result["controls_flagged"] == 0
+    assert result["controls_flagged"] == 1
+
+
+def test_deactivate_does_not_touch_independent_met_state(
+    db_session: Session, ref: dict
+):
+    """A state with sourced_from_product_id=None (independent) survives deactivation."""
+    a, _ = _setup(db_session, ref)
+
+    # IA is customer_owns — never touched by the magic loop, no sourced pointer
+    ia_state = db_session.scalars(
+        select(ControlState).where(
+            ControlState.assessment_id == a.id,
+            ControlState.objective_id == ref["ia_obj"].id,
+        )
+    ).first()
+    assert ia_state is not None
+    assert ia_state.sourced_from_product_id is None
+
+    ia_state.status = "met"
+    db_session.flush()
+
+    deactivate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
+
+    db_session.refresh(ia_state)
+    assert ia_state.status == "met"
 
 
 # ---------------------------------------------------------------------------
@@ -317,19 +356,19 @@ def test_deactivate_archives_evidence_links_on_auto_states(
     assert result["evidence_links_archived"] == 1
 
 
-def test_deactivate_preserves_evidence_links_on_manual_states(
+def test_deactivate_archives_evidence_on_tool_sourced_met_state(
     db_session: Session, ref: dict
 ):
+    """Evidence on a met-but-tool-sourced state is archived on deactivation."""
     a, _ = _setup(db_session, ref)
 
-    # Manually mark the state as met, then attach evidence
     ac_state = db_session.scalars(
         select(ControlState).where(
             ControlState.assessment_id == a.id,
             ControlState.objective_id == ref["ac_obj"].id,
         )
     ).first()
-    ac_state.status = "met"
+    ac_state.status = "met"  # sourced_from still points to product
     db_session.flush()
 
     ev = Evidence(
@@ -340,6 +379,41 @@ def test_deactivate_preserves_evidence_links_on_manual_states(
     db_session.add(ev)
     db_session.flush()
     lnk = EvidenceStateLink(evidence_id=ev.id, control_state_id=ac_state.id)
+    db_session.add(lnk)
+    db_session.flush()
+
+    result = deactivate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
+
+    db_session.refresh(lnk)
+    assert lnk.is_archived is True
+    assert lnk.archived_by_product == ref["product"].id
+    assert result["evidence_links_archived"] == 1
+
+
+def test_deactivate_does_not_archive_evidence_on_independent_state(
+    db_session: Session, ref: dict
+):
+    """Evidence on a state with no product source survives deactivation."""
+    a, _ = _setup(db_session, ref)
+
+    # IA is customer_owns with no sourced pointer — truly independent
+    ia_state = db_session.scalars(
+        select(ControlState).where(
+            ControlState.assessment_id == a.id,
+            ControlState.objective_id == ref["ia_obj"].id,
+        )
+    ).first()
+    ia_state.status = "met"
+    db_session.flush()
+
+    ev = Evidence(
+        org_id=ref["org"].id, title="IA evidence", artifact_type="export",
+        kind="reference", reference_location="http://example.com/ia-ev",
+        collected_at=datetime.now(UTC),
+    )
+    db_session.add(ev)
+    db_session.flush()
+    lnk = EvidenceStateLink(evidence_id=ev.id, control_state_id=ia_state.id)
     db_session.add(lnk)
     db_session.flush()
 
@@ -525,3 +599,191 @@ def test_patch_active_task_updates_status(client, db_session: Session, ref: dict
     assert r.status_code == 200
     assert r.json()["status"] == "collected"
     assert r.json()["is_archived"] is False
+
+
+# ---------------------------------------------------------------------------
+# 10. Reactivation: restore archived evidence → needs_review
+# ---------------------------------------------------------------------------
+
+
+def test_reactivate_restores_archived_open_task(db_session: Session, ref: dict):
+    """An open task archived during deactivation is restored to open on reactivation."""
+    a, _ = _setup(db_session, ref)
+    deactivate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
+
+    task = db_session.scalars(
+        select(EvidenceTask).where(EvidenceTask.assessment_id == a.id)
+    ).first()
+    assert task is not None
+    assert task.is_archived is True
+    assert task.status == "na"
+
+    activate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
+
+    db_session.refresh(task)
+    assert task.is_archived is False
+    assert task.archived_at is None
+    assert task.status == "open"
+
+
+def test_reactivate_restores_collected_task_preserving_status(
+    db_session: Session, ref: dict
+):
+    """A collected task archived during deactivation is restored with status collected."""
+    a, _ = _setup(db_session, ref)
+
+    task = db_session.scalars(
+        select(EvidenceTask).where(EvidenceTask.assessment_id == a.id)
+    ).first()
+    task.status = "collected"
+    db_session.flush()
+
+    deactivate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
+
+    db_session.refresh(task)
+    assert task.is_archived is True
+    assert task.status == "collected"
+
+    activate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
+
+    db_session.refresh(task)
+    assert task.is_archived is False
+    assert task.status == "collected"
+
+
+def test_reactivate_restores_archived_evidence_links(db_session: Session, ref: dict):
+    """Evidence-state links archived on deactivation are unarchived on reactivation."""
+    a, _ = _setup(db_session, ref)
+
+    ac_state = db_session.scalars(
+        select(ControlState).where(
+            ControlState.assessment_id == a.id,
+            ControlState.objective_id == ref["ac_obj"].id,
+        )
+    ).first()
+    ev = Evidence(
+        org_id=ref["org"].id, title="Restore test", artifact_type="export",
+        kind="reference", reference_location="http://example.com/r",
+        collected_at=datetime.now(UTC),
+    )
+    db_session.add(ev)
+    db_session.flush()
+    lnk = EvidenceStateLink(evidence_id=ev.id, control_state_id=ac_state.id)
+    db_session.add(lnk)
+    db_session.flush()
+
+    deactivate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
+    db_session.refresh(lnk)
+    assert lnk.is_archived is True
+
+    activate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
+
+    db_session.refresh(lnk)
+    assert lnk.is_archived is False
+    assert lnk.archived_at is None
+    assert lnk.archived_by_product is None
+
+
+def test_reactivate_sets_needs_review_for_restored_states(
+    db_session: Session, ref: dict
+):
+    """After reactivation, states that regained archived evidence → needs_review."""
+    a, _ = _setup(db_session, ref)
+
+    ac_state = db_session.scalars(
+        select(ControlState).where(
+            ControlState.assessment_id == a.id,
+            ControlState.objective_id == ref["ac_obj"].id,
+        )
+    ).first()
+    ev = Evidence(
+        org_id=ref["org"].id, title="Prior evidence", artifact_type="export",
+        kind="reference", reference_location="http://example.com/prior",
+        collected_at=datetime.now(UTC),
+    )
+    db_session.add(ev)
+    db_session.flush()
+    db_session.add(EvidenceStateLink(evidence_id=ev.id, control_state_id=ac_state.id))
+    db_session.flush()
+
+    deactivate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
+    activate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
+
+    db_session.refresh(ac_state)
+    assert ac_state.status == "needs_review"
+
+
+def test_reactivate_fresh_control_gets_pending_evidence(db_session: Session, ref: dict):
+    """First activation (no prior archived evidence) → pending_evidence, not needs_review."""
+    a = start_assessment(db_session, ref["org"].id, ref["fw"].id, "Fresh test")
+    activate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
+
+    ac_state = db_session.scalars(
+        select(ControlState).where(
+            ControlState.assessment_id == a.id,
+            ControlState.objective_id == ref["ac_obj"].id,
+        )
+    ).first()
+    assert ac_state is not None
+    assert ac_state.status == "pending_evidence"
+
+
+def test_full_cycle_deactivate_reactivate_preserves_needs_review(
+    db_session: Session, ref: dict
+):
+    """End-to-end: activate → collect evidence → deactivate → reactivate → needs_review."""
+    a, _ = _setup(db_session, ref)
+
+    ac_state = db_session.scalars(
+        select(ControlState).where(
+            ControlState.assessment_id == a.id,
+            ControlState.objective_id == ref["ac_obj"].id,
+        )
+    ).first()
+
+    ev = Evidence(
+        org_id=ref["org"].id, title="Cycle evidence", artifact_type="export",
+        kind="reference", reference_location="http://example.com/cycle",
+        collected_at=datetime.now(UTC),
+    )
+    db_session.add(ev)
+    db_session.flush()
+    lnk = EvidenceStateLink(evidence_id=ev.id, control_state_id=ac_state.id)
+    db_session.add(lnk)
+    db_session.flush()
+
+    deactivate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
+    db_session.refresh(ac_state)
+    assert ac_state.status == "needs_review"
+    db_session.refresh(lnk)
+    assert lnk.is_archived is True
+
+    activate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
+
+    db_session.refresh(ac_state)
+    assert ac_state.status == "needs_review"
+    db_session.refresh(lnk)
+    assert lnk.is_archived is False
+    assert lnk.archived_by_product is None
+
+
+def test_reactivate_independent_control_unaffected(db_session: Session, ref: dict):
+    """A control with no product source is never touched by deactivate or reactivate."""
+    a, _ = _setup(db_session, ref)
+
+    ia_state = db_session.scalars(
+        select(ControlState).where(
+            ControlState.assessment_id == a.id,
+            ControlState.objective_id == ref["ia_obj"].id,
+        )
+    ).first()
+    ia_state.status = "met"
+    db_session.flush()
+
+    deactivate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
+    db_session.refresh(ia_state)
+    assert ia_state.status == "met"
+
+    activate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
+    db_session.refresh(ia_state)
+    assert ia_state.status == "met"

@@ -135,9 +135,12 @@ def activate_org_product(
 ) -> dict:
     """Mark a product active and fire the magic loop for one assessment.
 
-    Idempotent on control_state (overwrites with same values on re-activation).
-    Evidence tasks are deduplicated by (assessment_id, baseline_spec_id)
-    to avoid accumulating duplicates on repeated calls.
+    On re-activation after a prior deactivation:
+      - Archived evidence tasks are restored (na→open; collected stays collected).
+      - Archived evidence-state links from this product are unarchived.
+      - States that regain evidence are set to needs_review, not pending_evidence:
+        the MSP keeps their artifacts but must re-confirm coverage is still current.
+    On first activation (no archived evidence), behaviour is the same as before.
 
     Returns {"objectives_updated": N, "tasks_created": N}.
     """
@@ -157,7 +160,113 @@ def activate_org_product(
         op.configuration_notes = configuration_notes
     session.flush()
 
+    product = session.get(Product, product_id)
+    reactivation_ctx: dict = {
+        "via": "product_reactivation",
+        "product_name": product.name if product else str(product_id),
+        "assessment_id": str(assessment_id),
+    }
+
+    # Restore archived evidence tasks seeded by this product.
+    archived_tasks = session.scalars(
+        select(EvidenceTask)
+        .join(BaselineEvidenceSpec, EvidenceTask.baseline_spec_id == BaselineEvidenceSpec.id)
+        .join(BaselineControl, BaselineEvidenceSpec.baseline_control_id == BaselineControl.id)
+        .where(
+            EvidenceTask.assessment_id == assessment_id,
+            EvidenceTask.org_id == org_id,
+            BaselineControl.product_id == product_id,
+            EvidenceTask.is_archived.is_(True),
+        )
+    ).all()
+
+    for task in archived_tasks:
+        prev_status = task.status
+        task.is_archived = False
+        task.archived_at = None
+        if task.status == "na":
+            task.status = "open"
+        log_event(
+            session,
+            org_id=org_id,
+            action="evidence_task.restore",
+            entity_type="evidence_task",
+            entity_id=task.id,
+            before_value={"is_archived": True, "status": prev_status},
+            after_value={"is_archived": False, "status": task.status},
+            context={**reactivation_ctx, "collection_session": task.collection_session},
+        )
+
+    # Restore archived evidence-state links attributed to this product.
+    archived_links = session.scalars(
+        select(EvidenceStateLink)
+        .join(ControlState, EvidenceStateLink.control_state_id == ControlState.id)
+        .where(
+            ControlState.assessment_id == assessment_id,
+            EvidenceStateLink.is_archived.is_(True),
+            EvidenceStateLink.archived_by_product == product_id,
+        )
+    ).all()
+
+    restored_cs_ids: set[uuid.UUID] = set()
+    for lnk in archived_links:
+        lnk.is_archived = False
+        lnk.archived_at = None
+        lnk.archived_by_product = None
+        restored_cs_ids.add(lnk.control_state_id)
+        log_event(
+            session,
+            org_id=org_id,
+            action="evidence_state_link.restore",
+            entity_type="evidence_state_link",
+            entity_id=lnk.id,
+            before_value={"is_archived": True},
+            after_value={"is_archived": False},
+            context={**reactivation_ctx, "control_state_id": str(lnk.control_state_id)},
+        )
+
+    session.flush()
+
     result = _run_loop(session, org_id, product_id, assessment_id)
+
+    # States that regained archived evidence need human re-confirmation, not pending.
+    if restored_cs_ids:
+        cs_with_restored = session.scalars(
+            select(ControlState).where(
+                ControlState.id.in_(list(restored_cs_ids)),
+                ControlState.status == ControlStatus.PENDING_EVIDENCE,
+            )
+        ).all()
+        restore_history: list[ControlStateHistory] = []
+        product_name = product.name if product else str(product_id)
+        for cs in cs_with_restored:
+            restore_history.append(
+                ControlStateHistory(
+                    control_state_id=cs.id,
+                    previous_status=ControlStatus.PENDING_EVIDENCE,
+                    new_status=ControlStatus.NEEDS_REVIEW,
+                    previous_responsibility=cs.responsibility,
+                    new_responsibility=cs.responsibility,
+                    change_reason=f"Reactivation: prior evidence restored from {product_name}",
+                )
+            )
+            log_event(
+                session,
+                org_id=org_id,
+                action="control_state.update",
+                entity_type="control_state",
+                entity_id=cs.id,
+                before_value={"status": ControlStatus.PENDING_EVIDENCE},
+                after_value={"status": ControlStatus.NEEDS_REVIEW},
+                context={
+                    **reactivation_ctx,
+                    "via": "product_reactivation_with_prior_evidence",
+                },
+            )
+            cs.status = ControlStatus.NEEDS_REVIEW
+        session.add_all(restore_history)
+        session.flush()
+
     recompute_sprs(session, assessment_id)
     return result
 
@@ -409,18 +518,20 @@ def deactivate_org_product(
     product_id: uuid.UUID,
     assessment_id: uuid.UUID,
 ) -> dict:
-    """Decommission a product and revert/archive its automatic contributions.
+    """Decommission a product and revert/archive all its contributions.
 
-    Implements "machine's work is reversible; human work is permanent":
-      - Auto-flipped control states (pending_evidence + sourced from this product)
-        → needs_review. Human-touched states (any other status) → sourced cleared only.
-      - Evidence-state links on auto-flipped states → archived (is_archived=True).
+    Implements provenance-based reversal:
+      - ALL control states with sourced_from_product_id == this product → needs_review,
+        regardless of current status (pending_evidence, partial, or met). The sourced
+        pointer is the canonical signal; a human may have confirmed a state as met while
+        coverage still came from this product, but if the product is gone it needs review.
+      - Only states with sourced_from_product_id IS NULL survive untouched.
+      - Evidence-state links on ALL tool-sourced states → archived.
       - Evidence tasks from this product → archived; open ones also closed (na).
       - OrgProduct → decommissioned with deactivated_at timestamp.
       - SPRS recomputed (needs_review does not satisfy, so score reflects lost coverage).
 
-    Every step is audited via log_event() with context["via"]="product_deactivation"
-    so audit entries carry clear causal intent, not just raw field diffs.
+    Every step is audited via log_event() with context["via"]="product_deactivation".
 
     Returns {"controls_flagged": N, "tasks_archived": N, "evidence_links_archived": N}.
     """
@@ -469,57 +580,51 @@ def deactivate_org_product(
         )
     ).all()
 
-    auto_states: list[ControlState] = []
     history_rows: list[ControlStateHistory] = []
     controls_flagged = 0
 
     for cs in sourced_states:
-        if cs.status == ControlStatus.PENDING_EVIDENCE:
-            # Auto-flipped, not yet human-reviewed → needs_review
-            history_rows.append(
-                ControlStateHistory(
-                    control_state_id=cs.id,
-                    previous_status=cs.status,
-                    new_status=ControlStatus.NEEDS_REVIEW,
-                    previous_responsibility=cs.responsibility,
-                    new_responsibility=cs.responsibility,
-                    change_reason=f"Satisfying tool deactivated: {product.name}",
-                )
+        prev_status = cs.status
+        history_rows.append(
+            ControlStateHistory(
+                control_state_id=cs.id,
+                previous_status=prev_status,
+                new_status=ControlStatus.NEEDS_REVIEW,
+                previous_responsibility=cs.responsibility,
+                new_responsibility=cs.responsibility,
+                change_reason=f"Satisfying tool deactivated: {product.name}",
             )
-            log_event(
-                session,
-                org_id=org_id,
-                action="control_state.update",
-                entity_type="control_state",
-                entity_id=cs.id,
-                before_value={
-                    "status": cs.status,
-                    "sourced_from_product_id": str(product_id),
-                },
-                after_value={
-                    "status": ControlStatus.NEEDS_REVIEW,
-                    "sourced_from_product_id": None,
-                },
-                context=deactivation_ctx,
-            )
-            cs.status = ControlStatus.NEEDS_REVIEW
-            cs.sourced_from_product_id = None
-            auto_states.append(cs)
-            controls_flagged += 1
-        else:
-            # Human-touched: clear provenance pointer, preserve status
-            cs.sourced_from_product_id = None
+        )
+        log_event(
+            session,
+            org_id=org_id,
+            action="control_state.update",
+            entity_type="control_state",
+            entity_id=cs.id,
+            before_value={
+                "status": prev_status,
+                "sourced_from_product_id": str(product_id),
+            },
+            after_value={
+                "status": ControlStatus.NEEDS_REVIEW,
+                "sourced_from_product_id": None,
+            },
+            context=deactivation_ctx,
+        )
+        cs.status = ControlStatus.NEEDS_REVIEW
+        cs.sourced_from_product_id = None
+        controls_flagged += 1
 
     session.add_all(history_rows)
     session.flush()
 
-    # 3. Archive evidence_state_link rows on auto-flipped states
+    # 3. Archive evidence_state_link rows on all tool-sourced states
     evidence_links_archived = 0
-    if auto_states:
-        auto_state_ids = [cs.id for cs in auto_states]
+    if sourced_states:
+        sourced_state_ids = [cs.id for cs in sourced_states]
         link_rows = session.scalars(
             select(EvidenceStateLink).where(
-                EvidenceStateLink.control_state_id.in_(auto_state_ids),
+                EvidenceStateLink.control_state_id.in_(sourced_state_ids),
                 EvidenceStateLink.is_archived.is_(False),
             )
         ).all()
