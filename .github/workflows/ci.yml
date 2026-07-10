@@ -16,6 +16,9 @@ jobs:
       - name: Install
         working-directory: backend
         run: pip install -e ".[dev]"
+      - name: Lint (show diff for debugging)
+        working-directory: backend
+        run: ruff check --diff tests/test_evidence_tasks.py || true
       - name: Lint
         working-directory: backend
         run: ruff check .
