@@ -69,7 +69,16 @@ class MinIOClient(StorageClient):
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,
             region_name=region,
-            config=Config(signature_version="s3v4"),
+            config=Config(
+                signature_version="s3v4",
+                # Suppress Content-MD5 and ETag-MD5 validation: botocore calls
+                # hashlib.md5() for these by default, which hard-fails when
+                # OpenSSL is in FIPS mode.  "when_required" means: only add a
+                # checksum / validate when the API contract requires it (it does
+                # not for plain put_object / delete_object against MinIO).
+                request_checksum_calculation="when_required",
+                response_checksum_validation="when_required",
+            ),
         )
         self._s3 = boto3.client("s3", endpoint_url=endpoint, **client_kwargs)
         self._s3_pub = (
