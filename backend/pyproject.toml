@@ -58,6 +58,7 @@ known-first-party = ["app"]
 "app/routers/assessments.py" = ["B008"]
 "app/routers/evidence.py" = ["B008"]
 "app/routers/frameworks.py" = ["B008"]
+"app/routers/bundle.py" = ["B008"]
 "app/routers/contacts.py" = ["B008"]
 "app/routers/orgs.py" = ["B008"]
 

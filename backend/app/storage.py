@@ -28,6 +28,11 @@ class StorageClient(ABC):
     @abstractmethod
     def delete_file(self, key: str) -> None: ...
 
+    def get_bytes(self, key: str) -> bytes:  # noqa: ARG002
+        """Download and return object bytes. NullStorageClient returns b''.
+        Override in real clients. Tests that need embedded files override this."""
+        return b""
+
 
 class NullStorageClient(StorageClient):
     """Used when no storage endpoint is configured.  Bytes are discarded."""
@@ -111,6 +116,10 @@ class MinIOClient(StorageClient):
 
     def delete_file(self, key: str) -> None:
         self._s3.delete_object(Bucket=self._bucket, Key=key)
+
+    def get_bytes(self, key: str) -> bytes:
+        resp = self._s3.get_object(Bucket=self._bucket, Key=key)
+        return resp["Body"].read()  # type: ignore[no-any-return]
 
 
 @lru_cache(maxsize=1)
