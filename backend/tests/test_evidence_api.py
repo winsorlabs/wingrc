@@ -58,6 +58,11 @@ class InMemoryStorageClient(StorageClient):
         self.deleted.append(key)
         self.files.pop(key, None)
 
+    def get_bytes(self, key: str) -> bytes:
+        if key not in self.files:
+            raise FileNotFoundError(key)
+        return self.files[key]
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
