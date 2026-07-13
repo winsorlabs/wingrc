@@ -5,10 +5,20 @@ to frozen Python dataclasses before rendering so the bundle is a coherent
 point-in-time snapshot even if the live assessment is edited after export.
 Evidence file bytes are embedded directly so the bundle stays valid after
 presigned URLs expire.
+
+CMMC artifact hashing (DoD-CIO-00008):
+  - SHA-256 is computed at upload time and stored on the evidence row.
+  - Pre-existing evidence (uploaded before migration 0014) is hashed lazily:
+    bytes are already fetched for embedding; the hash is computed from those
+    in-memory bytes and written back to the DB in the same transaction.
+  - artifact_log.txt lists every embedded file with Algorithm | Hash | Path.
+  - A second-order SHA-256 of artifact_log.txt is shown on the cover page
+    using the exact eMASS field labels (Hashed Data List / Hash Value).
 """
 from __future__ import annotations
 
 import base64
+import hashlib
 import html
 import io
 import re
@@ -18,7 +28,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from .engine import recompute_sprs
@@ -98,6 +108,8 @@ _STATUS_PRIORITY: dict[str, int] = {
 
 _NON_PASSING = frozenset({"not_met", "needs_review", "pending_evidence", "partial"})
 
+_ARTIFACT_HASH_ALGO = "SHA-256"
+
 
 def _rollup_status(statuses: list[str]) -> str:
     if not statuses:
@@ -172,6 +184,7 @@ class EvidenceSnap:
     location: str | None
     file_size_bytes: int | None
     collected_at: datetime
+    sha256_hash: str | None = None
 
 
 @dataclass
@@ -230,6 +243,7 @@ class BundleSnapshot:
     contacts: list[ContactSnap]
     controls: list[ControlSnap]
     evidence_files: dict[uuid.UUID, tuple[str, bytes]]
+    evidence_hashes: dict[uuid.UUID, str]
     unavailable_ev_ids: set[uuid.UUID]
     open_tasks: list[OpenTaskSnap]
     findings: list[FindingSnap]
@@ -299,6 +313,27 @@ def _html_page(title: str, body: str) -> str:
     )
 
 
+def _ev_zip_rel(ev_id: uuid.UUID, title: str, mime_type: str | None) -> str:
+    """Canonical ZIP-relative path for an embedded evidence file.
+
+    Single source of truth used by both snapshot assembly (where the path is
+    stored in EvidenceSnap.zip_path) and render (where the path is written to
+    the artifact log and the ZIP entry).  Keeping this in one function prevents
+    slug-generation drift between the two code paths.
+    """
+    ext = _ext_from_mime(mime_type)
+    slug = _safe_slug(title or str(ev_id)[:8])
+    return f"evidence/files/{str(ev_id)[:8]}_{slug}{ext}"
+
+
+def _hash_cell(ev: EvidenceSnap) -> str:
+    if ev.kind == "reference":
+        return "not applicable — reference only"
+    if ev.sha256_hash:
+        return f"<span class='ev-path'>{_esc(ev.sha256_hash)}</span>"
+    return "<em style='color:#9ca3af'>unavailable</em>"
+
+
 # ---------------------------------------------------------------------------
 # Snapshot assembly
 # ---------------------------------------------------------------------------
@@ -315,6 +350,17 @@ def snapshot_bundle(
     Calls recompute_sprs first so the score in the bundle is always current.
     Evidence file bytes are fetched from object storage and embedded; failures
     are recorded in unavailable_ev_ids (included in manifest, not the zip).
+
+    SHA-256 hashes (DoD-CIO-00008):
+      evidence_hashes is populated ONLY for evidence items whose bytes were
+      successfully fetched this export.  If a fetch fails, the item goes into
+      unavailable_ev_ids and gets NO entry in evidence_hashes, regardless of
+      whether a cached sha256_hash exists on the DB row.  This prevents a stale
+      DB hash from appearing next to a file that is absent from the bundle.
+
+      Pre-existing evidence (sha256_hash IS NULL in DB): hash is computed from
+      the in-memory bytes (already fetched for embedding) and written back to
+      the evidence row in the same transaction via a lightweight UPDATE.
     """
     sprs_score = recompute_sprs(session, assessment_id)
     session.flush()
@@ -456,6 +502,7 @@ def snapshot_bundle(
             Evidence.file_size_bytes,
             Evidence.reference_location,
             Evidence.collected_at,
+            Evidence.sha256_hash,
         )
         .select_from(ControlState)
         .join(EvidenceStateLink, EvidenceStateLink.control_state_id == ControlState.id)
@@ -467,9 +514,16 @@ def snapshot_bundle(
         .order_by(Evidence.collected_at)
     ).all()
 
-    # Fetch file bytes (deduplicated by evidence_id)
+    # Fetch file bytes (deduplicated by evidence_id).
+    #
+    # Invariant: evidence_files and evidence_hashes have identical key sets.
+    # An ev_id enters both dicts only on a successful get_bytes() call.
+    # Fetch failure → unavailable_ev_ids only; the DB sha256_hash value is
+    # intentionally ignored so a stale cached hash never appears next to a
+    # file that is absent from this bundle.
     seen_ev: set[uuid.UUID] = set()
     evidence_files: dict[uuid.UUID, tuple[str, bytes]] = {}
+    evidence_hashes: dict[uuid.UUID, str] = {}
     unavailable_ev_ids: set[uuid.UUID] = set()
     for er in ev_rows:
         if er.kind != "file" or not er.storage_key:
@@ -478,13 +532,20 @@ def snapshot_bundle(
         if ev_id in seen_ev:
             continue
         seen_ev.add(ev_id)
-        ext = _ext_from_mime(er.mime_type)
-        slug = _safe_slug(er.ev_title or str(ev_id)[:8])
-        zip_path = f"evidence/files/{str(ev_id)[:8]}_{slug}{ext}"
+        zip_path = _ev_zip_rel(ev_id, er.ev_title or "", er.mime_type)
         try:
             file_bytes = storage.get_bytes(er.storage_key)
             if file_bytes:
+                h = er.sha256_hash
+                if h is None:
+                    h = hashlib.sha256(file_bytes).hexdigest()
+                    session.execute(
+                        update(Evidence)
+                        .where(Evidence.id == ev_id)
+                        .values(sha256_hash=h)
+                    )
                 evidence_files[ev_id] = (zip_path, file_bytes)
+                evidence_hashes[ev_id] = h
             else:
                 unavailable_ev_ids.add(ev_id)
         except Exception:  # noqa: BLE001
@@ -497,8 +558,10 @@ def snapshot_bundle(
         if er.kind == "file":
             hit = evidence_files.get(ev_id)
             zip_path_for_ev = hit[0] if hit else None
+            ev_hash = evidence_hashes.get(ev_id)
         else:
             zip_path_for_ev = None
+            ev_hash = None
         ev_snap = EvidenceSnap(
             evidence_id=ev_id,
             kind=er.kind,
@@ -508,6 +571,7 @@ def snapshot_bundle(
             location=er.reference_location,
             file_size_bytes=er.file_size_bytes,
             collected_at=er.collected_at,
+            sha256_hash=ev_hash,
         )
         ev_by_cs.setdefault(cs_id, []).append(ev_snap)
 
@@ -631,6 +695,7 @@ def snapshot_bundle(
         contacts=contacts,
         controls=controls,
         evidence_files=evidence_files,
+        evidence_hashes=evidence_hashes,
         unavailable_ev_ids=unavailable_ev_ids,
         open_tasks=open_tasks,
         findings=findings,
@@ -642,28 +707,79 @@ def snapshot_bundle(
 # ---------------------------------------------------------------------------
 
 
-def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str]:
-    """Render the snapshot to a ZIP archive.  Returns (bytes, filename)."""
+def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
+    """Render the snapshot to a ZIP archive.
+
+    Returns (zip_bytes, filename, artifact_log_filename, artifact_log_hash).
+
+    Artifact log (DoD-CIO-00008):
+      All generated HTML documents (except cover.html) and all embedded evidence
+      files are listed with Algorithm | Hash | Path.  cover.html is excluded
+      because it carries the second-order hash — including it would be circular.
+      The artifact log itself is then hashed (second-order hash) and both values
+      are written to cover.html under the exact eMASS field names.
+    """
     slug = _safe_slug(snapshot.org.name)
     date_str = snapshot.generated_at.strftime("%Y%m%d")
     root = f"{slug}_{date_str}"
 
+    # --- render all HTML pages except cover ---
+    index_html = _render_index(snapshot)
+    sys_desc_html = _render_sys_desc(snapshot)
+    impl_html = _render_implementation(snapshot)
+    personnel_html = _render_personnel(snapshot)
+    manifest_html = _render_manifest(snapshot)
+    scoring_html = _render_scoring(snapshot)
+    outstanding_html = _render_outstanding(snapshot)
+
+    # --- build artifact log ---
+    # HTML documents are hashed from their rendered bytes.
+    # Evidence files use the stored sha256_hash from evidence_hashes (computed
+    # at upload time or lazily during this snapshot_bundle call — never re-read
+    # from storage here).  evidence_hashes and evidence_files share the same
+    # key set, so the direct index lookup below is always valid.
+    log_lines = ["Algorithm | Hash | Path"]
+    for rel_path, content in [
+        (f"{root}/index.html", index_html),
+        (f"{root}/ssp/01_system_description.html", sys_desc_html),
+        (f"{root}/ssp/02_implementation.html", impl_html),
+        (f"{root}/ssp/03_personnel.html", personnel_html),
+        (f"{root}/evidence/manifest.html", manifest_html),
+        (f"{root}/summary/scoring.html", scoring_html),
+        (f"{root}/summary/outstanding.html", outstanding_html),
+    ]:
+        h = hashlib.sha256(content.encode()).hexdigest()
+        log_lines.append(f"{_ARTIFACT_HASH_ALGO} | {h} | {rel_path}")
+
+    for ev_id, (zip_rel, _) in snapshot.evidence_files.items():
+        log_lines.append(
+            f"{_ARTIFACT_HASH_ALGO} | {snapshot.evidence_hashes[ev_id]} | {root}/{zip_rel}"
+        )
+
+    artifact_log_filename = "artifact_log.txt"
+    artifact_log_bytes = ("\n".join(log_lines) + "\n").encode()
+    artifact_log_hash = hashlib.sha256(artifact_log_bytes).hexdigest()
+
+    # --- render cover with eMASS fields (after second-order hash is known) ---
+    cover_html = _render_cover(snapshot, artifact_log_filename, artifact_log_hash)
+
+    # --- write ZIP ---
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(f"{root}/index.html", _render_index(snapshot))
-        zf.writestr(f"{root}/cover.html", _render_cover(snapshot))
-        zf.writestr(f"{root}/ssp/01_system_description.html", _render_sys_desc(snapshot))
-        zf.writestr(f"{root}/ssp/02_implementation.html", _render_implementation(snapshot))
-        zf.writestr(f"{root}/ssp/03_personnel.html", _render_personnel(snapshot))
-        zf.writestr(f"{root}/evidence/manifest.html", _render_manifest(snapshot))
-        zf.writestr(f"{root}/summary/scoring.html", _render_scoring(snapshot))
-        zf.writestr(f"{root}/summary/outstanding.html", _render_outstanding(snapshot))
-
+        zf.writestr(f"{root}/index.html", index_html)
+        zf.writestr(f"{root}/cover.html", cover_html)
+        zf.writestr(f"{root}/ssp/01_system_description.html", sys_desc_html)
+        zf.writestr(f"{root}/ssp/02_implementation.html", impl_html)
+        zf.writestr(f"{root}/ssp/03_personnel.html", personnel_html)
+        zf.writestr(f"{root}/evidence/manifest.html", manifest_html)
+        zf.writestr(f"{root}/summary/scoring.html", scoring_html)
+        zf.writestr(f"{root}/summary/outstanding.html", outstanding_html)
+        zf.writestr(f"{root}/{artifact_log_filename}", artifact_log_bytes)
         for _ev_id, (zip_rel, file_bytes) in snapshot.evidence_files.items():
             zf.writestr(f"{root}/{zip_rel}", file_bytes)
 
     filename = f"wingrc_bundle_{slug}_{date_str}.zip"
-    return buf.getvalue(), filename
+    return buf.getvalue(), filename, artifact_log_filename, artifact_log_hash
 
 
 # ---------------------------------------------------------------------------
@@ -679,7 +795,11 @@ def _stamp(snapshot: BundleSnapshot) -> str:
     )
 
 
-def _render_cover(snapshot: BundleSnapshot) -> str:
+def _render_cover(
+    snapshot: BundleSnapshot,
+    hashed_data_list: str | None = None,
+    hash_value: str | None = None,
+) -> str:
     o = snapshot.org
     a = snapshot.assessment
 
@@ -711,6 +831,21 @@ def _render_cover(snapshot: BundleSnapshot) -> str:
         f"<tr><th>Website</th><td>{_esc(_na(o.website))}</td></tr>",
     ])
 
+    emass_html = ""
+    if hashed_data_list and hash_value:
+        emass_html = (
+            "<h2>Artifact Hash &mdash; eMASS Submission Fields</h2>"
+            "<table>"
+            f"<tr><th>Hashed Data List</th>"
+            f"<td><span class='ev-path'>{_esc(hashed_data_list)}</span></td></tr>"
+            f"<tr><th>Hash Value</th>"
+            f"<td><span class='ev-path'>{_esc(hash_value)}</span></td></tr>"
+            "</table>"
+            "<p style='font-size:.85rem;color:#4b5563'>"
+            "Copy these values into the corresponding eMASS fields when submitting "
+            "this assessment package to your C3PAO or DCMA DIBCAC.</p>"
+        )
+
     body = (
         f"{_stamp(snapshot)}"
         f"{logo_html}"
@@ -718,6 +853,7 @@ def _render_cover(snapshot: BundleSnapshot) -> str:
         f"<p style='{score_style}'><span class='score-big'>{snapshot.sprs_score}</span>"
         f"&nbsp;<span style='color:#6b7280'>/ 110 SPRS</span></p>"
         f"<table>{rows}</table>"
+        f"{emass_html}"
         f"<p style='color:#6b7280;font-size:.85rem'>"
         f"Generated: {_esc(snapshot.generated_at.strftime('%Y-%m-%d %H:%M UTC'))}</p>"
     )
@@ -932,13 +1068,15 @@ def _render_manifest(snapshot: BundleSnapshot) -> str:
                     f"<td>{_esc(ev.artifact_type)}</td>"
                     f"<td>{loc_html}</td>"
                     f"<td>{_esc(ev.collected_at.strftime('%Y-%m-%d'))}</td>"
+                    f"<td>{_hash_cell(ev)}</td>"
                     f"</tr>"
                 )
         sections += (
             f"<h3>{_esc(ctrl.control_id)} — {_esc(ctrl.title)}</h3>"
             "<table>"
             "<tr><th>Obj</th><th>Title</th><th>Kind</th>"
-            "<th>Type</th><th>Location / Path</th><th>Collected</th></tr>"
+            "<th>Type</th><th>Location / Path</th><th>Collected</th>"
+            "<th>SHA-256 Hash</th></tr>"
             f"{rows}</table>"
         )
 
@@ -1102,6 +1240,7 @@ def _render_index(snapshot: BundleSnapshot) -> str:
         ("Evidence Manifest", "evidence/manifest.html"),
         ("SPRS Scoring Summary", "summary/scoring.html"),
         ("Outstanding Items", "summary/outstanding.html"),
+        ("Artifact Hash Log", "artifact_log.txt"),
     ]
     li_items = "".join(
         f'<li><a href="{href}">{label}</a></li>'
@@ -1124,6 +1263,9 @@ def _render_index(snapshot: BundleSnapshot) -> str:
         "<li>Open <code>index.html</code> in any browser "
         "— all documents are self-contained HTML.</li>"
         "<li>Evidence files are in <code>evidence/files/</code> and linked from the manifest.</li>"
+        "<li><code>artifact_log.txt</code> lists SHA-256 hashes for all artifacts "
+        "per DoD-CIO-00008. The second-order hash on the cover page is the eMASS "
+        "<em>Hash Value</em> field.</li>"
         "<li>This bundle is a point-in-time snapshot. Do not modify it before submission.</li>"
         "</ul>"
     )

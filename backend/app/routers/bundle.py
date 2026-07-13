@@ -38,7 +38,7 @@ def export_bundle(
         raise HTTPException(status_code=404, detail="Assessment not found")
 
     snapshot = snapshot_bundle(session, storage, org_id, assessment_id)
-    zip_bytes, filename = render_bundle(snapshot)
+    zip_bytes, filename, artifact_log_filename, artifact_log_hash = render_bundle(snapshot)
 
     log_event(
         session,
@@ -50,6 +50,8 @@ def export_bundle(
         after_value={
             "sprs_score": snapshot.sprs_score,
             "generated_at": snapshot.generated_at.isoformat(),
+            "hashed_data_list": artifact_log_filename,
+            "hash_value": artifact_log_hash,
         },
         context={"filename": filename},
     )

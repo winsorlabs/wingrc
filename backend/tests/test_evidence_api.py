@@ -9,12 +9,14 @@ Covers:
   - Delete: file cleans up storage; reference does not touch storage
   - Manifest: correct shape, human-readable identifiers, both evidence kinds
   - Invariants: status never changes on attach/detach; customer_owns is not blocked
+  - SHA-256 hashing: upload stores hash; get_bytes() roundtrip matches stored hash
 
 All tests use InMemoryStorageClient injected via dependency_overrides so no
 MinIO instance is required.
 """
 from __future__ import annotations
 
+import hashlib
 import uuid
 
 import pytest
@@ -24,7 +26,7 @@ from sqlalchemy import select
 from app.db import get_session
 from app.engine import start_assessment
 from app.main import app
-from app.models import AssessmentObjective, Control, ControlState, Framework, Organization
+from app.models import AssessmentObjective, Control, ControlState, Evidence, Framework, Organization
 from app.storage import StorageClient, get_storage_client
 
 # ---------------------------------------------------------------------------
@@ -611,3 +613,77 @@ def test_evidence_manifest_wrong_org_returns_404(client, db_session):
     )
     r = client.get(url)
     assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# SHA-256 hashing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_upload_populates_sha256(client, db_session, storage):
+    """File upload endpoint stores sha256_hash matching the uploaded bytes."""
+    d = _seed(db_session)
+    data = b"%PDF-1.4 test content for hashing"
+    expected_hash = hashlib.sha256(data).hexdigest()
+
+    r = client.post(
+        _upload_url(d),
+        files={"file": ("report.pdf", data, "application/pdf")},
+        data={"artifact_type": "document"},
+    )
+    assert r.status_code == 201, r.text
+
+    ev = db_session.get(Evidence, uuid.UUID(r.json()["id"]))
+    assert ev is not None
+    assert ev.sha256_hash == expected_hash
+
+
+@pytest.mark.integration
+def test_upload_hash_matches_storage_roundtrip(client, db_session, storage):
+    """The hash stored in the DB equals the hash of bytes returned by get_bytes().
+
+    This exercises the actual path bundle export uses: snapshot_bundle calls
+    storage.get_bytes(key) to fetch bytes for embedding.  If those bytes differ
+    from what was uploaded, the hash would mismatch and the artifact log would be
+    wrong.  InMemoryStorageClient stores and returns bytes faithfully, proving
+    the contract.
+    """
+    d = _seed(db_session)
+    data = b"%PDF-1.4 roundtrip test"
+
+    r = client.post(
+        _upload_url(d),
+        files={"file": ("audit.pdf", data, "application/pdf")},
+        data={"artifact_type": "document"},
+    )
+    assert r.status_code == 201, r.text
+
+    ev = db_session.get(Evidence, uuid.UUID(r.json()["id"]))
+    assert ev is not None
+    assert ev.storage_key is not None
+
+    retrieved = storage.get_bytes(ev.storage_key)
+    assert hashlib.sha256(retrieved).hexdigest() == ev.sha256_hash
+
+
+@pytest.mark.integration
+def test_references_do_not_get_sha256(client, db_session):
+    """Reference evidence (no stored bytes) must have sha256_hash = NULL."""
+    d = _seed(db_session)
+
+    r = client.post(
+        _refs_url(d),
+        json=[{
+            "title": "Policy doc",
+            "location": "https://sharepoint.example.com/policy.pdf",
+            "artifact_type": "policy",
+        }],
+    )
+    assert r.status_code == 201, r.text
+
+    ev_id = uuid.UUID(r.json()[0]["id"])
+    ev = db_session.get(Evidence, ev_id)
+    assert ev is not None
+    assert ev.kind == "reference"
+    assert ev.sha256_hash is None

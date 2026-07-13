@@ -22,6 +22,7 @@ Invariants:
 """
 from __future__ import annotations
 
+import hashlib
 import mimetypes
 import os
 import re
@@ -301,6 +302,12 @@ async def upload_evidence(
     # Store under UUID to prevent path traversal; original name kept in title.
     storage_key = f"{org_id}/evidence/{evidence_id}/{evidence_id}{ext}"
 
+    # SHA-256 per DoD-CIO-00008 CMMC artifact hashing requirement.  Algorithm is
+    # CMVP-approved; the FIPS-validated crypto boundary (UBI 9 / BoringCrypto,
+    # see docs/fips.md) is roadmap item #2 — FIPS deployment profile — and is
+    # not yet deployed.  Do not read this as FIPS-compliant today.
+    file_sha256 = hashlib.sha256(data).hexdigest()
+
     storage.upload_file(storage_key, data, mime)
 
     ev = Evidence(
@@ -312,6 +319,7 @@ async def upload_evidence(
         storage_key=storage_key,
         mime_type=mime,
         file_size_bytes=len(data),
+        sha256_hash=file_sha256,
         collected_at=datetime.now(UTC),
     )
     session.add(ev)
@@ -743,6 +751,7 @@ async def collect_task_evidence_file(
     display_title = title or raw_name
     evidence_id = uuid.uuid4()
     storage_key = f"{org_id}/evidence/{evidence_id}/{evidence_id}{ext}"
+    file_sha256 = hashlib.sha256(data).hexdigest()
     storage.upload_file(storage_key, data, mime)
 
     ev = Evidence(
@@ -754,6 +763,7 @@ async def collect_task_evidence_file(
         storage_key=storage_key,
         mime_type=mime,
         file_size_bytes=len(data),
+        sha256_hash=file_sha256,
         collected_at=datetime.now(UTC),
     )
     session.add(ev)
