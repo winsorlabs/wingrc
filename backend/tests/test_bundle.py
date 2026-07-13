@@ -166,6 +166,7 @@ def _seed(db_session, storage: InMemoryStorageClient) -> dict:
 
     # Implementation statement for objective [a]
     stmt = ImplementationStatement(
+        org_id=org.id,
         objective_id=obj_a.id,
         assessment_id=assessment.id,
         body="Heimdal enforces MFA for all privileged accounts.",
