@@ -26,7 +26,16 @@ from sqlalchemy import select
 from app.db import get_session
 from app.engine import start_assessment
 from app.main import app
-from app.models import AssessmentObjective, Control, ControlState, Evidence, Framework, Organization
+from app.models import (
+    AssessmentObjective,
+    Control,
+    ControlState,
+    Evidence,
+    EvidenceTask,
+    EvidenceTaskStateLink,
+    Framework,
+    Organization,
+)
 from app.storage import StorageClient, get_storage_client
 
 # ---------------------------------------------------------------------------
@@ -665,6 +674,41 @@ def test_upload_hash_matches_storage_roundtrip(client, db_session, storage):
 
     retrieved = storage.get_bytes(ev.storage_key)
     assert hashlib.sha256(retrieved).hexdigest() == ev.sha256_hash
+
+
+@pytest.mark.integration
+def test_collect_task_populates_sha256(client, db_session, storage):
+    """Task-collect endpoint stores sha256_hash matching the uploaded bytes."""
+    d = _seed(db_session)
+    data = b"%PDF-1.4 task collect hashing test"
+    expected_hash = hashlib.sha256(data).hexdigest()
+
+    task = EvidenceTask(
+        org_id=d["org"].id,
+        assessment_id=d["assessment"].id,
+        title="Config export",
+        artifact_type="export",
+        status="open",
+    )
+    db_session.add(task)
+    db_session.flush()
+    db_session.add(EvidenceTaskStateLink(task_id=task.id, control_state_id=d["cs"].id))
+    db_session.flush()
+
+    url = (
+        f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}"
+        f"/evidence-tasks/{task.id}/collect"
+    )
+    r = client.post(
+        url,
+        files={"file": ("config.pdf", data, "application/pdf")},
+        data={"artifact_type": "export"},
+    )
+    assert r.status_code == 201, r.text
+
+    ev = db_session.get(Evidence, uuid.UUID(r.json()["id"]))
+    assert ev is not None
+    assert ev.sha256_hash == expected_hash
 
 
 @pytest.mark.integration
