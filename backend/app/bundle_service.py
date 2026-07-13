@@ -21,6 +21,7 @@ import base64
 import hashlib
 import html
 import io
+import posixpath
 import re
 import uuid
 import zipfile
@@ -1043,47 +1044,89 @@ def _render_manifest(snapshot: BundleSnapshot) -> str:
         )
         return _html_page("Evidence Manifest", body)
 
+    # manifest.html sits at evidence/manifest.html within the zip root.
+    # posixpath.relpath computes the correct relative href to any evidence file
+    # regardless of _ev_zip_rel()'s prefix — robust against future path changes.
+    _MANIFEST_DIR = "evidence"
+
+    toc_links: list[str] = []
     sections = ""
+    current_family = ""
+
     for ctrl in snapshot.controls:
-        all_ev = [e for obj in ctrl.objectives for e in obj.evidence]
-        if not all_ev:
+        ev_objectives = [obj for obj in ctrl.objectives if obj.evidence]
+        if not ev_objectives:
             continue
 
-        rows = ""
-        for obj in ctrl.objectives:
-            for ev in obj.evidence:
-                if ev.kind == "file":
-                    loc_html = (
-                        f"<span class='ev-path'>{_esc(ev.zip_path)}</span>"
-                        if ev.zip_path
-                        else "<em style='color:#9ca3af'>not available in bundle</em>"
-                    )
-                else:
-                    loc_html = _esc(ev.location or "")
-                rows += (
-                    f"<tr>"
-                    f"<td>[{_esc(obj.objective_key)}]</td>"
-                    f"<td>{_esc(ev.title)}</td>"
-                    f"<td>{_esc(ev.kind)}</td>"
-                    f"<td>{_esc(ev.artifact_type)}</td>"
-                    f"<td>{loc_html}</td>"
-                    f"<td>{_esc(ev.collected_at.strftime('%Y-%m-%d'))}</td>"
-                    f"<td>{_hash_cell(ev)}</td>"
-                    f"</tr>"
-                )
+        if ctrl.family != current_family:
+            current_family = ctrl.family
+            sections += f"<h2>{_esc(current_family)}</h2>"
+
+        anchor = _esc(ctrl.control_id)
+        toc_links.append(f'<a href="#{anchor}">{_esc(ctrl.control_id)}</a>')
         sections += (
-            f"<h3>{_esc(ctrl.control_id)} — {_esc(ctrl.title)}</h3>"
-            "<table>"
-            "<tr><th>Obj</th><th>Title</th><th>Kind</th>"
-            "<th>Type</th><th>Location / Path</th><th>Collected</th>"
-            "<th>SHA-256 Hash</th></tr>"
-            f"{rows}</table>"
+            f'<h3 id="{anchor}">{_esc(ctrl.control_id)} &mdash; {_esc(ctrl.title)}'
+            f"&nbsp;{_status_badge(ctrl.rollup_status)}</h3>"
         )
 
-    if not sections:
-        sections = '<p class="no-stmt">No evidence has been collected yet.</p>'
+        for obj in ev_objectives:
+            items = ""
+            for ev in obj.evidence:
+                if ev.kind == "file":
+                    if ev.zip_path:
+                        href = posixpath.relpath(ev.zip_path, _MANIFEST_DIR)
+                        hash_html = (
+                            f"<br><span class='ev-path'>{_esc(ev.sha256_hash)}</span>"
+                            if ev.sha256_hash
+                            else ""
+                        )
+                        items += (
+                            f'<li><a href="{_esc(href)}">{_esc(ev.title)}</a>'
+                            f' <span class="s-tag">{_esc(ev.artifact_type)}</span>'
+                            f"{hash_html}</li>"
+                        )
+                    else:
+                        items += (
+                            f"<li>{_esc(ev.title)}"
+                            f' <span class="s-tag">{_esc(ev.artifact_type)}</span>'
+                            f" <em style='color:#9ca3af'>"
+                            f"(file unavailable in this bundle)</em></li>"
+                        )
+                else:
+                    items += (
+                        f"<li>&#x2197;&nbsp;{_esc(ev.title)}"
+                        f" &mdash; {_esc(ev.location or '')}"
+                        f"&nbsp;<span style='color:#9ca3af;font-style:italic'>"
+                        f"not applicable &mdash; reference only</span></li>"
+                    )
 
-    body = f"{_stamp(snapshot)}<h1>Evidence Manifest</h1>{sections}"
+            sections += (
+                f'<div class="obj">'
+                f'<span class="obj-k">[{_esc(obj.objective_key)}]</span>'
+                f" {_esc(obj.objective_text)}&nbsp;{_status_badge(obj.status)}"
+                f"<ul>{items}</ul>"
+                f"</div>"
+            )
+
+    if not sections:
+        body = (
+            f"{_stamp(snapshot)}"
+            "<h1>Evidence Manifest</h1>"
+            '<p class="no-stmt">No evidence has been collected yet.</p>'
+        )
+        return _html_page("Evidence Manifest", body)
+
+    toc_html = (
+        '<p style="font-size:.9rem;color:#4b5563">Jump to: '
+        + " &middot; ".join(toc_links)
+        + "</p>"
+    )
+    note = (
+        '<p style="font-size:.85rem;color:#6b7280">'
+        "File links open the embedded artifact directly. "
+        "SHA-256 Hash shown per DoD-CIO-00008 artifact hashing requirements.</p>"
+    )
+    body = f"{_stamp(snapshot)}<h1>Evidence Manifest</h1>{toc_html}{note}{sections}"
     return _html_page("Evidence Manifest", body)
 
 

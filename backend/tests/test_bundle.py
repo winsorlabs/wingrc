@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import re
 import uuid
 import zipfile
 from datetime import UTC, datetime
@@ -555,6 +556,41 @@ def test_bundle_artifact_log_zip_consistency(client, db_session, storage):
     expected_in_log = zip_paths - excluded
     missing_from_log = expected_in_log - log_paths
     assert not missing_from_log, f"ZIP entries not in artifact log: {missing_from_log}"
+
+
+@pytest.mark.integration
+def test_bundle_manifest_links_resolve(client, db_session, storage):
+    """Every href='files/...' link in manifest.html points to a real ZIP entry.
+
+    Regression guard: if _ev_zip_rel() and _render_manifest()'s relative-path
+    computation ever drift apart, broken links would be silently embedded in
+    every exported bundle.  posixpath.relpath() makes the href robust, and this
+    test catches any regression in that derivation.
+    """
+    d = _seed(db_session, storage)
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        names = zf.namelist()
+        manifest_name = next(n for n in names if n.endswith("manifest.html"))
+        manifest_html = zf.read(manifest_name).decode()
+
+    # Derive the root prefix from the first ZIP entry (e.g. "acme_msp_20260713")
+    root = names[0].split("/")[0]
+
+    # Extract every href="files/..." from the manifest
+    hrefs = re.findall(r'href="(files/[^"]+)"', manifest_html)
+    assert hrefs, "manifest.html contains no file links — expected at least one"
+
+    # manifest.html lives at {root}/evidence/manifest.html, so a relative
+    # href="files/foo.png" resolves to {root}/evidence/files/foo.png in the ZIP.
+    zip_names = set(names)
+    for href in hrefs:
+        abs_path = f"{root}/evidence/{href}"
+        assert abs_path in zip_names, (
+            f"manifest.html links to {href!r} but {abs_path!r} is not in the ZIP"
+        )
 
 
 @pytest.mark.integration
