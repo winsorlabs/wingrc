@@ -119,6 +119,8 @@ export function AssessmentBoard({ org, assessment }: Props) {
 
   const [filters, setFilters] = useState<FilterOpts>(clearFilters());
   const [sortByWeight, setSortByWeight] = useState(false);
+  const [generatingBundle, setGeneratingBundle] = useState(false);
+  const [bundleError, setBundleError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -160,6 +162,18 @@ export function AssessmentBoard({ org, assessment }: Props) {
       .getControlStates(org.id, assessment.id)
       .then(setRows)
       .catch((e: Error) => setError(e.message));
+  }
+
+  async function handleGenerateBundle() {
+    setGeneratingBundle(true);
+    setBundleError(null);
+    try {
+      await api.downloadBundle(org.id, assessment.id);
+    } catch (err: unknown) {
+      setBundleError((err as Error).message);
+    } finally {
+      setGeneratingBundle(false);
+    }
   }
 
   function handleStatementSave(updates: Array<{ objectiveId: string; status: string }>) {
@@ -208,6 +222,13 @@ export function AssessmentBoard({ org, assessment }: Props) {
           </div>
           <div className="board-topbar-right">
             <div className="board-meta">{met} / {rows.length} objectives met</div>
+            <button
+              className="btn-ghost btn-sm"
+              onClick={handleGenerateBundle}
+              disabled={generatingBundle}
+            >
+              {generatingBundle ? "Generating…" : "Generate Assessor Bundle"}
+            </button>
             <button className="btn-ghost btn-sm" onClick={() => setShowTasks(true)}>
               Tasks
             </button>
@@ -216,6 +237,10 @@ export function AssessmentBoard({ org, assessment }: Props) {
             </button>
           </div>
         </div>
+
+        {bundleError && (
+          <div className="error-msg">Bundle export failed: {bundleError}</div>
+        )}
 
         {/* ── Tier summary ── */}
         {rows.length > 0 && (

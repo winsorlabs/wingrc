@@ -228,6 +228,27 @@ export const api = {
     const r = await fetch(`/api/orgs/${orgId}/contacts/${contactId}/roles/${role}`, { method: "DELETE" });
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   },
+
+  downloadBundle: async (orgId: string, assessmentId: string): Promise<void> => {
+    const r = await fetch(`/api/orgs/${orgId}/assessments/${assessmentId}/bundle`);
+    if (!r.ok) {
+      let msg = `${r.status} ${r.statusText}`;
+      try { const body = await r.json(); if (body.detail) msg = body.detail; } catch { /* ignore */ }
+      throw new Error(msg);
+    }
+    const blob = await r.blob();
+    const cd = r.headers.get("Content-Disposition") ?? "";
+    const match = cd.match(/filename="([^"]+)"/);
+    const filename = match?.[1] ?? `bundle_${assessmentId}.zip`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  },
 };
 
 const CACHE_PREFIX = "wingrc_assessment_";
