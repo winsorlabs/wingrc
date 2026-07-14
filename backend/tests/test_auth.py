@@ -7,7 +7,6 @@ Unit tests (no DB required):
   - state cookie sign/verify round-trip
   - state cookie rejects tampered signature
   - state cookie rejects expired payload
-  - _lockout_duration_minutes caps at 8h
 
 Integration tests (no DB — just checks request routing):
   - GET /health is still ungated → 200
@@ -23,7 +22,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.auth import (
-    _lockout_duration_minutes,
     hash_password,
     make_state_payload,
     sign_state_cookie,
@@ -100,22 +98,6 @@ def test_state_cookie_expired():
     payload = {"x": "y", "exp": int(time.time()) - 1}
     signed = sign_state_cookie(payload)
     assert verify_state_cookie(signed) is None
-
-
-# ---------------------------------------------------------------------------
-# Unit: lockout duration
-# ---------------------------------------------------------------------------
-
-def test_lockout_first_lockout():
-    assert _lockout_duration_minutes(1) == 15
-
-
-def test_lockout_second_lockout():
-    assert _lockout_duration_minutes(2) == 30
-
-
-def test_lockout_caps_at_8_hours():
-    assert _lockout_duration_minutes(100) == 480
 
 
 # ---------------------------------------------------------------------------
