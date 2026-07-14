@@ -19,6 +19,7 @@ from __future__ import annotations
 import time
 import uuid
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.auth import (
@@ -121,19 +122,21 @@ def test_lockout_caps_at_8_hours():
 # Integration: HTTP layer basics (no DB — just checks request routing)
 # ---------------------------------------------------------------------------
 
-_client = TestClient(app, raise_server_exceptions=False)
+@pytest.fixture
+def http_client():
+    return TestClient(app, raise_server_exceptions=False)
 
 
-def test_health_is_ungated():
-    r = _client.get("/health")
+def test_health_is_ungated(http_client):
+    r = http_client.get("/health")
     assert r.status_code == 200
 
 
-def test_me_without_session_returns_401():
-    r = _client.get("/auth/me")
+def test_me_without_session_returns_401(http_client):
+    r = http_client.get("/auth/me")
     assert r.status_code == 401
 
 
-def test_local_login_missing_body_returns_422():
-    r = _client.post("/auth/login", json={})
+def test_local_login_missing_body_returns_422(http_client):
+    r = http_client.post("/auth/login", json={})
     assert r.status_code == 422

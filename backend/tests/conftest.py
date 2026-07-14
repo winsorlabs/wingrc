@@ -19,9 +19,10 @@ from urllib.parse import urlparse, urlunparse
 import pytest
 from alembic import command as alembic_cmd
 from alembic.config import Config as AlembicConfig
-from app.auth import CurrentUser
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
+
+from app.auth import CurrentUser
 
 _ALEMBIC_INI = str(Path(__file__).resolve().parents[1] / "alembic.ini")
 _DEFAULT_DEV_URL = "postgresql+psycopg://wingrc:wingrc@db:5432/wingrc"
