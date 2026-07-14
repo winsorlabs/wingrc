@@ -31,6 +31,19 @@ class Settings(BaseSettings):
     storage_bucket: str = "evidence"
     storage_region: str = "us-east-1"
 
+    # Auth: Microsoft Entra ID SSO (optional — omit to disable SSO)
+    entra_tenant_id: str | None = None
+    entra_client_id: str | None = None
+    entra_client_secret: str | None = None
+    entra_redirect_uri: str = "http://localhost:8000/api/auth/callback"
+
+    # Auth: cookie signing for auth_flow + mfa_pending state cookies
+    auth_flow_secret: str = "dev-auth-flow-secret-change-in-production"
+
+    # Auth: session expiry and password policy
+    session_expiry_hours: int = 8
+    pwned_passwords_check: bool = True
+
     # Allowed CORS origins.  In production set WINGRC_CORS_ORIGINS to a JSON
     # array of the exact origins that should be permitted, e.g.:
     #   WINGRC_CORS_ORIGINS='["https://app.example.com"]'

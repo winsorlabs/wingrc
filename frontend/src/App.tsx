@@ -1,13 +1,16 @@
 import { useState } from "react";
 import { AssessmentBoard } from "./components/AssessmentBoard";
+import { LoginPage } from "./components/LoginPage";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 import { OrgPicker } from "./components/OrgPicker";
 import { OrgSettings } from "./components/OrgSettings";
+import { useAuth } from "./hooks/useAuth";
 import type { Assessment, Org } from "./types";
 
 type Screen = "orgs" | "board" | "onboarding" | "settings";
 
 export function App() {
+  const { user, isLoading, logout, refresh } = useAuth();
   const [screen, setScreen] = useState<Screen>("orgs");
   const [org, setOrg] = useState<Org | null>(null);
   const [assessment, setAssessment] = useState<Assessment | null>(null);
@@ -39,6 +42,9 @@ export function App() {
 
   const showGear = org !== null && screen !== "settings" && screen !== "orgs";
 
+  if (isLoading) return <div className="app-loading">Loading…</div>;
+  if (!user) return <LoginPage onAuthenticated={refresh} />;
+
   return (
     <>
       <header className="app-header">
@@ -69,6 +75,14 @@ export function App() {
             ⚙
           </button>
         )}
+        <button
+          className="header-logout"
+          onClick={logout}
+          title={`Sign out (${user.email})`}
+          aria-label="Sign out"
+        >
+          ⏏
+        </button>
       </header>
 
       {screen === "orgs" && (

@@ -37,6 +37,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..audit import log_event
+from ..auth import get_current_user
 from ..db import get_session
 from ..models import (
     Assessment,
@@ -50,7 +51,11 @@ from ..models import (
 )
 from ..storage import StorageClient, get_storage_client
 
-router = APIRouter(prefix="/orgs/{org_id}", tags=["evidence"])
+router = APIRouter(
+    prefix="/orgs/{org_id}",
+    tags=["evidence"],
+    dependencies=[Depends(get_current_user)],
+)
 
 # ---------------------------------------------------------------------------
 # Upload validation constants

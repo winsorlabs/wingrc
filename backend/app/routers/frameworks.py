@@ -13,10 +13,15 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..auth import get_current_user
 from ..db import get_session
 from ..models import Framework
 
-router = APIRouter(prefix="/frameworks", tags=["frameworks"])
+router = APIRouter(
+    prefix="/frameworks",
+    tags=["frameworks"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 class FrameworkOut(BaseModel):

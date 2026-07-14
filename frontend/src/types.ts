@@ -176,3 +176,12 @@ export interface OnboardingStatus {
   system_description: { complete: boolean };
   personnel: { complete: boolean; contact_count: number; roles_covered: string[] };
 }
+
+export interface AuthUser {
+  id: string;
+  org_id: string;
+  email: string;
+  display_name: string;
+  role: string;
+  login_method: string;
+}

@@ -30,6 +30,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from app.auth import get_current_user
 from app.db import get_session
 from app.engine import start_assessment
 from app.main import app
@@ -85,9 +86,10 @@ def storage() -> InMemoryStorageClient:
 
 
 @pytest.fixture
-def client(db_session, storage):
+def client(db_session, storage, fake_msp_admin):
     app.dependency_overrides[get_session] = lambda: db_session
     app.dependency_overrides[get_storage_client] = lambda: storage
+    app.dependency_overrides[get_current_user] = lambda: fake_msp_admin
     yield TestClient(app)
     app.dependency_overrides.clear()
 

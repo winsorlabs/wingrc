@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from . import repo
+from .auth import CurrentUser, get_current_user
 from .catalog import ALL_VIEWS, VIEWS_BY_ID
 from .config import get_settings
 from .db import get_session
@@ -26,6 +27,8 @@ from .importers.workbook import parse_workbook
 from .reconcile import reconcile
 from .render import render_view
 from .routers import assessments, bundle, contacts, evidence, frameworks, orgs
+from .routers import auth as auth_router
+from .routers import users as users_router
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name, version="0.1.0")
@@ -35,12 +38,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(auth_router.router)
 app.include_router(frameworks.router)
 app.include_router(orgs.router)
 app.include_router(contacts.router)
 app.include_router(assessments.router)
 app.include_router(evidence.router)
 app.include_router(bundle.router)
+app.include_router(users_router.router)
 
 
 @app.get("/health")
@@ -67,6 +72,7 @@ def get_scope(
     org_id: uuid.UUID,
     entity_type: str | None = Query(default=None),
     session: Session = Depends(get_session),
+    _auth: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
     et = EntityType(entity_type) if entity_type else None
     entities = repo.list_entities(session, org_id, et)
@@ -87,6 +93,7 @@ async def import_dry_run(
     org_id: uuid.UUID,
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
+    _auth: CurrentUser = Depends(get_current_user),
 ) -> dict:
     """Parse an uploaded workbook and return the reconcile diff. No writes."""
     with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
@@ -119,6 +126,7 @@ def export_view(
     org_id: uuid.UUID,
     view_id: str,
     session: Session = Depends(get_session),
+    _auth: CurrentUser = Depends(get_current_user),
 ) -> FileResponse:
     view = VIEWS_BY_ID.get(view_id)
     if view is None:

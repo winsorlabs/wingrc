@@ -74,6 +74,28 @@ def _ensure_test_db(test_url: str) -> None:
         get_settings.cache_clear()
 
 
+def _make_fake_user(**kwargs):
+    """Return a CurrentUser for dependency_overrides in tests."""
+    from app.auth import CurrentUser
+    import uuid as _uuid
+    defaults = dict(
+        id=_uuid.uuid4(),
+        org_id=_uuid.uuid4(),
+        email="test-admin@example.com",
+        display_name="Test Admin",
+        role="msp_admin",
+        is_active=True,
+        login_method="local",
+    )
+    defaults.update(kwargs)
+    return CurrentUser(**defaults)
+
+
+@pytest.fixture
+def fake_msp_admin():
+    return _make_fake_user()
+
+
 @pytest.fixture(scope="session")
 def db_engine():
     test_url = _test_db_url()

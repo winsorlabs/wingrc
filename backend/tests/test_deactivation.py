@@ -38,6 +38,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import app.audit as audit_module
+from app.auth import get_current_user
 from app.db import get_session
 from app.engine import activate_org_product, deactivate_org_product, start_assessment
 from app.main import app
@@ -143,8 +144,9 @@ def _setup(db_session: Session, ref: dict) -> tuple[Assessment, dict]:
 
 
 @pytest.fixture
-def client(db_session: Session):
+def client(db_session: Session, fake_msp_admin):
     app.dependency_overrides[get_session] = lambda: db_session
+    app.dependency_overrides[get_current_user] = lambda: fake_msp_admin
     yield TestClient(app)
     app.dependency_overrides.clear()
 

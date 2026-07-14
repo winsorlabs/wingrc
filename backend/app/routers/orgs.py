@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..audit import log_event
+from ..auth import get_current_user
 from ..db import get_session
 from ..models import (
     Contact,
@@ -31,7 +32,7 @@ from ..models import (
 )
 from ..storage import StorageClient, get_storage_client
 
-router = APIRouter(prefix="/orgs", tags=["orgs"])
+router = APIRouter(prefix="/orgs", tags=["orgs"], dependencies=[Depends(get_current_user)])
 
 # ---------------------------------------------------------------------------
 # Image upload constraints for logo (image-only subset of evidence upload)

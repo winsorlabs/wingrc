@@ -12,6 +12,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
+from app.auth import get_current_user
 from app.db import get_session
 from app.engine import start_assessment
 from app.main import app
@@ -27,8 +28,9 @@ from app.models import (
 
 
 @pytest.fixture
-def client(db_session):
+def client(db_session, fake_msp_admin):
     app.dependency_overrides[get_session] = lambda: db_session
+    app.dependency_overrides[get_current_user] = lambda: fake_msp_admin
     yield TestClient(app)
     app.dependency_overrides.clear()
 

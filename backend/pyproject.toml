@@ -17,6 +17,8 @@ dependencies = [
     "typer>=0.15",
     "pyyaml>=6.0",
     "boto3>=1.35",
+    "msal>=1.20",
+    "pyotp>=2.9",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +35,7 @@ ai = [
 
 [project.scripts]
 wingrc = "app.cli:app"
+wingrc-admin = "app.manage:app"
 
 [build-system]
 requires = ["hatchling"]
@@ -61,6 +64,9 @@ known-first-party = ["app"]
 "app/routers/bundle.py" = ["B008"]
 "app/routers/contacts.py" = ["B008"]
 "app/routers/orgs.py" = ["B008"]
+"app/routers/auth.py" = ["B008"]
+"app/routers/users.py" = ["B008"]
+"app/manage.py" = ["B008"]
 
 [tool.pytest.ini_options]
 addopts = "--basetemp=/tmp/pyt-tmp"

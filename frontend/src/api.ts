@@ -1,4 +1,4 @@
-import type { Assessment, Contact, ControlStateRow, EvidenceRow, EvidenceTaskRow, Framework, OnboardingStatus, Org, OrgProfile, ProductRow, StatementRow, SystemDescriptionData } from "./types";
+import type { Assessment, AuthUser, Contact, ControlStateRow, EvidenceRow, EvidenceTaskRow, Framework, OnboardingStatus, Org, OrgProfile, ProductRow, StatementRow, SystemDescriptionData } from "./types";
 
 const BASE = "/api";
 
@@ -12,6 +12,70 @@ async function req<T>(path: string, opts?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  getMe: async (): Promise<AuthUser | null> => {
+    const r = await fetch(`${BASE}/auth/me`, { credentials: "include" });
+    if (r.status === 401) return null;
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json() as Promise<AuthUser>;
+  },
+
+  logout: async (): Promise<void> => {
+    await fetch(`${BASE}/auth/logout`, { method: "POST", credentials: "include" });
+  },
+
+  localLogin: async (email: string, password: string): Promise<{ next: string }> => {
+    const r = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<{ next: string }>;
+  },
+
+  mfaVerify: async (code: string): Promise<void> => {
+    const r = await fetch(`${BASE}/auth/mfa/verify`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+  },
+
+  mfaEnroll: async (): Promise<{ provisioning_uri: string; secret: string }> => {
+    const r = await fetch(`${BASE}/auth/mfa/enroll`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<{ provisioning_uri: string; secret: string }>;
+  },
+
+  mfaEnrollConfirm: async (code: string): Promise<{ backup_codes: string[] }> => {
+    const r = await fetch(`${BASE}/auth/mfa/enroll/confirm`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<{ backup_codes: string[] }>;
+  },
+
   getOrgs: () => req<Org[]>("/orgs"),
   createOrg: (name: string) =>
     req<Org>("/orgs", { method: "POST", body: JSON.stringify({ name }) }),

@@ -1062,3 +1062,152 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+# ---------------------------------------------------------------------------
+# Auth layer: users, sessions, MFA, API tokens
+# ---------------------------------------------------------------------------
+
+
+class User(Base):
+    """Authenticated user account.
+
+    login_method='sso'   — identity validated via Microsoft Entra ID.
+    login_method='local' — password + TOTP MFA managed by WinGRC.
+
+    contact_id is nullable: a user can exist without a contact entry (e.g. a
+    read-only engineer who doesn't appear in SSP/CRM docs), and a contact can
+    exist without a user account (customer POCs, CUI users). The FK runs
+    user→contact, never contact→user — enforced by test_contacts_raci.
+    """
+
+    __tablename__ = "user"
+    __table_args__ = (
+        UniqueConstraint("org_id", "email", name="uq_user_org_email"),
+        CheckConstraint("login_method IN ('sso','local')", name="ck_user_login_method"),
+        CheckConstraint(
+            "role IN ('msp_admin','msp_engineer','customer_poc','c3pao_assessor')",
+            name="ck_user_role",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id", ondelete="CASCADE"), index=True
+    )
+    contact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contact.id", ondelete="SET NULL"), nullable=True
+    )
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    entra_oid: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True)
+    display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    login_method: Mapped[str] = mapped_column(
+        String(10), nullable=False, server_default=text("'local'")
+    )
+    role: Mapped[str] = mapped_column(String(40), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    # Local auth
+    password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    invite_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    invite_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # MFA
+    totp_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mfa_enrolled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    # Lockout (local accounts; ignored for SSO)
+    failed_login_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    lockout_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    requires_admin_reset: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class UserSession(Base):
+    """Server-side session record. Raw token is stored as SHA-256 hash only.
+
+    org_id is denormalized from user.org_id so the session-resolution function
+    can set app.current_org before any RLS-gated query runs.
+    """
+
+    __tablename__ = "user_session"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"), nullable=False
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class MfaBackupCode(Base):
+    """Single-use TOTP recovery code. Shown once at enrollment; hash stored."""
+
+    __tablename__ = "mfa_backup_code"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ApiToken(Base):
+    """Machine-to-machine Bearer token. Raw value shown once at creation.
+
+    Role is set explicitly at creation — the token may have a lower privilege
+    than the issuing user's own role. An msp_admin cannot issue a token with
+    a role higher than their own.
+    """
+
+    __tablename__ = "api_token"
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('msp_admin','msp_engineer','customer_poc','c3pao_assessor')",
+            name="ck_api_token_role",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    role: Mapped[str] = mapped_column(String(40), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
