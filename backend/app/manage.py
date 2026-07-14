@@ -15,8 +15,6 @@ and prompts for a password. MFA enrollment happens on first web login.
 """
 from __future__ import annotations
 
-import sys
-
 import typer
 from sqlalchemy import select, text
 

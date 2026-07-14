@@ -12,12 +12,14 @@ Run in-container:
 from __future__ import annotations
 
 import os
+import uuid as _uuid
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
 import pytest
 from alembic import command as alembic_cmd
 from alembic.config import Config as AlembicConfig
+from app.auth import CurrentUser
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
@@ -76,8 +78,6 @@ def _ensure_test_db(test_url: str) -> None:
 
 def _make_fake_user(**kwargs):
     """Return a CurrentUser for dependency_overrides in tests."""
-    from app.auth import CurrentUser
-    import uuid as _uuid
     defaults = dict(
         id=_uuid.uuid4(),
         org_id=_uuid.uuid4(),

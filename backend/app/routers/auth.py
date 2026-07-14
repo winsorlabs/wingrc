@@ -31,10 +31,10 @@ from __future__ import annotations
 import hashlib  # used for invite-token, backup-code, and session hashing
 import secrets
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import text
@@ -73,7 +73,7 @@ def _get_msal_app():  # type: ignore[return]
     try:
         from msal import ConfidentialClientApplication
     except ImportError:
-        raise HTTPException(status_code=501, detail="msal package not installed")
+        raise HTTPException(status_code=501, detail="msal package not installed") from None
 
     settings = get_settings()
     if not (settings.entra_client_id and settings.entra_tenant_id and settings.entra_client_secret):
@@ -305,7 +305,10 @@ def set_password(
     if check_pwned_password(body.password):
         raise HTTPException(
             status_code=422,
-            detail="This password has appeared in a known data breach. Please choose a different password.",
+            detail=(
+                "This password has appeared in a known data breach."
+                " Please choose a different password."
+            ),
         )
 
     user = db.get(User, user_row.id)
@@ -341,7 +344,7 @@ def mfa_enroll(
     try:
         import pyotp
     except ImportError:
-        raise HTTPException(status_code=501, detail="pyotp not installed")
+        raise HTTPException(status_code=501, detail="pyotp not installed") from None
 
     if not wingrc_mfa_pending:
         raise HTTPException(status_code=401, detail="No MFA pending state")
@@ -387,7 +390,7 @@ def mfa_enroll_confirm(
     try:
         import pyotp
     except ImportError:
-        raise HTTPException(status_code=501, detail="pyotp not installed")
+        raise HTTPException(status_code=501, detail="pyotp not installed") from None
 
     if not wingrc_mfa_pending or not wingrc_mfa_setup:
         raise HTTPException(status_code=401, detail="Missing MFA enrollment cookies")
@@ -468,7 +471,7 @@ def mfa_verify(
     try:
         import pyotp
     except ImportError:
-        raise HTTPException(status_code=501, detail="pyotp not installed")
+        raise HTTPException(status_code=501, detail="pyotp not installed") from None
 
     if not wingrc_mfa_pending:
         raise HTTPException(status_code=401, detail="No MFA pending state")

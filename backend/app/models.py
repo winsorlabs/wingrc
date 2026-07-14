@@ -1111,7 +1111,9 @@ class User(Base):
     # Local auth
     password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     invite_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    invite_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    invite_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # MFA
     totp_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
     mfa_enrolled: Mapped[bool] = mapped_column(

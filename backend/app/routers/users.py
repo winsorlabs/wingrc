@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from ..audit import log_event
 from ..auth import CurrentUser, get_current_user, require_role
 from ..db import get_session
-from ..models import ApiToken, MfaBackupCode, User
+from ..models import ApiToken, User
 
 router = APIRouter(prefix="/orgs/{org_id}", tags=["users"])
 
@@ -70,7 +70,10 @@ def invite_user(
         select(User).where(User.org_id == org_id, User.email == body.email)
     ).scalar_one_or_none()
     if existing is not None:
-        raise HTTPException(status_code=409, detail="A user with this email already exists in this org")
+        raise HTTPException(
+            status_code=409,
+            detail="A user with this email already exists in this org",
+        )
 
     raw_token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()

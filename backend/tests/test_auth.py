@@ -9,17 +9,17 @@ Unit tests (no DB required):
   - state cookie rejects expired payload
   - _lockout_duration_minutes caps at 8h
 
-Integration tests:
-  - POST /api/auth/login rejects missing user → 401
-  - POST /api/auth/me without cookie → 401
+Integration tests (no DB — just checks request routing):
   - GET /health is still ungated → 200
+  - GET /auth/me without cookie → 401
+  - POST /auth/login with missing body → 422
 """
 from __future__ import annotations
 
 import time
 import uuid
 
-import pytest
+from fastapi.testclient import TestClient
 
 from app.auth import (
     _lockout_duration_minutes,
@@ -30,6 +30,7 @@ from app.auth import (
     verify_password,
     verify_state_cookie,
 )
+from app.main import app
 
 
 # ---------------------------------------------------------------------------
@@ -119,10 +120,6 @@ def test_lockout_caps_at_8_hours():
 # ---------------------------------------------------------------------------
 # Integration: HTTP layer basics (no DB — just checks request routing)
 # ---------------------------------------------------------------------------
-
-from fastapi.testclient import TestClient
-
-from app.main import app
 
 _client = TestClient(app, raise_server_exceptions=False)
 
