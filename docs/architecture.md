@@ -6,14 +6,14 @@ decisions see `docs/adr/`.
 
 ## Goal
 
-A free, open, MSP-first, multitenant CMMC (NIST 800-171 Rev 2 / CMMC L2) GRC
-platform that feature-matches the high-priced commercial tools and deploys
-anywhere a tenant's data must live — commercial Azure, GCC High, on-prem, or
-fully air-gapped.
+A free, open, MSP-first CMMC (NIST 800-171 Rev 2 / CMMC L2) GRC platform MSPs
+deploy to collaborate with their client organizations — feature-matching the
+high-priced commercial tools, deployable anywhere the data must live: commercial
+Azure, GCC High, on-prem, or fully air-gapped.
 
 ## The five layers
 
-### 1. Reference layer (shared across tenants)
+### 1. Reference layer (shared across orgs)
 
 - **Control catalog.** The 110 CMMC L2 practices decomposed into their 800-171A
   assessment objectives, each carrying its SPRS point weight (1 / 3 / 5).
@@ -23,10 +23,10 @@ fully air-gapped.
   Senteon, RoboShadow, RocketCyber, DUO, FenixPyre…). Each entry declares, per
   control: the objectives the product covers when configured correctly, the
   assumed configuration, the evidence spec, and the responsibility split. This
-  is the moat — curated, shared across tenants, and vendor-sponsorable. See
+  is the moat — curated, shared across all orgs in a deployment, and vendor-sponsorable. See
   `baselines/` for the format and the worked RocketCyber example.
 
-### 2. Tenant setup
+### 2. Org setup
 
 Select the tools in place, and define scope (users, devices, boundaries) by
 spreadsheet upload or by API/MCP pull from Liongard / Datto RMM / Entra. The
@@ -35,7 +35,7 @@ pre-populates the controls it covers and queues the remaining evidence tasks.
 
 ### 3. Assessment core
 
-Per tenant, per objective: control state (met / not met / partial / N/A /
+Per org, per objective: control state (met / not met / partial / N/A /
 inherited), responsibility assignment (RACI, which renders as the
 customer-responsibility matrix), and linked evidence. This is the
 control-by-control view and the source of the SPRS score (start at 110, deduct
@@ -44,7 +44,7 @@ the 1/3/5 weight per unmet control).
 ### 4. Generation
 
 AI-drafted implementation statements, grounded in the relevant product
-baseline + the tenant's scope + the collected evidence, then human-reviewed.
+baseline + the org's scope + the collected evidence, then human-reviewed.
 Runs in a background worker, not the request path.
 
 ### 5. Deliverables — the assessment bundle
@@ -95,35 +95,35 @@ minimizes deliberately:
   screenshots.
 - Only `provider_satisfies`/`shared` controls generate provider evidence tasks;
   `customer_owns` and inherited controls generate none.
-- Capture product-level config once and reuse across tenants; re-capture only
-  tenant-specific state.
+- Capture product-level config once and reuse across client orgs; re-capture only
+  org-specific state.
 - Batch tasks by collection session ("while you're in the portal, grab these").
 - Track last-captured + cadence so evidence is refreshed, not re-collected.
 
 ## AI provider abstraction (bring-your-own)
 
-Every AI call routes through a provider interface the tenant configures:
+Every AI call routes through a provider interface each deployment configures:
 Anthropic API, Azure OpenAI (GCC High path), or a local model (Ollama/vLLM) for
 air-gapped/CUI-sensitive work. "Bring your own AI" means bring your own **API
 key** or local model — consumer chat subscriptions can't be used by a
-third-party app programmatically. Credentials live in the tenant's secrets
+third-party app programmatically. Credentials live in the deployment's secrets
 vault. This is both an economic necessity (a free tool can't pay everyone's
 inference) and a compliance one (sending CUI to a commercial cloud LLM is a
-per-tenant data-handling decision WinGRC must not make for the user).
+per-org data-handling decision WinGRC must not make for the user).
 
 ## Platform & deployment
 
 React 19 (Vite SPA) · FastAPI (Python 3.13) · PostgreSQL 18 + pgvector ·
 SQLAlchemy 2.0 + Alembic · S3-compatible object storage. One container image;
-Azure Container Apps for the "deploy to your tenant" story, Docker/compose for
-self-host, the same image for GCC High and air-gapped. Per-tenant isolation via
-`org_id` + Postgres Row-Level Security.
+Azure Container Apps for deploying into your own Azure environment, Docker/compose
+for self-host, the same image for GCC High and air-gapped. Per-org isolation
+within a deployment via `org_id` + Postgres Row-Level Security.
 
 ## Data model direction
 
 Built: `scope_entity` (scope graph; lists are views). To add: control catalog +
-assessment objectives (+ SPRS weights), product baseline, tenant↔product link,
-control_state (status + responsibility per objective per tenant), evidence +
+assessment objectives (+ SPRS weights), product baseline, org↔product link,
+control_state (status + responsibility per objective per org), evidence +
 evidence_task, implementation_statement. Extends the single-table-+-JSONB + RLS
 pattern already in `backend/app/models.py`.
 

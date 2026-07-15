@@ -126,6 +126,7 @@ scripts/      Tooling (example-workbook generator)
 
 ## License
 
-AGPL-3.0-or-later. WinGRC is free to self-host; a hosted/sponsored tier and
-vendor-sponsored stack-library mappings fund ongoing development. See
+AGPL-3.0-or-later. WinGRC is free to self-host; managed hosting of your own
+dedicated instance and vendor-sponsored stack-library mappings fund ongoing
+development. See
 [`LICENSE`](LICENSE).

@@ -8,8 +8,9 @@ Read this first, every session. It captures *intent*, not just file structure.
 
 ## What WinGRC is
 
-An open, AGPL-licensed, multitenant CMMC (NIST 800-171 Rev 2 / CMMC L2) GRC
-platform for MSPs. It does what high-priced commercial GRC tools do —
+An open, AGPL-licensed CMMC (NIST 800-171 Rev 2 / CMMC L2) GRC platform
+MSPs deploy to collaborate with their client organizations on compliance. It does
+what high-priced commercial GRC tools do —
 control-by-control met/not-met, SPRS scoring, AI-drafted implementation
 statements, RACI/CRM, evidence storage, full assessment-bundle export — but
 free, MSP-first, and deployable anywhere (commercial Azure, GCC High, on-prem,
@@ -27,11 +28,11 @@ still needed. The lists are one *output*, not the product.
 
 ## The five layers
 
-1. **Reference (shared across tenants):** the control catalog (800-171A
+1. **Reference (shared across orgs):** the control catalog (800-171A
    assessment objectives + SPRS point weights) and the **product baseline
    library** (per-product: which objectives it covers when configured, the
    assumed config, the evidence spec, the responsibility split).
-2. **Tenant setup:** select tools in place; define scope (spreadsheet upload OR
+2. **Org setup:** select tools in place; define scope (spreadsheet upload OR
    Liongard/RMM API/MCP).
 3. **Assessment core:** per-objective control state (met / not met / partial /
    N/A / inherited), responsibility (RACI → the MSP-vs-customer CRM), evidence.
@@ -70,12 +71,12 @@ Violating these produces incorrect assessments. Enforce them in every review.
   once, reference many. Prefer one authoritative export over many screenshots.
   Only `provider_satisfies`/`shared` controls generate provider evidence tasks;
   `customer_owns`/inherited never do. Capture product-level config once and
-  reuse across tenants; re-capture only tenant-specific state. Batch tasks by
+  reuse across client orgs; re-capture only org-specific state. Batch tasks by
   collection session.
 
 - **BYO-AI / pluggable provider.** Every AI call routes through a provider
-  abstraction the tenant configures: Anthropic API, Azure OpenAI (GCC High), or
-  a local model (Ollama/vLLM). CUI-sensitive tenants must be able to keep
+  abstraction each deployment configures: Anthropic API, Azure OpenAI (GCC High),
+  or a local model (Ollama/vLLM). CUI-sensitive deployments must be able to keep
   generation local; never assume CUI may go to a commercial cloud LLM.
 
 - **Scope = denominator.** Control objectives are evaluated against scoped

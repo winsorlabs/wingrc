@@ -9,8 +9,8 @@ Supersedes the framing (not the code) of the initial scope-first scaffold.
 The initial build delivered a vertical slice of the scope/lists module and
 framed it as the core of the product. That framing was wrong: lists are one
 input pillar plus one output of a much larger assessment engine. The actual
-target is a multitenant CMMC GRC platform whose differentiator is tool-driven
-control pre-population.
+target is a full CMMC GRC platform MSPs deploy for themselves and their client
+organizations, whose differentiator is tool-driven control pre-population.
 
 ## Decisions
 
@@ -27,7 +27,7 @@ control pre-population.
 3. **Evidence minimization is a first-class requirement**, not a nicety —
    deduplicate artifacts across objectives, prefer authoritative exports, only
    provider/shared controls generate provider tasks, reuse product-level config
-   across tenants, batch by collection session.
+   across client orgs, batch by collection session.
 
 4. **AI is bring-your-own, via a provider abstraction.** Anthropic API / Azure
    OpenAI (GCC High) / local model, configured and credentialed per tenant.

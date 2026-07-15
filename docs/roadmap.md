@@ -55,7 +55,7 @@ bundle/
 
 ### K. Organization Profile
 
-Extend `organization` table (migration 0011). One row per tenant; all new columns nullable (incomplete profile is valid; bundle export warns, not errors).
+Extend `organization` table (migration 0011). One row per org; all new columns nullable (incomplete profile is valid; bundle export warns, not errors).
 
 **Fields added:** `cage_code`, `uei` (SAM.gov Unique Entity ID), `year_established`, `industry`, `address_line1`, `address_line2`, `city`, `state_or_province`, `postal_code`, `country` (default 'US'), `phone_primary`, `phone_secondary`, `website`, `logo_storage_key`.
 
