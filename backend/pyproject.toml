@@ -68,6 +68,8 @@ known-first-party = ["app"]
 "app/routers/auth.py" = ["B008"]
 "app/routers/users.py" = ["B008"]
 "app/manage.py" = ["B008"]
+"tests/test_auth.py" = ["I001"]
+"tests/test_auth_cookies.py" = ["I001"]
 
 [tool.pytest.ini_options]
 addopts = "--basetemp=/tmp/pyt-tmp"

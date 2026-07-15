@@ -1,4 +1,7 @@
-"""Unit + integration tests for auth password hashing, policy, and HTTP routing."""
+"""Unit + integration tests for auth password hashing, policy, and HTTP routing.
+
+No database required — pure unit tests plus HTTP routing smoke tests.
+"""
 from __future__ import annotations
 
 import hashlib

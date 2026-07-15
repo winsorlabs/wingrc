@@ -1,4 +1,7 @@
-"""Unit tests for the HMAC-SHA256 signed state-cookie helpers in auth.py."""
+"""Unit tests for the HMAC-SHA256 signed state-cookie helpers in auth.py.
+
+No database required.
+"""
 from __future__ import annotations
 
 from app.auth import make_state_payload, sign_state_cookie, verify_state_cookie
