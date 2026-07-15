@@ -1,6 +1,8 @@
 """Unit + integration tests for auth password hashing, policy, and HTTP routing."""
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -29,6 +31,19 @@ def test_verify_empty_stored():
 
 def test_verify_malformed_stored():
     assert not verify_password("anything", "bad$hash")
+
+
+def test_hash_uses_pbkdf2_sha256():
+    pw = "correct-horse-battery-staple-and-then-some"
+    stored = hash_password(pw)
+    iterations_str, salt_hex, expected_hex = stored.split("$")
+    key = hashlib.pbkdf2_hmac(
+        "sha256",
+        pw.encode(),
+        bytes.fromhex(salt_hex),
+        int(iterations_str),
+    )
+    assert key.hex() == expected_hex
 
 
 # ---------------------------------------------------------------------------

@@ -7,7 +7,8 @@ _EXPIRED_TS = 0  # Unix epoch — always in the past
 
 
 def test_state_cookie_round_trip():
-    payload = make_state_payload({"user_id": "00000000-0000-0000-0000-000000000001", "phase": "verify"})
+    payload = make_state_payload({"user_id": "00000000-0000-0000-0000-000000000001",
+                                  "phase": "verify"})
     result = verify_state_cookie(sign_state_cookie(payload))
     assert result is not None
     assert result["phase"] == "verify"
