@@ -6,8 +6,6 @@ services:
       POSTGRES_USER: wingrc
       POSTGRES_PASSWORD: wingrc
       POSTGRES_DB: wingrc
-    ports:
-      - "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql
     healthcheck:
@@ -18,6 +16,12 @@ services:
 
   # S3-compatible object storage for evidence. Same code path targets Azure
   # Blob or AWS S3 in the cloud; MinIO keeps self-host and air-gapped simple.
+  #
+  # No host-published ports: the backend reaches MinIO over the internal
+  # Docker network (WINGRC_STORAGE_ENDPOINT). Browser-facing evidence/logo
+  # downloads (presigned URLs) go through nginx's storage.YOUR_HOSTNAME
+  # server block instead of a directly-published MinIO port — see
+  # docs/deployment.md and deploy/nginx/nginx.conf.
   minio:
     image: minio/minio:latest
     restart: unless-stopped
@@ -25,9 +29,12 @@ services:
     environment:
       MINIO_ROOT_USER: wingrc
       MINIO_ROOT_PASSWORD: wingrc-dev-secret
-    ports:
-      - "9000:9000"
-      - "9001:9001"
+      # Public URL MinIO advertises for itself when running behind the nginx
+      # reverse proxy (used for its own redirects/self-checks, not for
+      # signature validation). Should match the storage subdomain nginx
+      # terminates TLS for, e.g. https://storage.YOUR_HOSTNAME. Leave unset
+      # for local dev without a proxy in front.
+      MINIO_SERVER_URL: ${MINIO_SERVER_URL:-}
     volumes:
       - minio_data:/data
 
@@ -43,16 +50,18 @@ services:
       WINGRC_DATABASE_URL: postgresql+psycopg://wingrc:wingrc@db:5432/wingrc
       WINGRC_TEST_DATABASE_URL: postgresql+psycopg://wingrc:wingrc@db:5432/wingrc_test
       WINGRC_STORAGE_ENDPOINT: http://minio:9000
-      # Set WINGRC_STORAGE_PUBLIC_ENDPOINT in your host .env to the LAN/public
-      # address browsers use to reach MinIO (e.g. http://10.10.24.35:9000).
-      # Without it, presigned URLs contain the internal 'minio' hostname which
-      # browsers can't resolve.
+      # Set WINGRC_STORAGE_PUBLIC_ENDPOINT in your host .env to the address
+      # browsers use to reach MinIO. Behind the nginx reverse proxy (see
+      # docs/deployment.md) this is the dedicated storage subdomain, e.g.
+      # https://storage.YOUR_HOSTNAME — NOT a path under the main app
+      # hostname; MinIO's own bucket routing needs the unprefixed path, so
+      # this must be a separate host, not a path prefix.
+      # Without it, presigned URLs contain the internal 'minio' hostname
+      # which browsers can't resolve.
       WINGRC_STORAGE_PUBLIC_ENDPOINT: ${WINGRC_STORAGE_PUBLIC_ENDPOINT:-}
       WINGRC_STORAGE_ACCESS_KEY: wingrc
       WINGRC_STORAGE_SECRET_KEY: wingrc-dev-secret
       PYTHONPATH: /app
-    ports:
-      - "8000:8000"
     volumes:
       - ./backend:/app
     # --reload picks up host edits without a rebuild (volume mount keeps /app in sync).
@@ -60,14 +69,30 @@ services:
       sh -c "alembic upgrade head &&
              exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
-  frontend:
-    build: ./frontend
+  # Sole host-facing entry point (ports 80/443). Reverse-proxies to backend
+  # and serves the frontend's production build directly — no frontend dev
+  # server runs in this stack. See docs/deployment.md for TLS cert setup
+  # (manual Let's Encrypt DNS-01) and deploy/nginx/nginx.conf for routing.
+  nginx:
+    build:
+      context: .
+      dockerfile: deploy/nginx/Dockerfile
     restart: unless-stopped
     depends_on:
       - backend
+      - minio
     ports:
-      - "5173:5173"
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Populated by a one-off, manually-run `certbot/certbot` container
+      # (see docs/deployment.md) — not managed by this compose file. Must
+      # exist before `docker compose up` (external: true below).
+      - certs:/etc/letsencrypt:ro
 
 volumes:
   db_data:
   minio_data:
+  certs:
+    external: true
+    name: wingrc_certs

@@ -151,3 +151,5 @@ Onboarding wizard v1 (K + L + M manual entry)
 - **CRM (Customer Responsibility Matrix)** — render from `raci_assignment` + `contact`; depends on M.
 - **Scope connector** — Liongard / Datto RMM → `scope_entity`; supplements manual CSV import.
 - **Auth / RBAC** — authenticated user accounts; `user` table with nullable `contact_id` FK; role-based API guards.
+- **Evidence download hardening** — replace presigned direct-to-MinIO download URLs with the backend streaming evidence bytes itself. Presigned URLs are bearer-token style: anyone with the link can download until it expires, with no per-request re-check of session/auth state. Worth revisiting given the investment already made in session/MFA/lockout hardening (item I) — that hardening doesn't currently extend to the download path. Surfaced while proxying MinIO behind nginx for item O.
+- **Frontend build determinism** — generate and commit `frontend/package-lock.json` (none exists yet), then switch `deploy/nginx/Dockerfile` from `npm install` to `npm ci` for reproducible builds. Low priority, not blocking anything currently in flight.
