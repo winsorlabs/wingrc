@@ -110,6 +110,26 @@ Two new tables (migration 0014). Prerequisite: M (for `approved_by_contact_id` F
 
 ---
 
+### O. Public Documentation / Knowledge Base Site (docs.wingrc.us)
+
+Independent initiative — does not block or get blocked by other roadmap items; schedule wherever makes sense.
+
+**Tooling:** Docusaurus (React-based static site generator). Chosen for stack alignment with the existing frontend, built-in versioned-docs support, and MDX support for embedding interactive components later.
+
+**Approach:** docs-as-code — markdown/MDX content lives in git, changes go through normal PR review, same discipline as the rest of the project.
+
+**Repository — decision needed before scaffolding:** recommend a separate repo (e.g. `wingrc-docs`) rather than folding into the main app repo, so the docs deploy pipeline and contribution surface stay decoupled from the app's own CI/CD. **Jarrod to confirm before any scaffolding begins.**
+
+**Hosting:** static output on Cloudflare Pages, Netlify, or GitHub Pages — any of these give free automatic HTTPS for the docs domain itself. This is separate infrastructure from the app's own nginx/Certbot setup, which is for deployed WinGRC instances, not this docs site.
+
+**Visual direction:** aim for the clean, minimal, sidebar-nav look of docs.fenixpyre.com. Docusaurus's default theme will need custom CSS to get there — budget this as real work, not a quick tweak.
+
+**First planned content, in order:**
+1. HTTPS/Certbot + DNSimple DNS-01 deployment runbook — write once the current HTTPS work on wl-util-1 is complete and validated. Document the real, verified process, not in advance.
+2. Azure App Registration / M365 SSO setup how-to — write once SSO is implemented and validated end-to-end, not before.
+
+---
+
 ## Sequencing
 
 ```
