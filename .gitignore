@@ -11,6 +11,9 @@ venv/
 .env
 *.local
 
+# Local dev override (see docker-compose.override.yml.example)
+docker-compose.override.yml
+
 # Node / frontend
 node_modules/
 frontend/dist/

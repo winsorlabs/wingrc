@@ -13,10 +13,19 @@ stack-library mappings for security products — are welcome.
 ## Dev setup
 ```bash
 cp .env.example .env
-docker compose up --build         # full stack
+cp docker-compose.override.yml.example docker-compose.override.yml   # once
+docker compose up --build         # full stack, live-reloading frontend
 # or backend only:
 cd backend && pip install -e ".[dev]" && pytest -q && ruff check .
 ```
+
+`docker-compose.override.yml` (gitignored, auto-loaded by `docker compose up`
+on top of `docker-compose.yml` — no extra flags needed) adds a Vite dev-server
+frontend with your source bind-mounted in, so edits hot-reload. It's a local
+contributor convenience only. A real deployment (e.g. wl-util-1) runs
+`docker-compose.yml` alone, with no override — there the frontend is a static
+production build served by nginx (see `docs/deployment.md`). Don't expect the
+override to be present outside your own machine.
 
 ## Adding a CMMC list
 Add a `ListView` to `backend/app/catalog.py` (filter + ordered columns). No new

@@ -1,0 +1,36 @@
+# Local contributor dev only. Copy to docker-compose.override.yml (gitignored,
+# auto-loaded by `docker compose up` on top of docker-compose.yml — no extra
+# flags needed):
+#
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#   docker compose up --build
+#
+# This adds a Vite dev-server frontend with your source bind-mounted in, so
+# edits hot-reload. Never present on a real deployment (e.g. wl-util-1) —
+# those run docker-compose.yml alone, where the frontend is a static
+# production build served by nginx. See CONTRIBUTING.md and
+# docs/deployment.md.
+
+services:
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      # Anonymous volume: keeps the container's own (Linux-native)
+      # node_modules from being shadowed by the bind-mounted host directory
+      # above — without this, an empty or wrong-platform host node_modules/
+      # breaks the dev server.
+      - /app/node_modules
+    # vite.config.ts already proxies /api to http://backend:8000 — the same
+    # `backend` service (and default project network) docker-compose.yml
+    # defines, so no extra proxy wiring is needed here.
+    #
+    # Note: if file-change detection is unreliable on your platform (a known
+    # rough edge with bind mounts on Docker Desktop for Mac/Windows), Vite
+    # supports polling via `server.watch.usePolling` in vite.config.ts —
+    # not enabled by default here.
