@@ -18,6 +18,7 @@ interface StatementItem {
   body: string;
   status: string;
   id: string | null;
+  control_discussion: string | null;
 }
 
 interface Props {
@@ -41,6 +42,7 @@ function fromRow(row: StatementRow): StatementItem {
     body: row.body,
     status: row.status ?? "draft",
     id: row.id,
+    control_discussion: row.control_discussion,
   };
 }
 
