@@ -12,6 +12,7 @@ GET    /orgs/{org_id}/onboarding-status  Completion indicators (never gates acce
 """
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime
 from typing import Any
@@ -30,7 +31,7 @@ from ..models import (
     Organization,
     SystemDescription,
 )
-from ..storage import StorageClient, get_storage_client
+from ..storage import StorageClient, download_filename, get_storage_client
 
 router = APIRouter(prefix="/orgs", tags=["orgs"], dependencies=[Depends(get_current_user)])
 
@@ -218,7 +219,10 @@ def _verify_image_bytes(data: bytes, mime: str) -> bool:
 def _build_profile_out(org: Organization, storage: StorageClient | None) -> OrgProfileOut:
     out = OrgProfileOut.model_validate(org)
     if org.logo_storage_key and storage is not None:
-        out.logo_url = storage.presigned_url(org.logo_storage_key)
+        ext = os.path.splitext(org.logo_storage_key)[1]
+        out.logo_url = storage.presigned_url(
+            org.logo_storage_key, download_filename=download_filename(org.name, ext)
+        )
     return out
 
 
@@ -359,7 +363,9 @@ async def upload_logo(
 
     return LogoUploadOut(
         logo_storage_key=new_key,
-        logo_url=storage.presigned_url(new_key),
+        logo_url=storage.presigned_url(
+            new_key, download_filename=download_filename(org.name, ext)
+        ),
     )
 
 

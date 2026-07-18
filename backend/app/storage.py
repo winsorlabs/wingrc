@@ -16,6 +16,36 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from functools import lru_cache
+from urllib.parse import quote
+
+
+def download_filename(title: str, ext: str) -> str:
+    """Filename to force-download as, given a display title and extension.
+
+    Appends ext only if title doesn't already end with it (case-insensitive)
+    — covers both the default (raw filename, already has the extension) and
+    custom-title cases.
+    """
+    if ext and not title.lower().endswith(ext.lower()):
+        return f"{title}{ext}"
+    return title
+
+
+def content_disposition(filename: str) -> str:
+    """Build an RFC 6266 'attachment' Content-Disposition value for `filename`.
+
+    Forces the browser to save rather than render inline, regardless of
+    content type. Includes both a quoted-string ASCII fallback (filename=,
+    for older clients) and a UTF-8 percent-encoded extended value
+    (filename*=, RFC 5987) so non-ASCII names still round-trip correctly.
+    filename is user-supplied (evidence title / org name); CR/LF are
+    stripped and quote/backslash escaped to prevent header injection.
+    """
+    filename = filename.replace("\r", "").replace("\n", "")
+    ascii_fallback = filename.encode("ascii", "replace").decode("ascii")
+    ascii_fallback = ascii_fallback.replace("\\", "\\\\").replace('"', '\\"')
+    encoded = quote(filename, safe="")
+    return f'attachment; filename="{ascii_fallback}"; filename*=UTF-8\'\'{encoded}'
 
 
 class StorageClient(ABC):
@@ -23,7 +53,14 @@ class StorageClient(ABC):
     def upload_file(self, key: str, data: bytes, content_type: str) -> None: ...
 
     @abstractmethod
-    def presigned_url(self, key: str, expires_in: int = 300) -> str: ...
+    def presigned_url(
+        self, key: str, expires_in: int = 300, download_filename: str | None = None
+    ) -> str:
+        """Presigned GET URL. When download_filename is set, the response
+        carries Content-Disposition: attachment so the browser saves the
+        file instead of rendering it inline — used for download actions,
+        not for inline display (e.g. logo preview)."""
+        ...
 
     @abstractmethod
     def delete_file(self, key: str) -> None: ...
@@ -40,7 +77,9 @@ class NullStorageClient(StorageClient):
     def upload_file(self, key: str, data: bytes, content_type: str) -> None:
         pass
 
-    def presigned_url(self, key: str, expires_in: int = 300) -> str:
+    def presigned_url(
+        self, key: str, expires_in: int = 300, download_filename: str | None = None
+    ) -> str:
         return ""
 
     def delete_file(self, key: str) -> None:
@@ -107,10 +146,15 @@ class MinIOClient(StorageClient):
             ContentType=content_type,
         )
 
-    def presigned_url(self, key: str, expires_in: int = 300) -> str:
+    def presigned_url(
+        self, key: str, expires_in: int = 300, download_filename: str | None = None
+    ) -> str:
+        params: dict = {"Bucket": self._bucket, "Key": key}
+        if download_filename:
+            params["ResponseContentDisposition"] = content_disposition(download_filename)
         return self._s3_pub.generate_presigned_url(
             "get_object",
-            Params={"Bucket": self._bucket, "Key": key},
+            Params=params,
             ExpiresIn=expires_in,
         )
 

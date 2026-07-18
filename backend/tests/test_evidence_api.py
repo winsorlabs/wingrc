@@ -52,8 +52,13 @@ class InMemoryStorageClient(StorageClient):
     def upload_file(self, key: str, data: bytes, content_type: str) -> None:
         self.files[key] = data
 
-    def presigned_url(self, key: str, expires_in: int = 300) -> str:
-        return f"http://fake-storage/{key}"
+    def presigned_url(
+        self, key: str, expires_in: int = 300, download_filename: str | None = None
+    ) -> str:
+        url = f"http://fake-storage/{key}"
+        if download_filename:
+            url += f"?download_filename={download_filename}"
+        return url
 
     def delete_file(self, key: str) -> None:
         self.deleted.append(key)
@@ -169,6 +174,7 @@ def test_upload_creates_evidence_and_does_not_change_status(client, db_session, 
     assert body["title"] == "screenshot.png"
     assert body["file_size_bytes"] == len(b"\x89PNG\r\n\x1a\n extra")
     assert body["download_url"].startswith("http://fake-storage/")
+    assert "download_filename=screenshot.png" in body["download_url"]
     assert body["reference_location"] is None
     assert body["note"] is None
 
@@ -201,6 +207,7 @@ def test_list_evidence_returns_uploaded_item(client, db_session):
     assert item["artifact_type"] == "export"
     assert item["title"] == "config.xlsx"
     assert item["download_url"].startswith("http://fake-storage/")
+    assert "download_filename=config.xlsx" in item["download_url"]
     assert item["reference_location"] is None
 
 
@@ -234,6 +241,28 @@ def test_download_redirects_to_presigned_url(client, db_session):
     r = client.get(_download_url(d, ev_id), follow_redirects=False)
     assert r.status_code == 302
     assert "fake-storage" in r.headers["location"]
+    assert "download_filename=mfa.png" in r.headers["location"]
+
+
+@pytest.mark.integration
+def test_download_filename_uses_custom_title_with_extension_appended(client, db_session):
+    """A custom title without an extension still gets one on the download link,
+    so the saved file has the right type — see storage.download_filename()."""
+    d = _seed(db_session)
+    up = client.post(
+        _upload_url(d),
+        files={"file": ("original-name.pdf", b"%PDF-1.4", "application/pdf")},
+        data={"artifact_type": "document", "title": "Firewall config export"},
+    )
+    ev_id = up.json()["id"]
+    assert up.json()["download_url"].endswith(
+        "download_filename=Firewall config export.pdf"
+    )
+
+    r = client.get(_download_url(d, ev_id), follow_redirects=False)
+    assert r.headers["location"].endswith(
+        "download_filename=Firewall config export.pdf"
+    )
 
 
 @pytest.mark.integration

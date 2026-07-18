@@ -46,8 +46,13 @@ class InMemoryStorageClient(StorageClient):
     def upload_file(self, key: str, data: bytes, content_type: str) -> None:
         self.files[key] = data
 
-    def presigned_url(self, key: str, expires_in: int = 300) -> str:
-        return f"http://fake-storage/{key}"
+    def presigned_url(
+        self, key: str, expires_in: int = 300, download_filename: str | None = None
+    ) -> str:
+        url = f"http://fake-storage/{key}"
+        if download_filename:
+            url += f"?download_filename={download_filename}"
+        return url
 
     def delete_file(self, key: str) -> None:
         self.deleted.append(key)
@@ -192,7 +197,7 @@ def test_org_profile_patch_audit_log(client, db_session):
 
 
 def test_logo_upload_sets_storage_key(client, db_session, storage):
-    org = _org(db_session)
+    org = _org(db_session, name="Acme MSP")
     r = client.post(
         f"/orgs/{org.id}/logo",
         files={"file": ("logo.png", _FAKE_PNG, "image/png")},
@@ -202,6 +207,9 @@ def test_logo_upload_sets_storage_key(client, db_session, storage):
     assert data["logo_storage_key"].startswith(f"{org.id}/logos/")
     assert data["logo_storage_key"].endswith(".png")
     assert data["logo_url"].startswith("http://fake-storage/")
+    # Download forces attachment (not inline render) with a sensible name —
+    # not the random UUID-based storage key.
+    assert "download_filename=Acme MSP.png" in data["logo_url"]
 
     # Confirm key persisted on org
     db_session.refresh(org)
@@ -260,7 +268,7 @@ def test_logo_upload_too_large(client, db_session):
 
 
 def test_logo_appears_in_profile_get(client, db_session):
-    org = _org(db_session)
+    org = _org(db_session, name="Acme MSP")
     client.post(
         f"/orgs/{org.id}/logo",
         files={"file": ("logo.png", _FAKE_PNG, "image/png")},
@@ -269,6 +277,9 @@ def test_logo_appears_in_profile_get(client, db_session):
     assert r.status_code == 200
     data = r.json()
     assert data["logo_storage_key"] is not None
+    # _build_profile_out's own presigned_url call also forces attachment —
+    # not just the upload-response one.
+    assert "download_filename=Acme MSP.png" in data["logo_url"]
     assert data["logo_url"] is not None
 
 

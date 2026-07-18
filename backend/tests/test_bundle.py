@@ -63,7 +63,9 @@ class InMemoryStorageClient(StorageClient):
     def upload_file(self, key: str, data: bytes, content_type: str) -> None:
         self.files[key] = data
 
-    def presigned_url(self, key: str, expires_in: int = 300) -> str:
+    def presigned_url(
+        self, key: str, expires_in: int = 300, download_filename: str | None = None
+    ) -> str:
         return f"http://fake/{key}"
 
     def delete_file(self, key: str) -> None:

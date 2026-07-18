@@ -49,7 +49,7 @@ from ..models import (
     EvidenceTask,
     EvidenceTaskStateLink,
 )
-from ..storage import StorageClient, get_storage_client
+from ..storage import StorageClient, download_filename, get_storage_client
 
 router = APIRouter(
     prefix="/orgs/{org_id}",
@@ -340,7 +340,9 @@ async def upload_evidence(
         artifact_type=ev.artifact_type,
         mime_type=ev.mime_type,
         file_size_bytes=ev.file_size_bytes,
-        download_url=storage.presigned_url(storage_key),
+        download_url=storage.presigned_url(
+            storage_key, download_filename=download_filename(display_title, ext)
+        ),
         reference_location=None,
         note=None,
         collected_at=ev.collected_at,
@@ -442,7 +444,12 @@ def list_evidence(
             mime_type=ev.mime_type,
             file_size_bytes=ev.file_size_bytes,
             download_url=(
-                storage.presigned_url(ev.storage_key)
+                storage.presigned_url(
+                    ev.storage_key,
+                    download_filename=download_filename(
+                        ev.title, os.path.splitext(ev.storage_key)[1]
+                    ),
+                )
                 if ev.kind == "file" and ev.storage_key
                 else None
             ),
@@ -475,7 +482,10 @@ def download_evidence(
             detail="No stored file for this evidence item — it is a location reference",
         )
 
-    url = storage.presigned_url(ev.storage_key)
+    url = storage.presigned_url(
+        ev.storage_key,
+        download_filename=download_filename(ev.title, os.path.splitext(ev.storage_key)[1]),
+    )
     if not url:
         raise HTTPException(status_code=404, detail="Storage not configured")
 
@@ -799,7 +809,9 @@ async def collect_task_evidence_file(
         artifact_type=ev.artifact_type,
         mime_type=ev.mime_type,
         file_size_bytes=ev.file_size_bytes,
-        download_url=storage.presigned_url(storage_key),
+        download_url=storage.presigned_url(
+            storage_key, download_filename=download_filename(display_title, ext)
+        ),
         reference_location=None,
         note=None,
         collected_at=ev.collected_at,
