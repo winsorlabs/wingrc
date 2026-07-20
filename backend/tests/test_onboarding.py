@@ -16,6 +16,7 @@ Run in-container:
 from __future__ import annotations
 
 import uuid
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi.testclient import TestClient
@@ -81,6 +82,14 @@ def client(db_session, storage, fake_msp_admin):
 # ---------------------------------------------------------------------------
 # Seed helpers
 # ---------------------------------------------------------------------------
+
+
+def _download_filename_param(url: str) -> str | None:
+    """Decoded download_filename query param, however the URL chose to encode
+    it — asserting on the decoded value avoids coupling tests to one specific
+    (but equally valid) encoding choice."""
+    values = parse_qs(urlparse(url).query).get("download_filename")
+    return values[0] if values else None
 
 
 def _org(db_session, *, name: str | None = None) -> Organization:
@@ -209,7 +218,7 @@ def test_logo_upload_sets_storage_key(client, db_session, storage):
     assert data["logo_url"].startswith("http://fake-storage/")
     # Download forces attachment (not inline render) with a sensible name —
     # not the random UUID-based storage key.
-    assert "download_filename=Acme MSP.png" in data["logo_url"]
+    assert _download_filename_param(data["logo_url"]) == "Acme MSP.png"
 
     # Confirm key persisted on org
     db_session.refresh(org)
@@ -279,7 +288,7 @@ def test_logo_appears_in_profile_get(client, db_session):
     assert data["logo_storage_key"] is not None
     # _build_profile_out's own presigned_url call also forces attachment —
     # not just the upload-response one.
-    assert "download_filename=Acme MSP.png" in data["logo_url"]
+    assert _download_filename_param(data["logo_url"]) == "Acme MSP.png"
     assert data["logo_url"] is not None
 
 
