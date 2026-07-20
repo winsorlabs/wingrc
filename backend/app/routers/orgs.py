@@ -32,6 +32,7 @@ from ..models import (
     SystemDescription,
 )
 from ..storage import StorageClient, download_filename, get_storage_client
+from .evidence import _verify_magic_bytes
 
 router = APIRouter(prefix="/orgs", tags=["orgs"], dependencies=[Depends(get_current_user)])
 
@@ -204,18 +205,6 @@ def _get_org(session: Session, org_id: uuid.UUID) -> Organization:
     return org
 
 
-def _verify_image_bytes(data: bytes, mime: str) -> bool:
-    if mime == "image/png":
-        return data[:4] == b"\x89PNG"
-    if mime == "image/jpeg":
-        return data[:3] == b"\xff\xd8\xff"
-    if mime == "image/gif":
-        return data[:6] in (b"GIF87a", b"GIF89a")
-    if mime == "image/webp":
-        return data[:4] == b"RIFF" and data[8:12] == b"WEBP"
-    return False
-
-
 def _build_profile_out(org: Organization, storage: StorageClient | None) -> OrgProfileOut:
     out = OrgProfileOut.model_validate(org)
     if org.logo_storage_key and storage is not None:
@@ -330,7 +319,7 @@ async def upload_logo(
             status_code=422,
             detail=f"Logo exceeds {_IMAGE_MAX_BYTES // (1024 * 1024)} MB limit",
         )
-    if not _verify_image_bytes(data, mime):
+    if not _verify_magic_bytes(data, mime):
         raise HTTPException(
             status_code=422, detail="File content does not match declared MIME type"
         )
