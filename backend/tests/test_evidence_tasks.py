@@ -63,15 +63,21 @@ def seeded(db_session):
 
 
 @pytest.fixture
-def scenario(db_session, seeded):
-    """Org + assessment + rocketcyber product, NOT yet activated."""
+def scenario(db_session, seeded, fake_msp_admin):
+    """Org + assessment + rocketcyber product, NOT yet activated.
+
+    org.id is aligned to fake_msp_admin.org_id so the one test that goes
+    through the HTTP API (test_evidence_tasks_api) passes the
+    require_org_access ownership guard — harmless for the other tests here,
+    which call engine functions directly and never go through the router.
+    """
     fw_id = seeded["framework_id"]
     product = db_session.scalars(
         select(Product).where(Product.key == "rocketcyber")
     ).first()
     assert product is not None, "rocketcyber baseline not seeded"
 
-    org = Organization(name=f"EvTaskOrg-{uuid.uuid4().hex[:8]}")
+    org = Organization(id=fake_msp_admin.org_id, name=f"EvTaskOrg-{uuid.uuid4().hex[:8]}")
     db_session.add(org)
     db_session.flush()
 

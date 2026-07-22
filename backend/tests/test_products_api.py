@@ -40,9 +40,12 @@ def client(db_session, fake_msp_admin):
 # ---------------------------------------------------------------------------
 
 
-def _seed_empty(db_session) -> dict:
+def _seed_empty(db_session, *, org_id: uuid.UUID | None = None) -> dict:
     """Org + framework + assessment with no products in the baseline."""
-    org = Organization(name=f"ProdTestOrg-{uuid.uuid4().hex[:6]}")
+    org_kwargs: dict = {"name": f"ProdTestOrg-{uuid.uuid4().hex[:6]}"}
+    if org_id is not None:
+        org_kwargs["id"] = org_id
+    org = Organization(**org_kwargs)
     fw = Framework(key=f"fw-prod-{uuid.uuid4().hex[:6]}", name="NIST r2", version="r2")
     db_session.add_all([org, fw])
     db_session.flush()
@@ -70,7 +73,7 @@ def _seed_empty(db_session) -> dict:
     return {"org": org, "fw": fw, "assessment": assessment}
 
 
-def _seed_rocketcyber(db_session) -> dict:
+def _seed_rocketcyber(db_session, *, org_id: uuid.UUID | None = None) -> dict:
     """Seed a RocketCyber-style product covering AU (provider_satisfies)
     and explicitly disclaiming IA (customer_owns).
 
@@ -78,7 +81,10 @@ def _seed_rocketcyber(db_session) -> dict:
       AU.L2-3.3.1  objective [a]  -- authoritative SIEM; RC owns this
       IA.L2-3.5.1  objective [a]  -- customer IdP owns this; RC does NOT
     """
-    org = Organization(name=f"ProdTestOrg-RC-{uuid.uuid4().hex[:6]}")
+    org_kwargs: dict = {"name": f"ProdTestOrg-RC-{uuid.uuid4().hex[:6]}"}
+    if org_id is not None:
+        org_kwargs["id"] = org_id
+    org = Organization(**org_kwargs)
     fw = Framework(key=f"fw-rc-{uuid.uuid4().hex[:6]}", name="NIST r2", version="r2")
     db_session.add_all([org, fw])
     db_session.flush()
@@ -184,18 +190,18 @@ def _activate_url(d: dict) -> str:
 
 
 @pytest.mark.integration
-def test_list_products_empty_when_no_baseline(client, db_session):
+def test_list_products_empty_when_no_baseline(client, db_session, fake_msp_admin):
     """Returns empty list when no products are seeded for this framework."""
-    d = _seed_empty(db_session)
+    d = _seed_empty(db_session, org_id=fake_msp_admin.org_id)
     r = client.get(_products_url(d))
     assert r.status_code == 200
     assert r.json() == []
 
 
 @pytest.mark.integration
-def test_list_products_shows_rocketcyber(client, db_session):
+def test_list_products_shows_rocketcyber(client, db_session, fake_msp_admin):
     """RocketCyber product appears with correct coverage counts."""
-    d = _seed_rocketcyber(db_session)
+    d = _seed_rocketcyber(db_session, org_id=fake_msp_admin.org_id)
     r = client.get(_products_url(d))
     assert r.status_code == 200
     products = r.json()
@@ -211,9 +217,9 @@ def test_list_products_shows_rocketcyber(client, db_session):
 
 
 @pytest.mark.integration
-def test_list_products_shows_active_after_activate(client, db_session):
+def test_list_products_shows_active_after_activate(client, db_session, fake_msp_admin):
     """After activation, is_active flips to True."""
-    d = _seed_rocketcyber(db_session)
+    d = _seed_rocketcyber(db_session, org_id=fake_msp_admin.org_id)
     assert client.get(_products_url(d)).json()[0]["is_active"] is False
 
     act = client.post(_activate_url(d))
@@ -230,9 +236,9 @@ def test_list_products_shows_active_after_activate(client, db_session):
 
 
 @pytest.mark.integration
-def test_control_states_include_product_key_after_activate(client, db_session):
+def test_control_states_include_product_key_after_activate(client, db_session, fake_msp_admin):
     """After activation, sourced_from_product_key appears on covered objectives."""
-    d = _seed_rocketcyber(db_session)
+    d = _seed_rocketcyber(db_session, org_id=fake_msp_admin.org_id)
     client.post(_activate_url(d))
 
     rows = client.get(_states_url(d)).json()
@@ -255,14 +261,14 @@ def test_control_states_include_product_key_after_activate(client, db_session):
 
 
 @pytest.mark.integration
-def test_activate_rocketcyber_au_pending_evidence_not_met(client, db_session):
+def test_activate_rocketcyber_au_pending_evidence_not_met(client, db_session, fake_msp_admin):
     """Activation sets AU objectives to pending_evidence, NOT met.
 
     The magic loop marks a product's covered objectives as candidates awaiting
     evidence. 'met' requires confirmed config + attached evidence by an engineer.
     Activation alone must never produce 'met'.
     """
-    d = _seed_rocketcyber(db_session)
+    d = _seed_rocketcyber(db_session, org_id=fake_msp_admin.org_id)
     r = client.post(_activate_url(d))
     assert r.status_code == 200
     result = r.json()
@@ -281,13 +287,13 @@ def test_activate_rocketcyber_au_pending_evidence_not_met(client, db_session):
 
 
 @pytest.mark.integration
-def test_activate_rocketcyber_ia_family_untouched(client, db_session):
+def test_activate_rocketcyber_ia_family_untouched(client, db_session, fake_msp_admin):
     """IA (customer_owns) objectives remain not_met/customer_owns after RC activation.
 
     RocketCyber's baseline explicitly disclaims the IA family — the customer's
     IdP owns identity. This test proves the engine does not over-credit the vendor.
     """
-    d = _seed_rocketcyber(db_session)
+    d = _seed_rocketcyber(db_session, org_id=fake_msp_admin.org_id)
     client.post(_activate_url(d))
 
     rows = client.get(_states_url(d)).json()
@@ -306,11 +312,13 @@ def test_activate_rocketcyber_ia_family_untouched(client, db_session):
 
 
 @pytest.mark.integration
-def test_list_products_wrong_org_returns_404(client, db_session):
-    d = _seed_rocketcyber(db_session)
-    url = (
-        f"/orgs/{uuid.uuid4()}/assessments/{d['assessment'].id}/products"
-    )
+def test_list_products_wrong_org_returns_404(client, db_session, fake_msp_admin):
+    """URL org_id is the caller's own org (passes the guard); the real
+    assessment belongs to a different, unrelated org — handler 404s."""
+    d = _seed_rocketcyber(db_session)  # unrelated org holds the real assessment
+    db_session.add(Organization(id=fake_msp_admin.org_id, name="Caller Org"))
+    db_session.flush()
+    url = f"/orgs/{fake_msp_admin.org_id}/assessments/{d['assessment'].id}/products"
     assert client.get(url).status_code == 404
 
 
@@ -320,7 +328,7 @@ def test_list_products_wrong_org_returns_404(client, db_session):
 
 
 @pytest.mark.integration
-def test_platform_only_controls_excluded_from_activation(client, db_session):
+def test_platform_only_controls_excluded_from_activation(client, db_session, fake_msp_admin):
     """A provider_satisfies control with coverage_basis=platform_only must NOT
     flip to pending_evidence when the product is activated.
 
@@ -330,7 +338,7 @@ def test_platform_only_controls_excluded_from_activation(client, db_session):
     the customer's assessment does not show false pending_evidence for controls
     the product does not perform in the customer's environment.
     """
-    org = Organization(name=f"PlatOnlyOrg-{uuid.uuid4().hex[:6]}")
+    org = Organization(id=fake_msp_admin.org_id, name=f"PlatOnlyOrg-{uuid.uuid4().hex[:6]}")
     fw = Framework(key=f"fw-plat-{uuid.uuid4().hex[:6]}", name="NIST r2", version="r2")
     db_session.add_all([org, fw])
     db_session.flush()
@@ -415,9 +423,9 @@ def test_platform_only_controls_excluded_from_activation(client, db_session):
 
 
 @pytest.mark.integration
-def test_coverage_basis_counts_in_product_list(client, db_session):
+def test_coverage_basis_counts_in_product_list(client, db_session, fake_msp_admin):
     """Products endpoint reports coverage_basis breakdown correctly."""
-    org = Organization(name=f"BasisCountOrg-{uuid.uuid4().hex[:6]}")
+    org = Organization(id=fake_msp_admin.org_id, name=f"BasisCountOrg-{uuid.uuid4().hex[:6]}")
     fw = Framework(key=f"fw-basis-{uuid.uuid4().hex[:6]}", name="NIST r2", version="r2")
     db_session.add_all([org, fw])
     db_session.flush()

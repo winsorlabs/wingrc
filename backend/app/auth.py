@@ -28,6 +28,7 @@ import os
 import secrets
 import time
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -381,10 +382,40 @@ def _resolve_api_token(db: Session, raw: str) -> CurrentUser:
     )
 
 
-def require_role(*roles: str):
-    """FastAPI dependency factory for role gates.
+def require_org_access(*roles: str):
+    """FastAPI dependency factory: confirms the authenticated user's org_id
+    matches the org_id path parameter (403 if not), and optionally the
+    user's role (403 if roles are given and the user's role isn't among
+    them).
 
-    Usage:  current_user: CurrentUser = Depends(require_role("msp_admin"))
+    Usage:  Depends(require_org_access())                   # org-scope only
+            Depends(require_org_access("msp_admin"))         # + role gate
+    """
+    def _check(
+        org_id: uuid.UUID,
+        current_user: CurrentUser = Depends(get_current_user),
+    ) -> CurrentUser:
+        if current_user.org_id != org_id:
+            raise HTTPException(status_code=403, detail="Cross-org access denied")
+        if roles and current_user.role not in roles:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Requires one of: {', '.join(roles)}",
+            )
+        return current_user
+    return _check
+
+
+def require_role(*roles: str):
+    """FastAPI dependency factory for role-only gates — no org_id check.
+
+    For routes with no target org in their own path to compare against
+    (e.g. GET/POST /orgs, which list/create across orgs rather than acting
+    on one), so require_org_access() doesn't apply. Prefer
+    require_org_access() for any route that does have an org_id path
+    parameter — this exists specifically for the routes that don't.
+
+    Usage:  Depends(require_role("msp_admin"))
     """
     def _check(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
         if current_user.role not in roles:

@@ -22,7 +22,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.auth import get_current_user
+from app.auth import CurrentUser, get_current_user
 from app.db import get_session
 from app.main import app
 from app.models import (
@@ -92,8 +92,13 @@ def _download_filename_param(url: str) -> str | None:
     return values[0] if values else None
 
 
-def _org(db_session, *, name: str | None = None) -> Organization:
-    org = Organization(name=name or f"TestOrg-{uuid.uuid4().hex[:8]}")
+def _org(
+    db_session, *, name: str | None = None, org_id: uuid.UUID | None = None
+) -> Organization:
+    kwargs: dict = {"name": name or f"TestOrg-{uuid.uuid4().hex[:8]}"}
+    if org_id is not None:
+        kwargs["id"] = org_id
+    org = Organization(**kwargs)
     db_session.add(org)
     db_session.flush()
     return org
@@ -126,8 +131,8 @@ _FAKE_WEBP = b"RIFF" + b"\x00" * 4 + b"WEBP" + b"\x00" * 50
 # ---------------------------------------------------------------------------
 
 
-def test_org_profile_get_returns_defaults(client, db_session):
-    org = _org(db_session)
+def test_org_profile_get_returns_defaults(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     r = client.get(f"/orgs/{org.id}/profile")
     assert r.status_code == 200
     data = r.json()
@@ -137,8 +142,8 @@ def test_org_profile_get_returns_defaults(client, db_session):
     assert data["country"] == "US"  # server_default 'US' fires on DB INSERT
 
 
-def test_org_profile_patch_updates_fields(client, db_session):
-    org = _org(db_session)
+def test_org_profile_patch_updates_fields(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     r = client.patch(
         f"/orgs/{org.id}/profile",
         json={
@@ -158,9 +163,9 @@ def test_org_profile_patch_updates_fields(client, db_session):
     assert data["phone_primary"] == "703-555-0100"
 
 
-def test_org_profile_patch_is_partial(client, db_session):
+def test_org_profile_patch_is_partial(client, db_session, fake_msp_admin):
     """PATCH with one field must not overwrite other fields."""
-    org = _org(db_session)
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     client.patch(
         f"/orgs/{org.id}/profile",
         json={"industry": "Defense", "city": "Arlington"},
@@ -173,22 +178,24 @@ def test_org_profile_patch_is_partial(client, db_session):
     assert data["phone_primary"] == "703-555-0200"
 
 
-def test_org_profile_patch_null_clears_field(client, db_session):
+def test_org_profile_patch_null_clears_field(client, db_session, fake_msp_admin):
     """Explicitly sending null in PATCH body clears that field."""
-    org = _org(db_session)
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     client.patch(f"/orgs/{org.id}/profile", json={"industry": "Defense"})
     r = client.patch(f"/orgs/{org.id}/profile", json={"industry": None})
     assert r.status_code == 200
     assert r.json()["industry"] is None
 
 
-def test_org_profile_patch_404_unknown_org(client, db_session):
-    r = client.patch(f"/orgs/{uuid.uuid4()}/profile", json={"industry": "Defense"})
+def test_org_profile_patch_404_unknown_org(client, db_session, fake_msp_admin):
+    """Org matching the caller's own org_id (passes the ownership check) but with
+    no Organization row created — still 404s from the handler's own lookup."""
+    r = client.patch(f"/orgs/{fake_msp_admin.org_id}/profile", json={"industry": "Defense"})
     assert r.status_code == 404
 
 
-def test_org_profile_patch_audit_log(client, db_session):
-    org = _org(db_session)
+def test_org_profile_patch_audit_log(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     client.patch(f"/orgs/{org.id}/profile", json={"industry": "Defense"})
     entry = db_session.scalars(
         select(AuditLog).where(
@@ -205,8 +212,8 @@ def test_org_profile_patch_audit_log(client, db_session):
 # ---------------------------------------------------------------------------
 
 
-def test_logo_upload_sets_storage_key(client, db_session, storage):
-    org = _org(db_session, name="Acme MSP")
+def test_logo_upload_sets_storage_key(client, db_session, storage, fake_msp_admin):
+    org = _org(db_session, name="Acme MSP", org_id=fake_msp_admin.org_id)
     r = client.post(
         f"/orgs/{org.id}/logo",
         files={"file": ("logo.png", _FAKE_PNG, "image/png")},
@@ -228,8 +235,8 @@ def test_logo_upload_sets_storage_key(client, db_session, storage):
     assert data["logo_storage_key"] in storage.files
 
 
-def test_logo_upload_replaces_old_logo(client, db_session, storage):
-    org = _org(db_session)
+def test_logo_upload_replaces_old_logo(client, db_session, storage, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     r1 = client.post(
         f"/orgs/{org.id}/logo",
         files={"file": ("logo.png", _FAKE_PNG, "image/png")},
@@ -246,8 +253,8 @@ def test_logo_upload_replaces_old_logo(client, db_session, storage):
     assert old_key in storage.deleted
 
 
-def test_logo_upload_invalid_mime(client, db_session):
-    org = _org(db_session)
+def test_logo_upload_invalid_mime(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     r = client.post(
         f"/orgs/{org.id}/logo",
         files={"file": ("report.pdf", b"%PDF-1.4 body", "application/pdf")},
@@ -255,9 +262,9 @@ def test_logo_upload_invalid_mime(client, db_session):
     assert r.status_code == 422
 
 
-def test_logo_upload_magic_byte_mismatch(client, db_session):
+def test_logo_upload_magic_byte_mismatch(client, db_session, fake_msp_admin):
     """File claims image/png but bytes are garbage."""
-    org = _org(db_session)
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     r = client.post(
         f"/orgs/{org.id}/logo",
         files={"file": ("logo.png", b"not a png at all", "image/png")},
@@ -265,8 +272,8 @@ def test_logo_upload_magic_byte_mismatch(client, db_session):
     assert r.status_code == 422
 
 
-def test_logo_upload_too_large(client, db_session):
-    org = _org(db_session)
+def test_logo_upload_too_large(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     # Create a fake PNG header followed by 11 MB of zeros
     oversized = _FAKE_PNG + b"\x00" * (11 * 1024 * 1024)
     r = client.post(
@@ -276,8 +283,8 @@ def test_logo_upload_too_large(client, db_session):
     assert r.status_code == 422
 
 
-def test_logo_appears_in_profile_get(client, db_session):
-    org = _org(db_session, name="Acme MSP")
+def test_logo_appears_in_profile_get(client, db_session, fake_msp_admin):
+    org = _org(db_session, name="Acme MSP", org_id=fake_msp_admin.org_id)
     client.post(
         f"/orgs/{org.id}/logo",
         files={"file": ("logo.png", _FAKE_PNG, "image/png")},
@@ -303,14 +310,14 @@ _SD_BASE = {
 }
 
 
-def test_system_description_404_before_create(client, db_session):
-    org = _org(db_session)
+def test_system_description_404_before_create(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     r = client.get(f"/orgs/{org.id}/system-description")
     assert r.status_code == 404
 
 
-def test_system_description_put_creates(client, db_session):
-    org = _org(db_session)
+def test_system_description_put_creates(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     r = client.put(f"/orgs/{org.id}/system-description", json=_SD_BASE)
     assert r.status_code == 200
     data = r.json()
@@ -320,17 +327,17 @@ def test_system_description_put_creates(client, db_session):
     assert data["org_id"] == str(org.id)
 
 
-def test_system_description_get_after_put(client, db_session):
-    org = _org(db_session)
+def test_system_description_get_after_put(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     client.put(f"/orgs/{org.id}/system-description", json=_SD_BASE)
     r = client.get(f"/orgs/{org.id}/system-description")
     assert r.status_code == 200
     assert r.json()["system_name"] == "ACME CUI System"
 
 
-def test_system_description_put_replaces(client, db_session):
+def test_system_description_put_replaces(client, db_session, fake_msp_admin):
     """Second PUT fully replaces the first (upsert)."""
-    org = _org(db_session)
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     client.put(f"/orgs/{org.id}/system-description", json=_SD_BASE)
     r = client.put(
         f"/orgs/{org.id}/system-description",
@@ -346,8 +353,8 @@ def test_system_description_put_replaces(client, db_session):
     assert len(rows) == 1
 
 
-def test_system_description_jsonb_roundtrip(client, db_session):
-    org = _org(db_session)
+def test_system_description_jsonb_roundtrip(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     body = {
         **_SD_BASE,
         "cui_categories": ["CUI//PRVCY", "CUI//CTI"],
@@ -368,8 +375,8 @@ def test_system_description_jsonb_roundtrip(client, db_session):
     assert "SharePoint" in data["cui_flow_description"]
 
 
-def test_system_description_invalid_system_type(client, db_session):
-    org = _org(db_session)
+def test_system_description_invalid_system_type(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     r = client.put(
         f"/orgs/{org.id}/system-description",
         json={**_SD_BASE, "system_type": "not_a_type"},
@@ -377,8 +384,8 @@ def test_system_description_invalid_system_type(client, db_session):
     assert r.status_code == 422
 
 
-def test_system_description_invalid_operational_status(client, db_session):
-    org = _org(db_session)
+def test_system_description_invalid_operational_status(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     r = client.put(
         f"/orgs/{org.id}/system-description",
         json={**_SD_BASE, "operational_status": "retired"},
@@ -391,8 +398,8 @@ def test_system_description_invalid_operational_status(client, db_session):
 # ---------------------------------------------------------------------------
 
 
-def test_contact_create_and_list(client, db_session):
-    org = _org(db_session)
+def test_contact_create_and_list(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     r = client.post(
         f"/orgs/{org.id}/contacts",
         json={
@@ -417,16 +424,16 @@ def test_contact_create_and_list(client, db_session):
     assert contacts[0]["id"] == data["id"]
 
 
-def test_contact_get_single(client, db_session):
-    org = _org(db_session)
+def test_contact_get_single(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     c = _contact(db_session, org)
     r = client.get(f"/orgs/{org.id}/contacts/{c.id}")
     assert r.status_code == 200
     assert r.json()["id"] == str(c.id)
 
 
-def test_contact_patch_updates_fields(client, db_session):
-    org = _org(db_session)
+def test_contact_patch_updates_fields(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     c = _contact(db_session, org)
     r = client.patch(
         f"/orgs/{org.id}/contacts/{c.id}",
@@ -439,8 +446,8 @@ def test_contact_patch_updates_fields(client, db_session):
     assert data["affiliation"] == "msp"  # unchanged
 
 
-def test_contact_patch_is_partial(client, db_session):
-    org = _org(db_session)
+def test_contact_patch_is_partial(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     c = _contact(db_session, org, phone="703-555-0100")
     r = client.patch(f"/orgs/{org.id}/contacts/{c.id}", json={"role_title": "CISO"})
     assert r.status_code == 200
@@ -449,15 +456,15 @@ def test_contact_patch_is_partial(client, db_session):
     assert data["phone"] == "703-555-0100"  # unchanged
 
 
-def test_contact_patch_invalid_affiliation(client, db_session):
-    org = _org(db_session)
+def test_contact_patch_invalid_affiliation(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     c = _contact(db_session, org)
     r = client.patch(f"/orgs/{org.id}/contacts/{c.id}", json={"affiliation": "alien"})
     assert r.status_code == 422
 
 
-def test_contact_delete(client, db_session):
-    org = _org(db_session)
+def test_contact_delete(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     c = _contact(db_session, org)
     r = client.delete(f"/orgs/{org.id}/contacts/{c.id}")
     assert r.status_code == 204
@@ -466,8 +473,8 @@ def test_contact_delete(client, db_session):
     assert r2.status_code == 404
 
 
-def test_contact_duplicate_email_rejected(client, db_session):
-    org = _org(db_session)
+def test_contact_duplicate_email_rejected(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     email = "dup@example.com"
     client.post(
         f"/orgs/{org.id}/contacts",
@@ -480,8 +487,8 @@ def test_contact_duplicate_email_rejected(client, db_session):
     assert r.status_code == 409
 
 
-def test_contact_invalid_affiliation_rejected(client, db_session):
-    org = _org(db_session)
+def test_contact_invalid_affiliation_rejected(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     r = client.post(
         f"/orgs/{org.id}/contacts",
         json={"name": "X", "email": "x@example.com", "affiliation": "vendor"},
@@ -489,8 +496,8 @@ def test_contact_invalid_affiliation_rejected(client, db_session):
     assert r.status_code == 422
 
 
-def test_contact_create_audit_log(client, db_session):
-    org = _org(db_session)
+def test_contact_create_audit_log(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     r = client.post(
         f"/orgs/{org.id}/contacts",
         json={"name": "Bob", "email": "bob@acme.com", "affiliation": "msp"},
@@ -511,8 +518,8 @@ def test_contact_create_audit_log(client, db_session):
 # ---------------------------------------------------------------------------
 
 
-def test_add_role_to_contact(client, db_session):
-    org = _org(db_session)
+def test_add_role_to_contact(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     c = _contact(db_session, org)
     r = client.post(
         f"/orgs/{org.id}/contacts/{c.id}/roles",
@@ -524,8 +531,8 @@ def test_add_role_to_contact(client, db_session):
     assert data["contact_id"] == str(c.id)
 
 
-def test_contact_with_roles_appears_in_list(client, db_session):
-    org = _org(db_session)
+def test_contact_with_roles_appears_in_list(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     c = _contact(db_session, org)
     client.post(f"/orgs/{org.id}/contacts/{c.id}/roles", json={"role": "it_admin"})
 
@@ -537,9 +544,9 @@ def test_contact_with_roles_appears_in_list(client, db_session):
     assert roles[0]["role"] == "it_admin"
 
 
-def test_contact_multiple_roles(client, db_session):
+def test_contact_multiple_roles(client, db_session, fake_msp_admin):
     """One person can hold multiple documentation roles."""
-    org = _org(db_session)
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     c = _contact(db_session, org)
     client.post(f"/orgs/{org.id}/contacts/{c.id}/roles", json={"role": "president"})
     client.post(
@@ -556,8 +563,8 @@ def test_contact_multiple_roles(client, db_session):
     assert roles == {"president", "authorizing_official", "system_owner"}
 
 
-def test_duplicate_role_rejected(client, db_session):
-    org = _org(db_session)
+def test_duplicate_role_rejected(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     c = _contact(db_session, org)
     client.post(
         f"/orgs/{org.id}/contacts/{c.id}/roles", json={"role": "security_officer"}
@@ -568,8 +575,8 @@ def test_duplicate_role_rejected(client, db_session):
     assert r.status_code == 409
 
 
-def test_invalid_role_rejected(client, db_session):
-    org = _org(db_session)
+def test_invalid_role_rejected(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     c = _contact(db_session, org)
     r = client.post(
         f"/orgs/{org.id}/contacts/{c.id}/roles",
@@ -578,8 +585,8 @@ def test_invalid_role_rejected(client, db_session):
     assert r.status_code == 422
 
 
-def test_remove_role(client, db_session):
-    org = _org(db_session)
+def test_remove_role(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     c = _contact(db_session, org)
     client.post(
         f"/orgs/{org.id}/contacts/{c.id}/roles", json={"role": "security_officer"}
@@ -593,23 +600,23 @@ def test_remove_role(client, db_session):
     assert r2.json()["documentation_roles"] == []
 
 
-def test_remove_nonexistent_role_returns_404(client, db_session):
-    org = _org(db_session)
+def test_remove_nonexistent_role_returns_404(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     c = _contact(db_session, org)
     r = client.delete(f"/orgs/{org.id}/contacts/{c.id}/roles/it_admin")
     assert r.status_code == 404
 
 
-def test_remove_invalid_role_returns_422(client, db_session):
-    org = _org(db_session)
+def test_remove_invalid_role_returns_422(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     c = _contact(db_session, org)
     r = client.delete(f"/orgs/{org.id}/contacts/{c.id}/roles/not_a_role")
     assert r.status_code == 422
 
 
-def test_contact_delete_cascades_roles(client, db_session):
+def test_contact_delete_cascades_roles(client, db_session, fake_msp_admin):
     """Deleting a contact must cascade to its documentation roles."""
-    org = _org(db_session)
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     c = _contact(db_session, org)
     client.post(f"/orgs/{org.id}/contacts/{c.id}/roles", json={"role": "it_admin"})
 
@@ -624,8 +631,8 @@ def test_contact_delete_cascades_roles(client, db_session):
     assert orphan is None
 
 
-def test_role_notes_roundtrip(client, db_session):
-    org = _org(db_session)
+def test_role_notes_roundtrip(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     c = _contact(db_session, org)
     r = client.post(
         f"/orgs/{org.id}/contacts/{c.id}/roles",
@@ -642,14 +649,31 @@ def test_role_notes_roundtrip(client, db_session):
 # ---------------------------------------------------------------------------
 
 
-def test_contacts_scoped_to_org(client, db_session):
-    """Contacts from org A must not appear in org B's list."""
-    org_a = _org(db_session)
+def test_contacts_scoped_to_org(client, db_session, fake_msp_admin):
+    """Contacts from org A must not appear in org B's list.
+
+    Each org's list is fetched as that org's own authenticated user —
+    require_org_access means a single caller can no longer query two
+    different orgs, so isolation here is proven by two distinct identities,
+    not by one caller hitting two URLs.
+    """
+    org_a = _org(db_session, org_id=fake_msp_admin.org_id)
     org_b = _org(db_session)
     _contact(db_session, org_a, email="alice@a.com")
     _contact(db_session, org_b, email="bob@b.com")
 
     r_a = client.get(f"/orgs/{org_a.id}/contacts")
+
+    user_b = CurrentUser(
+        id=uuid.uuid4(),
+        org_id=org_b.id,
+        email="userb@example.com",
+        display_name="User B",
+        role="msp_admin",
+        is_active=True,
+        login_method="local",
+    )
+    app.dependency_overrides[get_current_user] = lambda: user_b
     r_b = client.get(f"/orgs/{org_b.id}/contacts")
 
     emails_a = {c["email"] for c in r_a.json()}
@@ -658,9 +682,11 @@ def test_contacts_scoped_to_org(client, db_session):
     assert emails_b == {"bob@b.com"}
 
 
-def test_contact_get_from_wrong_org_returns_404(client, db_session):
+def test_contact_get_from_wrong_org_returns_404(client, db_session, fake_msp_admin):
+    """org_b is the caller's own org (passes the ownership check); the contact
+    belongs to unrelated org_a, so the handler's own lookup 404s."""
     org_a = _org(db_session)
-    org_b = _org(db_session)
+    org_b = _org(db_session, org_id=fake_msp_admin.org_id)
     c = _contact(db_session, org_a)
     r = client.get(f"/orgs/{org_b.id}/contacts/{c.id}")
     assert r.status_code == 404
@@ -671,8 +697,8 @@ def test_contact_get_from_wrong_org_returns_404(client, db_session):
 # ---------------------------------------------------------------------------
 
 
-def test_onboarding_status_empty_org(client, db_session):
-    org = _org(db_session)
+def test_onboarding_status_empty_org(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     r = client.get(f"/orgs/{org.id}/onboarding-status")
     assert r.status_code == 200
     data = r.json()
@@ -684,8 +710,8 @@ def test_onboarding_status_empty_org(client, db_session):
     assert data["personnel"]["roles_covered"] == []
 
 
-def test_onboarding_status_profile_complete(client, db_session):
-    org = _org(db_session)
+def test_onboarding_status_profile_complete(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     client.patch(
         f"/orgs/{org.id}/profile",
         json={
@@ -702,8 +728,8 @@ def test_onboarding_status_profile_complete(client, db_session):
     assert r.json()["profile"]["missing_fields"] == []
 
 
-def test_onboarding_status_partial_profile(client, db_session):
-    org = _org(db_session)
+def test_onboarding_status_partial_profile(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     client.patch(f"/orgs/{org.id}/profile", json={"industry": "Defense"})
     r = client.get(f"/orgs/{org.id}/onboarding-status")
     data = r.json()
@@ -711,15 +737,15 @@ def test_onboarding_status_partial_profile(client, db_session):
     assert "address_line1" in data["profile"]["missing_fields"]
 
 
-def test_onboarding_status_system_description_complete(client, db_session):
-    org = _org(db_session)
+def test_onboarding_status_system_description_complete(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     client.put(f"/orgs/{org.id}/system-description", json=_SD_BASE)
     r = client.get(f"/orgs/{org.id}/onboarding-status")
     assert r.json()["system_description"]["complete"] is True
 
 
-def test_onboarding_status_personnel_complete(client, db_session):
-    org = _org(db_session)
+def test_onboarding_status_personnel_complete(client, db_session, fake_msp_admin):
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     c = _contact(db_session, org)
     client.post(f"/orgs/{org.id}/contacts/{c.id}/roles", json={"role": "security_officer"})
     r = client.get(f"/orgs/{org.id}/onboarding-status")
@@ -729,9 +755,9 @@ def test_onboarding_status_personnel_complete(client, db_session):
     assert "security_officer" in data["personnel"]["roles_covered"]
 
 
-def test_onboarding_status_contacts_without_roles_not_complete(client, db_session):
+def test_onboarding_status_contacts_without_roles_not_complete(client, db_session, fake_msp_admin):
     """Contacts that have no documentation roles don't satisfy personnel completion."""
-    org = _org(db_session)
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     _contact(db_session, org)
     r = client.get(f"/orgs/{org.id}/onboarding-status")
     data = r.json()
@@ -739,9 +765,9 @@ def test_onboarding_status_contacts_without_roles_not_complete(client, db_sessio
     assert data["personnel"]["contact_count"] == 1
 
 
-def test_onboarding_status_non_blocking(client, db_session):
+def test_onboarding_status_non_blocking(client, db_session, fake_msp_admin):
     """Status endpoint is purely informational — no access gates in the response."""
-    org = _org(db_session)
+    org = _org(db_session, org_id=fake_msp_admin.org_id)
     # Even with everything missing, it returns 200, not an error
     r = client.get(f"/orgs/{org.id}/onboarding-status")
     assert r.status_code == 200

@@ -101,13 +101,18 @@ def client(db_session, storage, fake_msp_admin):
 # ---------------------------------------------------------------------------
 
 
-def _seed(db_session, storage: InMemoryStorageClient) -> dict:
+def _seed(
+    db_session, storage: InMemoryStorageClient, *, org_id: uuid.UUID | None = None
+) -> dict:
     """Create org + framework + two-objective control + assessment + extras.
 
     Returns a dict with keys: org, fw, assessment, ctrl, obj_a, obj_b, cs_a, cs_b,
     contact, evidence, ev_key.
     """
-    org = Organization(name=f"BundleOrg-{uuid.uuid4().hex[:6]}")
+    org_kwargs: dict = {"name": f"BundleOrg-{uuid.uuid4().hex[:6]}"}
+    if org_id is not None:
+        org_kwargs["id"] = org_id
+    org = Organization(**org_kwargs)
     fw = Framework(
         key=f"fw-bundle-{uuid.uuid4().hex[:6]}",
         name="NIST 800-171 r2",
@@ -254,22 +259,28 @@ def _bundle_url(d: dict) -> str:
 
 
 @pytest.mark.integration
-def test_bundle_missing_org(client):
-    r = client.get(f"/orgs/{uuid.uuid4()}/assessments/{uuid.uuid4()}/bundle")
+def test_bundle_missing_org(client, fake_msp_admin):
+    """URL org_id is the caller's own org (passes the ownership guard) but no
+    such org/assessment exists — still 404s from the handler's own lookup."""
+    r = client.get(f"/orgs/{fake_msp_admin.org_id}/assessments/{uuid.uuid4()}/bundle")
     assert r.status_code == 404
 
 
 @pytest.mark.integration
-def test_bundle_wrong_org_assessment(client, db_session, storage):
-    d = _seed(db_session, storage)
-    other_org_id = uuid.uuid4()
+def test_bundle_wrong_org_assessment(client, db_session, storage, fake_msp_admin):
+    """other_org_id is the caller's own org (passes the guard); the real
+    assessment belongs to a different, unrelated org — handler 404s."""
+    d = _seed(db_session, storage)  # unrelated org holds the real assessment
+    other_org_id = fake_msp_admin.org_id
+    db_session.add(Organization(id=other_org_id, name="Caller Org"))
+    db_session.flush()
     r = client.get(f"/orgs/{other_org_id}/assessments/{d['assessment'].id}/bundle")
     assert r.status_code == 404
 
 
 @pytest.mark.integration
-def test_bundle_returns_200_zip(client, db_session, storage):
-    d = _seed(db_session, storage)
+def test_bundle_returns_200_zip(client, db_session, storage, fake_msp_admin):
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/zip"
@@ -277,8 +288,8 @@ def test_bundle_returns_200_zip(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_bundle_content_disposition(client, db_session, storage):
-    d = _seed(db_session, storage)
+def test_bundle_content_disposition(client, db_session, storage, fake_msp_admin):
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
     cd = r.headers.get("content-disposition", "")
@@ -287,8 +298,8 @@ def test_bundle_content_disposition(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_bundle_zip_contains_required_files(client, db_session, storage):
-    d = _seed(db_session, storage)
+def test_bundle_zip_contains_required_files(client, db_session, storage, fake_msp_admin):
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -310,8 +321,8 @@ def test_bundle_zip_contains_required_files(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_bundle_cover_contains_org_name(client, db_session, storage):
-    d = _seed(db_session, storage)
+def test_bundle_cover_contains_org_name(client, db_session, storage, fake_msp_admin):
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -323,8 +334,8 @@ def test_bundle_cover_contains_org_name(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_bundle_cover_contains_sprs_score(client, db_session, storage):
-    d = _seed(db_session, storage)
+def test_bundle_cover_contains_sprs_score(client, db_session, storage, fake_msp_admin):
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -338,8 +349,8 @@ def test_bundle_cover_contains_sprs_score(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_bundle_implementation_contains_objective(client, db_session, storage):
-    d = _seed(db_session, storage)
+def test_bundle_implementation_contains_objective(client, db_session, storage, fake_msp_admin):
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -352,8 +363,8 @@ def test_bundle_implementation_contains_objective(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_bundle_implementation_contains_statement(client, db_session, storage):
-    d = _seed(db_session, storage)
+def test_bundle_implementation_contains_statement(client, db_session, storage, fake_msp_admin):
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -365,8 +376,8 @@ def test_bundle_implementation_contains_statement(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_bundle_manifest_contains_evidence(client, db_session, storage):
-    d = _seed(db_session, storage)
+def test_bundle_manifest_contains_evidence(client, db_session, storage, fake_msp_admin):
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -378,8 +389,8 @@ def test_bundle_manifest_contains_evidence(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_bundle_audit_logged(client, db_session, storage):
-    d = _seed(db_session, storage)
+def test_bundle_audit_logged(client, db_session, storage, fake_msp_admin):
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -394,8 +405,8 @@ def test_bundle_audit_logged(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_bundle_embeds_evidence_file(client, db_session, storage):
-    d = _seed(db_session, storage)
+def test_bundle_embeds_evidence_file(client, db_session, storage, fake_msp_admin):
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -414,8 +425,8 @@ def test_bundle_embeds_evidence_file(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_bundle_artifact_log_present(client, db_session, storage):
-    d = _seed(db_session, storage)
+def test_bundle_artifact_log_present(client, db_session, storage, fake_msp_admin):
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -424,9 +435,9 @@ def test_bundle_artifact_log_present(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_bundle_artifact_log_format(client, db_session, storage):
+def test_bundle_artifact_log_format(client, db_session, storage, fake_msp_admin):
     """artifact_log.txt has the required Algorithm | Hash | Path header and entries."""
-    d = _seed(db_session, storage)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -441,9 +452,9 @@ def test_bundle_artifact_log_format(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_bundle_second_order_hash_on_cover(client, db_session, storage):
+def test_bundle_second_order_hash_on_cover(client, db_session, storage, fake_msp_admin):
     """cover.html surfaces Hashed Data List and Hash Value using exact eMASS field names."""
-    d = _seed(db_session, storage)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -457,9 +468,9 @@ def test_bundle_second_order_hash_on_cover(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_bundle_manifest_hash_column(client, db_session, storage):
+def test_bundle_manifest_hash_column(client, db_session, storage, fake_msp_admin):
     """Evidence manifest table includes a SHA-256 Hash column header."""
-    d = _seed(db_session, storage)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -471,9 +482,9 @@ def test_bundle_manifest_hash_column(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_bundle_manifest_reference_not_applicable(client, db_session, storage):
+def test_bundle_manifest_reference_not_applicable(client, db_session, storage, fake_msp_admin):
     """Reference evidence shows 'not applicable — reference only' in the hash column."""
-    d = _seed(db_session, storage)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
 
     # Add a reference evidence item linked to cs_a
     ref_ev = Evidence(
@@ -501,9 +512,9 @@ def test_bundle_manifest_reference_not_applicable(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_bundle_audit_log_includes_hash_fields(client, db_session, storage):
+def test_bundle_audit_log_includes_hash_fields(client, db_session, storage, fake_msp_admin):
     """bundle.export audit row carries hashed_data_list and hash_value."""
-    d = _seed(db_session, storage)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -522,7 +533,7 @@ def test_bundle_audit_log_includes_hash_fields(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_bundle_artifact_log_zip_consistency(client, db_session, storage):
+def test_bundle_artifact_log_zip_consistency(client, db_session, storage, fake_msp_admin):
     """Every path in artifact_log.txt exists in the ZIP; every ZIP entry
     (except cover.html and artifact_log.txt) has a corresponding log entry.
 
@@ -530,7 +541,7 @@ def test_bundle_artifact_log_zip_consistency(client, db_session, storage):
     log and the logic used to write the ZIP entries — both go through the shared
     _ev_zip_rel() helper, so this test would catch a regression that splits them.
     """
-    d = _seed(db_session, storage)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -563,7 +574,7 @@ def test_bundle_artifact_log_zip_consistency(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_bundle_manifest_links_resolve(client, db_session, storage):
+def test_bundle_manifest_links_resolve(client, db_session, storage, fake_msp_admin):
     """Every href='files/...' link in manifest.html points to a real ZIP entry.
 
     Regression guard: if _ev_zip_rel() and _render_manifest()'s relative-path
@@ -571,7 +582,7 @@ def test_bundle_manifest_links_resolve(client, db_session, storage):
     every exported bundle.  posixpath.relpath() makes the href robust, and this
     test catches any regression in that derivation.
     """
-    d = _seed(db_session, storage)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -598,14 +609,14 @@ def test_bundle_manifest_links_resolve(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_bundle_lazy_backfill_populates_sha256(client, db_session, storage):
+def test_bundle_lazy_backfill_populates_sha256(client, db_session, storage, fake_msp_admin):
     """Evidence seeded without sha256_hash gets it computed on first bundle export.
 
     Simulates evidence uploaded before migration 0014: the DB row has
     sha256_hash=NULL but the bytes are present in storage.  After the bundle
     export the column must be populated with the correct hash.
     """
-    d = _seed(db_session, storage)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     ev = d["evidence"]
 
     # Simulate pre-migration state: clear the hash that _seed may have set
@@ -621,7 +632,7 @@ def test_bundle_lazy_backfill_populates_sha256(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_bundle_stale_hash_excluded_on_fetch_failure(client, db_session, storage):
+def test_bundle_stale_hash_excluded_on_fetch_failure(client, db_session, storage, fake_msp_admin):
     """A cached sha256_hash in the DB is NOT shown when the file cannot be fetched.
 
     Scenario: evidence was exported once (hash cached in DB), the file was
@@ -629,7 +640,7 @@ def test_bundle_stale_hash_excluded_on_fetch_failure(client, db_session, storage
     hash must NOT appear in artifact_log.txt or the manifest — showing it next
     to a missing file would be misleading.
     """
-    d = _seed(db_session, storage)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
 
     # Seed a second evidence item with a pre-populated hash but no bytes in storage
     stale_hash = "a" * 64

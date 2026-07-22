@@ -33,9 +33,12 @@ def client(db_session, fake_msp_admin):
     app.dependency_overrides.clear()
 
 
-def _seed(db_session) -> dict:
+def _seed(db_session, *, org_id: uuid.UUID | None = None) -> dict:
     """Seed org → framework → control → objective → assessment → control_state."""
-    org = Organization(name=f"PatchTestOrg-{uuid.uuid4().hex}")
+    org_kwargs: dict = {"name": f"PatchTestOrg-{uuid.uuid4().hex}"}
+    if org_id is not None:
+        org_kwargs["id"] = org_id
+    org = Organization(**org_kwargs)
     db_session.add(org)
     db_session.flush()
 
@@ -86,8 +89,8 @@ def _seed(db_session) -> dict:
 
 
 @pytest.mark.integration
-def test_patch_status_returns_200(client, db_session):
-    d = _seed(db_session)
+def test_patch_status_returns_200(client, db_session, fake_msp_admin):
+    d = _seed(db_session, org_id=fake_msp_admin.org_id)
     url = f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/control-states/{d['cs'].id}"
     r = client.patch(url, json={"status": "met"})
     assert r.status_code == 200
@@ -97,8 +100,8 @@ def test_patch_status_returns_200(client, db_session):
 
 
 @pytest.mark.integration
-def test_patch_status_persists(client, db_session):
-    d = _seed(db_session)
+def test_patch_status_persists(client, db_session, fake_msp_admin):
+    d = _seed(db_session, org_id=fake_msp_admin.org_id)
     url = f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/control-states/{d['cs'].id}"
     client.patch(url, json={"status": "partial"})
     db_session.expire(d["cs"])
@@ -106,8 +109,8 @@ def test_patch_status_persists(client, db_session):
 
 
 @pytest.mark.integration
-def test_patch_writes_history_row(client, db_session):
-    d = _seed(db_session)
+def test_patch_writes_history_row(client, db_session, fake_msp_admin):
+    d = _seed(db_session, org_id=fake_msp_admin.org_id)
     url = f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/control-states/{d['cs'].id}"
     client.patch(url, json={"status": "met"})
 
@@ -123,8 +126,8 @@ def test_patch_writes_history_row(client, db_session):
 
 
 @pytest.mark.integration
-def test_patch_same_status_still_writes_history(client, db_session):
-    d = _seed(db_session)
+def test_patch_same_status_still_writes_history(client, db_session, fake_msp_admin):
+    d = _seed(db_session, org_id=fake_msp_admin.org_id)
     url = f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/control-states/{d['cs'].id}"
     client.patch(url, json={"status": "not_met"})
 
@@ -143,8 +146,8 @@ def test_patch_same_status_still_writes_history(client, db_session):
     "status",
     ["met", "not_met", "partial", "pending_evidence", "not_applicable", "inherited"],
 )
-def test_patch_all_valid_statuses_accepted(client, db_session, status):
-    d = _seed(db_session)
+def test_patch_all_valid_statuses_accepted(client, db_session, status, fake_msp_admin):
+    d = _seed(db_session, org_id=fake_msp_admin.org_id)
     url = f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/control-states/{d['cs'].id}"
     r = client.patch(url, json={"status": status})
     assert r.status_code == 200
@@ -157,25 +160,29 @@ def test_patch_all_valid_statuses_accepted(client, db_session, status):
 
 
 @pytest.mark.integration
-def test_patch_invalid_status_returns_422(client, db_session):
-    d = _seed(db_session)
+def test_patch_invalid_status_returns_422(client, db_session, fake_msp_admin):
+    d = _seed(db_session, org_id=fake_msp_admin.org_id)
     url = f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/control-states/{d['cs'].id}"
     r = client.patch(url, json={"status": "unknown_value"})
     assert r.status_code == 422
 
 
 @pytest.mark.integration
-def test_patch_wrong_org_returns_404(client, db_session):
-    d = _seed(db_session)
-    wrong_org = uuid.uuid4()
+def test_patch_wrong_org_returns_404(client, db_session, fake_msp_admin):
+    """wrong_org is the caller's own org (passes the guard); the real
+    control-state belongs to a different, unrelated org — handler 404s."""
+    d = _seed(db_session)  # unrelated org holds the real control-state
+    wrong_org = fake_msp_admin.org_id
+    db_session.add(Organization(id=wrong_org, name="Caller Org"))
+    db_session.flush()
     url = f"/orgs/{wrong_org}/assessments/{d['assessment'].id}/control-states/{d['cs'].id}"
     r = client.patch(url, json={"status": "met"})
     assert r.status_code == 404
 
 
 @pytest.mark.integration
-def test_patch_wrong_assessment_returns_404(client, db_session):
-    d = _seed(db_session)
+def test_patch_wrong_assessment_returns_404(client, db_session, fake_msp_admin):
+    d = _seed(db_session, org_id=fake_msp_admin.org_id)
     wrong_assessment = uuid.uuid4()
     url = f"/orgs/{d['org'].id}/assessments/{wrong_assessment}/control-states/{d['cs'].id}"
     r = client.patch(url, json={"status": "met"})
@@ -183,8 +190,8 @@ def test_patch_wrong_assessment_returns_404(client, db_session):
 
 
 @pytest.mark.integration
-def test_patch_control_state_not_in_assessment_returns_404(client, db_session):
-    d = _seed(db_session)
+def test_patch_control_state_not_in_assessment_returns_404(client, db_session, fake_msp_admin):
+    d = _seed(db_session, org_id=fake_msp_admin.org_id)
     # Create a second assessment — cs belongs to the first one
     assessment2 = Assessment(
         org_id=d["org"].id,
@@ -204,9 +211,12 @@ def test_patch_control_state_not_in_assessment_returns_404(client, db_session):
 # ---------------------------------------------------------------------------
 
 
-def _seed_two_objectives(db_session) -> dict:
+def _seed_two_objectives(db_session, *, org_id: uuid.UUID | None = None) -> dict:
     """Seed one control (weight=3) with two objectives and two control_states."""
-    org = Organization(name=f"SprsTestOrg-{uuid.uuid4().hex}")
+    org_kwargs: dict = {"name": f"SprsTestOrg-{uuid.uuid4().hex}"}
+    if org_id is not None:
+        org_kwargs["id"] = org_id
+    org = Organization(**org_kwargs)
     db_session.add(org)
     db_session.flush()
 
@@ -252,8 +262,8 @@ def _seed_two_objectives(db_session) -> dict:
 
 
 @pytest.mark.integration
-def test_sprs_recomputed_when_sole_objective_marked_met(client, db_session):
-    d = _seed(db_session)
+def test_sprs_recomputed_when_sole_objective_marked_met(client, db_session, fake_msp_admin):
+    d = _seed(db_session, org_id=fake_msp_admin.org_id)
     url = f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/control-states/{d['cs'].id}"
     r = client.patch(url, json={"status": "met"})
     assert r.status_code == 200
@@ -261,8 +271,8 @@ def test_sprs_recomputed_when_sole_objective_marked_met(client, db_session):
 
 
 @pytest.mark.integration
-def test_sprs_recomputed_when_sole_objective_marked_inherited(client, db_session):
-    d = _seed(db_session)
+def test_sprs_recomputed_when_sole_objective_marked_inherited(client, db_session, fake_msp_admin):
+    d = _seed(db_session, org_id=fake_msp_admin.org_id)
     url = f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/control-states/{d['cs'].id}"
     r = client.patch(url, json={"status": "inherited"})
     assert r.status_code == 200
@@ -270,18 +280,20 @@ def test_sprs_recomputed_when_sole_objective_marked_inherited(client, db_session
 
 
 @pytest.mark.integration
-def test_sprs_deducts_when_objective_partial(client, db_session):
+def test_sprs_deducts_when_objective_partial(client, db_session, fake_msp_admin):
     # partial ≠ met; full weight (1) deducted → 109
-    d = _seed(db_session)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id)
     url = f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/control-states/{d['cs'].id}"
     r = client.patch(url, json={"status": "partial"})
     assert r.json()["sprs_score"] == 109
 
 
 @pytest.mark.integration
-def test_sprs_deducts_full_weight_when_one_of_two_objectives_not_met(client, db_session):
+def test_sprs_deducts_full_weight_when_one_of_two_objectives_not_met(
+    client, db_session, fake_msp_admin
+):
     # control weight = 3; obj_a → met, obj_b still not_met → full 3 deducted → 107
-    d = _seed_two_objectives(db_session)
+    d = _seed_two_objectives(db_session, org_id=fake_msp_admin.org_id)
     url_a = (
         f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}"
         f"/control-states/{d['cs_a'].id}"
@@ -291,9 +303,9 @@ def test_sprs_deducts_full_weight_when_one_of_two_objectives_not_met(client, db_
 
 
 @pytest.mark.integration
-def test_sprs_no_deduction_when_all_objectives_met(client, db_session):
+def test_sprs_no_deduction_when_all_objectives_met(client, db_session, fake_msp_admin):
     # Both objectives met → control satisfied → no deduction → 110
-    d = _seed_two_objectives(db_session)
+    d = _seed_two_objectives(db_session, org_id=fake_msp_admin.org_id)
     base = f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/control-states"
     client.patch(f"{base}/{d['cs_a'].id}", json={"status": "met"})
     r = client.patch(f"{base}/{d['cs_b'].id}", json={"status": "met"})

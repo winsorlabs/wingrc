@@ -24,7 +24,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from ..audit import log_event
-from ..auth import CurrentUser, get_current_user, require_role
+from ..auth import CurrentUser, require_org_access
 from ..db import get_session
 from ..models import ApiToken, User
 
@@ -33,11 +33,6 @@ router = APIRouter(prefix="/orgs/{org_id}", tags=["users"])
 _VALID_ROLES = {"msp_admin", "msp_engineer", "customer_poc", "c3pao_assessor"}
 _VALID_METHODS = {"local", "sso"}
 _INVITE_TTL_HOURS = 48
-
-
-def _own_org(current_user: CurrentUser, org_id: uuid.UUID) -> None:
-    if current_user.org_id != org_id:
-        raise HTTPException(status_code=403, detail="Cross-org access denied")
 
 
 # ---------------------------------------------------------------------------
@@ -57,10 +52,8 @@ def invite_user(
     org_id: uuid.UUID,
     body: InviteUserIn,
     db: Session = Depends(get_session),
-    current_user: CurrentUser = Depends(require_role("msp_admin")),
+    current_user: CurrentUser = Depends(require_org_access("msp_admin")),
 ):
-    _own_org(current_user, org_id)
-
     if body.role not in _VALID_ROLES:
         raise HTTPException(status_code=422, detail=f"Invalid role: {body.role}")
     if body.login_method not in _VALID_METHODS:
@@ -121,9 +114,8 @@ def invite_user(
 def list_users(
     org_id: uuid.UUID,
     db: Session = Depends(get_session),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_org_access()),
 ):
-    _own_org(current_user, org_id)
     rows = db.execute(
         select(User).where(User.org_id == org_id).order_by(User.created_at)
     ).scalars().all()
@@ -142,9 +134,8 @@ def patch_user(
     user_id: uuid.UUID,
     body: PatchUserIn,
     db: Session = Depends(get_session),
-    current_user: CurrentUser = Depends(require_role("msp_admin")),
+    current_user: CurrentUser = Depends(require_org_access("msp_admin")),
 ):
-    _own_org(current_user, org_id)
     user = _get_user(db, org_id, user_id)
 
     if body.role is not None:
@@ -165,10 +156,9 @@ def reset_user_mfa(
     org_id: uuid.UUID,
     user_id: uuid.UUID,
     db: Session = Depends(get_session),
-    current_user: CurrentUser = Depends(require_role("msp_admin")),
+    current_user: CurrentUser = Depends(require_org_access("msp_admin")),
 ):
     """Clear MFA enrollment and backup codes; deactivate until re-enroll."""
-    _own_org(current_user, org_id)
     user = _get_user(db, org_id, user_id)
 
     user.totp_secret = None
@@ -201,9 +191,8 @@ def deactivate_user(
     org_id: uuid.UUID,
     user_id: uuid.UUID,
     db: Session = Depends(get_session),
-    current_user: CurrentUser = Depends(require_role("msp_admin")),
+    current_user: CurrentUser = Depends(require_org_access("msp_admin")),
 ):
-    _own_org(current_user, org_id)
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="Cannot deactivate your own account")
     user = _get_user(db, org_id, user_id)
@@ -234,10 +223,8 @@ def create_api_token(
     org_id: uuid.UUID,
     body: CreateTokenIn,
     db: Session = Depends(get_session),
-    current_user: CurrentUser = Depends(require_role("msp_admin", "msp_engineer")),
+    current_user: CurrentUser = Depends(require_org_access("msp_admin", "msp_engineer")),
 ):
-    _own_org(current_user, org_id)
-
     if body.role not in _VALID_ROLES:
         raise HTTPException(status_code=422, detail=f"Invalid role: {body.role}")
 
@@ -279,9 +266,8 @@ def create_api_token(
 def list_api_tokens(
     org_id: uuid.UUID,
     db: Session = Depends(get_session),
-    current_user: CurrentUser = Depends(require_role("msp_admin", "msp_engineer")),
+    current_user: CurrentUser = Depends(require_org_access("msp_admin", "msp_engineer")),
 ):
-    _own_org(current_user, org_id)
     rows = db.execute(
         select(ApiToken)
         .where(ApiToken.org_id == org_id, ApiToken.revoked_at.is_(None))
@@ -305,9 +291,8 @@ def revoke_api_token(
     org_id: uuid.UUID,
     token_id: uuid.UUID,
     db: Session = Depends(get_session),
-    current_user: CurrentUser = Depends(require_role("msp_admin", "msp_engineer")),
+    current_user: CurrentUser = Depends(require_org_access("msp_admin", "msp_engineer")),
 ):
-    _own_org(current_user, org_id)
     token = db.execute(
         select(ApiToken).where(ApiToken.id == token_id, ApiToken.org_id == org_id)
     ).scalar_one_or_none()

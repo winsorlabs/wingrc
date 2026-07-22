@@ -23,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..audit import log_event
-from ..auth import get_current_user
+from ..auth import get_current_user, require_org_access, require_role
 from ..db import get_session
 from ..models import (
     Contact,
@@ -220,7 +220,12 @@ def _build_profile_out(org: Organization, storage: StorageClient | None) -> OrgP
 # ---------------------------------------------------------------------------
 
 
-@router.post("", response_model=OrgOut, status_code=201)
+@router.post(
+    "",
+    response_model=OrgOut,
+    status_code=201,
+    dependencies=[Depends(require_role("msp_admin", "msp_engineer"))],
+)
 def create_org(body: OrgIn, session: Session = Depends(get_session)) -> OrgOut:
     existing = session.scalars(
         select(Organization).where(Organization.name == body.name)
@@ -236,13 +241,17 @@ def create_org(body: OrgIn, session: Session = Depends(get_session)) -> OrgOut:
     return OrgOut.model_validate(org)
 
 
-@router.get("", response_model=list[OrgOut])
+@router.get(
+    "",
+    response_model=list[OrgOut],
+    dependencies=[Depends(require_role("msp_admin", "msp_engineer"))],
+)
 def list_orgs(session: Session = Depends(get_session)) -> list[OrgOut]:
     orgs = session.scalars(select(Organization).order_by(Organization.name)).all()
     return [OrgOut.model_validate(o) for o in orgs]
 
 
-@router.get("/{org_id}", response_model=OrgOut)
+@router.get("/{org_id}", response_model=OrgOut, dependencies=[Depends(require_org_access())])
 def get_org(org_id: uuid.UUID, session: Session = Depends(get_session)) -> OrgOut:
     org = _get_org(session, org_id)
     return OrgOut.model_validate(org)
@@ -253,7 +262,11 @@ def get_org(org_id: uuid.UUID, session: Session = Depends(get_session)) -> OrgOu
 # ---------------------------------------------------------------------------
 
 
-@router.get("/{org_id}/profile", response_model=OrgProfileOut)
+@router.get(
+    "/{org_id}/profile",
+    response_model=OrgProfileOut,
+    dependencies=[Depends(require_org_access())],
+)
 def get_profile(
     org_id: uuid.UUID,
     session: Session = Depends(get_session),
@@ -263,7 +276,11 @@ def get_profile(
     return _build_profile_out(org, storage)
 
 
-@router.patch("/{org_id}/profile", response_model=OrgProfileOut)
+@router.patch(
+    "/{org_id}/profile",
+    response_model=OrgProfileOut,
+    dependencies=[Depends(require_org_access())],
+)
 def patch_profile(
     org_id: uuid.UUID,
     body: OrgProfilePatch,
@@ -297,7 +314,11 @@ def patch_profile(
     return _build_profile_out(org, storage)
 
 
-@router.post("/{org_id}/logo", response_model=LogoUploadOut)
+@router.post(
+    "/{org_id}/logo",
+    response_model=LogoUploadOut,
+    dependencies=[Depends(require_org_access())],
+)
 async def upload_logo(
     org_id: uuid.UUID,
     file: UploadFile = File(...),
@@ -363,7 +384,11 @@ async def upload_logo(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/{org_id}/system-description", response_model=SystemDescriptionOut)
+@router.get(
+    "/{org_id}/system-description",
+    response_model=SystemDescriptionOut,
+    dependencies=[Depends(require_org_access())],
+)
 def get_system_description(
     org_id: uuid.UUID, session: Session = Depends(get_session)
 ) -> SystemDescriptionOut:
@@ -376,7 +401,11 @@ def get_system_description(
     return SystemDescriptionOut.model_validate(sd)
 
 
-@router.put("/{org_id}/system-description", response_model=SystemDescriptionOut)
+@router.put(
+    "/{org_id}/system-description",
+    response_model=SystemDescriptionOut,
+    dependencies=[Depends(require_org_access())],
+)
 def upsert_system_description(
     org_id: uuid.UUID,
     body: SystemDescriptionIn,
@@ -420,7 +449,11 @@ def upsert_system_description(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/{org_id}/onboarding-status", response_model=OnboardingStatus)
+@router.get(
+    "/{org_id}/onboarding-status",
+    response_model=OnboardingStatus,
+    dependencies=[Depends(require_org_access())],
+)
 def get_onboarding_status(
     org_id: uuid.UUID, session: Session = Depends(get_session)
 ) -> OnboardingStatus:

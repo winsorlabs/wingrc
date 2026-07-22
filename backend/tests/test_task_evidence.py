@@ -80,9 +80,18 @@ def client(db_session, storage, fake_msp_admin):
 # ---------------------------------------------------------------------------
 
 
-def _seed_multi(db_session, *, n_objectives: int = 2, cadence: str | None = None) -> dict:
+def _seed_multi(
+    db_session,
+    *,
+    n_objectives: int = 2,
+    cadence: str | None = None,
+    org_id: uuid.UUID | None = None,
+) -> dict:
     """Org + framework with n_objectives objectives + assessment + evidence task linked to all."""
-    org = Organization(name=f"TaskEvOrg-{uuid.uuid4().hex[:6]}")
+    org_kwargs: dict = {"name": f"TaskEvOrg-{uuid.uuid4().hex[:6]}"}
+    if org_id is not None:
+        org_kwargs["id"] = org_id
+    org = Organization(**org_kwargs)
     fw = Framework(key=f"fw-tkev-{uuid.uuid4().hex[:6]}", name="NIST r2", version="r2")
     db_session.add_all([org, fw])
     db_session.flush()
@@ -170,9 +179,11 @@ def _tasks_url(d: dict) -> str:
 
 
 @pytest.mark.integration
-def test_collect_file_fans_out_evidence_to_all_linked_states(client, db_session, storage):
+def test_collect_file_fans_out_evidence_to_all_linked_states(
+    client, db_session, storage, fake_msp_admin
+):
     """One file upload creates one Evidence + EvidenceStateLink for each linked CS."""
-    d = _seed_multi(db_session, n_objectives=3)
+    d = _seed_multi(db_session, n_objectives=3, org_id=fake_msp_admin.org_id)
     n_states = len(d["cs_rows"])
     assert n_states == 3
 
@@ -205,9 +216,9 @@ def test_collect_file_fans_out_evidence_to_all_linked_states(client, db_session,
 
 
 @pytest.mark.integration
-def test_collect_file_does_not_auto_mark_states_met(client, db_session, storage):
+def test_collect_file_does_not_auto_mark_states_met(client, db_session, storage, fake_msp_admin):
     """Attaching evidence via task collect MUST NOT change any ControlState status."""
-    d = _seed_multi(db_session, n_objectives=2)
+    d = _seed_multi(db_session, n_objectives=2, org_id=fake_msp_admin.org_id)
 
     # Record statuses before
     before = {cs.id: cs.status for cs in d["cs_rows"]}
@@ -230,9 +241,9 @@ def test_collect_file_does_not_auto_mark_states_met(client, db_session, storage)
 
 
 @pytest.mark.integration
-def test_collect_file_marks_task_collected(client, db_session, storage):
+def test_collect_file_marks_task_collected(client, db_session, storage, fake_msp_admin):
     """Task status becomes 'collected' and completed_evidence_id is set."""
-    d = _seed_multi(db_session, n_objectives=1)
+    d = _seed_multi(db_session, n_objectives=1, org_id=fake_msp_admin.org_id)
 
     r = client.post(
         _collect_file_url(d),
@@ -254,9 +265,11 @@ def test_collect_file_marks_task_collected(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_collect_reference_fans_out_to_all_linked_states(client, db_session, storage):
+def test_collect_reference_fans_out_to_all_linked_states(
+    client, db_session, storage, fake_msp_admin
+):
     """Reference collect creates EvidenceStateLink for each linked CS."""
-    d = _seed_multi(db_session, n_objectives=2)
+    d = _seed_multi(db_session, n_objectives=2, org_id=fake_msp_admin.org_id)
     n_states = len(d["cs_rows"])
 
     r = client.post(
@@ -280,9 +293,11 @@ def test_collect_reference_fans_out_to_all_linked_states(client, db_session, sto
 
 
 @pytest.mark.integration
-def test_collect_reference_does_not_auto_mark_states_met(client, db_session, storage):
+def test_collect_reference_does_not_auto_mark_states_met(
+    client, db_session, storage, fake_msp_admin
+):
     """Reference collect must not change any ControlState status."""
-    d = _seed_multi(db_session, n_objectives=2)
+    d = _seed_multi(db_session, n_objectives=2, org_id=fake_msp_admin.org_id)
     before = {cs.id: cs.status for cs in d["cs_rows"]}
 
     r = client.post(
@@ -307,9 +322,9 @@ def test_collect_reference_does_not_auto_mark_states_met(client, db_session, sto
 
 
 @pytest.mark.integration
-def test_collect_archived_task_rejected(client, db_session, storage):
+def test_collect_archived_task_rejected(client, db_session, storage, fake_msp_admin):
     """Collecting evidence on an archived task returns 422."""
-    d = _seed_multi(db_session, n_objectives=1)
+    d = _seed_multi(db_session, n_objectives=1, org_id=fake_msp_admin.org_id)
 
     # Archive the task directly
     task = db_session.get(EvidenceTask, d["task"].id)
@@ -326,9 +341,11 @@ def test_collect_archived_task_rejected(client, db_session, storage):
 
 
 @pytest.mark.integration
-def test_collect_task_no_linked_states_still_creates_evidence(client, db_session, storage):
+def test_collect_task_no_linked_states_still_creates_evidence(
+    client, db_session, storage, fake_msp_admin
+):
     """Task with zero linked states: evidence still created, task still marked collected."""
-    org = Organization(name=f"NoLink-{uuid.uuid4().hex[:6]}")
+    org = Organization(id=fake_msp_admin.org_id, name=f"NoLink-{uuid.uuid4().hex[:6]}")
     fw = Framework(key=f"fw-nolink-{uuid.uuid4().hex[:6]}", name="NIST r2", version="r2")
     db_session.add_all([org, fw])
     db_session.flush()
@@ -380,9 +397,11 @@ def test_collect_task_no_linked_states_still_creates_evidence(client, db_session
 
 
 @pytest.mark.integration
-def test_recollect_already_collected_task_adds_more_evidence(client, db_session, storage):
+def test_recollect_already_collected_task_adds_more_evidence(
+    client, db_session, storage, fake_msp_admin
+):
     """Re-uploading on a collected task adds a second Evidence row; task stays collected."""
-    d = _seed_multi(db_session, n_objectives=1)
+    d = _seed_multi(db_session, n_objectives=1, org_id=fake_msp_admin.org_id)
 
     for i in range(2):
         r = client.post(
@@ -410,9 +429,9 @@ def test_recollect_already_collected_task_adds_more_evidence(client, db_session,
 
 
 @pytest.mark.integration
-def test_task_list_includes_cadence_when_objective_has_one(client, db_session):
+def test_task_list_includes_cadence_when_objective_has_one(client, db_session, fake_msp_admin):
     """list_evidence_tasks returns cadence from the linked objective."""
-    d = _seed_multi(db_session, n_objectives=1, cadence="quarterly")
+    d = _seed_multi(db_session, n_objectives=1, cadence="quarterly", org_id=fake_msp_admin.org_id)
 
     r = client.get(_tasks_url(d))
     assert r.status_code == 200, r.text
@@ -422,9 +441,9 @@ def test_task_list_includes_cadence_when_objective_has_one(client, db_session):
 
 
 @pytest.mark.integration
-def test_task_list_cadence_null_when_not_set(client, db_session):
+def test_task_list_cadence_null_when_not_set(client, db_session, fake_msp_admin):
     """list_evidence_tasks returns cadence=null when objective has no cadence."""
-    d = _seed_multi(db_session, n_objectives=1, cadence=None)
+    d = _seed_multi(db_session, n_objectives=1, cadence=None, org_id=fake_msp_admin.org_id)
 
     r = client.get(_tasks_url(d))
     assert r.status_code == 200, r.text
@@ -434,9 +453,9 @@ def test_task_list_cadence_null_when_not_set(client, db_session):
 
 
 @pytest.mark.integration
-def test_task_list_cadence_first_nonnull_wins_when_mixed(client, db_session):
+def test_task_list_cadence_first_nonnull_wins_when_mixed(client, db_session, fake_msp_admin):
     """With multiple objectives, first non-null cadence is used for the task."""
-    d = _seed_multi(db_session, n_objectives=2, cadence=None)
+    d = _seed_multi(db_session, n_objectives=2, cadence=None, org_id=fake_msp_admin.org_id)
 
     # Set cadence only on the second objective
     obj_b = d["objectives"][1]
@@ -451,9 +470,9 @@ def test_task_list_cadence_first_nonnull_wins_when_mixed(client, db_session):
 
 
 @pytest.mark.integration
-def test_task_list_exposes_is_archived_and_archived_at(client, db_session):
+def test_task_list_exposes_is_archived_and_archived_at(client, db_session, fake_msp_admin):
     """EvidenceTaskOut now includes is_archived and archived_at."""
-    d = _seed_multi(db_session, n_objectives=1)
+    d = _seed_multi(db_session, n_objectives=1, org_id=fake_msp_admin.org_id)
 
     r = client.get(_tasks_url(d))
     assert r.status_code == 200
