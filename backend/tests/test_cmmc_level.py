@@ -104,12 +104,12 @@ def test_total_controls_is_110(db_session, seeded):
 
 
 @pytest.mark.integration
-def test_control_states_expose_is_level_1(client, db_session, seeded):
+def test_control_states_expose_is_level_1(client, db_session, seeded, fake_msp_admin):
     from app.engine import _seed_control_states
 
     fw_id = seeded["framework_id"]
 
-    org = Organization(name=f"L1TestOrg-{uuid.uuid4().hex}")
+    org = Organization(id=fake_msp_admin.org_id, name=f"L1TestOrg-{uuid.uuid4().hex}")
     db_session.add(org)
     db_session.flush()
 

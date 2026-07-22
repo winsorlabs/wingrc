@@ -68,13 +68,13 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def ref(db_session: Session) -> dict:
+def ref(db_session: Session, fake_msp_admin) -> dict:
     """Minimal reference data: two controls, one product, one evidence spec.
 
     AC.L2-3.1.1 — shared (auto-flipped by magic loop)
     IA.L2-3.5.1 — customer_owns (never auto-flipped)
     """
-    org = Organization(name=f"DeactivOrg-{uuid.uuid4().hex[:6]}")
+    org = Organization(id=fake_msp_admin.org_id, name=f"DeactivOrg-{uuid.uuid4().hex[:6]}")
     fw = Framework(key=f"fw-deact-{uuid.uuid4().hex[:6]}", name="Test FW", version="r2")
     db_session.add_all([org, fw])
     db_session.flush()
