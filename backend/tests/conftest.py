@@ -145,10 +145,21 @@ def db_session(db_engine):
     calls self.commit() when no exception is raised (type_ is None). Use
     explicit trans.rollback() in finally instead to guarantee rollback
     regardless of test outcome.
+
+    `expire_on_commit=False` matches app/db.py's production `SessionLocal`.
+    Without it, the default `expire_on_commit=True` marks every attribute
+    on committed instances stale, so the next attribute access (e.g.
+    `ev.id` right after `session.commit()`, a totally normal pattern in the
+    routers) issues an implicit SELECT to refresh it. Under `_app_session`,
+    that SELECT runs after `app.current_org` has been RESET for the commit
+    it just followed, so RLS matches zero rows and SQLAlchemy raises
+    ObjectDeletedError — a test-harness artifact, not a real bug: production
+    never re-queries on attribute access here because it isn't expiring
+    those attributes in the first place.
     """
     with db_engine.connect() as conn:
         trans = conn.begin()
-        sess = Session(conn, join_transaction_mode="create_savepoint")
+        sess = Session(conn, join_transaction_mode="create_savepoint", expire_on_commit=False)
         try:
             yield sess
         finally:
