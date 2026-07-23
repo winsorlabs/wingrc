@@ -171,10 +171,11 @@ def _authed(session: Session, user: CurrentUser):
     """
 
     def _override() -> CurrentUser:
-        session.execute(
-            text("SET LOCAL app.current_org = :org_id"),
-            {"org_id": str(user.org_id)},
-        )
+        # Postgres doesn't allow bind parameters in SET/SET LOCAL — mirrors
+        # the literal-embedding in app/auth.py's _resolve_session /
+        # _resolve_api_token. Safe here because org_id is a uuid.UUID, not
+        # unsanitized input.
+        session.execute(text(f"SET LOCAL app.current_org = '{user.org_id}'"))
         return user
 
     return _override
