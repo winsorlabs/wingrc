@@ -23,7 +23,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.auth import CurrentUser, get_current_user
-from tests.conftest import _authed
 from app.db import get_session
 from app.main import app
 from app.models import (
@@ -34,6 +33,7 @@ from app.models import (
     SystemDescription,
 )
 from app.storage import StorageClient, get_storage_client
+from tests.conftest import _authed
 
 # ---------------------------------------------------------------------------
 # In-memory storage

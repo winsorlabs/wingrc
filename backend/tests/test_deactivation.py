@@ -39,7 +39,6 @@ from sqlalchemy.orm import Session
 
 import app.audit as audit_module
 from app.auth import get_current_user
-from tests.conftest import _authed
 from app.db import get_session
 from app.engine import activate_org_product, deactivate_org_product, start_assessment
 from app.main import app
@@ -60,6 +59,7 @@ from app.models import (
     OrgProduct,
     Product,
 )
+from tests.conftest import _authed
 
 pytestmark = pytest.mark.integration
 

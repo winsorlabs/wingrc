@@ -23,7 +23,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app.auth import get_current_user
-from tests.conftest import _authed
 from app.db import get_session
 from app.engine import _seed_control_states, activate_org_product
 from app.main import app
@@ -41,6 +40,7 @@ from app.models import (
 )
 from app.seeds.baselines import seed_baselines
 from app.seeds.catalog import seed_catalog
+from tests.conftest import _authed
 
 # ---------------------------------------------------------------------------
 # Fixtures
