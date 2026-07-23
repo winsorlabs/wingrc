@@ -34,6 +34,7 @@ from app.models import (
     Organization,
 )
 from app.storage import StorageClient, get_storage_client
+from tests.conftest import _authed
 
 # ---------------------------------------------------------------------------
 # Storage stub
@@ -70,7 +71,7 @@ def storage():
 def client(db_session, storage, fake_msp_admin):
     app.dependency_overrides[get_session] = lambda: db_session
     app.dependency_overrides[get_storage_client] = lambda: storage
-    app.dependency_overrides[get_current_user] = lambda: fake_msp_admin
+    app.dependency_overrides[get_current_user] = _authed(db_session, fake_msp_admin)
     yield TestClient(app)
     app.dependency_overrides.clear()
 

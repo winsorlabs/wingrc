@@ -24,6 +24,12 @@ from sqlalchemy.orm import Session
 
 from app.auth import CurrentUser
 
+# Non-superuser, non-owner role Phase 3 introduces so RLS is an enforced
+# backstop rather than a no-op (superusers and table owners bypass RLS
+# unconditionally). Created idempotently by migration 0016; see that
+# migration for the GRANT/ALTER DEFAULT PRIVILEGES shape.
+_APP_ROLE = "wingrc_app"
+
 _ALEMBIC_INI = str(Path(__file__).resolve().parents[1] / "alembic.ini")
 _DEFAULT_DEV_URL = "postgresql+psycopg://wingrc:wingrc@db:5432/wingrc"
 
@@ -128,12 +134,66 @@ def db_session(db_engine):
     calls self.commit() when no exception is raised (type_ is None). Use
     explicit trans.rollback() in finally instead to guarantee rollback
     regardless of test outcome.
+
+    RLS enforcement (real, not superuser-bypassed):
+      `SET ROLE wingrc_app` runs inside this test's own transaction, so
+      `trans.rollback()` at teardown reverts it — a pooled connection handed
+      to the next test starts back at the login role (`wingrc`), not
+      leaked-over `wingrc_app`. (SET ROLE, unlike SET LOCAL, normally
+      outlives a commit — but it does NOT outlive a rollback of the
+      transaction it was issued in, which is exactly what happens here.)
+
+      `join_transaction_mode="create_savepoint"` means an app-level
+      `session.commit()` only releases a SAVEPOINT — it does not end this
+      real transaction, so `SET LOCAL app.current_org` (scoped to the real
+      transaction) would otherwise survive every commit, masking the exact
+      class of bug Phase 3 is auditing for (a query after a commit running
+      with stale/no org context). The wrapped `.commit` below closes that
+      gap by explicitly reverting the GUC after every commit, so a commit
+      inside a test behaves like a commit in production: whatever ran
+      before it had `app.current_org` set (by `_authed`, replicating what
+      real request auth does); whatever runs after must re-set it or see
+      nothing, under RLS, exactly as it would in production.
     """
     with db_engine.connect() as conn:
         trans = conn.begin()
+        conn.execute(text(f"SET ROLE {_APP_ROLE}"))
         sess = Session(conn, join_transaction_mode="create_savepoint")
+
+        real_commit = sess.commit
+
+        def _commit_and_clear_org(*args, **kwargs):
+            real_commit(*args, **kwargs)
+            sess.execute(text("RESET app.current_org"))
+
+        sess.commit = _commit_and_clear_org
+
         try:
             yield sess
         finally:
             sess.close()
             trans.rollback()
+
+
+def _authed(session: Session, user: CurrentUser):
+    """Build a get_current_user override that also sets app.current_org.
+
+    The real get_current_user (`_resolve_session`/`_resolve_api_token` in
+    app/auth.py) sets `app.current_org` as a side effect of authenticating
+    every request. Tests bypass that function entirely via
+    `app.dependency_overrides[get_current_user] = ...` — so without this
+    helper, `app.current_org` is never set at all, and every RLS-protected
+    query would return zero rows once running under a real (non-bypassing)
+    role, regardless of anything Phase 3 fixes. This closure is called once
+    per request (FastAPI re-resolves dependencies per request), matching
+    the real code's per-request SET LOCAL.
+    """
+
+    def _override() -> CurrentUser:
+        session.execute(
+            text("SET LOCAL app.current_org = :org_id"),
+            {"org_id": str(user.org_id)},
+        )
+        return user
+
+    return _override

@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.auth import CurrentUser, get_current_user
+from tests.conftest import _authed
 from app.db import get_session
 from app.main import app
 from app.models import (
@@ -74,7 +75,7 @@ def storage():
 def client(db_session, storage, fake_msp_admin):
     app.dependency_overrides[get_session] = lambda: db_session
     app.dependency_overrides[get_storage_client] = lambda: storage
-    app.dependency_overrides[get_current_user] = lambda: fake_msp_admin
+    app.dependency_overrides[get_current_user] = _authed(db_session, fake_msp_admin)
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -673,7 +674,7 @@ def test_contacts_scoped_to_org(client, db_session, fake_msp_admin):
         is_active=True,
         login_method="local",
     )
-    app.dependency_overrides[get_current_user] = lambda: user_b
+    app.dependency_overrides[get_current_user] = _authed(db_session, user_b)
     r_b = client.get(f"/orgs/{org_b.id}/contacts")
 
     emails_a = {c["email"] for c in r_a.json()}
