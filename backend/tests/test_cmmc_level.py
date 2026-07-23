@@ -21,12 +21,12 @@ from app.db import get_session
 from app.main import app
 from app.models import Assessment, Control, Organization
 from app.seeds.catalog import seed_catalog
-from tests.conftest import _authed
+from tests.conftest import _app_session, _authed
 
 
 @pytest.fixture
 def client(db_session, fake_msp_admin):
-    app.dependency_overrides[get_session] = lambda: db_session
+    app.dependency_overrides[get_session] = _app_session(db_session)
     app.dependency_overrides[get_current_user] = _authed(db_session, fake_msp_admin)
     yield TestClient(app)
     app.dependency_overrides.clear()

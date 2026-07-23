@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import uuid as _uuid
+from collections.abc import Iterator
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
@@ -130,44 +131,24 @@ def db_engine():
 def db_session(db_engine):
     """Function-scoped session that always rolls back after each test.
 
+    Runs as the connection's login role (`wingrc`, the table owner), which
+    bypasses RLS entirely — this is the session test bodies use directly to
+    scaffold fixtures (orgs, frameworks, controls, assessments) via raw
+    SQLAlchemy, outside of any request/org context. Those inserts have no
+    `app.current_org` to satisfy an RLS WITH CHECK clause, so scaffolding
+    must stay privileged, exactly as it did before Phase 3. Only
+    `_app_session` (below) — the override actually bound to the app's
+    request-handling DB dependency — runs as the RLS-enforced `wingrc_app`
+    role, and only for the duration of a single request.
+
     SA 2.0 caveat: `with conn.begin():` COMMITS on normal exit — its __exit__
     calls self.commit() when no exception is raised (type_ is None). Use
     explicit trans.rollback() in finally instead to guarantee rollback
     regardless of test outcome.
-
-    RLS enforcement (real, not superuser-bypassed):
-      `SET ROLE wingrc_app` runs inside this test's own transaction, so
-      `trans.rollback()` at teardown reverts it — a pooled connection handed
-      to the next test starts back at the login role (`wingrc`), not
-      leaked-over `wingrc_app`. (SET ROLE, unlike SET LOCAL, normally
-      outlives a commit — but it does NOT outlive a rollback of the
-      transaction it was issued in, which is exactly what happens here.)
-
-      `join_transaction_mode="create_savepoint"` means an app-level
-      `session.commit()` only releases a SAVEPOINT — it does not end this
-      real transaction, so `SET LOCAL app.current_org` (scoped to the real
-      transaction) would otherwise survive every commit, masking the exact
-      class of bug Phase 3 is auditing for (a query after a commit running
-      with stale/no org context). The wrapped `.commit` below closes that
-      gap by explicitly reverting the GUC after every commit, so a commit
-      inside a test behaves like a commit in production: whatever ran
-      before it had `app.current_org` set (by `_authed`, replicating what
-      real request auth does); whatever runs after must re-set it or see
-      nothing, under RLS, exactly as it would in production.
     """
     with db_engine.connect() as conn:
         trans = conn.begin()
-        conn.execute(text(f"SET ROLE {_APP_ROLE}"))
         sess = Session(conn, join_transaction_mode="create_savepoint")
-
-        real_commit = sess.commit
-
-        def _commit_and_clear_org(*args, **kwargs):
-            real_commit(*args, **kwargs)
-            sess.execute(text("RESET app.current_org"))
-
-        sess.commit = _commit_and_clear_org
-
         try:
             yield sess
         finally:
@@ -195,5 +176,49 @@ def _authed(session: Session, user: CurrentUser):
             {"org_id": str(user.org_id)},
         )
         return user
+
+    return _override
+
+
+def _app_session(session: Session):
+    """Build a get_session override that enforces RLS for a single request.
+
+    `db_session` stays on the connection's default owner role so test-body
+    scaffolding keeps bypassing RLS as it always has. This override shares
+    that same connection/transaction but brackets *just* the request: it
+    SET ROLEs to `wingrc_app` right before FastAPI hands the session to the
+    endpoint, and RESETs the role in the `finally` once the request
+    completes — before control returns to the test body. `SET ROLE` is a
+    property of the underlying connection, not the ORM Session object, so
+    without this bracketing a switch to `wingrc_app` would leak onto every
+    later use of `db_session` in the same test (and vice versa, onto every
+    earlier use, if applied at fixture-setup time instead of per-request).
+
+    The commit-wrapping mirrors that same request-only scope:
+    `join_transaction_mode="create_savepoint"` means an app-level
+    `session.commit()` only releases a SAVEPOINT — it does not end the real
+    transaction, so `SET LOCAL app.current_org` (scoped to the real
+    transaction) would otherwise survive every commit, masking the exact
+    class of bug Phase 3 is auditing for (a query after a commit running
+    with stale/no org context). Wrapping `.commit` here to RESET the GUC
+    makes a commit inside a request behave like a commit in production.
+    """
+
+    def _override() -> Iterator[Session]:
+        conn = session.connection()
+        conn.execute(text(f"SET ROLE {_APP_ROLE}"))
+        real_commit = session.commit
+
+        def _commit_and_clear_org(*args, **kwargs):
+            real_commit(*args, **kwargs)
+            session.execute(text("RESET app.current_org"))
+
+        session.commit = _commit_and_clear_org
+
+        try:
+            yield session
+        finally:
+            session.commit = real_commit
+            conn.execute(text("RESET ROLE"))
 
     return _override

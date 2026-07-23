@@ -40,7 +40,7 @@ from app.models import (
 )
 from app.seeds.baselines import seed_baselines
 from app.seeds.catalog import seed_catalog
-from tests.conftest import _authed
+from tests.conftest import _app_session, _authed
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -49,7 +49,7 @@ from tests.conftest import _authed
 
 @pytest.fixture
 def client(db_session, fake_msp_admin):
-    app.dependency_overrides[get_session] = lambda: db_session
+    app.dependency_overrides[get_session] = _app_session(db_session)
     app.dependency_overrides[get_current_user] = _authed(db_session, fake_msp_admin)
     yield TestClient(app)
     app.dependency_overrides.clear()

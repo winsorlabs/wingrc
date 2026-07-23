@@ -46,7 +46,7 @@ from app.models import (
     Organization,
 )
 from app.storage import StorageClient, get_storage_client
-from tests.conftest import _authed
+from tests.conftest import _app_session, _authed
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -76,7 +76,7 @@ def storage() -> InMemoryStorageClient:
 
 @pytest.fixture
 def client(db_session, storage, fake_msp_admin):
-    app.dependency_overrides[get_session] = lambda: db_session
+    app.dependency_overrides[get_session] = _app_session(db_session)
     app.dependency_overrides[get_storage_client] = lambda: storage
     app.dependency_overrides[get_current_user] = _authed(db_session, fake_msp_admin)
     yield TestClient(app)
