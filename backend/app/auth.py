@@ -517,6 +517,18 @@ def _resolve_api_token(db: Session, raw: str) -> CurrentUser:
         {"now": now, "id": row.id},
     )
 
+    # Commit immediately so this survives session.close() even on a pure
+    # GET request, which never calls commit() on its own — without this,
+    # last_used_at would silently never advance for read-only Bearer-token
+    # traffic (a read-only integration, or any token minted at
+    # c3pao_assessor). Same fix shape as _resolve_session's activity
+    # heartbeat: SET LOCAL is transaction-scoped and this commit ends that
+    # transaction, so app.current_org must be re-issued for the new one
+    # that starts under this same session — every RLS-gated query for the
+    # rest of the request depends on it, not just the lookup below.
+    db.commit()
+    db.execute(text(f"SET LOCAL app.current_org = '{row.org_id}'"))
+
     user = db.get(User, row.user_id)
     if user is None or not user.is_active:
         raise HTTPException(status_code=403, detail="Account deactivated")

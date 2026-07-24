@@ -415,19 +415,34 @@ Small items, one branch.
   test's own fixture value was wrong. Fixed. Confirmed via
   `pytest tests/test_login_method_coherence.py -m integration -v` against
   real Postgres 18 on wl-util-1 — passing clean.
-- **`api_token.last_used_at` never persists on GET-only requests.** Same root
-  cause I.4 hit and fixed for `user_session.last_activity_at`:
-  `_resolve_api_token`'s `UPDATE api_token SET last_used_at = ...` is a bare
-  `db.execute()` with no `db.commit()`, and `get_session()`'s `finally:
-  session.close()` rolls back anything uncommitted — so a Bearer-token
-  request that never hits a mutating endpoint (a read-only integration, or
-  any token minted at `c3pao_assessor`) never actually records
-  `last_used_at`. Apply the same fix shape as `_resolve_session`: commit
-  immediately after the update, then re-issue `SET LOCAL app.current_org`
-  since the commit ends the transaction it was scoped to. Add a test that
-  actually proves it (the existing test-harness session never truly commits
-  mid-test, so a naive test can't catch this either way — needs the same
-  kind of real, out-of-band confirmation I.4 required).
+- **`api_token.last_used_at` never persists on GET-only requests —
+  implemented, pending wl-util-1 confirmation.** Same root cause I.4 hit
+  and fixed for `user_session.last_activity_at`: `_resolve_api_token`'s
+  `UPDATE api_token SET last_used_at = ...` was a bare `db.execute()` with
+  no `db.commit()`, and `get_session()`'s `finally: session.close()` rolls
+  back anything uncommitted — so a Bearer-token request that never hits a
+  mutating endpoint (a read-only integration, or any token minted at
+  `c3pao_assessor`) never actually recorded `last_used_at`. Fixed with the
+  same shape as `_resolve_session`'s activity heartbeat: commit
+  immediately after the `UPDATE`, then re-issue `SET LOCAL
+  app.current_org` since the commit ends the transaction it was scoped
+  to — every RLS-gated query for the rest of the request (starting with
+  the `db.get(User, row.user_id)` right after) depends on it.
+  `backend/tests/test_api_token_last_used_at.py` (new): mints an API
+  token, confirms `last_used_at` is `NULL`, authenticates a real request
+  with it through the actual `get_current_user` → `_resolve_api_token`
+  path (not the fixture bypass), confirms `last_used_at` is populated
+  afterward. Same limitation as `test_session_idle.py`: this test can't
+  prove the commit survives `session.close()` in production, since the
+  test harness's session never truly commits mid-test
+  (`join_transaction_mode="create_savepoint"`) — a same-session read sees
+  the write regardless of whether the fix is present. Ruff clean, test
+  collects cleanly in this sandbox (no Postgres available here) —
+  **still needs a real
+  `pytest tests/test_api_token_last_used_at.py -m integration -v` pass on
+  wl-util-1 before this item can close**, ideally with the same kind of
+  out-of-band confirmation I.4 required (a real Bearer-token GET request,
+  confirming `last_used_at` persists after the request completes).
 - **`0016_app_role.py`'s `downgrade()` blocked by dependent objects — resolved.**
   Downgrading `0016` failed with 32 objects still holding dependent grants
   on `wingrc_app`, blocking `DROP ROLE`. Confirmed via live queries against
