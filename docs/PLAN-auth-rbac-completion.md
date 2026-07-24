@@ -1,6 +1,6 @@
 # Plan — Auth/RBAC completion (roadmap item I) + frontend admin surface
 
-**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3–I.9 not started
+**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 in progress
 **Baseline:** 0088757
 **Scope:** close the gaps identified in the audit of item I, then land the frontend
 surface those endpoints require.

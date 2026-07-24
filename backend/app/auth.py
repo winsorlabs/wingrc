@@ -52,6 +52,12 @@ _PASSWORD_MAX_LEN = 128
 _STATE_COOKIE_TTL = 300  # 5 minutes
 _TOKEN_PREFIX = "wingrc_"
 
+# Single ranking definition shared by API token minting (routers/users.py,
+# a token cannot be minted above the issuer's/target's own rank) and token
+# resolution below (a token cannot outlive the demotion of the user behind
+# it — see _resolve_api_token).
+_ROLE_RANK = {"msp_admin": 4, "msp_engineer": 3, "customer_poc": 2, "c3pao_assessor": 1}
+
 
 # ---------------------------------------------------------------------------
 # Resolved identity (works for both session and API token auth)
@@ -253,6 +259,22 @@ def create_session(db: Session, user: Any) -> tuple[Any, str]:
     return session_row, raw
 
 
+def revoke_user_sessions(db: Session, user_id: uuid.UUID) -> None:
+    """Revoke every live session for a user (does not commit).
+
+    Shared by every write path that disables a user account
+    (routers/users.py: deactivate_user, patch_user's is_active=False case)
+    so they revoke identically instead of each re-implementing the query.
+    """
+    db.execute(
+        text(
+            "UPDATE user_session SET revoked_at = :now"
+            " WHERE user_id = :uid AND revoked_at IS NULL"
+        ),
+        {"now": datetime.now(UTC), "uid": user_id},
+    )
+
+
 def set_session_cookie(response: Response, raw_token: str) -> None:
     settings = get_settings()
     response.set_cookie(
@@ -384,12 +406,18 @@ def _resolve_api_token(db: Session, raw: str) -> CurrentUser:
     if user is None or not user.is_active:
         raise HTTPException(status_code=403, detail="Account deactivated")
 
+    # Clamp to whichever is lower: the role frozen on the token at mint time,
+    # or the user's current role. A demotion after mint must not leave the
+    # token running at its old (now-excessive) privilege; a promotion after
+    # mint must not retroactively escalate a token minted at a lower role.
+    effective_role = min(row.role, user.role, key=lambda r: _ROLE_RANK[r])
+
     return CurrentUser(
         id=user.id,
         org_id=row.org_id,
         email=user.email,
         display_name=user.display_name,
-        role=row.role,  # token's role; may be lower than user.role
+        role=effective_role,
         is_active=user.is_active,
         login_method=user.login_method,
     )

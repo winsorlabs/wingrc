@@ -8,6 +8,11 @@ Covers:
   - user_id pointing at a real user in a different org -> 404
   - msp_admin minting a token above the target user's own role -> 403
   - invite_user still rejects login_method="api" (_VALID_METHODS)
+  - I.3: a token minted at one role clamps to the user's current role on
+    demotion, and does not escalate on promotion (auth.py's
+    _resolve_api_token, via effective_role = min(token role, user role))
+  - I.3: patch_user(is_active=False) revokes the user's live sessions,
+    same as deactivate_user
 """
 from __future__ import annotations
 
@@ -16,7 +21,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-from app.auth import CurrentUser, get_current_user
+from app.auth import CurrentUser, create_session, get_current_user
 from app.db import get_session
 from app.main import app
 from app.models import Organization, User
@@ -164,3 +169,98 @@ def test_invite_user_rejects_api_login_method(client, fake_msp_admin):
     }
     r = client.post(f"/orgs/{fake_msp_admin.org_id}/users", json=payload)
     assert r.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# I.3: token/role coherence — a token cannot outlive the privilege of the
+# user behind it, and promotion does not retroactively escalate one already
+# minted at a lower role.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_api_token_role_clamps_after_demotion(client, db_session, fake_msp_admin):
+    _seed_org(db_session, fake_msp_admin.org_id)
+    target = _seed_user(db_session, org_id=fake_msp_admin.org_id, role="msp_admin")
+
+    minted = client.post(
+        f"/orgs/{fake_msp_admin.org_id}/api-tokens",
+        json={"name": "x", "role": "msp_admin", "user_id": str(target.id)},
+    )
+    assert minted.status_code == 201
+    token = minted.json()["token"]
+
+    patched = client.patch(
+        f"/orgs/{fake_msp_admin.org_id}/users/{target.id}",
+        json={"role": "customer_poc"},
+    )
+    assert patched.status_code == 200
+
+    # Drop the fixture override so the token resolves through the real
+    # get_current_user -> _resolve_api_token path instead of the test bypass.
+    del app.dependency_overrides[get_current_user]
+
+    me = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert me.status_code == 200
+    assert me.json()["role"] == "customer_poc"
+
+    r = client.post(
+        f"/orgs/{fake_msp_admin.org_id}/users",
+        json={
+            "email": f"{uuid.uuid4().hex[:8]}@example.com",
+            "display_name": "Should be blocked",
+            "role": "customer_poc",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.integration
+def test_api_token_role_not_escalated_after_promotion(client, db_session, fake_msp_admin):
+    _seed_org(db_session, fake_msp_admin.org_id)
+    target = _seed_user(db_session, org_id=fake_msp_admin.org_id, role="customer_poc")
+
+    minted = client.post(
+        f"/orgs/{fake_msp_admin.org_id}/api-tokens",
+        json={"name": "x", "role": "customer_poc", "user_id": str(target.id)},
+    )
+    assert minted.status_code == 201
+    token = minted.json()["token"]
+
+    patched = client.patch(
+        f"/orgs/{fake_msp_admin.org_id}/users/{target.id}",
+        json={"role": "msp_admin"},
+    )
+    assert patched.status_code == 200
+
+    del app.dependency_overrides[get_current_user]
+
+    me = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert me.status_code == 200
+    assert me.json()["role"] == "customer_poc"
+
+
+# ---------------------------------------------------------------------------
+# I.3: patch_user(is_active=False) revokes live sessions, same as
+# deactivate_user
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_patch_user_is_active_false_revokes_sessions(client, db_session, fake_msp_admin):
+    _seed_org(db_session, fake_msp_admin.org_id)
+    target = _seed_user(db_session, org_id=fake_msp_admin.org_id, role="customer_poc")
+
+    session_row, _raw = create_session(db_session, target)
+    db_session.flush()
+    assert session_row.revoked_at is None
+
+    r = client.patch(
+        f"/orgs/{fake_msp_admin.org_id}/users/{target.id}",
+        json={"is_active": False},
+    )
+    assert r.status_code == 200
+
+    db_session.refresh(session_row)
+    assert session_row.revoked_at is not None

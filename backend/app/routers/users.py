@@ -24,7 +24,14 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from ..audit import log_event
-from ..auth import CurrentUser, generate_secret, require_org_access, require_write
+from ..auth import (
+    _ROLE_RANK,
+    CurrentUser,
+    generate_secret,
+    require_org_access,
+    require_write,
+    revoke_user_sessions,
+)
 from ..db import get_session
 from ..models import ApiToken, User
 
@@ -37,7 +44,6 @@ router = APIRouter(
 _VALID_ROLES = {"msp_admin", "msp_engineer", "customer_poc", "c3pao_assessor"}
 _VALID_METHODS = {"local", "sso"}
 _INVITE_TTL_HOURS = 48
-_role_rank = {"msp_admin": 4, "msp_engineer": 3, "customer_poc": 2, "c3pao_assessor": 1}
 
 
 def _actor_type(current_user: CurrentUser) -> str:
@@ -181,6 +187,8 @@ def patch_user(
                 actor=str(current_user.id),
                 actor_type=_actor_type(current_user),
             )
+            if body.is_active is False:
+                revoke_user_sessions(db, user.id)
         user.is_active = body.is_active
     if body.display_name is not None:
         user.display_name = body.display_name
@@ -236,13 +244,7 @@ def deactivate_user(
     user = _get_user(db, org_id, user_id)
     was_active = user.is_active
     user.is_active = False
-    db.execute(
-        text(
-            "UPDATE user_session SET revoked_at = :now"
-            " WHERE user_id = :uid AND revoked_at IS NULL"
-        ),
-        {"now": datetime.now(UTC), "uid": user_id},
-    )
+    revoke_user_sessions(db, user_id)
     log_event(
         db,
         org_id=org_id,
@@ -362,7 +364,7 @@ def create_api_token(
         rank_against_role = current_user.role
 
     # Token role cannot exceed the rank of whoever it's being issued for
-    if _role_rank.get(body.role, 0) > _role_rank.get(rank_against_role, 0):
+    if _ROLE_RANK.get(body.role, 0) > _ROLE_RANK.get(rank_against_role, 0):
         detail = (
             "Cannot create a token with a higher role than your own"
             if not on_behalf_of
