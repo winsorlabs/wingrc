@@ -1,6 +1,6 @@
 # Plan — Auth/RBAC completion (roadmap item I) + frontend admin surface
 
-**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4 in progress
+**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4 ✅ merged · I.5–I.9 not started
 **Baseline:** 0088757
 **Scope:** close the gaps identified in the audit of item I, then land the frontend
 surface those endpoints require.
@@ -362,11 +362,11 @@ Small items, one branch.
   privilege the role holds on any object in one statement, so it isn't
   sensitive to the same ordering/coverage failure mode regardless of cause.
   `upgrade()` was left untouched since it's already applied in deployed
-  history. The fix itself has not yet been exercised via a real downgrade
-  run (code review plus a clean `alembic upgrade head` from scratch was
-  judged sufficient at the time it landed, since `upgrade()` is unchanged)
-  — confirm end-to-end on wl-util-1 next time a downgrade through `0016` is
-  exercised.
+  history. **Verified end-to-end**: a full `alembic upgrade head` →
+  `alembic downgrade -3` round-trip against a disposable Postgres 18
+  database on wl-util-1 completed cleanly, landing at `0015_auth_users`
+  with no dependency error — the exact failure mode that originally
+  blocked this downgrade.
 
 ---
 
