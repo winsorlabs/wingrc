@@ -34,7 +34,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import Depends, HTTPException, Request, Response
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from .config import get_settings
@@ -182,6 +182,59 @@ def clear_failed_login(user: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Login rate limit by source IP (distinct from per-account lockout above)
+# ---------------------------------------------------------------------------
+#
+# apply_failed_login gates one account after repeated failures against it.
+# That alone permits spraying one attempt each across many accounts from a
+# single source — no individual account ever reaches its own threshold.
+# This gates the source address instead, independent of which account(s)
+# it targets.
+#
+# In-memory fixed-window counter: this deployment runs a single uvicorn
+# process per instance (see backend/Dockerfile — no --workers), so there is
+# no cross-process state to reconcile. Resets on process restart, an
+# accepted tradeoff for this control (see docs/PLAN-auth-rbac-completion.md
+# I.6) rather than adding a DB table or an external store for it.
+
+_LOGIN_RATE_LIMIT = 20  # attempts
+_LOGIN_RATE_WINDOW_SECONDS = 900  # 15 minutes
+
+_login_attempts: dict[str, tuple[float, int]] = {}
+
+
+def get_client_ip(request: Request) -> str:
+    """Resolve the real client address behind the nginx reverse proxy.
+
+    deploy/nginx/nginx.conf sets X-Real-IP from its own $remote_addr,
+    overwriting any client-supplied value — not spoofable through nginx.
+    request.client.host alone would resolve to nginx's own address in the
+    deployed topology, since uvicorn isn't run with --proxy-headers. Falls
+    back to request.client.host for direct-connection dev/tests, where
+    there is no proxy in front to set the header at all.
+    """
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip
+    return request.client.host if request.client else "unknown"
+
+
+def check_login_rate_limit(ip: str) -> None:
+    """Raise 429 once an IP exceeds _LOGIN_RATE_LIMIT attempts within the window."""
+    now = time.monotonic()
+    window_start, count = _login_attempts.get(ip, (now, 0))
+    if now - window_start > _LOGIN_RATE_WINDOW_SECONDS:
+        window_start, count = now, 0
+    count += 1
+    _login_attempts[ip] = (window_start, count)
+    if count > _LOGIN_RATE_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts from this address. Try again later.",
+        )
+
+
+# ---------------------------------------------------------------------------
 # State cookie signing (HMAC-SHA256)
 # ---------------------------------------------------------------------------
 
@@ -248,6 +301,10 @@ def create_session(db: Session, user: Any) -> tuple[Any, str]:
     settings = get_settings()
     raw, token_hash = generate_secret()
     now = datetime.now(UTC)
+
+    if settings.max_sessions_per_user > 0:
+        _enforce_session_cap(db, user.id, settings.max_sessions_per_user, now)
+
     session_row = UserSession(
         user_id=user.id,
         org_id=user.org_id,
@@ -257,6 +314,36 @@ def create_session(db: Session, user: Any) -> tuple[Any, str]:
     )
     db.add(session_row)
     return session_row, raw
+
+
+def _enforce_session_cap(db: Session, user_id: uuid.UUID, cap: int, now: datetime) -> None:
+    """Revoke the oldest active sessions for `user_id` beyond `cap`.
+
+    Accounts for the session about to be created by this same call: the
+    session under construction isn't added/flushed yet (SessionLocal has
+    autoflush=False), so it can't appear in this SELECT regardless — the
+    +1 below reserves its slot in the cap rather than relying on that.
+    Self-healing if the cap is lowered after sessions already exceed it:
+    each new login trims down toward the new cap rather than requiring a
+    one-time cleanup.
+    """
+    from .models import UserSession
+
+    existing = db.execute(
+        select(UserSession)
+        .where(
+            UserSession.user_id == user_id,
+            UserSession.revoked_at.is_(None),
+            UserSession.expires_at > now,
+        )
+        .order_by(UserSession.created_at.asc())
+    ).scalars().all()
+
+    excess = len(existing) + 1 - cap
+    if excess <= 0:
+        return
+    for stale in existing[:excess]:
+        stale.revoked_at = now
 
 
 def revoke_user_sessions(db: Session, user_id: uuid.UUID) -> None:

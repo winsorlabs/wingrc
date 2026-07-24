@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # 800-171 leaves the period org-defined, so this must stay configurable
     # and the configured value must appear in the SSP for this control.
     session_idle_minutes: int = 15
+    # Concurrent session cap per user. 0 = unlimited (default) — optional
+    # hardening, not required by any specific 800-171 control on its own.
+    max_sessions_per_user: int = 0
     pwned_passwords_check: bool = True
 
     # Allowed CORS origins.  In production set WINGRC_CORS_ORIGINS to a JSON

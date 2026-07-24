@@ -44,11 +44,13 @@ from ..audit import log_event
 from ..auth import (
     CurrentUser,
     apply_failed_login,
+    check_login_rate_limit,
     check_pwned_password,
     clear_failed_login,
     clear_session_cookie,
     clear_state_cookie,
     create_session,
+    get_client_ip,
     get_current_user,
     hash_password,
     make_state_payload,
@@ -204,6 +206,7 @@ class LocalLoginIn(BaseModel):
 
 @router.post("/login")
 def local_login(
+    request: Request,
     body: LocalLoginIn,
     db: Session = Depends(get_session),
 ):
@@ -212,6 +215,8 @@ def local_login(
     Password validation happens BEFORE the mfa_enrolled check so MFA enrollment
     state is never disclosed to callers who fail authentication.
     """
+    check_login_rate_limit(get_client_ip(request))
+
     user_row = db.execute(
         text("SELECT * FROM auth.find_user_for_login(NULL, :email)"),
         {"email": body.email},

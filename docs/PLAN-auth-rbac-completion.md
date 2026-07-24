@@ -320,18 +320,72 @@ password in the first place.
 
 Small items, one branch.
 
-- **Concurrent session cap.** Optional; add `WINGRC_MAX_SESSIONS_PER_USER`
-  (default 0 = unlimited). On `create_session`, revoke oldest beyond the cap.
-- **Session fixation.** Confirm `create_session` mints a fresh token after MFA
-  step-up and that the pre-MFA `wingrc_mfa_pending` state cookie is cleared on
-  success. Add an explicit test — the behaviour is probably already correct, but
-  it is not currently asserted.
-- **Login rate limit by IP**, distinct from per-account lockout. Per-account
-  lockout alone permits spraying one attempt each across many accounts from one
-  source.
-- **`login_method` coherence.** `test_invite_user_rejects_api_login_method`
-  covers invite; assert `local_login` rejects a user whose `login_method` is
-  `entra` or `api`.
+- **Concurrent session cap — implemented, pending wl-util-1 confirmation.**
+  Confirmed prior behavior: `create_session` had no cap logic at all, so a
+  user could hold unlimited concurrent sessions. Added
+  `max_sessions_per_user: int = 0` to `config.py`
+  (`WINGRC_MAX_SESSIONS_PER_USER`, default 0 = unlimited, per this doc).
+  `create_session()` now calls `auth._enforce_session_cap()` before minting
+  a new session, which revokes the oldest active sessions once the count
+  would exceed the cap — self-healing if the cap is lowered after sessions
+  already exceed it, rather than needing a one-time cleanup.
+  `backend/tests/test_session_cap.py` (new): default stays unlimited,
+  oldest-first eviction at a set cap, and self-healing after lowering the
+  cap. Ruff clean, tests collect and skip cleanly in this sandbox (no
+  Postgres available) — DB-backed assertions not yet executed for real;
+  confirm with `pytest tests/test_session_cap.py -m integration -v` on
+  wl-util-1.
+- **Session fixation — test added, pending wl-util-1 confirmation.**
+  `backend/tests/test_session_fixation.py` (new) drives both
+  MFA-completion code paths end-to-end (login → `mfa/verify`, and
+  set-password → `mfa/enroll` → `mfa/enroll/confirm`), confirming
+  `create_session()` mints a token distinct from the pre-auth
+  `wingrc_mfa_pending`/`wingrc_mfa_setup` state cookies, that those cookies
+  are actually cleared (`Max-Age=0`) on success, and that exactly one
+  fresh, unrevoked `UserSession` row backs the issued cookie. No fix
+  required — behavior was already correct by inspection (`create_session`
+  always mints via `generate_secret()`, never reusing an existing value;
+  both code paths call `clear_state_cookie` on the pending cookie(s)); the
+  test formalizes that rather than changing anything. Ruff clean, tests
+  collect and skip cleanly in this sandbox (no Postgres available); the
+  pyotp TOTP generation/verification the test depends on was confirmed
+  standalone. Confirm the actual pass with
+  `pytest tests/test_session_fixation.py -m integration -v` on wl-util-1.
+- **Login rate limit by IP — implemented, pending wl-util-1 confirmation.**
+  Confirmed no rate limiting existed anywhere in the codebase before this
+  (only per-account lockout). This doc didn't specify a threshold/window;
+  proposed and confirmed with Jarrod: 20 attempts / 15 minutes per source
+  IP, fixed-window, in-memory (`auth._login_attempts`,
+  `auth.check_login_rate_limit`) — viable without a shared store or new
+  table because this deployment runs a single uvicorn process per instance
+  (no `--workers`); resets on process restart, an accepted tradeoff for
+  this control. Source IP resolved via `auth.get_client_ip()`: reads
+  `X-Real-IP` first (`deploy/nginx/nginx.conf` sets this from nginx's own
+  `$remote_addr`, not client-spoofable), falling back to
+  `request.client.host` for direct-connection dev — necessary because
+  uvicorn isn't run with `--proxy-headers`, so `request.client.host` alone
+  would resolve to nginx's own address in the deployed topology, not the
+  real client's. Wired into `POST /auth/login` only.
+  `backend/tests/test_login_rate_limit.py` (new): under-limit still gets
+  normal auth errors, over-limit gets 429, and — the exact scenario this
+  item exists for — spraying a different, nonexistent account on every
+  attempt from one IP still trips the limit even though no single
+  account's own lockout counter ever climbs. Ruff clean, tests collect and
+  skip cleanly in this sandbox (no Postgres available); confirm with
+  `pytest tests/test_login_rate_limit.py -m integration -v` on wl-util-1.
+- **`login_method` coherence — test added, pending wl-util-1 confirmation.**
+  `test_invite_user_rejects_api_login_method` covers invite-time
+  rejection; enforcement at the actual login boundary already existed
+  (`local_login` already checks `login_method != "local"` → 401 before
+  even touching the password), so no fix was needed here — this closes
+  the missing-test-coverage gap the doc flagged.
+  `backend/tests/test_login_method_coherence.py` (new): parametrized over
+  `entra`/`api`, confirms `local_login` rejects both, and confirms a
+  genuine `local` user is still accepted (proceeds to `{"next": "enroll"}`
+  rather than being rejected). Ruff clean, tests collect and skip cleanly
+  in this sandbox (no Postgres available); confirm with
+  `pytest tests/test_login_method_coherence.py -m integration -v` on
+  wl-util-1.
 - **`api_token.last_used_at` never persists on GET-only requests.** Same root
   cause I.4 hit and fixed for `user_session.last_activity_at`:
   `_resolve_api_token`'s `UPDATE api_token SET last_used_at = ...` is a bare
