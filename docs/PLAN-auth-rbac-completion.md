@@ -459,6 +459,35 @@ methods. `useAuth` exposes `user`, `isLoading`, `logout`, `refresh`.
 Mount both under `OrgSettings.tsx`, visible only to `msp_admin` (and
 `msp_engineer` for the token panel, matching the backend gates).
 
+### Cross-cutting note — auth/session parameters need a settings store before they're GUI-editable
+
+Several backend auth/session parameters landed in I.4/I.6 as env vars or
+hardcoded module constants, matching the existing config.py pattern:
+
+- `WINGRC_SESSION_IDLE_MINUTES` (I.4, `config.py` — `session_idle_minutes`)
+- `WINGRC_MAX_SESSIONS_PER_USER` (I.6 — `max_sessions_per_user`)
+- Login rate-limit threshold/window (I.6 — `auth._LOGIN_RATE_LIMIT` /
+  `auth._LOGIN_RATE_WINDOW_SECONDS`; currently hardcoded constants, not even
+  env-configurable)
+
+This is intentional and correct for I.6 — matches how every other setting
+in `config.py` works today, and nothing about how these are stored is being
+changed as part of this note. But the roadmap (and common sense) expects
+these to eventually be visible and editable from the frontend GUI, most
+naturally as part of I.7's admin surface. **That's not a trivial "add a
+form" task**: env vars and module constants are read once at process
+startup (or, for the rate-limit constants, compiled in) — there is no
+request-time code path that reads a live, per-org value for any of them,
+and no table to write one to. Making any of these GUI-editable requires
+first moving it from env-var/hardcoded to a database-backed settings store
+(e.g. a `system_settings` table, or an `Organization`-scoped column
+depending on whether the setting should be global or per-org) — a real
+migration plus read-path changes in `auth.py`, `config.py` no longer being
+the source of truth for that value, and probably a cache-invalidation
+story so a saved change takes effect without a restart. Budget for that
+migration cost explicitly when I.7 is scoped, rather than discovering it
+mid-slice.
+
 ---
 
 ## I.8 — Frontend: role-aware rendering
