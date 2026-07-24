@@ -31,6 +31,13 @@ def client(db_session, fake_msp_admin):
     app.dependency_overrides.clear()
 
 
+def _seed_org(db_session, org_id: uuid.UUID) -> Organization:
+    org = Organization(id=org_id, name=f"ApiTokenTestOrg-{uuid.uuid4().hex[:8]}")
+    db_session.add(org)
+    db_session.flush()
+    return org
+
+
 def _seed_user(db_session, *, org_id: uuid.UUID, role: str) -> User:
     user = User(
         org_id=org_id,
@@ -63,7 +70,9 @@ def _as_role(role: str, *, org_id: uuid.UUID) -> CurrentUser:
 
 
 @pytest.mark.integration
-def test_api_user_token_actually_authenticates(client, fake_msp_admin):
+def test_api_user_token_actually_authenticates(client, db_session, fake_msp_admin):
+    _seed_org(db_session, fake_msp_admin.org_id)
+
     r = client.post(
         f"/orgs/{fake_msp_admin.org_id}/users/api",
         json={"display_name": "CI Bot", "role": "customer_poc"},
@@ -91,6 +100,7 @@ def test_api_user_token_actually_authenticates(client, fake_msp_admin):
 
 @pytest.mark.integration
 def test_create_api_token_on_behalf_of_by_engineer_403(client, db_session, fake_msp_admin):
+    _seed_org(db_session, fake_msp_admin.org_id)
     target = _seed_user(db_session, org_id=fake_msp_admin.org_id, role="msp_engineer")
 
     app.dependency_overrides[get_current_user] = lambda: _as_role(
@@ -129,6 +139,7 @@ def test_create_api_token_on_behalf_of_wrong_org_404(client, db_session, fake_ms
 
 @pytest.mark.integration
 def test_create_api_token_on_behalf_of_exceeds_target_role_403(client, db_session, fake_msp_admin):
+    _seed_org(db_session, fake_msp_admin.org_id)
     target = _seed_user(db_session, org_id=fake_msp_admin.org_id, role="customer_poc")
 
     r = client.post(
