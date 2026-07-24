@@ -140,7 +140,15 @@ def _seed(db_session, *, org_id: uuid.UUID | None = None) -> dict:
     db_session.add(contact)
     db_session.flush()
 
-    return {"org": org, "fw": fw, "assessment": assessment, "cs": cs, "contact": contact}
+    return {
+        "org": org,
+        "fw": fw,
+        "ctrl": ctrl,
+        "obj": obj,
+        "assessment": assessment,
+        "cs": cs,
+        "contact": contact,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +168,17 @@ def test_assessments_patch_cross_org_403(client, db_session):
     b = _seed(db_session)
     url = f"/orgs/{b['org'].id}/assessments/{b['assessment'].id}/control-states/{b['cs'].id}"
     assert client.patch(url, json={"status": "met"}).status_code == 403
+
+
+@pytest.mark.integration
+def test_statements_put_cross_org_403(client, db_session):
+    b = _seed(db_session)
+    url = (
+        f"/orgs/{b['org'].id}/assessments/{b['assessment'].id}"
+        f"/controls/{b['ctrl'].id}/statements"
+    )
+    payload = [{"objective_id": str(b["obj"].id), "body": "Intruder statement", "status": "draft"}]
+    assert client.put(url, json=payload).status_code == 403
 
 
 @pytest.mark.integration
