@@ -3,9 +3,10 @@
 test_invite_user_rejects_api_login_method (test_api_tokens.py) covers
 rejection at invite time. This covers enforcement at the actual
 authentication boundary: local_login must refuse a user whose
-login_method isn't "local", for every other value the column allows
-(entra, api) — and still accept one whose login_method genuinely is
-"local".
+login_method isn't "local", for every other value ck_user_login_method
+allows ("sso" — Entra ID is the identity provider, but the stored value is
+the generic "sso" bucket, not "entra"; and "api") — and still accept one
+whose login_method genuinely is "local".
 
 Run in-container:
     docker compose exec backend pytest tests/test_login_method_coherence.py -m integration -v
@@ -52,7 +53,7 @@ def _seed_user(db_session, *, login_method: str) -> User:
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("login_method", ["entra", "api"])
+@pytest.mark.parametrize("login_method", ["sso", "api"])
 def test_local_login_rejects_non_local_login_method(client, db_session, login_method):
     user = _seed_user(db_session, login_method=login_method)
     r = client.post("/auth/login", json={"email": user.email, "password": "whatever-they-guess"})

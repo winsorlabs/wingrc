@@ -335,22 +335,38 @@ Small items, one branch.
   Postgres available) — DB-backed assertions not yet executed for real;
   confirm with `pytest tests/test_session_cap.py -m integration -v` on
   wl-util-1.
-- **Session fixation — test added, pending wl-util-1 confirmation.**
-  `backend/tests/test_session_fixation.py` (new) drives both
-  MFA-completion code paths end-to-end (login → `mfa/verify`, and
-  set-password → `mfa/enroll` → `mfa/enroll/confirm`), confirming
-  `create_session()` mints a token distinct from the pre-auth
-  `wingrc_mfa_pending`/`wingrc_mfa_setup` state cookies, that those cookies
-  are actually cleared (`Max-Age=0`) on success, and that exactly one
-  fresh, unrevoked `UserSession` row backs the issued cookie. No fix
-  required — behavior was already correct by inspection (`create_session`
-  always mints via `generate_secret()`, never reusing an existing value;
-  both code paths call `clear_state_cookie` on the pending cookie(s)); the
-  test formalizes that rather than changing anything. Ruff clean, tests
-  collect and skip cleanly in this sandbox (no Postgres available); the
-  pyotp TOTP generation/verification the test depends on was confirmed
-  standalone. Confirm the actual pass with
-  `pytest tests/test_session_fixation.py -m integration -v` on wl-util-1.
+- **Session fixation — still open. Real bug found on wl-util-1, fixed; needs
+  re-run to confirm.** First real Postgres run of `test_session_fixation.py`
+  failed both tests. Root cause was a genuine gap in `local_login`
+  (`routers/auth.py`), not the session-fixation property itself:
+  `app.current_org` was only ever `SET LOCAL` inside the *bad-password*
+  branch, copied from that branch's own `user.org_id`. The success
+  (correct-password) branch never set it at all — and neither did the
+  `db.get(User, user_row.id)` read that runs *before* either branch, which
+  is also RLS-gated. Under RLS-enforcing `wingrc_app` (this test harness's
+  `SET ROLE wingrc_app` per request, matching the still-pending Phase 3
+  cutover — production today still connects as the bypassing `wingrc`
+  owner role, which is why this was never hit live), that gap surfaced as
+  either an invalid-UUID cast error or a silently-matched-zero-rows
+  `StaleDataError` on the subsequent `clear_failed_login` UPDATE,
+  depending on whatever `app.current_org` value happened to be left over
+  on the pooled test connection from an earlier request — hence the two
+  different error shapes for what was one bug. Fixed: `SET LOCAL
+  app.current_org` now runs once, immediately after the initial user
+  lookup, using `user_row.org_id` (already available from that lookup) —
+  before the `db.get()` read and covering both branches, rather than being
+  duplicated per-branch after the fact.
+  Separately, `test_mfa_enroll_confirm_mints_fresh_session_and_clears_pending_cookies`
+  failed consistently (not connection-state-dependent) with a flat 400
+  from `/auth/set-password` — a test bug, not an app bug: the seeded
+  invited user never got `invite_expires_at` set, and
+  `auth.find_user_for_invite` requires `invite_expires_at > now()`
+  (`NULL > now()` is `NULL`, not true, so the row was silently excluded).
+  Fixed by seeding a real future expiry. Ruff clean, both fixes collect
+  cleanly in this sandbox (no Postgres available here to actually re-run
+  them) — **still needs a real
+  `pytest tests/test_session_fixation.py -m integration -v` pass on
+  wl-util-1 before this item can close.**
 - **Login rate limit by IP — implemented, pending wl-util-1 confirmation.**
   Confirmed no rate limiting existed anywhere in the codebase before this
   (only per-account lockout). This doc didn't specify a threshold/window;
@@ -373,19 +389,23 @@ Small items, one branch.
   account's own lockout counter ever climbs. Ruff clean, tests collect and
   skip cleanly in this sandbox (no Postgres available); confirm with
   `pytest tests/test_login_rate_limit.py -m integration -v` on wl-util-1.
-- **`login_method` coherence — test added, pending wl-util-1 confirmation.**
-  `test_invite_user_rejects_api_login_method` covers invite-time
-  rejection; enforcement at the actual login boundary already existed
-  (`local_login` already checks `login_method != "local"` → 401 before
-  even touching the password), so no fix was needed here — this closes
-  the missing-test-coverage gap the doc flagged.
-  `backend/tests/test_login_method_coherence.py` (new): parametrized over
-  `entra`/`api`, confirms `local_login` rejects both, and confirms a
-  genuine `local` user is still accepted (proceeds to `{"next": "enroll"}`
-  rather than being rejected). Ruff clean, tests collect and skip cleanly
-  in this sandbox (no Postgres available); confirm with
-  `pytest tests/test_login_method_coherence.py -m integration -v` on
-  wl-util-1.
+- **`login_method` coherence — still open. Test bug found on wl-util-1,
+  fixed; needs re-run to confirm.** First real Postgres run failed
+  `test_local_login_rejects_non_local_login_method[entra]` at the seeding
+  stage: `psycopg.errors.CheckViolation` on `ck_user_login_method`. Root
+  cause was in the test, not the schema —
+  `ck_user_login_method` allows `'sso'`, `'local'`, `'api'` (see `0015` and
+  `0017`); `'entra'` was never a valid stored value. Entra ID is the
+  identity *provider*, but `login_method` stores the generic `'sso'`
+  bucket, not the provider name — the parametrize list should have been
+  `["sso", "api"]`, not `["entra", "api"]`. Enforcement at the actual login
+  boundary was already correct (`local_login` already checks
+  `login_method != "local"` → 401 before touching the password); only the
+  test's own fixture value was wrong. Fixed. Ruff clean, collects cleanly
+  in this sandbox (no Postgres available here to actually re-run it) —
+  **still needs a real
+  `pytest tests/test_login_method_coherence.py -m integration -v` pass on
+  wl-util-1 before this item can close.**
 - **`api_token.last_used_at` never persists on GET-only requests.** Same root
   cause I.4 hit and fixed for `user_session.last_activity_at`:
   `_resolve_api_token`'s `UPDATE api_token SET last_used_at = ...` is a bare

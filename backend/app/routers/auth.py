@@ -228,6 +228,14 @@ def local_login(
         hash_password("dummy-stretch-prevents-timing")
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
+    # Every read/write of "user" below runs under wingrc_app (RLS-restricted,
+    # not the bypassing owner role) once the Phase 3 cutover lands, so
+    # app.current_org must be set before the very first org-scoped access —
+    # db.get() immediately below — not just before the writes later in this
+    # function. (It previously was only set inside the bad-password branch,
+    # after this read had already run unscoped.)
+    db.execute(text(f"SET LOCAL app.current_org = '{user_row.org_id}'"))
+
     user = db.get(User, user_row.id)
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -245,7 +253,6 @@ def local_login(
 
     # --- password check FIRST, before MFA state ---
     if not user.password_hash or not verify_password(body.password, user.password_hash):
-        db.execute(text(f"SET LOCAL app.current_org = '{user.org_id}'"))
         apply_failed_login(db, user)
         db.commit()
         log_event(

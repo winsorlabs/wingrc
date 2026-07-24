@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pyotp
 import pytest
@@ -143,6 +144,10 @@ def test_mfa_enroll_confirm_mints_fresh_session_and_clears_pending_cookies(clien
         role="customer_poc",
         is_active=False,
         invite_token_hash=hashlib.sha256(raw_invite_token.encode()).hexdigest(),
+        # auth.find_user_for_invite requires invite_expires_at > now(); a
+        # NULL expiry silently excludes the row (NULL > now() is NULL, not
+        # true), which is what made this test's set-password call 400.
+        invite_expires_at=datetime.now(UTC) + timedelta(hours=48),
     )
     db_session.add(user)
     db_session.flush()
