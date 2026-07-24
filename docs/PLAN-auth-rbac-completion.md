@@ -320,34 +320,36 @@ password in the first place.
 
 Small items, one branch.
 
-- **Concurrent session cap — implemented, pending wl-util-1 confirmation.**
-  Confirmed prior behavior: `create_session` had no cap logic at all, so a
-  user could hold unlimited concurrent sessions. Added
-  `max_sessions_per_user: int = 0` to `config.py`
-  (`WINGRC_MAX_SESSIONS_PER_USER`, default 0 = unlimited, per this doc).
-  `create_session()` now calls `auth._enforce_session_cap()` before minting
-  a new session, which revokes the oldest active sessions once the count
-  would exceed the cap — self-healing if the cap is lowered after sessions
-  already exceed it, rather than needing a one-time cleanup.
-  `backend/tests/test_session_cap.py` (new): default stays unlimited,
-  oldest-first eviction at a set cap, and self-healing after lowering the
-  cap. Ruff clean, tests collect and skip cleanly in this sandbox (no
-  Postgres available) — DB-backed assertions not yet executed for real;
-  confirm with `pytest tests/test_session_cap.py -m integration -v` on
-  wl-util-1.
-- **Session fixation — still open. Real bug found on wl-util-1, fixed; needs
-  re-run to confirm.** First real Postgres run of `test_session_fixation.py`
-  failed both tests. Root cause was a genuine gap in `local_login`
-  (`routers/auth.py`), not the session-fixation property itself:
+- **Concurrent session cap — ✅ verified.** Confirmed prior behavior:
+  `create_session` had no cap logic at all, so a user could hold unlimited
+  concurrent sessions. Added `max_sessions_per_user: int = 0` to
+  `config.py` (`WINGRC_MAX_SESSIONS_PER_USER`, default 0 = unlimited, per
+  this doc). `create_session()` now calls `auth._enforce_session_cap()`
+  before minting a new session, which revokes the oldest active sessions
+  once the count would exceed the cap — self-healing if the cap is
+  lowered after sessions already exceed it, rather than needing a
+  one-time cleanup. `backend/tests/test_session_cap.py` (new): default
+  stays unlimited, oldest-first eviction at a set cap, and self-healing
+  after lowering the cap. Confirmed via `pytest tests/test_session_cap.py
+  -m integration -v` against real Postgres 18 on wl-util-1 — passing
+  clean.
+- **Session fixation — ✅ verified.** First real Postgres run of
+  `test_session_fixation.py` failed both tests. Root cause was a genuine
+  gap in `local_login` (`routers/auth.py`), not the session-fixation
+  property itself — **and a real pre-cutover RLS gap worth flagging on its
+  own merits**: this is exactly the kind of bug the `wingrc_app` cutover
+  would have surfaced in production (today's `wingrc` connection bypasses
+  RLS unconditionally as a superuser, so it was invisible until a test
+  actually ran under RLS enforcement). Caught and fixed here, ahead of
+  that cutover, rather than after it:
   `app.current_org` was only ever `SET LOCAL` inside the *bad-password*
   branch, copied from that branch's own `user.org_id`. The success
   (correct-password) branch never set it at all — and neither did the
   `db.get(User, user_row.id)` read that runs *before* either branch, which
   is also RLS-gated. Under RLS-enforcing `wingrc_app` (this test harness's
   `SET ROLE wingrc_app` per request, matching the still-pending Phase 3
-  cutover — production today still connects as the bypassing `wingrc`
-  owner role, which is why this was never hit live), that gap surfaced as
-  either an invalid-UUID cast error or a silently-matched-zero-rows
+  cutover), that gap surfaced as either an invalid-UUID cast error or a
+  silently-matched-zero-rows
   `StaleDataError` on the subsequent `clear_failed_login` UPDATE,
   depending on whatever `app.current_org` value happened to be left over
   on the pooled test connection from an earlier request — hence the two
@@ -374,13 +376,11 @@ Small items, one branch.
   `http.cookies.SimpleCookie` output, and confirmed a real (non-empty)
   cookie value is never quoted this way, so the fix can't false-positive
   on a legitimate value. `_is_cleared()` only checked the bare form.
-  Fixed to accept either. Ruff clean, both tests collect cleanly in this
-  sandbox (no Postgres available here to actually re-run them) —
-  **still needs a real
-  `pytest tests/test_session_fixation.py -m integration -v` pass on
-  wl-util-1 before this item can close.**
-- **Login rate limit by IP — implemented, pending wl-util-1 confirmation.**
-  Confirmed no rate limiting existed anywhere in the codebase before this
+  Fixed to accept either. Confirmed via
+  `pytest tests/test_session_fixation.py -m integration -v` against real
+  Postgres 18 on wl-util-1 — passing clean.
+- **Login rate limit by IP — ✅ verified.** Confirmed no rate limiting
+  existed anywhere in the codebase before this
   (only per-account lockout). This doc didn't specify a threshold/window;
   proposed and confirmed with Jarrod: 20 attempts / 15 minutes per source
   IP, fixed-window, in-memory (`auth._login_attempts`,
@@ -398,11 +398,10 @@ Small items, one branch.
   normal auth errors, over-limit gets 429, and — the exact scenario this
   item exists for — spraying a different, nonexistent account on every
   attempt from one IP still trips the limit even though no single
-  account's own lockout counter ever climbs. Ruff clean, tests collect and
-  skip cleanly in this sandbox (no Postgres available); confirm with
-  `pytest tests/test_login_rate_limit.py -m integration -v` on wl-util-1.
-- **`login_method` coherence — still open. Test bug found on wl-util-1,
-  fixed; needs re-run to confirm.** First real Postgres run failed
+  account's own lockout counter ever climbs. Confirmed via
+  `pytest tests/test_login_rate_limit.py -m integration -v` against real
+  Postgres 18 on wl-util-1 — passing clean.
+- **`login_method` coherence — ✅ verified.** First real Postgres run failed
   `test_local_login_rejects_non_local_login_method[entra]` at the seeding
   stage: `psycopg.errors.CheckViolation` on `ck_user_login_method`. Root
   cause was in the test, not the schema —
@@ -413,11 +412,9 @@ Small items, one branch.
   `["sso", "api"]`, not `["entra", "api"]`. Enforcement at the actual login
   boundary was already correct (`local_login` already checks
   `login_method != "local"` → 401 before touching the password); only the
-  test's own fixture value was wrong. Fixed. Ruff clean, collects cleanly
-  in this sandbox (no Postgres available here to actually re-run it) —
-  **still needs a real
-  `pytest tests/test_login_method_coherence.py -m integration -v` pass on
-  wl-util-1 before this item can close.**
+  test's own fixture value was wrong. Fixed. Confirmed via
+  `pytest tests/test_login_method_coherence.py -m integration -v` against
+  real Postgres 18 on wl-util-1 — passing clean.
 - **`api_token.last_used_at` never persists on GET-only requests.** Same root
   cause I.4 hit and fixed for `user_session.last_activity_at`:
   `_resolve_api_token`'s `UPDATE api_token SET last_used_at = ...` is a bare
