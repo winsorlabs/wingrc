@@ -345,27 +345,28 @@ Small items, one branch.
   actually proves it (the existing test-harness session never truly commits
   mid-test, so a naive test can't catch this either way — needs the same
   kind of real, out-of-band confirmation I.4 required).
-- **`0016_app_role.py`'s `downgrade()` blocked by out-of-band grants — fixed.**
-  Investigated: downgrading `0016` failed with 32 objects still holding
-  dependent grants on `wingrc_app`, blocking `DROP ROLE`. `0016`'s own
-  grant/revoke statements are symmetric by type (nothing this migration
-  itself grants was left unrevoked), and no other migration, `conftest.py`,
-  or in-repo script grants anything to `wingrc_app` — so the most likely
-  cause is a grant issued outside the migration chain entirely (e.g. an
-  ad-hoc `GRANT` run by hand against a live DB during the earlier Phase 3
-  RLS investigation), with a residual possibility of an `ALTER DEFAULT
-  PRIVILEGES` grantor-role mismatch if upgrade/downgrade ever ran under
-  different connected roles. Fixed by replacing the enumerated
+- **`0016_app_role.py`'s `downgrade()` blocked by dependent objects — resolved.**
+  Downgrading `0016` failed with 32 objects still holding dependent grants
+  on `wingrc_app`, blocking `DROP ROLE`. Confirmed via live queries against
+  wl-util-1: all 32 objects (29 tables × 4 privileges, 2 schema `USAGE`
+  grants, 1 default-ACL entry) matched `0016.upgrade()`'s grants exactly,
+  grantor `wingrc`, no mismatch — nothing out-of-band, no unaccounted-for
+  source. The actual cause was `downgrade()`'s original `DROP ROLE`
+  statement failing on those dependent objects *before* its own preceding
+  `REVOKE`/`ALTER DEFAULT PRIVILEGES` statements had actually cleared them,
+  which rolled back the whole migration transaction and left 100% of the
+  original grants intact — not a coverage gap in what was revoked, a
+  transaction-rollback artifact. Fixed by replacing that
   `REVOKE`/`ALTER DEFAULT PRIVILEGES` sequence in `downgrade()` with `DROP
-  OWNED BY wingrc_app` before `DROP ROLE IF EXISTS` — this revokes every
-  privilege the role holds on any object, regardless of which statement
-  granted it, so it's robust to this class of drift instead of needing to
-  enumerate every grant type. `upgrade()` was left untouched since it's
-  already applied in deployed history. Not verified against a live
-  downgrade (out of scope for this fix per the instruction that landed it —
-  code review plus a clean `alembic upgrade head` from scratch was judged
-  sufficient); confirm on wl-util-1 next time a real downgrade-through-0016
-  is exercised.
+  OWNED BY wingrc_app` before `DROP ROLE IF EXISTS` — revokes every
+  privilege the role holds on any object in one statement, so it isn't
+  sensitive to the same ordering/coverage failure mode regardless of cause.
+  `upgrade()` was left untouched since it's already applied in deployed
+  history. The fix itself has not yet been exercised via a real downgrade
+  run (code review plus a clean `alembic upgrade head` from scratch was
+  judged sufficient at the time it landed, since `upgrade()` is unchanged)
+  — confirm end-to-end on wl-util-1 next time a downgrade through `0016` is
+  exercised.
 
 ---
 
