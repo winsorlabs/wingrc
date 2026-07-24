@@ -220,6 +220,19 @@ def _token_hash(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+def generate_secret(prefix: str = "") -> tuple[str, str]:
+    """Generate a random secret and its hash. Returns (raw, hash).
+
+    The raw value is what gets shown to the caller once and is never stored;
+    only the hash is persisted. Shared by every call site that mints a
+    bearer-style secret (session cookie, invite token, API token) so they
+    stay byte-for-byte consistent instead of each reimplementing
+    token_urlsafe(32) + hashing.
+    """
+    raw = prefix + secrets.token_urlsafe(32)
+    return raw, _token_hash(raw)
+
+
 def create_session(db: Session, user: Any) -> tuple[Any, str]:
     """Create a UserSession row. Returns (session_row, raw_token).
 
@@ -227,12 +240,12 @@ def create_session(db: Session, user: Any) -> tuple[Any, str]:
     """
     from .models import UserSession
     settings = get_settings()
-    raw = secrets.token_urlsafe(32)
+    raw, token_hash = generate_secret()
     now = datetime.now(UTC)
     session_row = UserSession(
         user_id=user.id,
         org_id=user.org_id,
-        token_hash=_token_hash(raw),
+        token_hash=token_hash,
         created_at=now,
         expires_at=now + timedelta(hours=settings.session_expiry_hours),
     )

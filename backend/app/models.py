@@ -1074,6 +1074,10 @@ class User(Base):
 
     login_method='sso'   — identity validated via Microsoft Entra ID.
     login_method='local' — password + TOTP MFA managed by WinGRC.
+    login_method='api'   — machine/service account; no password or MFA, has
+                            no session/cookie login path, authenticates only
+                            via its ApiToken(s). email is a generated,
+                            non-deliverable placeholder, not a real mailbox.
 
     contact_id is nullable: a user can exist without a contact entry (e.g. a
     read-only engineer who doesn't appear in SSP/CRM docs), and a contact can
@@ -1084,7 +1088,7 @@ class User(Base):
     __tablename__ = "user"
     __table_args__ = (
         UniqueConstraint("org_id", "email", name="uq_user_org_email"),
-        CheckConstraint("login_method IN ('sso','local')", name="ck_user_login_method"),
+        CheckConstraint("login_method IN ('sso','local','api')", name="ck_user_login_method"),
         CheckConstraint(
             "role IN ('msp_admin','msp_engineer','customer_poc','c3pao_assessor')",
             name="ck_user_role",

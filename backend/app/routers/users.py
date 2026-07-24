@@ -6,6 +6,7 @@ GET  /orgs/{org_id}/users            — list users
 PATCH /orgs/{org_id}/users/{user_id} — update role / is_active
 POST /orgs/{org_id}/users/{user_id}/reset-mfa — admin MFA reset
 DELETE /orgs/{org_id}/users/{user_id} — deactivate
+POST /orgs/{org_id}/users/api        — create an API user (service account) + its first token
 
 GET    /orgs/{org_id}/api-tokens            — list tokens
 POST   /orgs/{org_id}/api-tokens            — create token (raw value returned once)
@@ -13,7 +14,6 @@ DELETE /orgs/{org_id}/api-tokens/{token_id} — revoke
 """
 from __future__ import annotations
 
-import hashlib
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -24,7 +24,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from ..audit import log_event
-from ..auth import CurrentUser, require_org_access
+from ..auth import CurrentUser, generate_secret, require_org_access
 from ..db import get_session
 from ..models import ApiToken, User
 
@@ -33,6 +33,7 @@ router = APIRouter(prefix="/orgs/{org_id}", tags=["users"])
 _VALID_ROLES = {"msp_admin", "msp_engineer", "customer_poc", "c3pao_assessor"}
 _VALID_METHODS = {"local", "sso"}
 _INVITE_TTL_HOURS = 48
+_role_rank = {"msp_admin": 4, "msp_engineer": 3, "customer_poc": 2, "c3pao_assessor": 1}
 
 
 # ---------------------------------------------------------------------------
@@ -68,8 +69,7 @@ def invite_user(
             detail="A user with this email already exists in this org",
         )
 
-    raw_token = secrets.token_urlsafe(32)
-    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    raw_token, token_hash = generate_secret()
 
     user = User(
         org_id=org_id,
@@ -208,6 +208,73 @@ def deactivate_user(
     return {"ok": True}
 
 
+class CreateApiUserIn(BaseModel):
+    display_name: str
+    role: str
+
+
+@router.post("/users/api", status_code=201)
+def create_api_user(
+    org_id: uuid.UUID,
+    body: CreateApiUserIn,
+    db: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(require_org_access("msp_admin")),
+):
+    """Create a login_method='api' service-account user and mint its first
+    token in one transaction. No email field: the address is a generated,
+    non-deliverable placeholder — this account never receives mail, it only
+    authenticates via the returned token. Organization has no slug column,
+    so the org_id's short form fills that role in the generated address.
+    """
+    if body.role not in _VALID_ROLES:
+        raise HTTPException(status_code=422, detail=f"Invalid role: {body.role}")
+
+    email = f"api-{secrets.token_urlsafe(6)}@{org_id.hex[:8]}.internal"
+
+    user = User(
+        org_id=org_id,
+        contact_id=None,
+        email=email,
+        display_name=body.display_name,
+        login_method="api",
+        role=body.role,
+        is_active=True,
+    )
+    db.add(user)
+    db.flush()
+
+    raw, token_hash = generate_secret("wingrc_")
+    token = ApiToken(
+        org_id=org_id,
+        user_id=user.id,
+        name=f"{body.display_name} (default)",
+        token_hash=token_hash,
+        role=body.role,
+    )
+    db.add(token)
+    db.flush()
+
+    log_event(
+        db,
+        org_id=org_id,
+        action="api_user.create",
+        entity_type="user",
+        entity_id=user.id,
+        after_value={"email": user.email, "role": user.role, "display_name": user.display_name},
+        context={"creator": str(current_user.id), "token_id": str(token.id)},
+        actor=str(current_user.id),
+        actor_type="api" if current_user.login_method == "api" else "user",
+    )
+    db.commit()
+
+    return {
+        "id": str(user.id),
+        "username": user.email,
+        "role": user.role,
+        "token": raw,  # shown once
+    }
+
+
 # ---------------------------------------------------------------------------
 # API tokens
 # ---------------------------------------------------------------------------
@@ -216,6 +283,7 @@ class CreateTokenIn(BaseModel):
     name: str
     role: str
     expires_in_days: int | None = None
+    user_id: uuid.UUID | None = None  # None = self-issue (unchanged default behavior)
 
 
 @router.post("/api-tokens", status_code=201)
@@ -228,23 +296,37 @@ def create_api_token(
     if body.role not in _VALID_ROLES:
         raise HTTPException(status_code=422, detail=f"Invalid role: {body.role}")
 
-    # Token role cannot exceed the creator's role
-    _role_rank = {"msp_admin": 4, "msp_engineer": 3, "customer_poc": 2, "c3pao_assessor": 1}
-    if _role_rank.get(body.role, 0) > _role_rank.get(current_user.role, 0):
-        raise HTTPException(
-            status_code=403,
-            detail="Cannot create a token with a higher role than your own",
-        )
+    on_behalf_of = body.user_id is not None and body.user_id != current_user.id
+    if on_behalf_of:
+        if current_user.role != "msp_admin":
+            raise HTTPException(
+                status_code=403,
+                detail="Only msp_admin may create tokens on behalf of another user",
+            )
+        target_user = _get_user(db, org_id, body.user_id)
+        target_user_id = target_user.id
+        rank_against_role = target_user.role
+    else:
+        target_user_id = current_user.id
+        rank_against_role = current_user.role
 
-    raw = "wingrc_" + secrets.token_urlsafe(32)
-    token_hash = hashlib.sha256(raw.encode()).hexdigest()
+    # Token role cannot exceed the rank of whoever it's being issued for
+    if _role_rank.get(body.role, 0) > _role_rank.get(rank_against_role, 0):
+        detail = (
+            "Cannot create a token with a higher role than your own"
+            if not on_behalf_of
+            else "Cannot create a token with a higher role than the target user's"
+        )
+        raise HTTPException(status_code=403, detail=detail)
+
+    raw, token_hash = generate_secret("wingrc_")
     expires_at = None
     if body.expires_in_days:
         expires_at = datetime.now(UTC) + timedelta(days=body.expires_in_days)
 
     token = ApiToken(
         org_id=org_id,
-        user_id=current_user.id,
+        user_id=target_user_id,
         name=body.name,
         token_hash=token_hash,
         role=body.role,
