@@ -275,7 +275,7 @@ stubs in other test files inherit the default and are unaffected.
 
 ---
 
-## Data model snapshot (current migrations through 0015)
+## Data model snapshot (current migrations through 0017)
 
 ```
 Organization
@@ -315,12 +315,41 @@ Do not build a slice until its prerequisites ship and tests pass.
 ### 1. Bundle export ✅ DONE (this session)
 `GET …/bundle` → ZIP. See above.
 
-### 2. Auth / RBAC
-JWT-based auth. `User` table with nullable `contact_id` FK (maps a login to an
-existing contact — does NOT replace it). Roles: `msp_admin`, `msp_engineer`,
-`customer_poc`, `c3pao_assessor`. Row-Level Security is already on (migrations);
-auth tokens carry `org_id` claim to satisfy RLS. Password hashing: PBKDF2-HMAC-
-SHA256 only (FIPS requirement). Email verification. Session management.
+### 2. Auth / RBAC — substantially built, completion tracked separately
+
+**Plan and live status: `docs/PLAN-auth-rbac-completion.md`** (slices I.1–I.9).
+Read that file before touching auth. Do not re-derive the design from this entry,
+and do not infer completion status from it — the plan header is the only source
+of truth for what has landed.
+
+Shipped (migrations 0015–0017): local login + Entra SSO; session cookies
+(`wingrc_session`, HttpOnly/SameSite=Lax, Secure in prod) and
+`Authorization: Bearer wingrc_<token>` API tokens — NOT JWT. PBKDF2-HMAC-SHA256
+@ 600k iterations. TOTP MFA with backup codes. Exponential-backoff lockout.
+HIBP k-anonymity check. RLS via `SET LOCAL app.current_org` with SECURITY DEFINER
+functions on a pinned search_path. `wingrc_app` role, NOBYPASSRLS. Router-level
+guards on all routers.
+
+Roles: `msp_admin`, `msp_engineer`, `customer_poc`, `c3pao_assessor`.
+
+The completion plan covers, in order: audit coverage for privilege-affecting
+mutations plus a deny-by-default route harness (I.1); `c3pao_assessor` write
+enforcement, currently defined but unenforced (I.2); API token role-downgrade
+tracking (I.3); session inactivity timeout for 3.1.11 (I.4); password reset,
+admin unlock, and password history (I.5); a hardening sweep (I.6); and the
+frontend admin surface, role-aware rendering, and account self-service
+(I.7–I.9).
+
+Design constraints that override anything written elsewhere in this file or in
+older notes:
+- **No SMTP dependency.** One-time tokens (invite, password reset) are returned
+  in the response body for out-of-band delivery. GCC High and air-gapped
+  deployments have no mail relay. Disregard any "email verification" reference
+  in older roadmap text.
+- **PBKDF2 only.** bcrypt/argon2/scrypt are not FIPS-140-validated.
+- Never log, echo, or persist a raw token, invite token, reset token, TOTP
+  secret, or backup code. Hash at rest, return once in the response body, never
+  in the audit log.
 
 ### 3. FIPS deployment profile
 UBI 9 base image, MinIO FIPS build (BoringCrypto), TLS for app↔Postgres and

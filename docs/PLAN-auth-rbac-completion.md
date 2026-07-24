@@ -1,6 +1,7 @@
 # Plan — Auth/RBAC completion (roadmap item I) + frontend admin surface
 
-**Baseline commit:** `0088757`
+**Status:** I.1 in progress · I.2–I.9 not started
+**Baseline:** 0088757
 **Scope:** close the gaps identified in the audit of item I, then land the frontend
 surface those endpoints require.
 
