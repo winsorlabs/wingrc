@@ -99,11 +99,17 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute(
-        f"ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE SELECT, INSERT, UPDATE, DELETE"
-        f" ON TABLES FROM {_ROLE}"
-    )
-    op.execute(f"REVOKE ALL ON ALL TABLES IN SCHEMA public FROM {_ROLE}")
-    op.execute(f"REVOKE USAGE ON SCHEMA auth FROM {_ROLE}")
-    op.execute(f"REVOKE USAGE ON SCHEMA public FROM {_ROLE}")
+    # DROP OWNED BY (rather than enumerating REVOKE/ALTER DEFAULT PRIVILEGES
+    # statements matching upgrade()'s grant list one-for-one) revokes every
+    # privilege wingrc_app holds on any object in the database — tables,
+    # schemas, default-privilege entries, whatever — regardless of which
+    # statement granted it. An enumerated list only reverses what this
+    # migration itself granted; it silently leaves anything granted outside
+    # the migration chain (e.g. an ad-hoc GRANT run by hand against a live
+    # DB) still attached, which blocks the DROP ROLE below with "cannot be
+    # dropped because some objects depend on it". That's not hypothetical —
+    # see the I.6 investigation (32 dependent objects blocked this exact
+    # downgrade on wl-util-1). DROP OWNED BY is robust to that class of
+    # drift by construction.
+    op.execute(f"DROP OWNED BY {_ROLE}")
     op.execute(f"DROP ROLE IF EXISTS {_ROLE}")

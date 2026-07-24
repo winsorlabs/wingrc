@@ -345,6 +345,27 @@ Small items, one branch.
   actually proves it (the existing test-harness session never truly commits
   mid-test, so a naive test can't catch this either way — needs the same
   kind of real, out-of-band confirmation I.4 required).
+- **`0016_app_role.py`'s `downgrade()` blocked by out-of-band grants — fixed.**
+  Investigated: downgrading `0016` failed with 32 objects still holding
+  dependent grants on `wingrc_app`, blocking `DROP ROLE`. `0016`'s own
+  grant/revoke statements are symmetric by type (nothing this migration
+  itself grants was left unrevoked), and no other migration, `conftest.py`,
+  or in-repo script grants anything to `wingrc_app` — so the most likely
+  cause is a grant issued outside the migration chain entirely (e.g. an
+  ad-hoc `GRANT` run by hand against a live DB during the earlier Phase 3
+  RLS investigation), with a residual possibility of an `ALTER DEFAULT
+  PRIVILEGES` grantor-role mismatch if upgrade/downgrade ever ran under
+  different connected roles. Fixed by replacing the enumerated
+  `REVOKE`/`ALTER DEFAULT PRIVILEGES` sequence in `downgrade()` with `DROP
+  OWNED BY wingrc_app` before `DROP ROLE IF EXISTS` — this revokes every
+  privilege the role holds on any object, regardless of which statement
+  granted it, so it's robust to this class of drift instead of needing to
+  enumerate every grant type. `upgrade()` was left untouched since it's
+  already applied in deployed history. Not verified against a live
+  downgrade (out of scope for this fix per the instruction that landed it —
+  code review plus a clean `alembic upgrade head` from scratch was judged
+  sufficient); confirm on wl-util-1 next time a real downgrade-through-0016
+  is exercised.
 
 ---
 
