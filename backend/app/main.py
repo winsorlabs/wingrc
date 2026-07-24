@@ -54,7 +54,7 @@ def health() -> dict:
 
 
 @app.get("/catalog/views")
-def catalog_views() -> list[dict]:
+def catalog_views(_auth: CurrentUser = Depends(get_current_user)) -> list[dict]:
     return [
         {
             "id": v.id,

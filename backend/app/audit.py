@@ -11,6 +11,15 @@ Scoped to meaningful compliance mutations (signal, not firehose):
   evidence_task.update        — task status changed (open/collected/na)
   evidence_task.archive       — task archived on deactivation
   implementation_statement.upsert — statement created or updated
+  user.invite                — user invited (routers/users.py)
+  user.role_change            — role changed via PATCH /users/{id}
+  user.activation_change      — is_active changed via PATCH /users/{id}
+  user.deactivate             — DELETE /users/{id}
+  user.mfa_reset              — admin-forced MFA reset
+  api_user.create             — API user (service account) + first token minted
+  api_token.create            — token minted (name/role/expiry only — never
+                                 the raw token or its hash)
+  api_token.revoke            — token revoked
 
 NOT logged (noise):
   _seed_control_states() bulk insert on assessment creation
@@ -23,8 +32,11 @@ is set to True so consumers know the value is partial.
 DB-level append-only hardening (pending production step):
   REVOKE UPDATE, DELETE ON audit_log FROM <app_role>;
 
-Actor field: wired as actor="system", actor_type="system" until authentication
-lands (roadmap item I). No schema change required when real user identity arrives.
+Actor field: routers/users.py events carry the real authenticated actor (id +
+actor_type, "user" or "api" depending on CurrentUser.login_method) now that
+auth has landed (roadmap item I). Other routers (assessments/evidence/
+contacts/orgs/bundle) have not been retrofitted yet and still default to
+actor="system", actor_type="system" — that retrofit is not part of this slice.
 """
 from __future__ import annotations
 

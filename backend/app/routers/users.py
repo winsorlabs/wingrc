@@ -36,6 +36,14 @@ _INVITE_TTL_HOURS = 48
 _role_rank = {"msp_admin": 4, "msp_engineer": 3, "customer_poc": 2, "c3pao_assessor": 1}
 
 
+def _actor_type(current_user: CurrentUser) -> str:
+    """API tokens can carry any role including msp_admin, so a token-driven
+    call is not the same thing as a human at the keyboard — actor_type must
+    reflect that rather than hardcoding "user" regardless of login_method.
+    """
+    return "api" if current_user.login_method == "api" else "user"
+
+
 # ---------------------------------------------------------------------------
 # User CRUD
 # ---------------------------------------------------------------------------
@@ -94,7 +102,7 @@ def invite_user(
         after_value={"email": body.email, "role": body.role, "login_method": body.login_method},
         context={"inviter": str(current_user.id)},
         actor=str(current_user.id),
-        actor_type="user",
+        actor_type=_actor_type(current_user),
     )
     db.commit()
 
@@ -141,8 +149,34 @@ def patch_user(
     if body.role is not None:
         if body.role not in _VALID_ROLES:
             raise HTTPException(status_code=422, detail=f"Invalid role: {body.role}")
+        if body.role != user.role:
+            log_event(
+                db,
+                org_id=org_id,
+                action="user.role_change",
+                entity_type="user",
+                entity_id=user.id,
+                before_value={"role": user.role},
+                after_value={"role": body.role},
+                context={"admin": str(current_user.id)},
+                actor=str(current_user.id),
+                actor_type=_actor_type(current_user),
+            )
         user.role = body.role
     if body.is_active is not None:
+        if body.is_active != user.is_active:
+            log_event(
+                db,
+                org_id=org_id,
+                action="user.activation_change",
+                entity_type="user",
+                entity_id=user.id,
+                before_value={"is_active": user.is_active},
+                after_value={"is_active": body.is_active},
+                context={"admin": str(current_user.id)},
+                actor=str(current_user.id),
+                actor_type=_actor_type(current_user),
+            )
         user.is_active = body.is_active
     if body.display_name is not None:
         user.display_name = body.display_name
@@ -180,7 +214,7 @@ def reset_user_mfa(
         entity_id=user_id,
         context={"admin": str(current_user.id)},
         actor=str(current_user.id),
-        actor_type="user",
+        actor_type=_actor_type(current_user),
     )
     db.commit()
     return {"ok": True}
@@ -196,6 +230,7 @@ def deactivate_user(
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="Cannot deactivate your own account")
     user = _get_user(db, org_id, user_id)
+    was_active = user.is_active
     user.is_active = False
     db.execute(
         text(
@@ -203,6 +238,18 @@ def deactivate_user(
             " WHERE user_id = :uid AND revoked_at IS NULL"
         ),
         {"now": datetime.now(UTC), "uid": user_id},
+    )
+    log_event(
+        db,
+        org_id=org_id,
+        action="user.deactivate",
+        entity_type="user",
+        entity_id=user.id,
+        before_value={"is_active": was_active},
+        after_value={"is_active": False},
+        context={"admin": str(current_user.id)},
+        actor=str(current_user.id),
+        actor_type=_actor_type(current_user),
     )
     db.commit()
     return {"ok": True}
@@ -263,7 +310,7 @@ def create_api_user(
         after_value={"email": user.email, "role": user.role, "display_name": user.display_name},
         context={"creator": str(current_user.id), "token_id": str(token.id)},
         actor=str(current_user.id),
-        actor_type="api" if current_user.login_method == "api" else "user",
+        actor_type=_actor_type(current_user),
     )
     db.commit()
 
@@ -333,6 +380,24 @@ def create_api_token(
         expires_at=expires_at,
     )
     db.add(token)
+    db.flush()
+
+    log_event(
+        db,
+        org_id=org_id,
+        action="api_token.create",
+        entity_type="api_token",
+        entity_id=token.id,
+        after_value={
+            "name": token.name,
+            "role": token.role,
+            "expires_at": token.expires_at.isoformat() if token.expires_at else None,
+            "on_behalf_of": on_behalf_of,
+        },
+        context={"issuer": str(current_user.id), "user_id": str(target_user_id)},
+        actor=str(current_user.id),
+        actor_type=_actor_type(current_user),
+    )
     db.commit()
 
     return {
@@ -380,7 +445,20 @@ def revoke_api_token(
     ).scalar_one_or_none()
     if token is None:
         raise HTTPException(status_code=404, detail="Token not found")
+    was_revoked_at = token.revoked_at
     token.revoked_at = datetime.now(UTC)
+    log_event(
+        db,
+        org_id=org_id,
+        action="api_token.revoke",
+        entity_type="api_token",
+        entity_id=token.id,
+        before_value={"revoked_at": was_revoked_at.isoformat() if was_revoked_at else None},
+        after_value={"revoked_at": token.revoked_at.isoformat()},
+        context={"revoker": str(current_user.id), "token_name": token.name},
+        actor=str(current_user.id),
+        actor_type=_actor_type(current_user),
+    )
     db.commit()
     return {"ok": True}
 
