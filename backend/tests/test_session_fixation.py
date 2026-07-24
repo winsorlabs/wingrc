@@ -61,10 +61,20 @@ def _set_cookie_value(response, name: str) -> str | None:
 
 def _is_cleared(response, name: str) -> bool:
     """True if the response clears `name` via an empty value + Max-Age=0,
-    matching auth.clear_state_cookie()."""
+    matching auth.clear_state_cookie().
+
+    Python's http.cookies module (which Starlette's Response.set_cookie
+    uses under the hood) renders an empty string value as a literal
+    quoted `""`, not a bare trailing `=` — e.g. `name=""; ...; Max-Age=0`,
+    not `name=; ...; Max-Age=0`. A real (non-empty) cookie value is never
+    quoted this way, so checking for either the bare or quoted-empty form
+    is sufficient and doesn't risk false-positiving on a real value.
+    """
     for raw in response.headers.get_list("set-cookie"):
         if raw.startswith(f"{name}="):
-            return raw.split(";", 1)[0].endswith("=") and "Max-Age=0" in raw
+            first_segment = raw.split(";", 1)[0]
+            value = first_segment.split("=", 1)[1]
+            return value in ("", '""') and "Max-Age=0" in raw
     return False
 
 

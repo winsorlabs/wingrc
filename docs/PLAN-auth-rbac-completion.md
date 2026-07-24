@@ -362,9 +362,21 @@ Small items, one branch.
   invited user never got `invite_expires_at` set, and
   `auth.find_user_for_invite` requires `invite_expires_at > now()`
   (`NULL > now()` is `NULL`, not true, so the row was silently excluded).
-  Fixed by seeding a real future expiry. Ruff clean, both fixes collect
-  cleanly in this sandbox (no Postgres available here to actually re-run
-  them) — **still needs a real
+  Fixed by seeding a real future expiry.
+  Second wl-util-1 run (both fixes above applied) was down to one
+  deterministic failure in both tests:
+  `assert _is_cleared(verify_resp, "wingrc_mfa_pending")`. Diagnosis: a
+  test-helper bug, not an app bug — `clear_state_cookie` was correctly
+  clearing the cookie the whole time. Python's `http.cookies` module
+  (which `Response.set_cookie` uses) renders an empty-string value as a
+  literal quoted `""`, not a bare trailing `=` (`name=""; ...; Max-Age=0`,
+  not `name=; ...; Max-Age=0`) — confirmed directly against
+  `http.cookies.SimpleCookie` output, and confirmed a real (non-empty)
+  cookie value is never quoted this way, so the fix can't false-positive
+  on a legitimate value. `_is_cleared()` only checked the bare form.
+  Fixed to accept either. Ruff clean, both tests collect cleanly in this
+  sandbox (no Postgres available here to actually re-run them) —
+  **still needs a real
   `pytest tests/test_session_fixation.py -m integration -v` pass on
   wl-util-1 before this item can close.**
 - **Login rate limit by IP — implemented, pending wl-util-1 confirmation.**
