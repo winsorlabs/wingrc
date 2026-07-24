@@ -1,6 +1,6 @@
 # Plan — Auth/RBAC completion (roadmap item I) + frontend admin surface
 
-**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4–I.9 not started
+**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4 in progress
 **Baseline:** 0088757
 **Scope:** close the gaps identified in the audit of item I, then land the frontend
 surface those endpoints require.
@@ -332,6 +332,19 @@ Small items, one branch.
 - **`login_method` coherence.** `test_invite_user_rejects_api_login_method`
   covers invite; assert `local_login` rejects a user whose `login_method` is
   `entra` or `api`.
+- **`api_token.last_used_at` never persists on GET-only requests.** Same root
+  cause I.4 hit and fixed for `user_session.last_activity_at`:
+  `_resolve_api_token`'s `UPDATE api_token SET last_used_at = ...` is a bare
+  `db.execute()` with no `db.commit()`, and `get_session()`'s `finally:
+  session.close()` rolls back anything uncommitted — so a Bearer-token
+  request that never hits a mutating endpoint (a read-only integration, or
+  any token minted at `c3pao_assessor`) never actually records
+  `last_used_at`. Apply the same fix shape as `_resolve_session`: commit
+  immediately after the update, then re-issue `SET LOCAL app.current_org`
+  since the commit ends the transaction it was scoped to. Add a test that
+  actually proves it (the existing test-harness session never truly commits
+  mid-test, so a naive test can't catch this either way — needs the same
+  kind of real, out-of-band confirmation I.4 required).
 
 ---
 

@@ -42,6 +42,10 @@ class Settings(BaseSettings):
 
     # Auth: session expiry and password policy
     session_expiry_hours: int = 8
+    # 3.1.11 inactivity timeout. 15 min is the common DoD-aligned default;
+    # 800-171 leaves the period org-defined, so this must stay configurable
+    # and the configured value must appear in the SSP for this control.
+    session_idle_minutes: int = 15
     pwned_passwords_check: bool = True
 
     # Allowed CORS origins.  In production set WINGRC_CORS_ORIGINS to a JSON

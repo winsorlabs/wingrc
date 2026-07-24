@@ -346,16 +346,44 @@ def get_current_user(
 def _resolve_session(db: Session, raw: str) -> CurrentUser:
     from .models import User
     h = _token_hash(raw)
+    settings = get_settings()
 
     row = db.execute(
-        text("SELECT user_id, org_id, expires_at FROM auth.resolve_session(:h)"),
-        {"h": h},
+        text("SELECT user_id, org_id, expires_at FROM auth.resolve_session(:h, :idle)"),
+        {"h": h, "idle": settings.session_idle_minutes * 60},
     ).first()
 
     if row is None:
         raise HTTPException(status_code=401, detail="Session expired or invalid")
 
     # Set app.current_org for all subsequent RLS-gated queries in this request
+    db.execute(text(f"SET LOCAL app.current_org = '{row.org_id}'"))
+
+    # Throttled activity heartbeat: only write when the stored value is more
+    # than 60s stale, so a live session doesn't take a write on every single
+    # request — bounds idle-check accuracy to ±60s, immaterial against a
+    # 15-minute window. token_hash is unique-indexed, so it identifies the
+    # session row without auth.resolve_session needing to also return its id.
+    db.execute(
+        text(
+            "UPDATE user_session SET last_activity_at = now()"
+            " WHERE token_hash = :h AND last_activity_at < now() - interval '60 seconds'"
+        ),
+        {"h": h},
+    )
+
+    # Commit immediately so the heartbeat survives session.close() even on a
+    # pure GET request, which never calls commit() on its own — without
+    # this, idle tracking would silently never advance for read-only
+    # activity. This is not hypothetical: c3pao_assessor (I.2) is
+    # permanently read-only, so every request that role makes is a GET —
+    # under the bare UPDATE, an actively-reviewing assessor would
+    # deterministically hit the idle timeout regardless of engagement.
+    # SET LOCAL is transaction-scoped and this commit ends that
+    # transaction, so app.current_org must be re-issued for the new one
+    # that starts under this same session — every RLS-gated query for the
+    # rest of the request depends on it, not just the lookup below.
+    db.commit()
     db.execute(text(f"SET LOCAL app.current_org = '{row.org_id}'"))
 
     user = db.get(User, row.user_id)

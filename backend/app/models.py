@@ -1164,6 +1164,11 @@ class UserSession(Base):
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 3.1.11 idle timeout heartbeat; throttle-updated (see auth._resolve_session),
+    # not written on every request.
+    last_activity_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class MfaBackupCode(Base):
