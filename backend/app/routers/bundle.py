@@ -8,7 +8,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from ..audit import log_event
-from ..auth import require_org_access
+from ..auth import require_org_access, require_write
 from ..bundle_service import render_bundle, snapshot_bundle
 from ..db import get_session
 from ..models import Assessment, Organization
@@ -17,7 +17,7 @@ from ..storage import StorageClient, get_storage_client
 router = APIRouter(
     prefix="/orgs/{org_id}",
     tags=["bundle"],
-    dependencies=[Depends(require_org_access())],
+    dependencies=[Depends(require_org_access()), Depends(require_write())],
 )
 
 

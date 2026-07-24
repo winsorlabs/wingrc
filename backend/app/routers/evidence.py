@@ -37,7 +37,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..audit import log_event
-from ..auth import require_org_access
+from ..auth import require_org_access, require_write
 from ..db import get_session
 from ..models import (
     Assessment,
@@ -54,7 +54,7 @@ from ..storage import StorageClient, download_filename, get_storage_client
 router = APIRouter(
     prefix="/orgs/{org_id}",
     tags=["evidence"],
-    dependencies=[Depends(require_org_access())],
+    dependencies=[Depends(require_org_access()), Depends(require_write())],
 )
 
 # ---------------------------------------------------------------------------

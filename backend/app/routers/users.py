@@ -24,11 +24,15 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from ..audit import log_event
-from ..auth import CurrentUser, generate_secret, require_org_access
+from ..auth import CurrentUser, generate_secret, require_org_access, require_write
 from ..db import get_session
 from ..models import ApiToken, User
 
-router = APIRouter(prefix="/orgs/{org_id}", tags=["users"])
+router = APIRouter(
+    prefix="/orgs/{org_id}",
+    tags=["users"],
+    dependencies=[Depends(require_write())],
+)
 
 _VALID_ROLES = {"msp_admin", "msp_engineer", "customer_poc", "c3pao_assessor"}
 _VALID_METHODS = {"local", "sso"}

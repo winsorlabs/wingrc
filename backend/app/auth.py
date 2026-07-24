@@ -419,6 +419,32 @@ def require_org_access(*roles: str):
     return _check
 
 
+_READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+_READ_ONLY_ROLES = frozenset({"c3pao_assessor"})
+
+
+def require_write():
+    """Rejects read-only roles (c3pao_assessor) on any non-idempotent method.
+
+    Applied at router level so new mutating routes inherit the gate by
+    default rather than by remembering to add it (see
+    docs/PLAN-auth-rbac-completion.md, I.2).
+    """
+    def _check(
+        request: Request,
+        current_user: CurrentUser = Depends(get_current_user),
+    ) -> CurrentUser:
+        if request.method in _READ_METHODS:
+            return current_user
+        if current_user.role in _READ_ONLY_ROLES:
+            raise HTTPException(
+                status_code=403,
+                detail="Read-only role cannot modify data",
+            )
+        return current_user
+    return _check
+
+
 def require_role(*roles: str):
     """FastAPI dependency factory for role-only gates — no org_id check.
 

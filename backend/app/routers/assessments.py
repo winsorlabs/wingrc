@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..auth import require_org_access
+from ..auth import require_org_access, require_write
 from ..db import get_session
 from ..engine import activate_org_product, deactivate_org_product, recompute_sprs, start_assessment
 from ..models import (
@@ -43,7 +43,7 @@ from ..models import (
 router = APIRouter(
     prefix="/orgs/{org_id}",
     tags=["assessments"],
-    dependencies=[Depends(require_org_access())],
+    dependencies=[Depends(require_org_access()), Depends(require_write())],
 )
 
 

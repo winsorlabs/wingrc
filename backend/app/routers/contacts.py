@@ -26,11 +26,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..audit import log_event
-from ..auth import require_org_access
+from ..auth import require_org_access, require_write
 from ..db import get_session
 from ..models import Contact, ContactDocumentationRole, Organization
 
-router = APIRouter(prefix="/orgs", tags=["contacts"], dependencies=[Depends(require_org_access())])
+router = APIRouter(
+    prefix="/orgs",
+    tags=["contacts"],
+    dependencies=[Depends(require_org_access()), Depends(require_write())],
+)
 
 _VALID_AFFILIATIONS = frozenset({"msp", "customer", "mssp", "government", "other"})
 _VALID_DOC_ROLES = frozenset(
