@@ -63,6 +63,8 @@ Independent initiative — does not block or get blocked by other roadmap items;
 1. HTTPS/Certbot + DNSimple DNS-01 deployment runbook — write once the current HTTPS work on wl-util-1 is complete and validated. Document the real, verified process, not in advance.
 2. Azure App Registration / M365 SSO setup how-to — write once SSO is implemented and validated end-to-end, not before.
 
+Item 1's source content is written and validated: `docs/wl-util-1-worked-example-deployment.md` is the real, worked hardening/HTTPS session this item calls for. The hosting-cost/GovCloud-necessity research referenced above under **Hosting** is also written and validated: `docs/cloud-hosting-options.md`. Both are ready to seed their respective docs.wingrc.us pages whenever the Docusaurus build happens — the site itself is still unbuilt; only the source content for these two planned pages exists so far.
+
 ---
 
 ## Sequencing

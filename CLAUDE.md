@@ -129,6 +129,14 @@ GCC High / air-gapped.
 | `backend/migrations/` | Alembic migrations (currently 0001–0015) |
 | `baselines/` | YAML product baselines (`heimdal.yaml`, `rocketcyber.yaml`, …) |
 | `docs/fips.md` | FIPS 140-2/140-3 crypto boundary documentation |
+| `docs/architecture.md` | Authoritative architecture description (the five layers) — companion to this file's terse session version |
+| `docs/deployment.md` | Generic deployment walkthrough: clone, configure, `docker compose up`, HTTPS |
+| `docs/roadmap.md` | Full roadmap detail behind the "Roadmap — priority order" section below |
+| `docs/PLAN-auth-rbac-completion.md` | Auth/RBAC completion plan (slices I.1–I.9) — read before touching auth |
+| `docs/wl-util-1-worked-example-deployment.md` | Worked-example hardening + HTTPS (Certbot/DNSimple DNS-01) walkthrough on a real box |
+| `docs/azure-container-apps-deployment-plan.md` | Draft Azure Container Apps deployment plan — architecture only, not yet executed |
+| `docs/pdf_ssp_template_spec.md` | Design spec for the consolidated PDF SSP export — not built yet |
+| `docs/cloud-hosting-options.md` | Cloud hosting cost / GovCloud-necessity research for docs.wingrc.us |
 
 ---
 
