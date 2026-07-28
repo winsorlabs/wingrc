@@ -50,6 +50,20 @@ export const api = {
     }
   },
 
+  setPassword: async (token: string, password: string): Promise<{ next: string }> => {
+    const r = await fetch(`${BASE}/auth/set-password`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, password }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<{ next: string }>;
+  },
+
   mfaEnroll: async (): Promise<{ provisioning_uri: string; secret: string }> => {
     const r = await fetch(`${BASE}/auth/mfa/enroll`, {
       method: "POST",
