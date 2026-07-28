@@ -185,3 +185,20 @@ export interface AuthUser {
   role: string;
   login_method: string;
 }
+
+export interface ApiTokenRow {
+  id: string;
+  name: string;
+  role: string;
+  created_at: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+}
+
+export interface CreatedApiToken {
+  id: string;
+  name: string;
+  role: string;
+  expires_at: string | null;
+  token: string;
+}

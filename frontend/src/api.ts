@@ -1,4 +1,4 @@
-import type { Assessment, AuthUser, Contact, ControlStateRow, EvidenceRow, EvidenceTaskRow, Framework, OnboardingStatus, Org, OrgProfile, ProductRow, StatementRow, SystemDescriptionData } from "./types";
+import type { ApiTokenRow, Assessment, AuthUser, Contact, ControlStateRow, CreatedApiToken, EvidenceRow, EvidenceTaskRow, Framework, OnboardingStatus, Org, OrgProfile, ProductRow, StatementRow, SystemDescriptionData } from "./types";
 
 const BASE = "/api";
 
@@ -290,6 +290,24 @@ export const api = {
 
   removeContactRole: async (orgId: string, contactId: string, role: string): Promise<void> => {
     const r = await fetch(`/api/orgs/${orgId}/contacts/${contactId}/roles/${role}`, { method: "DELETE" });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  },
+
+  // ── API tokens ────────────────────────────────────────────────────────────
+  listApiTokens: (orgId: string) =>
+    req<ApiTokenRow[]>(`/orgs/${orgId}/api-tokens`),
+
+  createApiToken: (
+    orgId: string,
+    data: { name: string; role: string; expires_in_days?: number | null }
+  ) =>
+    req<CreatedApiToken>(`/orgs/${orgId}/api-tokens`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  revokeApiToken: async (orgId: string, tokenId: string): Promise<void> => {
+    const r = await fetch(`/api/orgs/${orgId}/api-tokens/${tokenId}`, { method: "DELETE" });
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   },
 

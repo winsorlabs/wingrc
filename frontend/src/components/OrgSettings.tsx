@@ -1,22 +1,31 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { OnboardingStatus } from "../types";
+import { ApiTokensPanel } from "./ApiTokensPanel";
 import { ContactsPanel } from "./ContactsPanel";
 import { OrgProfileForm } from "./OrgProfileForm";
 import { SystemDescriptionForm } from "./SystemDescriptionForm";
 
-type Tab = "profile" | "system" | "contacts";
+type Tab = "profile" | "system" | "contacts" | "api-tokens";
+
+// Matches the backend's require_org_access("msp_admin", "msp_engineer")
+// gate on the /api-tokens endpoints. This is UX only, not a security
+// boundary — the real enforcement is server-side (see I.8's own framing
+// for the same distinction on read-only rendering).
+const API_TOKEN_ROLES = new Set(["msp_admin", "msp_engineer"]);
 
 interface Props {
   orgId: string;
   orgName: string;
+  currentUserRole: string;
   onClose: () => void;
   initialTab?: Tab;
 }
 
-export function OrgSettings({ orgId, orgName, onClose, initialTab = "profile" }: Props) {
+export function OrgSettings({ orgId, orgName, currentUserRole, onClose, initialTab = "profile" }: Props) {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
+  const canSeeApiTokens = API_TOKEN_ROLES.has(currentUserRole);
 
   function loadStatus() {
     api.getOnboardingStatus(orgId).then(setStatus).catch(() => {});
@@ -64,6 +73,14 @@ export function OrgSettings({ orgId, orgName, onClose, initialTab = "profile" }:
             {status && indicator(status.personnel.complete)}
             Personnel &amp; Contacts
           </button>
+          {canSeeApiTokens && (
+            <button
+              className={`settings-nav-item${tab === "api-tokens" ? " active" : ""}`}
+              onClick={() => setTab("api-tokens")}
+            >
+              API Tokens
+            </button>
+          )}
         </nav>
 
         <div className="settings-content">
@@ -75,6 +92,9 @@ export function OrgSettings({ orgId, orgName, onClose, initialTab = "profile" }:
           )}
           {tab === "contacts" && (
             <ContactsPanel orgId={orgId} onChanged={loadStatus} />
+          )}
+          {tab === "api-tokens" && canSeeApiTokens && (
+            <ApiTokensPanel orgId={orgId} currentUserRole={currentUserRole} />
           )}
         </div>
       </div>
