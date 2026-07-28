@@ -202,3 +202,29 @@ export interface CreatedApiToken {
   expires_at: string | null;
   token: string;
 }
+
+export interface UserRow {
+  id: string;
+  org_id: string;
+  contact_id: string | null;
+  email: string;
+  display_name: string;
+  role: string;
+  login_method: string;
+  is_active: boolean;
+  mfa_enrolled: boolean;
+  requires_admin_reset: boolean;
+  last_login_at: string | null;
+  created_at: string;
+}
+
+export interface InvitedUser {
+  id: string;
+  email: string;
+  display_name: string;
+  role: string;
+  login_method: string;
+  is_active: boolean;
+  invite_token: string;
+  invite_expires_at: string;
+}

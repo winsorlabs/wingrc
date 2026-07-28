@@ -5,8 +5,9 @@ import { ApiTokensPanel } from "./ApiTokensPanel";
 import { ContactsPanel } from "./ContactsPanel";
 import { OrgProfileForm } from "./OrgProfileForm";
 import { SystemDescriptionForm } from "./SystemDescriptionForm";
+import { UsersPanel } from "./UsersPanel";
 
-type Tab = "profile" | "system" | "contacts" | "api-tokens";
+type Tab = "profile" | "system" | "contacts" | "api-tokens" | "users";
 
 // Matches the backend's require_org_access("msp_admin", "msp_engineer")
 // gate on the /api-tokens endpoints. This is UX only, not a security
@@ -17,15 +18,26 @@ const API_TOKEN_ROLES = new Set(["msp_admin", "msp_engineer"]);
 interface Props {
   orgId: string;
   orgName: string;
+  currentUserId: string;
   currentUserRole: string;
   onClose: () => void;
   initialTab?: Tab;
 }
 
-export function OrgSettings({ orgId, orgName, currentUserRole, onClose, initialTab = "profile" }: Props) {
+export function OrgSettings({
+  orgId,
+  orgName,
+  currentUserId,
+  currentUserRole,
+  onClose,
+  initialTab = "profile",
+}: Props) {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const canSeeApiTokens = API_TOKEN_ROLES.has(currentUserRole);
+  // invite_user/patch_user are gated to msp_admin only (no msp_engineer
+  // rank exception, unlike API tokens) — see routers/users.py.
+  const canSeeUsers = currentUserRole === "msp_admin";
 
   function loadStatus() {
     api.getOnboardingStatus(orgId).then(setStatus).catch(() => {});
@@ -81,6 +93,14 @@ export function OrgSettings({ orgId, orgName, currentUserRole, onClose, initialT
               API Tokens
             </button>
           )}
+          {canSeeUsers && (
+            <button
+              className={`settings-nav-item${tab === "users" ? " active" : ""}`}
+              onClick={() => setTab("users")}
+            >
+              Users
+            </button>
+          )}
         </nav>
 
         <div className="settings-content">
@@ -95,6 +115,9 @@ export function OrgSettings({ orgId, orgName, currentUserRole, onClose, initialT
           )}
           {tab === "api-tokens" && canSeeApiTokens && (
             <ApiTokensPanel orgId={orgId} currentUserRole={currentUserRole} />
+          )}
+          {tab === "users" && canSeeUsers && (
+            <UsersPanel orgId={orgId} currentUserId={currentUserId} />
           )}
         </div>
       </div>

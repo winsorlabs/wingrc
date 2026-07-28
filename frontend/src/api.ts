@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuthUser, Contact, ControlStateRow, CreatedApiToken, EvidenceRow, EvidenceTaskRow, Framework, OnboardingStatus, Org, OrgProfile, ProductRow, StatementRow, SystemDescriptionData } from "./types";
+import type { ApiTokenRow, Assessment, AuthUser, Contact, ControlStateRow, CreatedApiToken, EvidenceRow, EvidenceTaskRow, Framework, InvitedUser, OnboardingStatus, Org, OrgProfile, ProductRow, StatementRow, SystemDescriptionData, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -292,6 +292,40 @@ export const api = {
     const r = await fetch(`/api/orgs/${orgId}/contacts/${contactId}/roles/${role}`, { method: "DELETE" });
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   },
+
+  // ── Users ─────────────────────────────────────────────────────────────────
+  listUsers: (orgId: string) =>
+    req<UserRow[]>(`/orgs/${orgId}/users`),
+
+  inviteUser: (
+    orgId: string,
+    data: { email: string; display_name: string; role: string; login_method: string }
+  ) =>
+    req<InvitedUser>(`/orgs/${orgId}/users`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  patchUser: (
+    orgId: string,
+    userId: string,
+    data: Partial<{ role: string; is_active: boolean; display_name: string }>
+  ) =>
+    req<UserRow>(`/orgs/${orgId}/users/${userId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  deactivateUser: async (orgId: string, userId: string): Promise<void> => {
+    const r = await fetch(`/api/orgs/${orgId}/users/${userId}`, { method: "DELETE" });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  },
+
+  resetUserMfa: (orgId: string, userId: string) =>
+    req<{ ok: boolean }>(`/orgs/${orgId}/users/${userId}/reset-mfa`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
 
   // ── API tokens ────────────────────────────────────────────────────────────
   listApiTokens: (orgId: string) =>

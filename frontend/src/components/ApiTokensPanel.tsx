@@ -1,25 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { ALL_ROLES, ROLE_LABELS, ROLE_RANK } from "../lib/roles";
 import type { ApiTokenRow, CreatedApiToken } from "../types";
-
-// Mirrors backend/app/auth.py's _ROLE_RANK exactly — the UI must never
-// offer a role the API will reject, so this has to stay in lockstep with
-// the server-side ranking by hand (there's no endpoint that exposes it).
-const ROLE_RANK: Record<string, number> = {
-  msp_admin: 4,
-  msp_engineer: 3,
-  customer_poc: 2,
-  c3pao_assessor: 1,
-};
-
-const ROLE_LABELS: Record<string, string> = {
-  msp_admin: "MSP Admin",
-  msp_engineer: "MSP Engineer",
-  customer_poc: "Customer POC",
-  c3pao_assessor: "C3PAO Assessor",
-};
-
-const ALL_ROLES = Object.keys(ROLE_RANK);
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString();

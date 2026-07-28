@@ -106,6 +106,7 @@ export function App() {
         <OrgSettings
           orgId={org.id}
           orgName={org.name}
+          currentUserId={user.id}
           currentUserRole={user.role}
           onClose={closeSettings}
         />
