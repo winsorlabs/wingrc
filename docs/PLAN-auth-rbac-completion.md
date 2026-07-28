@@ -1,6 +1,6 @@
 # Plan — Auth/RBAC completion (roadmap item I) + frontend admin surface
 
-**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4 ✅ merged · I.5–I.9 not started
+**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4 ✅ merged · I.5 not started · I.6 ✅ merged (all 6 items) · I.7–I.9 not started
 **Baseline:** 0088757
 **Scope:** close the gaps identified in the audit of item I, then land the frontend
 surface those endpoints require.
@@ -415,11 +415,11 @@ Small items, one branch.
   test's own fixture value was wrong. Fixed. Confirmed via
   `pytest tests/test_login_method_coherence.py -m integration -v` against
   real Postgres 18 on wl-util-1 — passing clean.
-- **`api_token.last_used_at` never persists on GET-only requests —
-  implemented, pending wl-util-1 confirmation.** Same root cause I.4 hit
-  and fixed for `user_session.last_activity_at`: `_resolve_api_token`'s
-  `UPDATE api_token SET last_used_at = ...` was a bare `db.execute()` with
-  no `db.commit()`, and `get_session()`'s `finally: session.close()` rolls
+- **`api_token.last_used_at` never persists on GET-only requests — ✅
+  verified.** Same root cause I.4 hit and fixed for
+  `user_session.last_activity_at`: `_resolve_api_token`'s `UPDATE
+  api_token SET last_used_at = ...` was a bare `db.execute()` with no
+  `db.commit()`, and `get_session()`'s `finally: session.close()` rolls
   back anything uncommitted — so a Bearer-token request that never hits a
   mutating endpoint (a read-only integration, or any token minted at
   `c3pao_assessor`) never actually recorded `last_used_at`. Fixed with the
@@ -432,17 +432,16 @@ Small items, one branch.
   token, confirms `last_used_at` is `NULL`, authenticates a real request
   with it through the actual `get_current_user` → `_resolve_api_token`
   path (not the fixture bypass), confirms `last_used_at` is populated
-  afterward. Same limitation as `test_session_idle.py`: this test can't
-  prove the commit survives `session.close()` in production, since the
-  test harness's session never truly commits mid-test
-  (`join_transaction_mode="create_savepoint"`) — a same-session read sees
-  the write regardless of whether the fix is present. Ruff clean, test
-  collects cleanly in this sandbox (no Postgres available here) —
-  **still needs a real
-  `pytest tests/test_api_token_last_used_at.py -m integration -v` pass on
-  wl-util-1 before this item can close**, ideally with the same kind of
-  out-of-band confirmation I.4 required (a real Bearer-token GET request,
-  confirming `last_used_at` persists after the request completes).
+  afterward. As anticipated, the test-harness limitation (session never
+  truly commits mid-test) meant this needed the same kind of real,
+  out-of-band confirmation I.4 required — done by hand via `curl` against
+  `dev.wingrc.us` on wl-util-1: minted a self-issued token via `POST
+  /orgs/{org_id}/api-tokens`, confirmed `last_used_at: null` via `GET
+  /orgs/{org_id}/api-tokens`, authenticated a pure `GET
+  /orgs/{org_id}/users` with `Authorization: Bearer <token>`, then
+  re-checked the token list — `last_used_at` had flipped from `null` to
+  `"2026-07-28T13:36:19.658168+00:00"`. Confirms the commit-and-re-scope
+  fix persists correctly against real Postgres.
 - **`0016_app_role.py`'s `downgrade()` blocked by dependent objects — resolved.**
   Downgrading `0016` failed with 32 objects still holding dependent grants
   on `wingrc_app`, blocking `DROP ROLE`. Confirmed via live queries against
