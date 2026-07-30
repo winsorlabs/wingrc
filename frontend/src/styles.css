@@ -1281,3 +1281,223 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .task-ref-form input:focus { outline: none; border-color: var(--primary); }
 .task-ref-form-actions { display: flex; justify-content: flex-end; gap: 0.4rem; }
 
+/* ── Pre-auth screens: LoginPage / InviteAcceptPage / MfaEnrollmentFlow ──────
+   Scoped under .login-page / .login-card / .login-form so none of this
+   touches the shared .btn-primary / .btn-ghost / .field-hint rules used
+   throughout the rest of the app. */
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1.25rem;
+  background:
+    radial-gradient(1100px circle at 12% -10%, rgba(13, 110, 253, 0.14), transparent 55%),
+    radial-gradient(900px circle at 105% 110%, rgba(13, 110, 253, 0.10), transparent 50%),
+    var(--bg);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 2.25rem 2rem 2rem;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 24px 48px -16px rgba(15, 23, 42, 0.18);
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  margin-bottom: 1.75rem;
+}
+.login-brand-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--primary);
+  color: #fff;
+  font-weight: 800;
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+.login-brand-name {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.login-card h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+  text-align: center;
+  margin-bottom: 0.4rem;
+}
+.login-card h2 + p {
+  font-size: 0.85rem;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.5;
+  margin-bottom: 1.5rem;
+}
+
+.login-card .btn-sso {
+  margin-bottom: 1.25rem;
+}
+
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin-bottom: 1rem;
+}
+.login-divider::before,
+.login-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+.login-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.login-form input[type="email"],
+.login-form input[type="password"],
+.login-form input[type="text"] {
+  font-weight: 400;
+  font-size: 0.92rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.1s, box-shadow 0.1s;
+}
+.login-form input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.15);
+}
+.login-form .field-hint {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem 0.8rem;
+  line-height: 1.5;
+}
+
+.login-error {
+  font-size: 0.82rem;
+  color: #b02a37;
+  background: #fdecea;
+  border: 1px solid #f5c6cb;
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+}
+
+/* Scoped button treatment — does not touch the shared .btn-primary/.btn-ghost rules */
+.login-card .btn-primary,
+.login-card .btn-sso {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.7rem 1rem;
+  border-radius: 8px;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+.login-card .btn-sso {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  text-decoration: none;
+}
+.login-card .btn-sso:hover {
+  background: var(--bg);
+  border-color: #adb5bd;
+}
+.login-card .btn-ghost {
+  width: auto;
+  align-self: center;
+  background: none;
+  border: none;
+  color: var(--primary);
+  font-size: 0.85rem;
+  padding: 0.3rem;
+}
+.login-card .btn-ghost:hover {
+  background: none;
+  text-decoration: underline;
+}
+
+/* MfaEnrollmentFlow sub-elements (shared by both pre-auth pages) */
+.totp-qr {
+  display: block;
+  margin: 0 auto 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.6rem;
+  background: #fff;
+}
+.totp-manual {
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-align: center;
+}
+.totp-manual summary {
+  cursor: pointer;
+  color: var(--primary);
+  font-weight: 500;
+}
+.totp-manual code {
+  display: block;
+  margin-top: 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.65rem;
+  border-radius: 6px;
+  word-break: break-all;
+  font-size: 0.8rem;
+}
+.backup-codes {
+  list-style: none;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.85rem;
+}
+.backup-codes li code {
+  display: block;
+  text-align: center;
+  font-size: 0.85rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.35rem 0;
+}
+

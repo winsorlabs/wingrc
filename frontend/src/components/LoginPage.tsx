@@ -52,10 +52,16 @@ export function LoginPage({ onAuthenticated, onWantInvite }: Props) {
   return (
     <div className="login-page">
       <div className="login-card">
-        <h1 className="login-title">WinGRC</h1>
+        <div className="login-brand">
+          <span className="login-brand-mark">W</span>
+          <span className="login-brand-name">WinGRC</span>
+        </div>
 
         {step === "credentials" && (
           <>
+            <h2>Welcome back</h2>
+            <p>Sign in to your MSP workspace.</p>
+
             {ssoConfigured && (
               <a href="/api/auth/login" className="btn btn-primary btn-sso">
                 Sign in with Microsoft

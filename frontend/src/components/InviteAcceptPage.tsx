@@ -36,7 +36,10 @@ export function InviteAcceptPage({ onAuthenticated, onCancel }: Props) {
   return (
     <div className="login-page">
       <div className="login-card">
-        <h1 className="login-title">WinGRC</h1>
+        <div className="login-brand">
+          <span className="login-brand-mark">W</span>
+          <span className="login-brand-name">WinGRC</span>
+        </div>
 
         {step === "form" && (
           <form onSubmit={handleSubmit} className="login-form">
