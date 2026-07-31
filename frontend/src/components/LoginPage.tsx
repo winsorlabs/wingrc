@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api } from "../api";
 import { MfaEnrollmentFlow } from "./MfaEnrollmentFlow";
+import { MfaVerifyFlow } from "./MfaVerifyFlow";
 
 type LoginStep = "credentials" | "mfa_verify" | "enrolling";
 
@@ -13,7 +14,6 @@ export function LoginPage({ onAuthenticated, onWantInvite }: Props) {
   const [step, setStep] = useState<LoginStep>("credentials");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [mfaCode, setMfaCode] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -30,20 +30,6 @@ export function LoginPage({ onAuthenticated, onWantInvite }: Props) {
       setStep(result.next === "enroll" ? "enrolling" : "mfa_verify");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleMfaVerify(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    setBusy(true);
-    try {
-      await api.mfaVerify(mfaCode);
-      onAuthenticated();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Invalid code");
     } finally {
       setBusy(false);
     }
@@ -102,26 +88,7 @@ export function LoginPage({ onAuthenticated, onWantInvite }: Props) {
         )}
 
         {step === "mfa_verify" && (
-          <form onSubmit={handleMfaVerify} className="login-form">
-            <h2>Two-factor authentication</h2>
-            <p>Enter the 6-digit code from your authenticator app, or a backup code.</p>
-            <label>
-              Code
-              <input
-                type="text"
-                inputMode="numeric"
-                value={mfaCode}
-                onChange={e => setMfaCode(e.target.value)}
-                required
-                autoComplete="one-time-code"
-                maxLength={20}
-              />
-            </label>
-            {error && <p className="login-error">{error}</p>}
-            <button type="submit" disabled={busy} className="btn btn-primary">
-              {busy ? "Verifying…" : "Verify"}
-            </button>
-          </form>
+          <MfaVerifyFlow onComplete={onAuthenticated} />
         )}
 
         {step === "enrolling" && (

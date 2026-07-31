@@ -6,6 +6,8 @@ GET  /orgs/{org_id}/users            — list users
 PATCH /orgs/{org_id}/users/{user_id} — update role / is_active
 POST /orgs/{org_id}/users/{user_id}/reset-mfa — admin MFA reset
 DELETE /orgs/{org_id}/users/{user_id} — deactivate
+POST /orgs/{org_id}/users/{user_id}/unlock — clear lockout state (I.5)
+POST /orgs/{org_id}/users/{user_id}/reset-password — issue a one-time reset token (I.5)
 POST /orgs/{org_id}/users/api        — create an API user (service account) + its first token
 
 GET    /orgs/{org_id}/api-tokens            — list tokens
@@ -261,6 +263,88 @@ def deactivate_user(
     return {"ok": True}
 
 
+@router.post("/users/{user_id}/unlock", status_code=200)
+def unlock_user(
+    org_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(require_org_access("msp_admin")),
+):
+    """Clear lockout state. Does not touch MFA enrollment or password —
+    reset_user_mfa and reset_user_password are separate, deliberate actions.
+    """
+    user = _get_user(db, org_id, user_id)
+    before = {
+        "locked_until": user.locked_until.isoformat() if user.locked_until else None,
+        "failed_login_count": user.failed_login_count,
+        "lockout_count": user.lockout_count,
+        "requires_admin_reset": user.requires_admin_reset,
+    }
+    user.locked_until = None
+    user.failed_login_count = 0
+    user.lockout_count = 0
+    user.requires_admin_reset = False
+
+    log_event(
+        db,
+        org_id=org_id,
+        action="user.unlock",
+        entity_type="user",
+        entity_id=user.id,
+        before_value=before,
+        after_value={
+            "locked_until": None,
+            "failed_login_count": 0,
+            "lockout_count": 0,
+            "requires_admin_reset": False,
+        },
+        context={"admin": str(current_user.id)},
+        actor=str(current_user.id),
+        actor_type=_actor_type(current_user),
+    )
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/users/{user_id}/reset-password", status_code=200)
+def reset_user_password(
+    org_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(require_org_access("msp_admin")),
+):
+    """Mint a one-time password-reset token, redeemed at POST /auth/set-password.
+
+    Reuses invite_token_hash/invite_expires_at and the invite redemption
+    endpoint rather than a parallel reset-token code path — see
+    docs/PLAN-auth-rbac-completion.md I.5. Revokes the user's live sessions
+    immediately: an admin-initiated reset must not leave an already-open
+    session (possibly the attacker's, if this reset was prompted by a
+    suspected compromise) valid in the meantime.
+    """
+    user = _get_user(db, org_id, user_id)
+    raw_token, token_hash = generate_secret()
+    user.invite_token_hash = token_hash
+    user.invite_expires_at = datetime.now(UTC) + timedelta(hours=_INVITE_TTL_HOURS)
+    revoke_user_sessions(db, user.id)
+
+    log_event(
+        db,
+        org_id=org_id,
+        action="user.password_reset_issued",
+        entity_type="user",
+        entity_id=user.id,
+        context={"admin": str(current_user.id)},
+        actor=str(current_user.id),
+        actor_type=_actor_type(current_user),
+    )
+    db.commit()
+    return {
+        "reset_token": raw_token,  # shown once — admin delivers this out of band
+        "expires_at": user.invite_expires_at.isoformat(),
+    }
+
+
 class CreateApiUserIn(BaseModel):
     display_name: str
     role: str
@@ -494,6 +578,14 @@ def _user_out(u: User) -> dict:
         "is_active": u.is_active,
         "mfa_enrolled": u.mfa_enrolled,
         "requires_admin_reset": u.requires_admin_reset,
+        # I.5 deviation from the original spec: the spec's users.py changes
+        # only added the unlock/reset-password endpoints, but the unlock UI
+        # can't be honest without seeing lockout state that predates
+        # requires_admin_reset (1st/2nd lockout sets locked_until without
+        # requires_admin_reset — see auth.py:apply_failed_login). Added here
+        # rather than left implicit.
+        "locked_until": u.locked_until.isoformat() if u.locked_until else None,
+        "lockout_count": u.lockout_count,
         "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
         "created_at": u.created_at.isoformat(),
     }

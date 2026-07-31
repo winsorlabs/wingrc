@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     # hardening, not required by any specific 800-171 control on its own.
     max_sessions_per_user: int = 0
     pwned_passwords_check: bool = True
+    # Password reuse window (I.5): reject any of the last N passwords on
+    # set/reset. Enforced only on that path — see auth.check_password_reuse.
+    password_history_generations: int = 5
 
     # Allowed CORS origins.  In production set WINGRC_CORS_ORIGINS to a JSON
     # array of the exact origins that should be permitted, e.g.:

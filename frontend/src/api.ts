@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuthUser, Contact, ControlStateRow, CreatedApiToken, EvidenceRow, EvidenceTaskRow, Framework, InvitedUser, OnboardingStatus, Org, OrgProfile, ProductRow, StatementRow, SystemDescriptionData, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuthUser, Contact, ControlStateRow, CreatedApiToken, EvidenceRow, EvidenceTaskRow, Framework, InvitedUser, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, ProductRow, StatementRow, SystemDescriptionData, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -337,6 +337,18 @@ export const api = {
 
   resetUserMfa: (orgId: string, userId: string) =>
     req<{ ok: boolean }>(`/orgs/${orgId}/users/${userId}/reset-mfa`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+
+  unlockUser: (orgId: string, userId: string) =>
+    req<{ ok: boolean }>(`/orgs/${orgId}/users/${userId}/unlock`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+
+  resetUserPassword: (orgId: string, userId: string) =>
+    req<PasswordResetIssued>(`/orgs/${orgId}/users/${userId}/reset-password`, {
       method: "POST",
       body: JSON.stringify({}),
     }),

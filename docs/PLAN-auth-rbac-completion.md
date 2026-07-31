@@ -1,6 +1,6 @@
 # Plan — Auth/RBAC completion (roadmap item I) + frontend admin surface
 
-**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4 ✅ merged · I.5 not started · I.6 ✅ merged (all 6 items) · I.7–I.9 not started
+**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4 ✅ merged · I.5 implemented pending commit/review (4 deviations — see I.5) · I.6 ✅ merged (all 6 items) · I.7 ✅ merged (users + API tokens admin panels, invite-redemption page) · I.8–I.9 not started
 **Baseline:** 0088757
 **Scope:** close the gaps identified in the audit of item I, then land the frontend
 surface those endpoints require.
@@ -252,6 +252,12 @@ able to produce evidence for the control it implements.
 
 ## I.5 — Password lifecycle
 
+**Implemented with 4 deviations from the spec below** — recorded here rather
+than silently absorbed, per the scope check done before implementation
+started. See "Deviations from this spec" at the end of this section for the
+full reasoning behind each; the "Changes" list below is left as originally
+written so the diff against actual scope stays visible.
+
 **Goal:** a locked-out user can be recovered without destroying their MFA
 enrolment; password reuse is prohibited.
 
@@ -313,6 +319,62 @@ password in the first place.
   are rejected.
 - Reset revokes live sessions.
 - Non-admin gets 403 on both endpoints; assessor gets 403 (I.2 gate).
+
+Plus one regression test per deviation below (verify-not-enroll branch,
+already-active-user redemption, fresh-invite behavior unchanged).
+
+### Deviations from this spec (implementation-time)
+
+Found during the pre-implementation scope check and while implementing —
+none of these were silently folded into the "Changes" list above.
+
+1. **`/set-password`'s `next` value is conditional on `user.mfa_enrolled`,
+   not hardcoded `"enroll"`.** The spec above assumed only the invite case
+   (`Current state` describes `/set-password` as invite-only). But "Reusing
+   invite columns" also makes `/set-password` the redemption endpoint for
+   `reset-password`, and a reset target is an *existing*, possibly
+   already-MFA-enrolled user — forcing them through `next: "enroll"` would
+   silently regenerate their TOTP secret and invalidate a working
+   authenticator entry just because they forgot their password. Now mirrors
+   the same `phase = "enroll" if not user.mfa_enrolled else "verify"` branch
+   `/auth/login` already uses.
+
+2. **Extracted `MfaVerifyFlow.tsx`, used by both `LoginPage.tsx` and
+   `InviteAcceptPage.tsx`.** Deviation 1 means `InviteAcceptPage` now needs a
+   `mfa_verify` step it didn't have before (it previously assumed, in a code
+   comment, that `next` was always `"enroll"`). Rather than duplicate the
+   verify form across two pre-auth surfaces, extracted it the same way
+   `MfaEnrollmentFlow` was already extracted — an auth-critical form
+   duplicated across two pages drifts.
+
+3. **`_user_out()` (`backend/app/routers/users.py`) now returns
+   `locked_until` and `lockout_count`,** not just `requires_admin_reset`.
+   Without `locked_until` the unlock UI has no way to tell a 1st/2nd lockout
+   (which sets `locked_until` without tripping `requires_admin_reset`) apart
+   from an account that has never failed a login. `lockout_count` is what
+   makes `requires_admin_reset` legible to an admin instead of appearing
+   from nowhere, and is the context needed to judge whether unlocking is
+   appropriate.
+
+4. **`auth.find_user_for_invite` (migration 0015) no longer requires
+   `is_active = FALSE`** — found while implementing, not during the earlier
+   scope check. That predicate was correct when the function only served
+   invite redemption (a newly-invited user is always inactive). Reset reuses
+   the same function for an *active* user redeeming a reset token — under
+   the old predicate the function silently matched zero rows for any active
+   user, so every reset token would 400 as "invalid" regardless of how
+   correctly it was minted. Token hash + expiry is the real authorization;
+   `is_active` was never load-bearing for it. Fixed in migration
+   `0019_password_history.py` alongside the `password_history` table this
+   slice already needed. `test_reset_token_redeems_for_already_active_user`
+   is the regression test — it fails without this fix.
+
+Not changed, considered and left alone: reset-password's token TTL reuses
+`_INVITE_TTL_HOURS` (48h) rather than a shorter reset-specific window, and
+there's no `login_method` guard rejecting `reset-password` for SSO accounts.
+Neither is a correctness bug (an SSO user's `password_hash` is never checked
+at login regardless), so neither was added — flagged here as a possible
+follow-up rather than scope creep nobody asked for.
 
 ---
 

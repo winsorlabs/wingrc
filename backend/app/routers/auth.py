@@ -11,8 +11,14 @@ SSO:
   GET /auth/callback  → exchange code, find/create user, issue session
 
 Local (invite-provisioned):
-  POST /auth/set-password  → validate invite token, set password
-                             → responds {next:"enroll"} + wingrc_mfa_pending(phase=enroll)
+  POST /auth/set-password  → validate invite/reset token, set password
+      ↓ mfa_enrolled=False (invite redemption) → {next:"enroll"} + wingrc_mfa_pending(phase=enroll)
+      ↓ mfa_enrolled=True  (password reset)    → {next:"verify"} + wingrc_mfa_pending(phase=verify)
+      Also the redemption endpoint for admin-issued password resets
+      (POST /orgs/{org_id}/users/{user_id}/reset-password, I.5) — same
+      token mechanism, same columns, same endpoint as invite acceptance.
+      A reset target is an existing, possibly already-MFA-enrolled user,
+      unlike a brand-new invite — see next above.
   POST /auth/mfa/enroll  → return TOTP provisioning URI + set wingrc_mfa_setup cookie
   POST /auth/mfa/enroll/confirm  → verify TOTP code, store secret,
                                    issue backup codes, issue session
@@ -45,6 +51,7 @@ from ..auth import (
     CurrentUser,
     apply_failed_login,
     check_login_rate_limit,
+    check_password_reuse,
     check_pwned_password,
     clear_failed_login,
     clear_session_cookie,
@@ -54,6 +61,7 @@ from ..auth import (
     get_current_user,
     hash_password,
     make_state_payload,
+    record_password,
     set_session_cookie,
     set_state_cookie,
     validate_password_policy,
@@ -297,9 +305,15 @@ def set_password(
     body: SetPasswordIn,
     db: Session = Depends(get_session),
 ):
-    """Accept an invite token and set the initial password.
+    """Redeem an invite or admin-issued reset token and set the password.
 
-    Does not activate the account — activation happens at MFA enrollment confirmation.
+    Same token mechanism, same columns (invite_token_hash/invite_expires_at),
+    same endpoint for both flows — see the module docstring. For a brand-new
+    invite this does not activate the account (activation happens at MFA
+    enrollment confirmation); for a password reset the account is already
+    active and already MFA-enrolled, so this must not force it back through
+    enrollment — see the mfa_enrolled branch below (I.5 deviation from the
+    original spec, which assumed only the invite case).
     """
     token_hash = hashlib.sha256(body.token.encode()).hexdigest()
     user_row = db.execute(
@@ -328,17 +342,32 @@ def set_password(
         raise HTTPException(status_code=400, detail="User not found")
 
     db.execute(text(f"SET LOCAL app.current_org = '{user.org_id}'"))
+
+    settings = get_settings()
+    if user.password_hash and check_password_reuse(
+        db, user.id, body.password, settings.password_history_generations
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Password must not match any of your last "
+                f"{settings.password_history_generations} passwords."
+            ),
+        )
+
     user.password_hash = hash_password(body.password)
     user.invite_token_hash = None
     user.invite_expires_at = None
+    record_password(db, user.id, user.password_hash)
     db.commit()
 
+    phase = "enroll" if not user.mfa_enrolled else "verify"
     from fastapi.responses import JSONResponse
-    resp = JSONResponse({"next": "enroll"}, status_code=200)
+    resp = JSONResponse({"next": phase}, status_code=200)
     set_state_cookie(resp, "wingrc_mfa_pending", make_state_payload({
         "user_id": str(user.id),
         "org_id": str(user.org_id),
-        "phase": "enroll",
+        "phase": phase,
     }))
     return resp
 

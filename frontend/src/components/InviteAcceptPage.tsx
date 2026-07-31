@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { api } from "../api";
 import { MfaEnrollmentFlow } from "./MfaEnrollmentFlow";
+import { MfaVerifyFlow } from "./MfaVerifyFlow";
 
-type Step = "form" | "enrolling";
+type Step = "form" | "mfa_verify" | "enrolling";
 
 interface Props {
   onAuthenticated: () => void;
@@ -21,11 +22,13 @@ export function InviteAcceptPage({ onAuthenticated, onCancel }: Props) {
     setError("");
     setBusy(true);
     try {
-      // set-password always responds {"next": "enroll"} on success — an
-      // invited account has no MFA yet, so there is no "verify" branch
-      // here the way there is for an existing user's ordinary login.
-      await api.setPassword(token.trim(), password);
-      setStep("enrolling");
+      // This token is either a fresh invite or an admin-issued password
+      // reset (I.5) — same endpoint, same shape. A brand-new invite has no
+      // MFA yet (next: "enroll"); a reset targets an existing, already
+      // MFA-enrolled account (next: "verify"). Branch exactly like
+      // LoginPage's handleCredentials does for ordinary login.
+      const result = await api.setPassword(token.trim(), password);
+      setStep(result.next === "enroll" ? "enrolling" : "mfa_verify");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not set password");
     } finally {
@@ -79,6 +82,10 @@ export function InviteAcceptPage({ onAuthenticated, onCancel }: Props) {
               Back to sign in
             </button>
           </form>
+        )}
+
+        {step === "mfa_verify" && (
+          <MfaVerifyFlow onComplete={onAuthenticated} />
         )}
 
         {step === "enrolling" && (

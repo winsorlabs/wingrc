@@ -1135,6 +1135,15 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .status-inactive { background: #f1f5f9; color: #64748b; }
 .status-warning { background: #fee2e2; color: #991b1b; }
 
+/* ── Reset-password one-time token (inline, per-row — see UsersPanel) ────── */
+.reset-password-result {
+  display: flex; flex-direction: column; gap: 0.4rem;
+  width: 100%; min-width: 260px;
+}
+.reset-password-result .token-warning { font-size: 0.75rem; padding: 0.5rem 0.65rem; margin-bottom: 0; }
+.reset-password-result .token-value { font-size: 0.75rem; padding: 0.45rem 0.6rem; }
+.reset-password-result-actions { display: flex; justify-content: flex-end; gap: 0.35rem; }
+
 /* ── Org row actions (gear icon per row) ─────────────────────────────────── */
 .org-row-actions { display: flex; gap: 0.25rem; opacity: 0; transition: opacity 0.1s; }
 .item-row:hover .org-row-actions { opacity: 1; }

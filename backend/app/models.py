@@ -1187,6 +1187,29 @@ class MfaBackupCode(Base):
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class PasswordHistory(Base):
+    """Prior password hash, kept only to reject reuse on set/reset.
+
+    Never read on the login path — only on /auth/set-password, which is
+    already a deliberately expensive PBKDF2-heavy operation (see
+    auth.check_password_reuse).
+    """
+
+    __tablename__ = "password_history"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class ApiToken(Base):
     """Machine-to-machine Bearer token. Raw value shown once at creation.
 

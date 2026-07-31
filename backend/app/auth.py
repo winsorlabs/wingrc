@@ -34,7 +34,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import Depends, HTTPException, Request, Response
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
 from .config import get_settings
@@ -153,6 +153,50 @@ def check_pwned_password(password: str) -> bool:
     except Exception:
         pass  # API unreachable: fail open
     return False
+
+
+# ---------------------------------------------------------------------------
+# Password history / reuse (I.5)
+# ---------------------------------------------------------------------------
+
+def check_password_reuse(
+    db: Session, user_id: uuid.UUID, password: str, generations: int
+) -> bool:
+    """True if `password` matches any of the user's last `generations` hashes.
+
+    Runs up to `generations` PBKDF2 verifications at 600k iterations each —
+    real CPU time (see hash_password). Belongs only on the set/reset path,
+    never on login.
+    """
+    from .models import PasswordHistory
+
+    hashes = db.execute(
+        select(PasswordHistory.password_hash)
+        .where(PasswordHistory.user_id == user_id)
+        .order_by(PasswordHistory.created_at.desc())
+        .limit(generations)
+    ).scalars().all()
+    return any(verify_password(password, h) for h in hashes)
+
+
+def record_password(db: Session, user_id: uuid.UUID, password_hash: str) -> None:
+    """Insert a password_history row, then trim beyond the configured
+    generation count (config.py: password_history_generations).
+    """
+    from .models import PasswordHistory
+
+    settings = get_settings()
+    db.add(PasswordHistory(user_id=user_id, password_hash=password_hash))
+    db.flush()
+
+    stale_ids = db.execute(
+        select(PasswordHistory.id)
+        .where(PasswordHistory.user_id == user_id)
+        .order_by(PasswordHistory.created_at.desc())
+        .offset(settings.password_history_generations)
+    ).scalars().all()
+    if stale_ids:
+        db.execute(delete(PasswordHistory).where(PasswordHistory.id.in_(stale_ids)))
 
 
 # ---------------------------------------------------------------------------

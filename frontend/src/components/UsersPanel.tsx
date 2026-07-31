@@ -15,6 +15,17 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString();
+}
+
+// locked_until can be in the past without being cleared — auth.py only
+// clears it on the account's next successful login, not on a timer. Compare
+// against now() rather than trusting a non-null value to mean "locked".
+function isCurrentlyLocked(u: UserRow): boolean {
+  return !!u.locked_until && new Date(u.locked_until).getTime() > Date.now();
+}
+
 interface Props {
   orgId: string;
   currentUserId: string;
@@ -45,6 +56,15 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
 
   const [confirmResetMfaId, setConfirmResetMfaId] = useState<string | null>(null);
   const [resettingMfa, setResettingMfa] = useState(false);
+
+  const [unlockingId, setUnlockingId] = useState<string | null>(null);
+
+  const [confirmResetPasswordId, setConfirmResetPasswordId] = useState<string | null>(null);
+  const [resettingPassword, setResettingPassword] = useState(false);
+  const [resetPasswordResult, setResetPasswordResult] = useState<
+    { userId: string; token: string; expiresAt: string } | null
+  >(null);
+  const [resetPasswordCopied, setResetPasswordCopied] = useState(false);
 
   useEffect(() => {
     load();
@@ -179,6 +199,50 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
     }
   }
 
+  async function handleUnlock(userId: string) {
+    setUnlockingId(userId);
+    setError(null);
+    try {
+      await api.unlockUser(orgId, userId);
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.id === userId
+            ? { ...u, locked_until: null, lockout_count: 0, requires_admin_reset: false }
+            : u
+        )
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not unlock user");
+    } finally {
+      setUnlockingId(null);
+    }
+  }
+
+  async function handleResetPassword(userId: string) {
+    setResettingPassword(true);
+    setError(null);
+    try {
+      const result = await api.resetUserPassword(orgId, userId);
+      setResetPasswordResult({ userId, token: result.reset_token, expiresAt: result.expires_at });
+      setResetPasswordCopied(false);
+      setConfirmResetPasswordId(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not reset password");
+    } finally {
+      setResettingPassword(false);
+    }
+  }
+
+  async function handleCopyResetToken() {
+    if (!resetPasswordResult) return;
+    try {
+      await navigator.clipboard.writeText(resetPasswordResult.token);
+      setResetPasswordCopied(true);
+    } catch {
+      setResetPasswordCopied(false);
+    }
+  }
+
   if (loading) return <div className="loading">Loading users…</div>;
 
   return (
@@ -269,12 +333,73 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
                       : <span className="no-roles">Not enrolled</span>}
                   </td>
                   <td>
-                    {u.requires_admin_reset
-                      ? <span className="status-badge status-warning">Requires Admin Reset</span>
-                      : <span className="no-roles">—</span>}
+                    {u.requires_admin_reset ? (
+                      <span className="status-badge status-warning">Requires Admin Reset</span>
+                    ) : isCurrentlyLocked(u) ? (
+                      <span className="status-badge status-warning">
+                        Locked until {formatDateTime(u.locked_until as string)}
+                        {u.lockout_count > 0 && ` (lockout #${u.lockout_count})`}
+                      </span>
+                    ) : (
+                      <span className="no-roles">—</span>
+                    )}
                   </td>
                   <td>
                     <div className="user-row-actions">
+                      {resetPasswordResult?.userId === u.id ? (
+                        <div className="reset-password-result">
+                          <div className="token-warning">
+                            This is the only time this reset token will be shown. Copy
+                            it now and deliver it to {u.email} out of band. It expires{" "}
+                            {formatDateTime(resetPasswordResult.expiresAt)}.
+                          </div>
+                          <code className="token-value">{resetPasswordResult.token}</code>
+                          <div className="reset-password-result-actions">
+                            <button className="btn-ghost btn-xs" onClick={handleCopyResetToken}>
+                              {resetPasswordCopied ? "Copied!" : "Copy"}
+                            </button>
+                            <button
+                              className="btn-primary btn-xs"
+                              onClick={() => setResetPasswordResult(null)}
+                            >
+                              Done
+                            </button>
+                          </div>
+                        </div>
+                      ) : confirmResetPasswordId === u.id ? (
+                        <span className="delete-confirm">
+                          <span>Reset password? They'll be signed out immediately.</span>
+                          <button
+                            className="btn-danger btn-xs"
+                            onClick={() => handleResetPassword(u.id)}
+                            disabled={resettingPassword}
+                          >
+                            {resettingPassword ? "Resetting…" : "Yes, reset"}
+                          </button>
+                          <button
+                            className="btn-ghost btn-xs"
+                            onClick={() => setConfirmResetPasswordId(null)}
+                          >
+                            Cancel
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          className="btn-ghost btn-xs"
+                          onClick={() => setConfirmResetPasswordId(u.id)}
+                        >
+                          Reset Password
+                        </button>
+                      )}
+                      {(u.requires_admin_reset || isCurrentlyLocked(u)) && (
+                        <button
+                          className="btn-ghost btn-xs"
+                          onClick={() => handleUnlock(u.id)}
+                          disabled={unlockingId === u.id}
+                        >
+                          {unlockingId === u.id ? "Unlocking…" : "Unlock"}
+                        </button>
+                      )}
                       {u.mfa_enrolled && (
                         confirmResetMfaId === u.id ? (
                           <span className="delete-confirm">

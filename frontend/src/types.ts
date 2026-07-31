@@ -214,6 +214,11 @@ export interface UserRow {
   is_active: boolean;
   mfa_enrolled: boolean;
   requires_admin_reset: boolean;
+  // I.5: locked_until alone can't tell an admin apart a 1st/2nd lockout
+  // (requires_admin_reset stays false) from a never-locked account.
+  // lockout_count is what makes requires_admin_reset legible.
+  locked_until: string | null;
+  lockout_count: number;
   last_login_at: string | null;
   created_at: string;
 }
@@ -227,4 +232,9 @@ export interface InvitedUser {
   is_active: boolean;
   invite_token: string;
   invite_expires_at: string;
+}
+
+export interface PasswordResetIssued {
+  reset_token: string;
+  expires_at: string;
 }
