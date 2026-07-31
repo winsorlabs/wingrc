@@ -167,13 +167,15 @@ def check_password_reuse(
     Runs up to `generations` PBKDF2 verifications at 600k iterations each —
     real CPU time (see hash_password). Belongs only on the set/reset path,
     never on login.
+
+    Orders by seq, not created_at — see PasswordHistory.seq / migration 0020.
     """
     from .models import PasswordHistory
 
     hashes = db.execute(
         select(PasswordHistory.password_hash)
         .where(PasswordHistory.user_id == user_id)
-        .order_by(PasswordHistory.created_at.desc())
+        .order_by(PasswordHistory.seq.desc())
         .limit(generations)
     ).scalars().all()
     return any(verify_password(password, h) for h in hashes)
@@ -182,6 +184,8 @@ def check_password_reuse(
 def record_password(db: Session, user_id: uuid.UUID, password_hash: str) -> None:
     """Insert a password_history row, then trim beyond the configured
     generation count (config.py: password_history_generations).
+
+    Orders by seq, not created_at — see PasswordHistory.seq / migration 0020.
     """
     from .models import PasswordHistory
 
@@ -192,7 +196,7 @@ def record_password(db: Session, user_id: uuid.UUID, password_hash: str) -> None
     stale_ids = db.execute(
         select(PasswordHistory.id)
         .where(PasswordHistory.user_id == user_id)
-        .order_by(PasswordHistory.created_at.desc())
+        .order_by(PasswordHistory.seq.desc())
         .offset(settings.password_history_generations)
     ).scalars().all()
     if stale_ids:

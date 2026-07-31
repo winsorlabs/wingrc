@@ -369,6 +369,56 @@ none of these were silently folded into the "Changes" list above.
    slice already needed. `test_reset_token_redeems_for_already_active_user`
    is the regression test — it fails without this fix.
 
+5. **`password_history` gained a `seq BIGINT GENERATED ALWAYS AS IDENTITY`
+   column (migration `0020_password_history_seq.py`), and both ordering
+   queries in `auth.py` (`check_password_reuse`, `record_password`) were
+   repointed from `created_at.desc()` to `seq.desc()` — ✅ verified.**
+   `test_reuse_allows_password_beyond_generation_window` failed
+   deterministically (same failure every run) against real Postgres 18 on
+   wl-util-1, never against the DB-free unit suite. Root cause: Postgres's
+   `now()`/`CURRENT_TIMESTAMP` — what `created_at`'s `server_default =
+   func.now()` calls — returns the *start time of the enclosing
+   transaction*, not per-statement execution time. The test's `db_session`
+   fixture (`tests/conftest.py`) wraps the whole test in one transaction
+   with a savepoint per call, so six sequential `record_password` calls all
+   got a byte-identical `created_at`. `ORDER BY created_at DESC` over tied
+   rows has no defined tiebreak; Postgres's actual (undocumented,
+   implementation-specific) tie resolution for that query shape evidently
+   preserved original insertion order rather than reversing it, so
+   `record_password`'s retention-trim step deleted the newest row instead
+   of the oldest — an old password stayed inside the "last N" reuse window
+   indefinitely. Ruled out an off-by-one in the `LIMIT`/`OFFSET` arithmetic
+   and settings-cache staleness (`password_history_generations`) before
+   concluding this — both checked directly, neither was the cause. This is
+   the first table in this codebase where sort order is load-bearing for a
+   security control rather than just display, which is exactly why no
+   existing table had ever needed a tiebreaker before. `id`
+   (`uuid.uuid4()`, client-generated) can't serve as that tiebreaker either
+   — a random UUID has no correlation with insertion order, so pairing it
+   with `created_at` would make the query deterministic without making it
+   correct. Fixed by adding a real monotonic `seq` column and repointing
+   both queries at it; `id` stays the UUID primary key for consistency with
+   every other table in this codebase, `created_at` stays for potential
+   display/audit use but is no longer load-bearing. `SELECT COUNT(*) FROM
+   password_history` against wl-util-1's live `wingrc` DB was checked (not
+   assumed) before writing the migration: **0 rows** — the table had only
+   just been created by 0019, with no application code path yet calling
+   `record_password` outside test runs (which roll back their own inserts).
+   Fix applied to auth.py/models.py and the migration written; re-running
+   `pytest tests/test_password_lifecycle.py -m integration -v` against real
+   Postgres 18 on wl-util-1 to confirm 16/16 pass is the next step, not yet
+   done as of this entry.
+
+   Same category as the session-fixation finding under I.6 and the
+   `login_method`/`api_token.last_used_at` findings under I.4/I.6: a bug
+   that a mock or an in-memory store would never have surfaced, caught only
+   because the test ran against a real Postgres engine with real
+   transaction/timestamp semantics rather than a stand-in. The project's
+   own DB-required-for-integration-tests convention
+   (`@pytest.mark.integration` + `WINGRC_TEST_DATABASE_URL`, see this doc's
+   header note) exists precisely so this class of bug gets caught before
+   deploy rather than in production.
+
 Not changed, considered and left alone: reset-password's token TTL reuses
 `_INVITE_TTL_HOURS` (48h) rather than a shorter reset-specific window, and
 there's no `login_method` guard rejecting `reset-password` for SSO accounts.

@@ -33,6 +33,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Identity,
     Integer,
     SmallInteger,
     String,
@@ -1193,6 +1194,16 @@ class PasswordHistory(Base):
     Never read on the login path — only on /auth/set-password, which is
     already a deliberately expensive PBKDF2-heavy operation (see
     auth.check_password_reuse).
+
+    `seq` (added in migration 0020), not `created_at`, is the ordering key
+    both auth.check_password_reuse and auth.record_password sort by.
+    `created_at` uses Postgres's now()/CURRENT_TIMESTAMP, which returns
+    transaction-start time, not statement-execution time — multiple rows
+    inserted in one transaction (or, in principle, two transactions that
+    start within the same microsecond) get an identical value and an
+    undefined tie order. `seq` is a real auto-incrementing identity, so it
+    is always strictly monotonic regardless of transaction/clock timing.
+    See migration 0020 for the incident this fixes.
     """
 
     __tablename__ = "password_history"
@@ -1208,6 +1219,7 @@ class PasswordHistory(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True), nullable=False)
 
 
 class ApiToken(Base):
