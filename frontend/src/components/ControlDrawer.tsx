@@ -27,6 +27,7 @@ interface Props {
   controlDbId: string;
   controlId: string;
   controlTitle: string;
+  canWrite: boolean;
   onClose: () => void;
   onSave: (updates: Array<{ objectiveId: string; status: string }>) => void;
   onEvidenceChanged?: () => void;
@@ -52,6 +53,7 @@ export function ControlDrawer({
   controlDbId,
   controlId,
   controlTitle,
+  canWrite,
   onClose,
   onSave,
   onEvidenceChanged,
@@ -192,6 +194,7 @@ export function ControlDrawer({
                 {item.objective_guidance && openGuidance[item.objective_id] && (
                   <div className="drawer-guidance-text">{item.objective_guidance}</div>
                 )}
+                <fieldset className="fieldset-reset" disabled={!canWrite}>
                 <div className="drawer-obj-controls">
                   <textarea
                     className="drawer-textarea drawer-textarea-sm"
@@ -212,28 +215,32 @@ export function ControlDrawer({
                     ))}
                   </select>
                 </div>
+                </fieldset>
                 {item.control_state_id && (
                   <EvidenceSection
                     orgId={orgId}
                     assessmentId={assessmentId}
                     controlStateId={item.control_state_id}
+                    canWrite={canWrite}
                     onCountChange={(count) => handleEvidenceCountChange(item.objective_id, count)}
                   />
                 )}
               </div>
             ))}
 
-            <div className="drawer-footer">
-              {hasAnyBody && hasEmptyItems && (
-                <button className="btn-ghost btn-sm" onClick={applyToAllEmpty}>
-                  Apply first to all empty
+            {canWrite && (
+              <div className="drawer-footer">
+                {hasAnyBody && hasEmptyItems && (
+                  <button className="btn-ghost btn-sm" onClick={applyToAllEmpty}>
+                    Apply first to all empty
+                  </button>
+                )}
+                <button className="btn-primary" onClick={handleSave} disabled={saving}>
+                  {saving ? "Saving…" : "Save"}
                 </button>
-              )}
-              <button className="btn-primary" onClick={handleSave} disabled={saving}>
-                {saving ? "Saving…" : "Save"}
-              </button>
-              {saved && <span className="drawer-saved-msg">Saved</span>}
-            </div>
+                {saved && <span className="drawer-saved-msg">Saved</span>}
+              </div>
+            )}
 
             {error && (
               <div className="error-msg" style={{ padding: "0.5rem 1.25rem" }}>

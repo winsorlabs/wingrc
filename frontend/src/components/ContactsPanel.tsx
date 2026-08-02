@@ -18,10 +18,11 @@ const ROLE_LABELS: Record<string, string> = {
 
 interface Props {
   orgId: string;
+  canWrite: boolean;
   onChanged?: () => void;
 }
 
-export function ContactsPanel({ orgId, onChanged }: Props) {
+export function ContactsPanel({ orgId, canWrite, onChanged }: Props) {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,9 +69,11 @@ export function ContactsPanel({ orgId, onChanged }: Props) {
   return (
     <div className="contacts-panel">
       <div className="contacts-panel-header">
-        <button className="btn-primary btn-sm" onClick={() => setDrawerContact(null)}>
-          + Add Contact
-        </button>
+        {canWrite && (
+          <button className="btn-primary btn-sm" onClick={() => setDrawerContact(null)}>
+            + Add Contact
+          </button>
+        )}
       </div>
 
       {contacts.length === 0 ? (
@@ -122,6 +125,7 @@ export function ContactsPanel({ orgId, onChanged }: Props) {
         <ContactDrawer
           orgId={orgId}
           contact={drawerContact}
+          canWrite={canWrite}
           onClose={() => setDrawerContact(undefined)}
           onSaved={handleSaved}
           onDeleted={handleDeleted}

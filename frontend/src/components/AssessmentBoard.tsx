@@ -107,9 +107,10 @@ interface DrawerControl {
 interface Props {
   org: Org;
   assessment: Assessment;
+  canWrite: boolean;
 }
 
-export function AssessmentBoard({ org, assessment }: Props) {
+export function AssessmentBoard({ org, assessment, canWrite }: Props) {
   const [rows, setRows] = useState<ControlStateRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -346,6 +347,7 @@ export function AssessmentBoard({ org, assessment }: Props) {
             rows={byFamily[family]}
             orgId={org.id}
             assessmentId={assessment.id}
+            canWrite={canWrite}
             onStatusChange={handleStatusChange}
             onOpenDrawer={handleOpenDrawer}
           />
@@ -366,6 +368,7 @@ export function AssessmentBoard({ org, assessment }: Props) {
         <EvidenceTasksPanel
           orgId={org.id}
           assessmentId={assessment.id}
+          canWrite={canWrite}
           onClose={() => setShowTasks(false)}
         />
       )}
@@ -374,6 +377,7 @@ export function AssessmentBoard({ org, assessment }: Props) {
         <ProductsPanel
           orgId={org.id}
           assessmentId={assessment.id}
+          canWrite={canWrite}
           onClose={() => setShowTools(false)}
           onActivated={handleProductActivated}
           onDeactivated={handleProductDeactivated}
@@ -387,6 +391,7 @@ export function AssessmentBoard({ org, assessment }: Props) {
           controlDbId={drawerControl.dbId}
           controlId={drawerControl.controlId}
           controlTitle={drawerControl.title}
+          canWrite={canWrite}
           onClose={() => setDrawerControl(null)}
           onSave={handleStatementSave}
           onEvidenceChanged={handleEvidenceChanged}

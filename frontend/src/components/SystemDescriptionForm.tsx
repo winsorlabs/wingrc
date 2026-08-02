@@ -4,6 +4,7 @@ import type { ExternalConnection, StorageLocation, SystemDescriptionData } from 
 
 interface Props {
   orgId: string;
+  canWrite: boolean;
   onSaved?: () => void;
 }
 
@@ -22,7 +23,7 @@ const OP_STATUSES = [
 function emptyStorageLoc(): StorageLocation { return { type: "", description: "" }; }
 function emptyExtConn(): ExternalConnection { return { name: "", direction: "bidirectional", purpose: "" }; }
 
-export function SystemDescriptionForm({ orgId, onSaved }: Props) {
+export function SystemDescriptionForm({ orgId, canWrite, onSaved }: Props) {
   const [data, setData] = useState<SystemDescriptionData | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -142,6 +143,7 @@ export function SystemDescriptionForm({ orgId, onSaved }: Props) {
       {error && <div className="form-error">{error}</div>}
       {!data && <div className="form-info-banner">No system description yet — fill in the fields below and save.</div>}
 
+      <fieldset className="fieldset-reset" disabled={!canWrite}>
       <div className="form-grid">
         <div className="form-field" style={{ gridColumn: "1 / -1" }}>
           <label>System Name <span className="required">*</span></label>
@@ -235,12 +237,15 @@ export function SystemDescriptionForm({ orgId, onSaved }: Props) {
         <label>CUI Flow Description</label>
         <textarea rows={3} value={cuiFlow} onChange={(e) => { setCuiFlow(e.target.value); setSaved(false); }} placeholder="Describe how CUI flows through the system…" />
       </div>
+      </fieldset>
 
-      <div className="form-actions">
-        <button className="btn-primary" onClick={handleSave} disabled={saving}>
-          {saving ? "Saving…" : saved ? "Saved ✓" : "Save System Description"}
-        </button>
-      </div>
+      {canWrite && (
+        <div className="form-actions">
+          <button className="btn-primary" onClick={handleSave} disabled={saving}>
+            {saving ? "Saving…" : saved ? "Saved ✓" : "Save System Description"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

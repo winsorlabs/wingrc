@@ -4,10 +4,11 @@ import type { OrgProfile } from "../types";
 
 interface Props {
   orgId: string;
+  canWrite: boolean;
   onSaved?: () => void;
 }
 
-export function OrgProfileForm({ orgId, onSaved }: Props) {
+export function OrgProfileForm({ orgId, canWrite, onSaved }: Props) {
   const [profile, setProfile] = useState<OrgProfile | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -99,6 +100,7 @@ export function OrgProfileForm({ orgId, onSaved }: Props) {
         <div className="field-hint">Set at org creation. Contact support to rename.</div>
       </div>
 
+      <fieldset className="fieldset-reset" disabled={!canWrite}>
       <div className="form-section-heading">Government Identifiers</div>
       <div className="form-grid">
         <div className="form-field">
@@ -176,12 +178,15 @@ export function OrgProfileForm({ orgId, onSaved }: Props) {
         </div>
         <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" style={{ display: "none" }} onChange={handleLogoUpload} />
       </div>
+      </fieldset>
 
-      <div className="form-actions">
-        <button className="btn-primary" onClick={handleSave} disabled={saving}>
-          {saving ? "Saving…" : saved ? "Saved ✓" : "Save Profile"}
-        </button>
-      </div>
+      {canWrite && (
+        <div className="form-actions">
+          <button className="btn-primary" onClick={handleSave} disabled={saving}>
+            {saving ? "Saving…" : saved ? "Saved ✓" : "Save Profile"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

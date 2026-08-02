@@ -34,10 +34,11 @@ interface Props {
   orgId: string;
   assessmentId: string;
   controlStateId: string;
+  canWrite: boolean;
   onCountChange: (count: number) => void;
 }
 
-export function EvidenceSection({ orgId, assessmentId, controlStateId, onCountChange }: Props) {
+export function EvidenceSection({ orgId, assessmentId, controlStateId, canWrite, onCountChange }: Props) {
   const [items, setItems] = useState<EvidenceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -195,14 +196,16 @@ export function EvidenceSection({ orgId, assessmentId, controlStateId, onCountCh
                     ↓
                   </a>
                 )}
-                <button
-                  className="ev-remove"
-                  onClick={() => handleDelete(ev.id)}
-                  title="Remove"
-                  aria-label={`Remove ${ev.title}`}
-                >
-                  ✕
-                </button>
+                {canWrite && (
+                  <button
+                    className="ev-remove"
+                    onClick={() => handleDelete(ev.id)}
+                    title="Remove"
+                    aria-label={`Remove ${ev.title}`}
+                  >
+                    ✕
+                  </button>
+                )}
               </div>
             ))}
             {uploading && <div className="ev-status">Uploading…</div>}
@@ -260,33 +263,35 @@ export function EvidenceSection({ orgId, assessmentId, controlStateId, onCountCh
             </div>
           )}
 
-          <div className="ev-footer">
-            <button
-              className="btn-ghost btn-sm"
-              onClick={() => fileRef.current?.click()}
-              disabled={uploading}
-            >
-              + Attach file
-            </button>
-            <button
-              className="btn-ghost btn-sm"
-              onClick={() => {
-                setShowRefForm(true);
-                setRefRows([{ title: "", location: "" }]);
-                setError(null);
-              }}
-              disabled={uploading || showRefForm}
-            >
-              + Add location
-            </button>
-            <input
-              ref={fileRef}
-              type="file"
-              className="ev-file-input"
-              onChange={handleFileChange}
-            />
-            <span className="ev-hint">Attaching evidence does not change status</span>
-          </div>
+          {canWrite && (
+            <div className="ev-footer">
+              <button
+                className="btn-ghost btn-sm"
+                onClick={() => fileRef.current?.click()}
+                disabled={uploading}
+              >
+                + Attach file
+              </button>
+              <button
+                className="btn-ghost btn-sm"
+                onClick={() => {
+                  setShowRefForm(true);
+                  setRefRows([{ title: "", location: "" }]);
+                  setError(null);
+                }}
+                disabled={uploading || showRefForm}
+              >
+                + Add location
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                className="ev-file-input"
+                onChange={handleFileChange}
+              />
+              <span className="ev-hint">Attaching evidence does not change status</span>
+            </div>
+          )}
         </>
       )}
 

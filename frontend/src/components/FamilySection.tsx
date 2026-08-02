@@ -24,6 +24,7 @@ interface Props {
   rows: ControlStateRow[];
   orgId: string;
   assessmentId: string;
+  canWrite: boolean;
   onStatusChange: (id: string, newStatus: string) => void;
   onOpenDrawer: (controlDbId: string, controlId: string, title: string) => void;
 }
@@ -33,6 +34,7 @@ export function FamilySection({
   rows,
   orgId,
   assessmentId,
+  canWrite,
   onStatusChange,
   onOpenDrawer,
 }: Props) {
@@ -70,6 +72,7 @@ export function FamilySection({
               objectives={objs}
               orgId={orgId}
               assessmentId={assessmentId}
+              canWrite={canWrite}
               onStatusChange={onStatusChange}
               onOpenDrawer={onOpenDrawer}
             />

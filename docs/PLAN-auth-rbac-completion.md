@@ -1,12 +1,22 @@
 # Plan — Auth/RBAC completion (roadmap item I) + frontend admin surface
 
-**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4 ✅ merged · I.5 implemented pending commit/review (4 deviations — see I.5) · I.6 ✅ merged (all 6 items) · I.7 ✅ merged (users + API tokens admin panels, invite-redemption page) · I.8–I.9 not started
+**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4 ✅ merged · I.5 ✅ closed (5 deviations — see I.5; 308/308 integration tests green on wl-util-1, browser smoke test confirmed) · I.6 ✅ merged (all 6 items) · I.7 ✅ merged (users + API tokens admin panels, invite-redemption page) · I.8 implemented pending commit/review (see I.8) · I.9 not started
 **Baseline:** 0088757
 **Scope:** close the gaps identified in the audit of item I, then land the frontend
 surface those endpoints require.
 
-Slices are numbered `I.1`–`I.9`. Each is a branch, each ends green, each is
-independently shippable. Do not batch them.
+Slices are numbered `I.1`–`I.9`. Each lands as one or more commits directly on
+`main`, each ends green, each is independently shippable. Do not batch them.
+
+**Reconciled 2026-08-02:** this originally said "each is a branch." I.1–I.7 all
+landed via direct commits to `main` instead (confirmed against `git log` and
+`git branch -a` — no merge commits, no per-slice branch ever existed). The
+substance of the constraint — ends green, independently shippable, small
+commits, pushed promptly so wl-util-1 can pull — held every time; the branch
+mechanic never did. Wording corrected to match actual practice rather than
+leaving an aspirational rule seven slices ignored. I.8 was cut on a branch
+(per the now-superseded text) and fast-forwarded into `main` with no merge
+commit before this line was corrected.
 
 ---
 
@@ -337,7 +347,10 @@ none of these were silently folded into the "Changes" list above.
    silently regenerate their TOTP secret and invalidate a working
    authenticator entry just because they forgot their password. Now mirrors
    the same `phase = "enroll" if not user.mfa_enrolled else "verify"` branch
-   `/auth/login` already uses.
+   `/auth/login` already uses. `test_reset_of_already_enrolled_user_responds_verify_not_enroll`
+   covers the backend contract, but the actual bug this deviation prevents
+   is client-side (the frontend routing to the wrong step) — see deviation
+   2's browser verification note below for the check that closes that gap.
 
 2. **Extracted `MfaVerifyFlow.tsx`, used by both `LoginPage.tsx` and
    `InviteAcceptPage.tsx`.** Deviation 1 means `InviteAcceptPage` now needs a
@@ -345,7 +358,14 @@ none of these were silently folded into the "Changes" list above.
    comment, that `next` was always `"enroll"`). Rather than duplicate the
    verify form across two pre-auth surfaces, extracted it the same way
    `MfaEnrollmentFlow` was already extracted — an auth-critical form
-   duplicated across two pages drifts.
+   duplicated across two pages drifts. **Browser-verified** (manual, against
+   dev.wingrc.us — pytest alone exercises the backend's `next` value but
+   never the frontend branch that consumes it): invite → redeem → enroll
+   MFA, then admin-issued reset-password → redeem → confirmed routing to
+   MFA *verify*, not re-enrollment, and the authenticator entry from initial
+   enrollment still worked at that verify step. Also exercised in the same
+   pass: lockout after 3+ failed logins showing "Locked until … (lockout
+   #N)" in UsersPanel, Unlock clearing it, and account deactivation.
 
 3. **`_user_out()` (`backend/app/routers/users.py`) now returns
    `locked_until` and `lockout_count`,** not just `requires_admin_reset`.
@@ -404,10 +424,8 @@ none of these were silently folded into the "Changes" list above.
    assumed) before writing the migration: **0 rows** — the table had only
    just been created by 0019, with no application code path yet calling
    `record_password` outside test runs (which roll back their own inserts).
-   Fix applied to auth.py/models.py and the migration written; re-running
-   `pytest tests/test_password_lifecycle.py -m integration -v` against real
-   Postgres 18 on wl-util-1 to confirm 16/16 pass is the next step, not yet
-   done as of this entry.
+   Confirmed via `pytest tests/test_password_lifecycle.py -m integration -v`
+   against real Postgres 18 on wl-util-1 — passing clean, 16/16.
 
    Same category as the session-fixation finding under I.6 and the
    `login_method`/`api_token.last_used_at` findings under I.4/I.6: a bug
@@ -418,6 +436,13 @@ none of these were silently folded into the "Changes" list above.
    (`@pytest.mark.integration` + `WINGRC_TEST_DATABASE_URL`, see this doc's
    header note) exists precisely so this class of bug gets caught before
    deploy rather than in production.
+
+**I.5 closed.** Full suite: 308/308 integration tests green on wl-util-1
+(not just this file's 16). Browser smoke test against dev.wingrc.us
+confirmed all four paths end to end: invite → enroll, admin-issued
+reset-password → **verify** (not enroll — the exact client-side bug
+deviations 1–2 exist to prevent), lockout status rendering the correct
+"Locked until … (lockout #N)" message, and Unlock clearing it.
 
 Not changed, considered and left alone: reset-password's token TTL reuses
 `_INVITE_TTL_HOURS` (48h) rather than a shorter reset-specific window, and
@@ -651,6 +676,64 @@ mid-slice.
 
 **Stated plainly: this is UX, not security.** The I.2 backend gate is the control.
 This slice exists so an assessor is not presented with controls that will 403.
+(I.7 already wrote this exact framing into a comment in `OrgSettings.tsx`,
+forward-referencing this slice — I.8 fulfills that reference rather than
+introducing the principle.)
+
+### Scope check against I.5/I.7 (done before implementation)
+
+- **No overlap with I.7.** `UsersPanel`/`ApiTokensPanel`'s role-awareness
+  (admin sub-panel visibility, assignable-role clamping in
+  `ApiTokensPanel` via `lib/roles.ts`'s `ROLE_RANK`) is a different axis
+  entirely — `msp_admin`/`msp_engineer` tiering, not `c3pao_assessor`
+  read-only rendering. The `AssessmentBoard` subtree this slice targets
+  currently has zero role plumbing into it.
+- **The 11 listed components split into two differently-sized jobs, not
+  one uniform one.** `ContactsPanel`, `ContactDrawer`, `OrgProfileForm`,
+  `SystemDescriptionForm` sit under `OrgSettings`, which already receives
+  `currentUserRole` from `App.tsx` (I.7) — these four just need it
+  forwarded one more level. `AssessmentBoard`, `ControlDrawer`,
+  `ObjectiveRow`, `EvidenceSection`, `EvidenceTasksPanel`, `ProductsPanel`,
+  `ProductCard` sit under `AssessmentBoard`, which `App.tsx` currently
+  renders with no user/role prop at all — this half establishes a brand
+  new prop path from scratch.
+- **`lib/roles.ts` is the right home** for the read-only-role set — it
+  already mirrors `auth.py`'s `_ROLE_RANK` by explicit convention
+  ("if the backend map ever changes, this one needs the matching edit");
+  add a `READ_ONLY_ROLES` mirroring `auth.py`'s `_READ_ONLY_ROLES =
+  frozenset({"c3pao_assessor"})` the same way, rather than inlining the
+  set in `useAuth.ts` or duplicating it per-component.
+
+### Design decision — prop threading, not React Context, for `canWrite`
+
+Considered and rejected Context for the `AssessmentBoard` subtree. Two
+reasons, both from the actual code rather than habit:
+
+1. **Precedent already in this exact tree.** `org.id`/`assessment.id`
+   thread as required props through the identical chain —
+   `AssessmentBoard → FamilySection → ControlSection → ObjectiveRow`, plus
+   `AssessmentBoard → ControlDrawer/EvidenceTasksPanel/ProductsPanel`
+   directly — including through two pure-passthrough components
+   (`FamilySection`, `ControlSection`) that don't use the values
+   themselves. Introducing Context for `canWrite` alone would put two
+   different plumbing mechanisms for equally cross-cutting values in the
+   same tree.
+2. **Required props catch the exact failure mode Context is being asked to
+   prevent, and catch it earlier.** The concern: a component added later
+   forgets to accept/forward the value and silently renders editable,
+   failing only as a confusing 403 at click time. Under this project's
+   `strict: true` tsconfig and `tsc -b` build gate, a **required**
+   (non-optional) `canWrite: boolean` prop — declared the same way
+   `orgId`/`assessmentId` already are on every component in this tree —
+   makes that omission a **compile-time** error, not a runtime one.
+   Context doesn't give this for free: `useContext` on a provider-less
+   context silently returns `undefined` (or a default) unless a custom
+   throwing hook is written on top of it, which is more code than "mark
+   the prop required" costs, and still only fails at runtime.
+
+Conclusion: thread `canWrite` as a required prop everywhere in the
+`Changes` list below, matching the existing `orgId`/`assessmentId`
+convention exactly. No context provider introduced.
 
 ### Changes
 - `useAuth` — derive `canWrite` from `user.role`, exported alongside `user`.
@@ -667,6 +750,22 @@ This slice exists so an assessor is not presented with controls that will 403.
 ### Tests
 Extend `frontend/src/lib/filters.test.ts` patterns — add a `permissions.test.ts`
 covering the `canWrite` derivation for each of the four roles.
+
+**I.8 implemented.** `useAuth` derives `canWrite`; `lib/roles.ts` adds
+`READ_ONLY_ROLES` and an extracted pure `deriveCanWrite(role)` (mirrors the
+`filters.ts` pattern of pure functions the hook itself can't be unit-tested
+through) so `permissions.test.ts` can cover all four roles plus the
+no-user case without mounting a component. `canWrite` threaded as a
+required prop through all 11 listed components plus the two pure-passthrough
+components already on that path (`FamilySection`, `ControlSection`) and
+`OrgSettings`; read-only banner added in `App.tsx`; `.fieldset-reset`
+(`display: contents`, native `disabled` cascade) added to `styles.css` for
+the form-drawer cases (`ContactDrawer`, `OrgProfileForm`,
+`SystemDescriptionForm`, `ControlDrawer`'s per-objective fields) so descendant
+inputs are disabled without a `display` change to the layout. Not yet run
+against the frontend toolchain (no local Node — this box only has the
+backend Python env) or browser-smoke-tested; that verification is the next
+step, same gap I.5 had before its "closed" line above.
 
 ---
 
@@ -718,7 +817,9 @@ either can be reverted independently.
 
 ## Standing constraints for every slice
 
-- Branch per slice, small commits, push after each — the dev box pulls.
+- Small commits directly to `main`, push after each — the dev box pulls.
+  (See the sequencing-rationale note above — this replaced "branch per
+  slice" on 2026-08-02 to match what I.1–I.7 actually did.)
 - `ruff check` clean before merge.
 - DB-touching tests carry `@pytest.mark.integration`.
 - Never log, echo, or persist a raw token, invite token, reset token, TOTP secret,

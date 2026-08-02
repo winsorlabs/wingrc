@@ -40,10 +40,11 @@ interface Props {
   row: ControlStateRow;
   orgId: string;
   assessmentId: string;
+  canWrite: boolean;
   onStatusChange: (id: string, newStatus: string) => void;
 }
 
-export function ObjectiveRow({ row, orgId, assessmentId, onStatusChange }: Props) {
+export function ObjectiveRow({ row, orgId, assessmentId, canWrite, onStatusChange }: Props) {
   const [status, setStatus] = useState(row.status);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -81,14 +82,14 @@ export function ObjectiveRow({ row, orgId, assessmentId, onStatusChange }: Props
         <span className="status-picker" ref={dropdownRef}>
           <button
             className={`badge ${badgeClass} badge-btn${saving ? " badge-saving" : ""}`}
-            onClick={() => !saving && setOpen((o) => !o)}
+            onClick={() => !saving && canWrite && setOpen((o) => !o)}
             aria-haspopup="listbox"
             aria-expanded={open}
-            disabled={saving}
+            disabled={saving || !canWrite}
           >
             {saving ? "…" : badgeLabel}
           </button>
-          {open && (
+          {open && canWrite && (
             <div className="status-dropdown" role="listbox">
               {STATUSES.map((s) => (
                 <button

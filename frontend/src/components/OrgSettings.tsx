@@ -20,6 +20,7 @@ interface Props {
   orgName: string;
   currentUserId: string;
   currentUserRole: string;
+  canWrite: boolean;
   onClose: () => void;
   initialTab?: Tab;
 }
@@ -29,6 +30,7 @@ export function OrgSettings({
   orgName,
   currentUserId,
   currentUserRole,
+  canWrite,
   onClose,
   initialTab = "profile",
 }: Props) {
@@ -105,13 +107,13 @@ export function OrgSettings({
 
         <div className="settings-content">
           {tab === "profile" && (
-            <OrgProfileForm orgId={orgId} onSaved={loadStatus} />
+            <OrgProfileForm orgId={orgId} canWrite={canWrite} onSaved={loadStatus} />
           )}
           {tab === "system" && (
-            <SystemDescriptionForm orgId={orgId} onSaved={loadStatus} />
+            <SystemDescriptionForm orgId={orgId} canWrite={canWrite} onSaved={loadStatus} />
           )}
           {tab === "contacts" && (
-            <ContactsPanel orgId={orgId} onChanged={loadStatus} />
+            <ContactsPanel orgId={orgId} canWrite={canWrite} onChanged={loadStatus} />
           )}
           {tab === "api-tokens" && canSeeApiTokens && (
             <ApiTokensPanel orgId={orgId} currentUserRole={currentUserRole} />

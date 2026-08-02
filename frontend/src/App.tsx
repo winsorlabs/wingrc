@@ -17,7 +17,7 @@ type Screen = "orgs" | "board" | "onboarding" | "settings";
 type PreAuthScreen = "login" | "accept-invite";
 
 export function App() {
-  const { user, isLoading, logout, refresh } = useAuth();
+  const { user, isLoading, canWrite, logout, refresh } = useAuth();
   const [screen, setScreen] = useState<Screen>("orgs");
   const [org, setOrg] = useState<Org | null>(null);
   const [assessment, setAssessment] = useState<Assessment | null>(null);
@@ -107,6 +107,10 @@ export function App() {
         </button>
       </header>
 
+      {!canWrite && (
+        <div className="read-only-banner">Read-only access — assessor role.</div>
+      )}
+
       {screen === "orgs" && (
         <OrgPicker
           onEnterBoard={enterBoard}
@@ -115,7 +119,7 @@ export function App() {
         />
       )}
       {screen === "board" && org && assessment && (
-        <AssessmentBoard org={org} assessment={assessment} />
+        <AssessmentBoard org={org} assessment={assessment} canWrite={canWrite} />
       )}
       {screen === "onboarding" && org && (
         <OnboardingWizard
@@ -130,6 +134,7 @@ export function App() {
           orgName={org.name}
           currentUserId={user.id}
           currentUserRole={user.role}
+          canWrite={canWrite}
           onClose={closeSettings}
         />
       )}

@@ -5,6 +5,7 @@ import type { EvidenceTaskRow } from "../types";
 interface Props {
   orgId: string;
   assessmentId: string;
+  canWrite: boolean;
   onClose: () => void;
 }
 
@@ -45,7 +46,7 @@ function groupBySession(tasks: EvidenceTaskRow[]): [string, EvidenceTaskRow[]][]
 // Which expand mode is open on a task card
 type ExpandMode = "ref" | null;
 
-export function EvidenceTasksPanel({ orgId, assessmentId, onClose }: Props) {
+export function EvidenceTasksPanel({ orgId, assessmentId, canWrite, onClose }: Props) {
   const [tasks, setTasks] = useState<EvidenceTaskRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -246,7 +247,7 @@ export function EvidenceTasksPanel({ orgId, assessmentId, onClose }: Props) {
                         )}
 
                         {/* Reference form (inline expand) */}
-                        {isExpanded && !task.is_archived && (
+                        {canWrite && isExpanded && !task.is_archived && (
                           <div className="task-ref-form">
                             <input
                               type="text"
@@ -298,7 +299,7 @@ export function EvidenceTasksPanel({ orgId, assessmentId, onClose }: Props) {
                               <select
                                 className="task-status-select"
                                 value={task.status}
-                                disabled={isSaving}
+                                disabled={isSaving || !canWrite}
                                 onChange={(e) => handleStatusChange(task.id, e.target.value)}
                                 aria-label={`Status for ${task.title}`}
                               >
@@ -308,26 +309,28 @@ export function EvidenceTasksPanel({ orgId, assessmentId, onClose }: Props) {
                                   </option>
                                 ))}
                               </select>
-                              <div className="task-collect-actions">
-                                <button
-                                  className="btn-ghost btn-xs"
-                                  onClick={() => triggerFileUpload(task.id)}
-                                  disabled={isSaving}
-                                  title="Upload a file"
-                                >
-                                  {isSaving && pendingTaskRef.current === task.id
-                                    ? "Uploading…"
-                                    : "↑ File"}
-                                </button>
-                                <button
-                                  className={`btn-ghost btn-xs${isExpanded ? " active" : ""}`}
-                                  onClick={() => toggleRefForm(task.id)}
-                                  disabled={isSaving}
-                                  title="Add a reference URL or path"
-                                >
-                                  ⊕ Reference
-                                </button>
-                              </div>
+                              {canWrite && (
+                                <div className="task-collect-actions">
+                                  <button
+                                    className="btn-ghost btn-xs"
+                                    onClick={() => triggerFileUpload(task.id)}
+                                    disabled={isSaving}
+                                    title="Upload a file"
+                                  >
+                                    {isSaving && pendingTaskRef.current === task.id
+                                      ? "Uploading…"
+                                      : "↑ File"}
+                                  </button>
+                                  <button
+                                    className={`btn-ghost btn-xs${isExpanded ? " active" : ""}`}
+                                    onClick={() => toggleRefForm(task.id)}
+                                    disabled={isSaving}
+                                    title="Add a reference URL or path"
+                                  >
+                                    ⊕ Reference
+                                  </button>
+                                </div>
+                              )}
                             </>
                           )}
                         </div>

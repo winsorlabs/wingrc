@@ -6,11 +6,12 @@ interface Props {
   product: ProductRow;
   orgId: string;
   assessmentId: string;
+  canWrite: boolean;
   onActivated: () => void;
   onDeactivated: () => void;
 }
 
-export function ProductCard({ product, orgId, assessmentId, onActivated, onDeactivated }: Props) {
+export function ProductCard({ product, orgId, assessmentId, canWrite, onActivated, onDeactivated }: Props) {
   const [activating, setActivating] = useState(false);
   const [deactivating, setDeactivating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -75,22 +76,26 @@ export function ProductCard({ product, orgId, assessmentId, onActivated, onDeact
         {product.is_active ? (
           <>
             <span className="product-active-label">Active — pending evidence</span>
-            <button
-              className="btn-ghost btn-sm product-deactivate-btn"
-              onClick={handleDeactivate}
-              disabled={deactivating}
-            >
-              {deactivating ? "Deactivating…" : "Deactivate"}
-            </button>
+            {canWrite && (
+              <button
+                className="btn-ghost btn-sm product-deactivate-btn"
+                onClick={handleDeactivate}
+                disabled={deactivating}
+              >
+                {deactivating ? "Deactivating…" : "Deactivate"}
+              </button>
+            )}
           </>
         ) : (
-          <button
-            className="btn-primary btn-sm"
-            onClick={handleActivate}
-            disabled={activating}
-          >
-            {activating ? "Activating…" : "Activate"}
-          </button>
+          canWrite && (
+            <button
+              className="btn-primary btn-sm"
+              onClick={handleActivate}
+              disabled={activating}
+            >
+              {activating ? "Activating…" : "Activate"}
+            </button>
+          )
         )}
         {error && <span className="product-card-error">{error}</span>}
       </div>

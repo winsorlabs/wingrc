@@ -6,12 +6,13 @@ import { ProductCard } from "./ProductCard";
 interface Props {
   orgId: string;
   assessmentId: string;
+  canWrite: boolean;
   onClose: () => void;
   onActivated: () => void;
   onDeactivated: () => void;
 }
 
-export function ProductsPanel({ orgId, assessmentId, onClose, onActivated, onDeactivated }: Props) {
+export function ProductsPanel({ orgId, assessmentId, canWrite, onClose, onActivated, onDeactivated }: Props) {
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +68,7 @@ export function ProductsPanel({ orgId, assessmentId, onClose, onActivated, onDea
                 product={p}
                 orgId={orgId}
                 assessmentId={assessmentId}
+                canWrite={canWrite}
                 onActivated={handleActivated}
                 onDeactivated={handleDeactivated}
               />

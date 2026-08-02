@@ -20,12 +20,13 @@ const DOC_ROLES: { value: string; label: string }[] = [
 interface Props {
   orgId: string;
   contact: Contact | null;
+  canWrite: boolean;
   onClose: () => void;
   onSaved: (c: Contact) => void;
   onDeleted?: (id: string) => void;
 }
 
-export function ContactDrawer({ orgId, contact, onClose, onSaved, onDeleted }: Props) {
+export function ContactDrawer({ orgId, contact, canWrite, onClose, onSaved, onDeleted }: Props) {
   const isNew = contact === null;
 
   const [name, setName] = useState("");
@@ -144,6 +145,7 @@ export function ContactDrawer({ orgId, contact, onClose, onSaved, onDeleted }: P
         <div className="drawer-body">
           {error && <div className="form-error">{error}</div>}
 
+          <fieldset className="fieldset-reset" disabled={!canWrite}>
           <div className="form-field">
             <label>Name <span className="required">*</span></label>
             <input type="text" value={name} onChange={(e) => setName(e.target.value)} />
@@ -191,9 +193,10 @@ export function ContactDrawer({ orgId, contact, onClose, onSaved, onDeleted }: P
               </button>
             ))}
           </div>
+          </fieldset>
         </div>
         <div className="drawer-footer">
-          {!isNew && (
+          {canWrite && !isNew && (
             confirmDelete ? (
               <div className="delete-confirm">
                 <span>Delete this contact?</span>
@@ -208,9 +211,11 @@ export function ContactDrawer({ orgId, contact, onClose, onSaved, onDeleted }: P
           )}
           <div style={{ flex: 1 }} />
           <button className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" onClick={handleSave} disabled={saving}>
-            {saving ? "Saving…" : "Save"}
-          </button>
+          {canWrite && (
+            <button className="btn-primary" onClick={handleSave} disabled={saving}>
+              {saving ? "Saving…" : "Save"}
+            </button>
+          )}
         </div>
       </div>
     </div>
