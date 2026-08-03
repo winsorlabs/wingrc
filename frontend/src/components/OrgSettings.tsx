@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { OnboardingStatus } from "../types";
 import { ApiTokensPanel } from "./ApiTokensPanel";
+import { AuditLogPanel } from "./AuditLogPanel";
 import { ContactsPanel } from "./ContactsPanel";
 import { OrgProfileForm } from "./OrgProfileForm";
 import { SystemDescriptionForm } from "./SystemDescriptionForm";
 import { UsersPanel } from "./UsersPanel";
 
-type Tab = "profile" | "system" | "contacts" | "api-tokens" | "users";
+type Tab = "profile" | "system" | "contacts" | "api-tokens" | "users" | "audit-log";
 
 // Matches the backend's require_org_access("msp_admin", "msp_engineer")
 // gate on the /api-tokens endpoints. This is UX only, not a security
@@ -40,6 +41,10 @@ export function OrgSettings({
   // invite_user/patch_user are gated to msp_admin only (no msp_engineer
   // rank exception, unlike API tokens) — see routers/users.py.
   const canSeeUsers = currentUserRole === "msp_admin";
+  // Matches GET /orgs/{org_id}/audit-log's require_org_access("msp_admin")
+  // gate exactly (routers/audit_log.py) — this is UX only, the server-side
+  // check is the real boundary.
+  const canSeeAuditLog = currentUserRole === "msp_admin";
 
   function loadStatus() {
     api.getOnboardingStatus(orgId).then(setStatus).catch(() => {});
@@ -103,6 +108,14 @@ export function OrgSettings({
               Users
             </button>
           )}
+          {canSeeAuditLog && (
+            <button
+              className={`settings-nav-item${tab === "audit-log" ? " active" : ""}`}
+              onClick={() => setTab("audit-log")}
+            >
+              Audit Log
+            </button>
+          )}
         </nav>
 
         <div className="settings-content">
@@ -121,6 +134,7 @@ export function OrgSettings({
           {tab === "users" && canSeeUsers && (
             <UsersPanel orgId={orgId} currentUserId={currentUserId} />
           )}
+          {tab === "audit-log" && canSeeAuditLog && <AuditLogPanel orgId={orgId} />}
         </div>
       </div>
     </div>

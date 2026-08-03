@@ -12,13 +12,14 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from . import repo
-from .auth import CurrentUser, get_current_user
+from .audit import set_current_ip
+from .auth import CurrentUser, get_client_ip, get_current_user
 from .catalog import ALL_VIEWS, VIEWS_BY_ID
 from .config import get_settings
 from .db import get_session
@@ -26,7 +27,7 @@ from .domain import EntityType
 from .importers.workbook import parse_workbook
 from .reconcile import reconcile
 from .render import render_view
-from .routers import assessments, bundle, contacts, evidence, frameworks, orgs
+from .routers import assessments, audit_log, bundle, contacts, evidence, frameworks, orgs
 from .routers import auth as auth_router
 from .routers import users as users_router
 
@@ -38,6 +39,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _stamp_audit_ip(request: Request, call_next):
+    """Make the resolved client IP available to audit.log_event() for the
+    duration of this request, without threading it through every call site
+    (see audit.py's module docstring for why). Runs before routing, so it
+    covers every endpoint including the ones with no Request in their own
+    signature.
+    """
+    set_current_ip(get_client_ip(request))
+    return await call_next(request)
+
+
 app.include_router(auth_router.router)
 app.include_router(frameworks.router)
 app.include_router(orgs.router)
@@ -46,6 +61,7 @@ app.include_router(assessments.router)
 app.include_router(evidence.router)
 app.include_router(bundle.router)
 app.include_router(users_router.router)
+app.include_router(audit_log.router)
 
 
 @app.get("/health")

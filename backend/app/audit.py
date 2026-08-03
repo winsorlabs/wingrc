@@ -42,10 +42,27 @@ actor_type, "user" or "api" depending on CurrentUser.login_method) now that
 auth has landed (roadmap item I). Other routers (assessments/evidence/
 contacts/orgs/bundle) have not been retrofitted yet and still default to
 actor="system", actor_type="system" — that retrofit is not part of this slice.
+
+IP address (out-of-band scope, audit log viewer): log_event() stamps
+ip_address from _current_ip, a ContextVar set once per request by
+main.py's middleware (`get_client_ip(request)` — the same X-Real-IP-aware
+resolver auth.py's login rate limiter already uses; not a second, divergent
+extraction path). This avoids threading a Request/IP argument through
+every one of this module's ~40 call sites, most of which have no Request in
+scope at all (engine.py, several router internals). ContextVars set in
+Starlette's `@app.middleware("http")` are visible to code invoked via
+`call_next()` even for the sync `def` endpoints this codebase uses
+throughout — anyio's threadpool wrapper explicitly copies the current
+context into the worker thread — verified empirically in
+tests/test_audit_log.py rather than assumed. Falls back to None (NULL) when
+log_event() is called outside a request (direct test calls, scripts): a
+missing value there is correct, not a bug, since there's no client to
+attribute.
 """
 from __future__ import annotations
 
 import uuid
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
@@ -55,6 +72,15 @@ from .models import AuditLog
 
 _MAX_BODY_LEN = 4000
 _TEXT_KEYS = ("body", "description", "requirement_text", "change_reason")
+
+_current_ip: ContextVar[str | None] = ContextVar("_current_ip", default=None)
+
+
+def set_current_ip(ip: str | None) -> None:
+    """Called once per request by main.py's middleware. Not for use elsewhere
+    — log_event() is the only reader.
+    """
+    _current_ip.set(ip)
 
 
 def log_event(
@@ -81,6 +107,7 @@ def log_event(
         before_value=_sanitise(before_value),
         after_value=_sanitise(after_value),
         context=context,
+        ip_address=_current_ip.get(),
         created_at=datetime.now(UTC),
     )
     session.add(entry)

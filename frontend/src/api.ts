@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuthUser, Contact, ControlStateRow, CreatedApiToken, EvidenceRow, EvidenceTaskRow, Framework, InvitedUser, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, ProductRow, StatementRow, SystemDescriptionData, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, Contact, ControlStateRow, CreatedApiToken, EvidenceRow, EvidenceTaskRow, Framework, InvitedUser, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, ProductRow, StatementRow, SystemDescriptionData, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -408,6 +408,26 @@ export const api = {
   revokeApiToken: async (orgId: string, tokenId: string): Promise<void> => {
     const r = await fetch(`/api/orgs/${orgId}/api-tokens/${tokenId}`, { method: "DELETE" });
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  },
+
+  // ── Audit log (read-only, msp_admin only — see backend/app/routers/audit_log.py) ──
+  listAuditLog: (
+    orgId: string,
+    filters: {
+      offset?: number;
+      limit?: number;
+      action?: string;
+      actor?: string;
+      ip_address?: string;
+      start?: string;
+      end?: string;
+    }
+  ) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) {
+      if (value !== undefined && value !== "") params.set(key, String(value));
+    }
+    return req<AuditLogPage>(`/orgs/${orgId}/audit-log?${params.toString()}`);
   },
 
   downloadBundle: async (orgId: string, assessmentId: string): Promise<void> => {

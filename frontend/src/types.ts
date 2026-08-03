@@ -203,6 +203,29 @@ export interface CreatedApiToken {
   token: string;
 }
 
+export interface AuditLogRow {
+  id: string;
+  created_at: string;
+  actor: string;
+  actor_type: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  before_value: Record<string, unknown> | null;
+  after_value: Record<string, unknown> | null;
+  context: Record<string, unknown> | null;
+  // NULL means "predates IP capture, or logged outside an HTTP request" —
+  // never "hidden by a filter". See AuditLogPanel's own note to the admin.
+  ip_address: string | null;
+}
+
+export interface AuditLogPage {
+  items: AuditLogRow[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
 export interface UserRow {
   id: string;
   org_id: string;

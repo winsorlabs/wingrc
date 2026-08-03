@@ -1,6 +1,6 @@
 # Plan — Auth/RBAC completion (roadmap item I) + frontend admin surface
 
-**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4 ✅ merged · I.5 ✅ closed (5 deviations — see I.5; 308/308 integration tests green on wl-util-1, browser smoke test confirmed) · I.6 ✅ merged (all 6 items) · I.7 ✅ merged (users + API tokens admin panels, invite-redemption page) · I.8 implemented pending commit/review (see I.8) · I.9 not started · **User deletion (ADR 0006) implemented, out-of-band — see that section below, not part of I.1–I.9**
+**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4 ✅ merged · I.5 ✅ closed (5 deviations — see I.5; 308/308 integration tests green on wl-util-1, browser smoke test confirmed) · I.6 ✅ merged (all 6 items) · I.7 ✅ merged (users + API tokens admin panels, invite-redemption page) · I.8 implemented pending commit/review (see I.8) · I.9 not started · **User deletion (ADR 0006) implemented, out-of-band — see that section below, not part of I.1–I.9** · **Audit log viewer implemented, out-of-band — see that section below, not part of I.1–I.9**
 **Baseline:** 0088757
 **Scope:** close the gaps identified in the audit of item I, then land the frontend
 surface those endpoints require.
@@ -852,6 +852,130 @@ integration -v` on wl-util-1 (after `git pull`) is the outstanding step,
 same gap I.5/I.8 had before their own "closed"/"implemented" lines above.
 Frontend not yet `tsc -b`'d or browser-smoke-tested for the same reason
 (no local Node on this box, per I.8's note).
+
+---
+
+## Audit log viewer — implemented, out-of-band
+
+**Not part of the I.1–I.9 numbering**, same footing as the ADR 0006 section
+above — this is a new read-only surface over the existing `audit_log`
+table, not a role-rendering or auth-lifecycle slice this plan ever scoped.
+Recorded here for the same reason: so a future reader diffing this plan
+against `git log` doesn't conclude it was folded into I.8 or I.9.
+
+**Schema check done before writing the endpoint** (per the actual ask):
+`audit_log` (`backend/app/models.py`) had exactly `id`, `org_id`, `actor`,
+`actor_type`, `action`, `entity_type`, `entity_id`, `before_value`,
+`after_value`, `context`, `created_at` — no IP column anywhere, confirmed
+by grep before writing any code. `actor` is free text, not an FK (per ADR
+0006's own finding) — the viewer shows it as the raw stored string; it does
+not attempt to resolve it to a user display name, since a safe resolution
+would need to distinguish real UUIDs from values like `"system"`/`"api"`
+and wasn't asked for. Flagged as a possible follow-up, not built.
+
+**IP capture (migration `0022_audit_log_ip_address`):** adds
+`audit_log.ip_address VARCHAR(45)`, nullable, plus `(org_id, created_at)`
+and `(org_id, ip_address)` indexes. Populated by `audit.log_event()` from a
+`ContextVar` (`audit._current_ip`) that `main.py`'s new
+`_stamp_audit_ip` middleware sets once per request via
+`auth.get_client_ip(request)` — the exact same X-Real-IP-aware resolver
+the I.6 login rate limiter already uses, not a second extraction path.
+This was the only way to populate the column without threading a
+`Request`/IP argument through all ~40 existing `log_event()` call sites
+across 6 routers and `engine.py` (several of which have no `Request` in
+scope at all) — out of proportion to what this feature asked for.
+`tests/test_audit_log.py::test_real_request_captures_client_ip_via_middleware`
+proves the ContextVar-through-middleware mechanism actually works for this
+codebase's sync `def` endpoints end to end (a real `TestClient` request
+with a custom `X-Real-IP` header, checked against the resulting row),
+rather than trusting the anyio-threadpool-context-propagation reasoning
+on its own.
+
+**Is `get_client_ip` trustworthy for this, given nginx is the only thing in
+front of the app?** Yes, for the topology that's actually deployed today:
+`deploy/nginx/nginx.conf` sets `X-Real-IP` unconditionally from its own
+`$remote_addr`, which a client cannot override by sending its own
+`X-Real-IP` header through nginx. **Caveat, checked against
+`docs/azure-container-apps-deployment-plan.md`:** that draft (not yet
+executed) plan puts Container Apps' own ingress in front of nginx for TLS
+termination — in that topology nginx's `$remote_addr` would be the
+ingress's own hop, not the real client, unless nginx there is reconfigured
+to trust a forwarded-for header from that ingress instead. Not a live bug
+today; flagged so it isn't rediscovered as a surprise when that plan
+executes.
+
+**Rows predating this migration have `ip_address = NULL` and cannot be
+backfilled** — the address was simply never captured. Decision, stated
+explicitly rather than left implicit: when the IP filter is active, NULL
+rows are excluded (plain SQL `ILIKE` semantics — NULL never matches), and
+the UI shows a persistent hint while the filter is non-empty explaining
+that omission. Without the filter, NULL-IP rows still appear in the list,
+rendered as "Unknown" rather than blank — the row is real and its absence
+of an IP is itself informative, so it must never look like a display bug.
+
+**Endpoint:** `GET /orgs/{org_id}/audit-log` (`backend/app/routers/audit_log.py`),
+`require_org_access("msp_admin")` — read-only, no other HTTP method on this
+router and none planned; the table itself is append-only by design.
+Params: `offset`/`limit` (default 50, capped 200), `action` (exact match),
+`actor` (substring), `ip_address` (substring, NULL-excludes as above),
+`start`/`end` (inclusive `created_at` bounds). Sort `created_at DESC, id
+DESC` — the `id` tiebreaker is pagination-stability only, not a claim about
+real ordering; same-transaction timestamp ties are real here (see the
+`password_history` seq-column history under I.5's deviation 5 for the same
+root cause turning up in different data).
+
+**Frontend:** new "Audit Log" tab under `OrgSettings`, gated the same way
+`UsersPanel`'s tab is (`currentUserRole === "msp_admin"`, UX mirror of the
+server-side gate only). Date-range/action/actor/IP filters, newest-first
+paginated table, an expandable row for the JSON before/after/context
+values. Action filter is a free-text input with an autocomplete `<datalist>`
+of currently-known actions (non-enforced, drifts stale harmlessly if
+`audit.py`'s vocabulary changes — unlike `lib/roles.ts`'s `READ_ONLY_ROLES`,
+which mirrors a real enforcement boundary and would drift unsafely).
+
+**Tests:** `backend/tests/test_audit_log.py` (15 cases) — non-`msp_admin`
+403 (all three other roles, not just the I.2 assessor case), org-scoping,
+newest-first ordering + pagination, each filter in isolation, filters
+combined with AND, the NULL-never-matches-active-filter behavior in both
+directions (excluded when filtering, visible as "Unknown" when not), the
+real-request-through-middleware IP capture proof above, and a direct
+`log_event()` call outside any request producing a NULL IP (the expected,
+non-buggy default for every existing non-HTTP call site).
+
+**Crash-safety check on the no-request-context path, done explicitly
+before commit** (seed scripts, catalog seeding, CLI invocations, any future
+background job calling `log_event()` with no ambient HTTP request —
+`_current_ip.get()` must degrade to NULL, never raise, since a crash in the
+audit writer would be a worse failure mode than the missing IP itself
+already is): `_current_ip` is declared `ContextVar("_current_ip",
+default=None)` (`audit.py`), so `.get()` cannot raise `LookupError` even
+when `.set()` was never called anywhere in the process — confirmed by
+direct execution against this box's Python (no DB, no ASGI app): a bare
+`ContextVar(default=None).get()` with no prior `.set()` returns `None`; a
+`.set()` performed inside a spawned `asyncio.Task` (the same shape as one
+HTTP request's middleware) does not leak into the parent context once that
+task completes, matching the isolation between one request's IP-stamping
+and any later, unrelated direct call in the same process; and the real
+`audit.log_event()` function called directly against a bare stub session
+object (no DB) returns `ip_address=None` with no exception.
+`test_log_event_outside_any_request_never_raises_no_db_required` (new,
+deliberately **not** `@pytest.mark.integration` — it needs no fixtures and
+no DB) encodes this as a real, currently-passing test rather than only an
+integration test gated on wl-util-1 reachability; ran it locally on this
+box just now — passes.
+
+**Verification status:** `ruff check` clean; migration chain verified to
+resolve to a single head (`0022_audit_log_ip_address`) via Alembic's
+`ScriptDirectory` offline; `test_route_guards.py`'s deny-by-default harness
+passes without any allowlist edit (the new route's `require_org_access`
+dependency satisfies it automatically); all 15 new tests (14 integration +
+1 DB-free) plus the full 472-test suite collect cleanly; all 85 DB-free
+tests pass, including the new crash-safety one above. Everything else
+(the 14 `@pytest.mark.integration` cases) not yet run against a real
+Postgres, and frontend not yet `tsc -b`'d/browser-tested — same outstanding
+step as the ADR 0006 section above, for the same reason (no DB/Node
+reachable from this box). wl-util-1, after `git pull`:
+`pytest tests/test_audit_log.py -m integration -v`.
 
 ---
 
