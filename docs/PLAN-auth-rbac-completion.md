@@ -1,6 +1,6 @@
 # Plan — Auth/RBAC completion (roadmap item I) + frontend admin surface
 
-**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4 ✅ merged · I.5 ✅ closed (5 deviations — see I.5; 308/308 integration tests green on wl-util-1, browser smoke test confirmed) · I.6 ✅ merged (all 6 items) · I.7 ✅ merged (users + API tokens admin panels, invite-redemption page) · I.8 implemented pending commit/review (see I.8) · I.9 not started
+**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4 ✅ merged · I.5 ✅ closed (5 deviations — see I.5; 308/308 integration tests green on wl-util-1, browser smoke test confirmed) · I.6 ✅ merged (all 6 items) · I.7 ✅ merged (users + API tokens admin panels, invite-redemption page) · I.8 implemented pending commit/review (see I.8) · I.9 not started · **User deletion (ADR 0006) implemented, out-of-band — see that section below, not part of I.1–I.9**
 **Baseline:** 0088757
 **Scope:** close the gaps identified in the audit of item I, then land the frontend
 surface those endpoints require.
@@ -779,6 +779,79 @@ step, same gap I.5 had before its "closed" line above.
 - Show active sessions with last activity, and a "sign out everywhere" action.
   This depends on `last_activity_at` from I.4 and is the user-visible payoff for
   that column.
+
+---
+
+## User deletion (ADR 0006) — implemented, out-of-band
+
+**Not part of the I.1–I.9 numbering.** This work implements
+`docs/adr/0006-user-deletion-vs-immutable-audit-trail.md`, which was proposed
+independently of this plan (it settles a design question — permanent
+deletion vs. the append-only `audit_log` — not a slice this plan ever
+scoped). It's recorded here only because it touches the same `users.py`
+router and `UsersPanel.tsx` surface I.7/I.8 built, and a future reader
+diffing this plan against `git log` should not conclude it was silently
+folded into I.8's role-aware-rendering scope. It wasn't — I.8 is UI
+read-only enforcement for `c3pao_assessor`; this is a new, permanent,
+`msp_admin`-gated mutation with no relationship to role-based rendering.
+
+**Adopts the ADR's two-tier model exactly:**
+- `POST /orgs/{org_id}/users/{user_id}/delete` — hard `DELETE FROM "user"`,
+  permitted only when the target is already inactive (deactivate-first gate,
+  enforced server-side, not just hidden in the UI) and has zero `audit_log`
+  rows referencing it (`actor = user_id` OR `entity_type='user' AND
+  entity_id=user_id`). Cascades via the existing `ON DELETE CASCADE` FKs on
+  `user_session`, `mfa_backup_code`, `api_token` — and `password_history`,
+  which didn't exist when the ADR was written (I.5 landed it the same day)
+  but shares the identical shape the ADR describes for the other three: pure
+  auth mechanics, no compliance narrative. Blocked with 409 when history
+  exists; the 409 detail is the exact "N audit log entries... Anonymize
+  instead?" message, so the UI never has to duplicate that copy.
+- `POST /orgs/{org_id}/users/{user_id}/anonymize` — the fallback for any
+  user with history. Scrubs `email`/`display_name`/`entra_oid`/
+  `totp_secret`/`password_hash`, sets `mfa_enrolled=False`, explicitly
+  deletes that same four-table set (the parent row survives here, so the FK
+  cascade never fires), and sets the new `user.deleted_at` column
+  (migration `0021_user_deleted_at`). `audit_log` is never touched — the
+  action inserts one new `user.anonymize` row via the existing `log_event()`,
+  `after_value={"anonymized": true}` only, no PII per the ADR's explicit
+  warning against re-injecting what it just scrubbed.
+- `deleted_at` is permanent and distinct from `is_active`: `patch_user`
+  now 409s on any attempt to set `is_active=True` where `deleted_at` is set,
+  so an anonymized account can never be reactivated the way an ordinarily
+  deactivated one can.
+- Both endpoints require `msp_admin` (`require_org_access("msp_admin")`,
+  matching every other destructive user action in this router) and refuse
+  to act on the caller's own account, matching `deactivate_user`'s existing
+  self-check.
+
+**Frontend (`UsersPanel.tsx`):** "Delete" only renders on an inactive,
+non-self row (the same deactivate-first gate, mirrored in the UI). Inline
+confirm matches the existing deactivate/reset-MFA pattern. If the server
+409s, the row switches to a *second*, visually distinct confirm — the
+server's own message plus an "Anonymize" button — rather than silently
+retrying as anonymize; the admin must click that second button to choose
+it. An anonymized row (`deleted_at` set) renders a status badge and no
+further row actions, and its role `<select>` is disabled.
+
+**Tests:** `backend/tests/test_user_deletion.py` (18 cases) — active-user
+gate on both endpoints, self-protection, history-blocks-delete (singular
+and plural count wording, and the actor-not-just-entity case), zero-history
+delete cascades all four tables, the delete action's own audit row carries
+no PII, double-anonymize and double-delete rejection, anonymize scrubs PII
+while leaving the pre-existing audit row byte-for-byte unchanged, anonymize
+cascades the same four tables, reactivation-after-anonymize 409s, and
+non-admin/assessor 403 on both endpoints.
+
+**Verification status:** `ruff check` clean; migration chain verified to
+resolve to a single head (`0021_user_deleted_at`) via Alembic's
+`ScriptDirectory` offline (no DB needed for that check); all 18 new tests
+collect cleanly under pytest. Not yet run against a real Postgres — this
+box has no reachable database — so `pytest tests/test_user_deletion.py -m
+integration -v` on wl-util-1 (after `git pull`) is the outstanding step,
+same gap I.5/I.8 had before their own "closed"/"implemented" lines above.
+Frontend not yet `tsc -b`'d or browser-smoke-tested for the same reason
+(no local Node on this box, per I.8's note).
 
 ---
 

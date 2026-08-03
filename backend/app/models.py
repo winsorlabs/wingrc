@@ -1136,6 +1136,11 @@ class User(Base):
         Boolean, nullable=False, server_default=text("false")
     )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # ADR 0006: permanent, irreversible anonymization marker — distinct from
+    # is_active, which an admin can always flip back. deleted_at is never
+    # unset once written; the UI must tell the two states apart (never offer
+    # "reactivate" once this is set).
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

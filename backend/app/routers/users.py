@@ -8,6 +8,8 @@ POST /orgs/{org_id}/users/{user_id}/reset-mfa — admin MFA reset
 DELETE /orgs/{org_id}/users/{user_id} — deactivate
 POST /orgs/{org_id}/users/{user_id}/unlock — clear lockout state (I.5)
 POST /orgs/{org_id}/users/{user_id}/reset-password — issue a one-time reset token (I.5)
+POST /orgs/{org_id}/users/{user_id}/delete — permanent hard-delete (ADR 0006, zero-history only)
+POST /orgs/{org_id}/users/{user_id}/anonymize — scrub PII, keep row + audit trail (ADR 0006)
 POST /orgs/{org_id}/users/api        — create an API user (service account) + its first token
 
 GET    /orgs/{org_id}/api-tokens            — list tokens
@@ -22,7 +24,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import select, text
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.orm import Session
 
 from ..audit import log_event
@@ -35,7 +37,7 @@ from ..auth import (
     revoke_user_sessions,
 )
 from ..db import get_session
-from ..models import ApiToken, User
+from ..models import ApiToken, AuditLog, User
 
 router = APIRouter(
     prefix="/orgs/{org_id}",
@@ -176,6 +178,11 @@ def patch_user(
             )
         user.role = body.role
     if body.is_active is not None:
+        if body.is_active and user.deleted_at is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="This user has been permanently anonymized and cannot be reactivated",
+            )
         if body.is_active != user.is_active:
             log_event(
                 db,
@@ -261,6 +268,132 @@ def deactivate_user(
     )
     db.commit()
     return {"ok": True}
+
+
+def _audit_history_count(db: Session, org_id: uuid.UUID, user_id: uuid.UUID) -> int:
+    """ADR 0006's definition of "history": any audit_log row where the user
+    is the actor, or the row's entity is this user record.
+    """
+    return db.execute(
+        select(func.count()).select_from(AuditLog).where(
+            AuditLog.org_id == org_id,
+            or_(
+                AuditLog.actor == str(user_id),
+                and_(AuditLog.entity_type == "user", AuditLog.entity_id == user_id),
+            ),
+        )
+    ).scalar_one()
+
+
+@router.post("/users/{user_id}/delete", status_code=200)
+def delete_user_permanent(
+    org_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(require_org_access("msp_admin")),
+):
+    """Permanent hard-delete (ADR 0006) — only for a deactivated user with
+    zero audit_log footprint. Never falls back to anonymizing on its own if
+    history exists; the admin must choose that as a separate, deliberate
+    action via /anonymize (see UsersPanel's confirm flow).
+    """
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    user = _get_user(db, org_id, user_id)
+    if user.deleted_at is not None:
+        raise HTTPException(status_code=400, detail="User has already been anonymized")
+    if user.is_active:
+        raise HTTPException(
+            status_code=400,
+            detail="User must be deactivated before it can be deleted",
+        )
+
+    history_count = _audit_history_count(db, org_id, user_id)
+    if history_count > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"This user has {history_count} audit log "
+                f"{'entry' if history_count == 1 else 'entries'} and can't be "
+                "deleted without breaking the audit trail. Anonymize instead? "
+                "Their PII is scrubbed, the account stays disabled, and audit "
+                "history is preserved under an anonymized identifier."
+            ),
+        )
+
+    log_event(
+        db,
+        org_id=org_id,
+        action="user.delete",
+        entity_type="user",
+        entity_id=user.id,
+        after_value={"deleted": True},
+        context={"admin": str(current_user.id)},
+        actor=str(current_user.id),
+        actor_type=_actor_type(current_user),
+    )
+    # user_session/mfa_backup_code/api_token/password_history all carry
+    # ON DELETE CASCADE FKs to user.id (see ADR 0006) — one DELETE on the
+    # parent row is sufficient; Postgres removes the rest.
+    db.execute(text('DELETE FROM "user" WHERE id = :uid'), {"uid": user_id})
+    db.commit()
+    return {"ok": True, "deleted": True}
+
+
+@router.post("/users/{user_id}/anonymize", status_code=200)
+def anonymize_user(
+    org_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(require_org_access("msp_admin")),
+):
+    """Scrub PII, keep the row so audit_log.actor/entity_id still resolve
+    (ADR 0006, option C). audit_log itself is never touched — this only
+    ever inserts one new, non-PII user.anonymize event via log_event().
+    """
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot anonymize your own account")
+    user = _get_user(db, org_id, user_id)
+    if user.deleted_at is not None:
+        raise HTTPException(status_code=400, detail="User has already been anonymized")
+    if user.is_active:
+        raise HTTPException(
+            status_code=400,
+            detail="User must be deactivated before it can be anonymized",
+        )
+
+    user.email = f"deleted-{user.id}@wingrc.invalid"
+    user.display_name = "Deleted user"
+    user.entra_oid = None
+    user.totp_secret = None
+    user.mfa_enrolled = False
+    user.password_hash = None
+    user.deleted_at = datetime.now(UTC)
+
+    # Pure auth mechanics, no compliance narrative (ADR 0006) — cascade
+    # these explicitly since the user row itself is NOT deleted here, so the
+    # ON DELETE CASCADE FKs never fire. password_history postdates the
+    # ADR's own table but shares the identical shape (FK to user.id,
+    # ON DELETE CASCADE, nothing but password hashes), so it's cleared the
+    # same way as the three tables the ADR names.
+    db.execute(text("DELETE FROM user_session WHERE user_id = :uid"), {"uid": user_id})
+    db.execute(text("DELETE FROM mfa_backup_code WHERE user_id = :uid"), {"uid": user_id})
+    db.execute(text("DELETE FROM api_token WHERE user_id = :uid"), {"uid": user_id})
+    db.execute(text("DELETE FROM password_history WHERE user_id = :uid"), {"uid": user_id})
+
+    log_event(
+        db,
+        org_id=org_id,
+        action="user.anonymize",
+        entity_type="user",
+        entity_id=user.id,
+        after_value={"anonymized": True},
+        context={"admin": str(current_user.id)},
+        actor=str(current_user.id),
+        actor_type=_actor_type(current_user),
+    )
+    db.commit()
+    return _user_out(user)
 
 
 @router.post("/users/{user_id}/unlock", status_code=200)
@@ -588,4 +721,8 @@ def _user_out(u: User) -> dict:
         "lockout_count": u.lockout_count,
         "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
         "created_at": u.created_at.isoformat(),
+        # ADR 0006: distinguishes permanent anonymization from ordinary
+        # is_active=False — the UI must never offer to reactivate a row
+        # where this is set.
+        "deleted_at": u.deleted_at.isoformat() if u.deleted_at else None,
     }

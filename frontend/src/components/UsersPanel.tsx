@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import { ALL_ROLES, ROLE_LABELS } from "../lib/roles";
 import type { InvitedUser, UserRow } from "../types";
 
@@ -65,6 +65,17 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
     { userId: string; token: string; expiresAt: string } | null
   >(null);
   const [resetPasswordCopied, setResetPasswordCopied] = useState(false);
+
+  // ADR 0006: delete is a two-step, two-choice flow. confirmDeleteId is the
+  // plain "permanently delete?" confirm, matching every other row action's
+  // inline-confirm pattern. blockedDelete is a *different* state entered
+  // only when the server rejects the delete (409, audit history exists) —
+  // it is never set by clicking a button labeled "Delete", only by that
+  // rejection, so anonymize can never happen silently behind a Delete click.
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [blockedDelete, setBlockedDelete] = useState<{ userId: string; message: string } | null>(null);
+  const [anonymizing, setAnonymizing] = useState(false);
 
   useEffect(() => {
     load();
@@ -243,6 +254,42 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
     }
   }
 
+  async function handleDelete(userId: string) {
+    setDeleting(true);
+    setError(null);
+    try {
+      await api.deleteUserPermanent(orgId, userId);
+      setUsers((prev) => prev.filter((u) => u.id !== userId));
+      setConfirmDeleteId(null);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        // Blocked because audit history exists — offer anonymize as its
+        // own separate action rather than falling back to it silently.
+        setBlockedDelete({ userId, message: e.message });
+        setConfirmDeleteId(null);
+      } else {
+        setError(e instanceof Error ? e.message : "Could not delete user");
+        setConfirmDeleteId(null);
+      }
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function handleAnonymize(userId: string) {
+    setAnonymizing(true);
+    setError(null);
+    try {
+      const updated = await api.anonymizeUser(orgId, userId);
+      setUsers((prev) => prev.map((u) => (u.id === userId ? updated : u)));
+      setBlockedDelete(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not anonymize user");
+    } finally {
+      setAnonymizing(false);
+    }
+  }
+
   if (loading) return <div className="loading">Loading users…</div>;
 
   return (
@@ -292,6 +339,7 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
                     <select
                       value={roleValue}
                       onChange={(e) => requestRoleChange(u, e.target.value)}
+                      disabled={!!u.deleted_at}
                     >
                       {ALL_ROLES.map((r) => (
                         <option key={r} value={r}>{ROLE_LABELS[r] ?? r}</option>
@@ -333,7 +381,11 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
                       : <span className="no-roles">Not enrolled</span>}
                   </td>
                   <td>
-                    {u.requires_admin_reset ? (
+                    {u.deleted_at ? (
+                      <span className="status-badge status-warning">
+                        Anonymized {formatDate(u.deleted_at)}
+                      </span>
+                    ) : u.requires_admin_reset ? (
                       <span className="status-badge status-warning">Requires Admin Reset</span>
                     ) : isCurrentlyLocked(u) ? (
                       <span className="status-badge status-warning">
@@ -346,113 +398,163 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
                   </td>
                   <td>
                     <div className="user-row-actions">
-                      {resetPasswordResult?.userId === u.id ? (
-                        <div className="reset-password-result">
-                          <div className="token-warning">
-                            This is the only time this reset token will be shown. Copy
-                            it now and deliver it to {u.email} out of band. It expires{" "}
-                            {formatDateTime(resetPasswordResult.expiresAt)}.
-                          </div>
-                          <code className="token-value">{resetPasswordResult.token}</code>
-                          <div className="reset-password-result-actions">
-                            <button className="btn-ghost btn-xs" onClick={handleCopyResetToken}>
-                              {resetPasswordCopied ? "Copied!" : "Copy"}
-                            </button>
-                            <button
-                              className="btn-primary btn-xs"
-                              onClick={() => setResetPasswordResult(null)}
-                            >
-                              Done
-                            </button>
-                          </div>
-                        </div>
-                      ) : confirmResetPasswordId === u.id ? (
-                        <span className="delete-confirm">
-                          <span>Reset password? They'll be signed out immediately.</span>
-                          <button
-                            className="btn-danger btn-xs"
-                            onClick={() => handleResetPassword(u.id)}
-                            disabled={resettingPassword}
-                          >
-                            {resettingPassword ? "Resetting…" : "Yes, reset"}
-                          </button>
-                          <button
-                            className="btn-ghost btn-xs"
-                            onClick={() => setConfirmResetPasswordId(null)}
-                          >
-                            Cancel
-                          </button>
-                        </span>
+                      {u.deleted_at ? (
+                        <span className="no-roles">No actions — permanently anonymized</span>
                       ) : (
-                        <button
-                          className="btn-ghost btn-xs"
-                          onClick={() => setConfirmResetPasswordId(u.id)}
-                        >
-                          Reset Password
-                        </button>
-                      )}
-                      {(u.requires_admin_reset || isCurrentlyLocked(u)) && (
-                        <button
-                          className="btn-ghost btn-xs"
-                          onClick={() => handleUnlock(u.id)}
-                          disabled={unlockingId === u.id}
-                        >
-                          {unlockingId === u.id ? "Unlocking…" : "Unlock"}
-                        </button>
-                      )}
-                      {u.mfa_enrolled && (
-                        confirmResetMfaId === u.id ? (
-                          <span className="delete-confirm">
-                            <span>Reset MFA? They'll be deactivated until re-enrolled.</span>
-                            <button
-                              className="btn-danger btn-xs"
-                              onClick={() => handleResetMfa(u.id)}
-                              disabled={resettingMfa}
-                            >
-                              {resettingMfa ? "Resetting…" : "Yes, reset"}
-                            </button>
-                            <button
-                              className="btn-ghost btn-xs"
-                              onClick={() => setConfirmResetMfaId(null)}
-                            >
-                              Cancel
-                            </button>
-                          </span>
-                        ) : (
-                          <button
-                            className="btn-ghost btn-xs"
-                            onClick={() => setConfirmResetMfaId(u.id)}
-                          >
-                            Reset MFA
-                          </button>
-                        )
-                      )}
-                      {u.is_active && !isSelf && (
-                        confirmDeactivateId === u.id ? (
-                          <span className="delete-confirm">
-                            <span>Deactivate?</span>
-                            <button
-                              className="btn-danger btn-xs"
-                              onClick={() => handleDeactivate(u.id)}
-                              disabled={deactivating}
-                            >
-                              {deactivating ? "Deactivating…" : "Yes, deactivate"}
-                            </button>
+                        <>
+                          {resetPasswordResult?.userId === u.id ? (
+                            <div className="reset-password-result">
+                              <div className="token-warning">
+                                This is the only time this reset token will be shown. Copy
+                                it now and deliver it to {u.email} out of band. It expires{" "}
+                                {formatDateTime(resetPasswordResult.expiresAt)}.
+                              </div>
+                              <code className="token-value">{resetPasswordResult.token}</code>
+                              <div className="reset-password-result-actions">
+                                <button className="btn-ghost btn-xs" onClick={handleCopyResetToken}>
+                                  {resetPasswordCopied ? "Copied!" : "Copy"}
+                                </button>
+                                <button
+                                  className="btn-primary btn-xs"
+                                  onClick={() => setResetPasswordResult(null)}
+                                >
+                                  Done
+                                </button>
+                              </div>
+                            </div>
+                          ) : confirmResetPasswordId === u.id ? (
+                            <span className="delete-confirm">
+                              <span>Reset password? They'll be signed out immediately.</span>
+                              <button
+                                className="btn-danger btn-xs"
+                                onClick={() => handleResetPassword(u.id)}
+                                disabled={resettingPassword}
+                              >
+                                {resettingPassword ? "Resetting…" : "Yes, reset"}
+                              </button>
+                              <button
+                                className="btn-ghost btn-xs"
+                                onClick={() => setConfirmResetPasswordId(null)}
+                              >
+                                Cancel
+                              </button>
+                            </span>
+                          ) : (
                             <button
                               className="btn-ghost btn-xs"
-                              onClick={() => setConfirmDeactivateId(null)}
+                              onClick={() => setConfirmResetPasswordId(u.id)}
                             >
-                              Cancel
+                              Reset Password
                             </button>
-                          </span>
-                        ) : (
-                          <button
-                            className="btn-ghost btn-xs btn-destructive"
-                            onClick={() => setConfirmDeactivateId(u.id)}
-                          >
-                            Deactivate
-                          </button>
-                        )
+                          )}
+                          {(u.requires_admin_reset || isCurrentlyLocked(u)) && (
+                            <button
+                              className="btn-ghost btn-xs"
+                              onClick={() => handleUnlock(u.id)}
+                              disabled={unlockingId === u.id}
+                            >
+                              {unlockingId === u.id ? "Unlocking…" : "Unlock"}
+                            </button>
+                          )}
+                          {u.mfa_enrolled && (
+                            confirmResetMfaId === u.id ? (
+                              <span className="delete-confirm">
+                                <span>Reset MFA? They'll be deactivated until re-enrolled.</span>
+                                <button
+                                  className="btn-danger btn-xs"
+                                  onClick={() => handleResetMfa(u.id)}
+                                  disabled={resettingMfa}
+                                >
+                                  {resettingMfa ? "Resetting…" : "Yes, reset"}
+                                </button>
+                                <button
+                                  className="btn-ghost btn-xs"
+                                  onClick={() => setConfirmResetMfaId(null)}
+                                >
+                                  Cancel
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                className="btn-ghost btn-xs"
+                                onClick={() => setConfirmResetMfaId(u.id)}
+                              >
+                                Reset MFA
+                              </button>
+                            )
+                          )}
+                          {u.is_active && !isSelf && (
+                            confirmDeactivateId === u.id ? (
+                              <span className="delete-confirm">
+                                <span>Deactivate?</span>
+                                <button
+                                  className="btn-danger btn-xs"
+                                  onClick={() => handleDeactivate(u.id)}
+                                  disabled={deactivating}
+                                >
+                                  {deactivating ? "Deactivating…" : "Yes, deactivate"}
+                                </button>
+                                <button
+                                  className="btn-ghost btn-xs"
+                                  onClick={() => setConfirmDeactivateId(null)}
+                                >
+                                  Cancel
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                className="btn-ghost btn-xs btn-destructive"
+                                onClick={() => setConfirmDeactivateId(u.id)}
+                              >
+                                Deactivate
+                              </button>
+                            )
+                          )}
+                          {!u.is_active && !isSelf && (
+                            blockedDelete?.userId === u.id ? (
+                              <span className="delete-confirm">
+                                <span>{blockedDelete.message}</span>
+                                <button
+                                  className="btn-danger btn-xs"
+                                  onClick={() => handleAnonymize(u.id)}
+                                  disabled={anonymizing}
+                                >
+                                  {anonymizing ? "Anonymizing…" : "Anonymize"}
+                                </button>
+                                <button
+                                  className="btn-ghost btn-xs"
+                                  onClick={() => setBlockedDelete(null)}
+                                >
+                                  Cancel
+                                </button>
+                              </span>
+                            ) : confirmDeleteId === u.id ? (
+                              <span className="delete-confirm">
+                                <span>Permanently delete? This cannot be undone.</span>
+                                <button
+                                  className="btn-danger btn-xs"
+                                  onClick={() => handleDelete(u.id)}
+                                  disabled={deleting}
+                                >
+                                  {deleting ? "Deleting…" : "Yes, delete"}
+                                </button>
+                                <button
+                                  className="btn-ghost btn-xs"
+                                  onClick={() => setConfirmDeleteId(null)}
+                                >
+                                  Cancel
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                className="btn-ghost btn-xs btn-destructive"
+                                onClick={() => setConfirmDeleteId(u.id)}
+                              >
+                                Delete
+                              </button>
+                            )
+                          )}
+                        </>
                       )}
                     </div>
                   </td>

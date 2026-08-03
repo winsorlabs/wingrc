@@ -2,6 +2,17 @@ import type { ApiTokenRow, Assessment, AuthUser, Contact, ControlStateRow, Creat
 
 const BASE = "/api";
 
+// Carries the HTTP status alongside the server's detail message so callers
+// can branch on it (e.g. UsersPanel distinguishing "blocked, offer
+// anonymize" (409) from any other failure) without re-parsing the message.
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function req<T>(path: string, opts?: RequestInit): Promise<T> {
   const r = await fetch(`${BASE}${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -352,6 +363,34 @@ export const api = {
       method: "POST",
       body: JSON.stringify({}),
     }),
+
+  // ADR 0006 — permanent deletion. Custom fetch (not req<T>) because the
+  // 409 "blocked, history exists" response's detail message is the exact
+  // copy UsersPanel shows the admin as the anonymize offer; ApiError.status
+  // lets the caller distinguish that case from any other failure.
+  deleteUserPermanent: async (orgId: string, userId: string): Promise<{ ok: boolean; deleted: boolean }> => {
+    const r = await fetch(`${BASE}/orgs/${orgId}/users/${userId}/delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new ApiError(body.detail ?? `${r.status} ${r.statusText}`, r.status);
+    }
+    return r.json();
+  },
+
+  anonymizeUser: async (orgId: string, userId: string): Promise<UserRow> => {
+    const r = await fetch(`${BASE}/orgs/${orgId}/users/${userId}/anonymize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new ApiError(body.detail ?? `${r.status} ${r.statusText}`, r.status);
+    }
+    return r.json();
+  },
 
   // ── API tokens ────────────────────────────────────────────────────────────
   listApiTokens: (orgId: string) =>

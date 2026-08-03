@@ -16,6 +16,11 @@ Scoped to meaningful compliance mutations (signal, not firehose):
   user.activation_change      — is_active changed via PATCH /users/{id}
   user.deactivate             — DELETE /users/{id}
   user.mfa_reset              — admin-forced MFA reset
+  user.delete                 — permanent hard-delete of a zero-history user
+                                 (ADR 0006). before/after never carry PII.
+  user.anonymize              — PII scrubbed, row kept, audit_log untouched
+                                 (ADR 0006). after_value is {"anonymized": true}
+                                 only — never the pre-scrub email/name.
   api_user.create             — API user (service account) + first token minted
   api_token.create            — token minted (name/role/expiry only — never
                                  the raw token or its hash)

@@ -221,6 +221,9 @@ export interface UserRow {
   lockout_count: number;
   last_login_at: string | null;
   created_at: string;
+  // ADR 0006: permanent, irreversible anonymization marker — distinct from
+  // is_active. Once set, the row can never be reactivated.
+  deleted_at: string | null;
 }
 
 export interface InvitedUser {
