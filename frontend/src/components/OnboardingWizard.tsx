@@ -65,9 +65,16 @@ export function OnboardingWizard({ orgId, orgName, onClose }: Props) {
         </div>
 
         <div className="wizard-body">
-          {step === 0 && <OrgProfileForm orgId={orgId} onSaved={loadStatus} />}
-          {step === 1 && <SystemDescriptionForm orgId={orgId} onSaved={loadStatus} />}
-          {step === 2 && <ContactsPanel orgId={orgId} onChanged={loadStatus} />}
+          {/* canWrite hardcoded true, not threaded from useAuth: this wizard is
+              unreachable for c3pao_assessor by construction. The only entry
+              point is OrgPicker's createOrg() succeeding (App.tsx's
+              enterOnboarding is called solely from that success path), and
+              POST /orgs already 403s under require_write() for that role
+              (orgs.py router-level dependency) — so a read-only session can
+              never reach this render. */}
+          {step === 0 && <OrgProfileForm orgId={orgId} canWrite={true} onSaved={loadStatus} />}
+          {step === 1 && <SystemDescriptionForm orgId={orgId} canWrite={true} onSaved={loadStatus} />}
+          {step === 2 && <ContactsPanel orgId={orgId} canWrite={true} onChanged={loadStatus} />}
         </div>
 
         <div className="wizard-footer">
