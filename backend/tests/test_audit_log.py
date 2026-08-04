@@ -498,13 +498,24 @@ def test_identity_resolution_batches_into_one_query(client, db_session, fake_msp
     )
     # And every row actually got a real name, not a fallback — proving the
     # single query resolved all five distinct GUIDs, not just the first.
+    #
+    # Scoped to status == "active" and matched by GUID rather than swept
+    # from both actor_user/entity_user indiscriminately: the odd-indexed
+    # rows above only override entity_id, so their actor falls back to
+    # _seed_row's default ("00000000-...-0001") — a GUID with no matching
+    # user in this org, which correctly resolves to status "deleted" with
+    # display_name None. A broader sweep would collect that None into the
+    # set alongside the five real names and fail on an extra None entry —
+    # that's correct fallback behavior, not a batching bug, so this
+    # assertion isn't the place to also cover it (see
+    # test_actor_resolves_deleted_user_when_row_gone for that case).
     items = r.json()["items"]
-    resolved_names = set()
+    resolved_by_id = {}
     for item in items:
         for identity in (item["actor_user"], item["entity_user"]):
-            if identity:
-                resolved_names.add(identity["display_name"])
-    assert resolved_names == {u.display_name for u in users}
+            if identity and identity["status"] == "active":
+                resolved_by_id[identity["id"]] = identity["display_name"]
+    assert resolved_by_id == {str(u.id): u.display_name for u in users}
 
 
 # ---------------------------------------------------------------------------
