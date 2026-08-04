@@ -1,6 +1,6 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { api } from "../api";
-import type { AuditLogRow } from "../types";
+import type { AuditLogRow, ResolvedIdentity } from "../types";
 
 const PAGE_SIZE = 50;
 
@@ -35,6 +35,38 @@ const KNOWN_ACTIONS = [
 
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString();
+}
+
+// Same three-way fallback (ADR 0006) for both the actor and entity_id
+// columns — the GUID is the durable record and stays visible (secondary
+// line) no matter which branch renders; name/email are a display
+// convenience resolved at read time, never written into audit_log.
+function IdentityCell({
+  identity,
+  rawFallback,
+}: {
+  identity: ResolvedIdentity | null;
+  rawFallback: ReactNode;
+}) {
+  if (!identity) {
+    return <>{rawFallback}</>;
+  }
+  let primary: string;
+  if (identity.status === "active") {
+    primary = `${identity.display_name} (${identity.email})`;
+  } else if (identity.status === "anonymized") {
+    primary = "Anonymized user";
+  } else {
+    primary = "Deleted user";
+  }
+  return (
+    <>
+      <div>{primary}</div>
+      <div className="contact-sub" title={identity.id}>
+        {identity.id}
+      </div>
+    </>
+  );
 }
 
 interface Props {
@@ -122,8 +154,11 @@ export function AuditLogPanel({ orgId }: Props) {
           <input
             value={actorFilter}
             onChange={(e) => setActorFilter(e.target.value)}
-            placeholder="user id or 'system'"
+            placeholder="GUID or 'system' — not name/email"
           />
+          <div className="field-hint">
+            Matches the stored ID, not the resolved name shown in the User column.
+          </div>
         </div>
         <div className="form-field">
           <label>Source IP</label>
@@ -185,7 +220,7 @@ export function AuditLogPanel({ orgId }: Props) {
             <thead>
               <tr>
                 <th>Time</th>
-                <th>Actor</th>
+                <th>User</th>
                 <th>Action</th>
                 <th>Entity</th>
                 <th>Source IP</th>
@@ -198,11 +233,27 @@ export function AuditLogPanel({ orgId }: Props) {
                   <tr>
                     <td>{formatDateTime(r.created_at)}</td>
                     <td>
-                      {r.actor} <span className="no-roles">({r.actor_type})</span>
+                      <IdentityCell
+                        identity={r.actor_user}
+                        rawFallback={
+                          <>
+                            {r.actor} <span className="no-roles">({r.actor_type})</span>
+                          </>
+                        }
+                      />
                     </td>
                     <td>{r.action}</td>
-                    <td title={r.entity_id}>
-                      {r.entity_type} · {r.entity_id.slice(0, 8)}…
+                    <td>
+                      {r.entity_type === "user" ? (
+                        <IdentityCell
+                          identity={r.entity_user}
+                          rawFallback={`user · ${r.entity_id.slice(0, 8)}…`}
+                        />
+                      ) : (
+                        <span title={r.entity_id}>
+                          {r.entity_type} · {r.entity_id.slice(0, 8)}…
+                        </span>
+                      )}
                     </td>
                     <td>
                       {r.ip_address ?? <span className="no-roles">Unknown</span>}

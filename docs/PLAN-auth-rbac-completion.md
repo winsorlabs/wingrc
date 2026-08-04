@@ -1014,6 +1014,67 @@ added for this specifically — it would be testing a spec-guaranteed Web
 API's built-in encoding behavior, not application logic that this
 codebase's changes could regress.
 
+**Follow-up: GUID identity resolution (2026-08-04).** Two rendering gaps
+closed, no schema change (no new migration — `User.display_name`/`email`/
+`deleted_at` already existed):
+
+- `actor` was always a raw GUID (or the literal `"system"`) in the UI, and
+  `entity_id` was a raw GUID for every `entity_type` including `"user"` —
+  Jarrod noticed a `user.deactivate` row didn't show *which* user got
+  deactivated, which is exactly the `entity_id` case, not the `actor` one.
+  Both are resolved the same way now, since both are GUIDs pointing at the
+  same `user` table.
+- **Resolution is read-time only, never written back.** `audit_log` gained
+  no columns; `routers/audit_log.py`'s `_resolve_identities` runs one batch
+  `SELECT ... WHERE id IN (...)` per request (all actor GUIDs that parse as
+  UUIDs, plus all `entity_id`s where `entity_type == "user"`, unioned into
+  one query) and joins in memory — `test_identity_resolution_batches_into_one_query`
+  asserts exactly one `FROM "user"` statement fires via a
+  `before_cursor_execute` listener on the real engine, not just that the
+  result is correct, since an N+1 regression here would still pass a
+  correctness-only test.
+- **Three-way fallback (ADR 0006), identical for actor and entity:**
+  `"active"` → `display_name (email)`; `"anonymized"` (row exists,
+  `deleted_at` set) → a fixed **"Anonymized user"** label, never the
+  scrubbed placeholder display_name/email even though those happen to
+  already read innocuously (`"Deleted user"` / `deleted-{id}@wingrc.invalid`)
+  — the API returns `display_name: null, email: null` for this status so
+  the frontend can't accidentally leak the placeholder even if it changes
+  later; `"deleted"` (no row at all — the hard-delete path) → a distinct
+  **"Deleted user"** label, so "the row was scrubbed but survives" and "the
+  row is completely gone" never look identical to an admin reading the
+  log, even though both are legitimate ADR 0006 outcomes rather than bugs.
+  The raw GUID is always included and always rendered (a secondary line
+  under the name, `.contact-sub`, full value in a `title` tooltip) — never
+  replaced, per the requirement that the durable record stay visible.
+- Filtering behavior is unchanged: the `actor` query param still matches
+  against the raw stored string (GUID or `"system"`), not the resolved
+  name/email — same as `before_value`/`after_value`, the filter operates on
+  the durable record.
+- Column rename: "Actor" → "User" (table header only; the filter input
+  above it is still labeled "Actor" since it filters the raw field, not the
+  resolved name).
+- 9 new backend tests: all three fallback statuses for both actor and
+  entity_id (6), the `"system"`-literal-not-resolved case, the
+  entity_type-isn't-`"user"`-not-resolved case, and the batch-query-count
+  proof above. Full suite: 481 tests collected, all 85 DB-free tests still
+  pass. The 9 new cases are `@pytest.mark.integration` — same outstanding
+  wl-util-1 step as the rest of this section.
+
+**Immediate follow-up:** the "User" column (resolved names) and the
+"Actor" filter (raw stored field) had a naming mismatch — nothing told an
+admin that typing a display name into the Actor filter would silently
+return zero rows. Fixed at the point of use, not by changing what the
+filter queries (matching resolved/mutable names instead of the immutable
+stored record would be the wrong behavior for an audit trail, not just a
+UX nit): the Actor field's placeholder now reads "GUID or 'system' — not
+name/email" and gained a persistent `.field-hint` — "Matches the stored
+ID, not the resolved name shown in the User column." Also switched
+`.audit-log-filters`'s `align-items` from `end` to `start`, since the
+Actor field is now taller than its siblings (label + input + hint vs. just
+label + input) and `end` would have pulled its input down out of line with
+the rest of the filter row.
+
 ---
 
 ## Order of merge

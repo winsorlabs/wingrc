@@ -281,6 +281,233 @@ def test_filters_combine_with_and(client, db_session, fake_msp_admin):
 
 
 # ---------------------------------------------------------------------------
+# Identity resolution — actor and entity_id (when entity_type == "user"),
+# both resolved through the same three-way fallback chain (ADR 0006):
+#   1. row exists, not anonymized -> display_name + email
+#   2. row exists, deleted_at set (anonymized) -> "anonymized", no PII
+#   3. row absent entirely (hard-deleted) -> "deleted"
+# The GUID itself is always returned regardless of which branch fires — it
+# is the durable record; the resolved name/email is a display convenience.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_actor_resolves_active_user(client, db_session, fake_msp_admin):
+    org = _seed_org(db_session, fake_msp_admin.org_id)
+    actor_user = _seed_user(
+        db_session, org_id=org.id, display_name="Jarrod Winsor", email="jarrod.winsor@example.com"
+    )
+    _seed_row(db_session, org_id=org.id, actor=str(actor_user.id), actor_type="user")
+
+    r = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log")
+    assert r.status_code == 200
+    item = r.json()["items"][0]
+    assert item["actor"] == str(actor_user.id), "raw GUID must still be present, unchanged"
+    assert item["actor_user"] == {
+        "id": str(actor_user.id),
+        "status": "active",
+        "display_name": "Jarrod Winsor",
+        "email": "jarrod.winsor@example.com",
+    }
+
+
+@pytest.mark.integration
+def test_actor_resolves_anonymized_user(client, db_session, fake_msp_admin):
+    org = _seed_org(db_session, fake_msp_admin.org_id)
+    # Mirrors exactly what routers/users.py's anonymize_user leaves behind —
+    # row survives, PII scrubbed, deleted_at set.
+    actor_user = _seed_user(
+        db_session,
+        org_id=org.id,
+        display_name="Deleted user",
+        email=f"deleted-{uuid.uuid4()}@wingrc.invalid",
+        deleted_at=datetime.now(UTC),
+    )
+    _seed_row(db_session, org_id=org.id, actor=str(actor_user.id), actor_type="user")
+
+    r = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log")
+    assert r.status_code == 200
+    item = r.json()["items"][0]
+    assert item["actor"] == str(actor_user.id)
+    assert item["actor_user"]["status"] == "anonymized"
+    assert item["actor_user"]["display_name"] is None, "must not surface the scrubbed placeholder"
+    assert item["actor_user"]["email"] is None, "must not surface the scrubbed placeholder email"
+    assert item["actor_user"]["id"] == str(actor_user.id)
+
+
+@pytest.mark.integration
+def test_actor_resolves_deleted_user_when_row_gone(client, db_session, fake_msp_admin):
+    """No user row at all — the expected outcome of ADR 0006's zero-history
+    hard-delete path, not a data-integrity bug. Must be labeled distinctly
+    from "anonymized", not rendered as a bare orphan GUID.
+    """
+    org = _seed_org(db_session, fake_msp_admin.org_id)
+    hard_deleted_id = uuid.uuid4()
+    _seed_row(db_session, org_id=org.id, actor=str(hard_deleted_id), actor_type="user")
+
+    r = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log")
+    assert r.status_code == 200
+    item = r.json()["items"][0]
+    assert item["actor"] == str(hard_deleted_id)
+    assert item["actor_user"] == {
+        "id": str(hard_deleted_id),
+        "status": "deleted",
+        "display_name": None,
+        "email": None,
+    }
+
+
+@pytest.mark.integration
+def test_actor_system_literal_is_not_resolved(client, db_session, fake_msp_admin):
+    """"system" isn't a GUID — no resolution attempted, actor_user is None
+    rather than a false "deleted" (which would misleadingly imply a user
+    row once existed for this action).
+    """
+    org = _seed_org(db_session, fake_msp_admin.org_id)
+    _seed_row(db_session, org_id=org.id, actor="system", actor_type="system")
+
+    r = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log")
+    assert r.status_code == 200
+    item = r.json()["items"][0]
+    assert item["actor"] == "system"
+    assert item["actor_user"] is None
+
+
+@pytest.mark.integration
+def test_entity_resolves_active_user(client, db_session, fake_msp_admin):
+    """The gap Jarrod noticed: a user.deactivate row's entity_id is the
+    user who was deactivated, and it must resolve the same way actor does.
+    """
+    org = _seed_org(db_session, fake_msp_admin.org_id)
+    target = _seed_user(
+        db_session, org_id=org.id, display_name="Target Person", email="target@example.com"
+    )
+    _seed_row(
+        db_session,
+        org_id=org.id,
+        action="user.deactivate",
+        entity_type="user",
+        entity_id=target.id,
+    )
+
+    r = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log")
+    assert r.status_code == 200
+    item = r.json()["items"][0]
+    assert item["entity_id"] == str(target.id)
+    assert item["entity_user"] == {
+        "id": str(target.id),
+        "status": "active",
+        "display_name": "Target Person",
+        "email": "target@example.com",
+    }
+
+
+@pytest.mark.integration
+def test_entity_resolves_anonymized_user(client, db_session, fake_msp_admin):
+    org = _seed_org(db_session, fake_msp_admin.org_id)
+    target = _seed_user(
+        db_session,
+        org_id=org.id,
+        display_name="Deleted user",
+        email=f"deleted-{uuid.uuid4()}@wingrc.invalid",
+        deleted_at=datetime.now(UTC),
+    )
+    _seed_row(
+        db_session, org_id=org.id, action="user.anonymize", entity_type="user", entity_id=target.id
+    )
+
+    r = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log")
+    assert r.status_code == 200
+    item = r.json()["items"][0]
+    assert item["entity_id"] == str(target.id)
+    assert item["entity_user"]["status"] == "anonymized"
+    assert item["entity_user"]["display_name"] is None
+    assert item["entity_user"]["email"] is None
+
+
+@pytest.mark.integration
+def test_entity_resolves_deleted_user_when_row_gone(client, db_session, fake_msp_admin):
+    org = _seed_org(db_session, fake_msp_admin.org_id)
+    hard_deleted_id = uuid.uuid4()
+    _seed_row(
+        db_session,
+        org_id=org.id,
+        action="user.delete",
+        entity_type="user",
+        entity_id=hard_deleted_id,
+    )
+
+    r = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log")
+    assert r.status_code == 200
+    item = r.json()["items"][0]
+    assert item["entity_id"] == str(hard_deleted_id)
+    assert item["entity_user"] == {
+        "id": str(hard_deleted_id),
+        "status": "deleted",
+        "display_name": None,
+        "email": None,
+    }
+
+
+@pytest.mark.integration
+def test_entity_not_resolved_when_entity_type_is_not_user(client, db_session, fake_msp_admin):
+    org = _seed_org(db_session, fake_msp_admin.org_id)
+    _seed_row(db_session, org_id=org.id, entity_type="control_state", entity_id=uuid.uuid4())
+
+    r = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log")
+    assert r.status_code == 200
+    item = r.json()["items"][0]
+    assert item["entity_user"] is None
+
+
+@pytest.mark.integration
+def test_identity_resolution_batches_into_one_query(client, db_session, fake_msp_admin, db_engine):
+    """Five distinct users referenced across the page (mix of actor and
+    entity_id) must resolve via exactly one SELECT against "user", not one
+    per row/per GUID.
+    """
+    org = _seed_org(db_session, fake_msp_admin.org_id)
+    users = [
+        _seed_user(db_session, org_id=org.id, display_name=f"User {i}", email=f"u{i}@example.com")
+        for i in range(5)
+    ]
+    for i, u in enumerate(users):
+        if i % 2 == 0:
+            _seed_row(db_session, org_id=org.id, actor=str(u.id), actor_type="user")
+        else:
+            _seed_row(db_session, org_id=org.id, entity_type="user", entity_id=u.id)
+
+    from sqlalchemy import event
+
+    captured: list[str] = []
+
+    def _capture(conn, cursor, statement, parameters, context, executemany):
+        if 'FROM "user"' in statement:
+            captured.append(statement)
+
+    event.listen(db_engine, "before_cursor_execute", _capture)
+    try:
+        r = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log")
+    finally:
+        event.remove(db_engine, "before_cursor_execute", _capture)
+
+    assert r.status_code == 200
+    assert r.json()["total"] == 5
+    assert len(captured) == 1, (
+        f"expected exactly one batch SELECT against \"user\", got {len(captured)}: {captured}"
+    )
+    # And every row actually got a real name, not a fallback — proving the
+    # single query resolved all five distinct GUIDs, not just the first.
+    items = r.json()["items"]
+    resolved_names = set()
+    for item in items:
+        for identity in (item["actor_user"], item["entity_user"]):
+            if identity:
+                resolved_names.add(identity["display_name"])
+    assert resolved_names == {u.display_name for u in users}
+
+
+# ---------------------------------------------------------------------------
 # End-to-end IP capture through the real middleware (not log_event() directly)
 # ---------------------------------------------------------------------------
 

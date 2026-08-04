@@ -1123,7 +1123,7 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 
 /* ── Audit log panel ──────────────────────────────────────────────────────── */
 .audit-log-panel { display: flex; flex-direction: column; gap: 0.75rem; }
-.audit-log-filters { align-items: end; }
+.audit-log-filters { align-items: start; }
 .audit-log-filter-actions { display: flex; gap: 0.5rem; }
 .audit-log-table td { font-size: 0.82rem; }
 .audit-log-detail {

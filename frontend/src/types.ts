@@ -203,14 +203,34 @@ export interface CreatedApiToken {
   token: string;
 }
 
+// Resolved at read time from the current `user` table — never written into
+// audit_log itself, which stores only the raw GUID (actor / entity_id).
+// status:
+//   "active"     — display_name/email are current
+//   "anonymized" — user row survives (ADR 0006 anonymize) but PII is
+//                  scrubbed; display_name/email are null, never the
+//                  placeholder values
+//   "deleted"    — no user row at all (ADR 0006 hard-delete); the
+//                  expected, documented outcome, not a data bug
+export interface ResolvedIdentity {
+  id: string;
+  status: "active" | "anonymized" | "deleted";
+  display_name: string | null;
+  email: string | null;
+}
+
 export interface AuditLogRow {
   id: string;
   created_at: string;
   actor: string;
   actor_type: string;
+  // null when `actor` isn't a resolvable GUID (e.g. the literal "system").
+  actor_user: ResolvedIdentity | null;
   action: string;
   entity_type: string;
   entity_id: string;
+  // null unless entity_type === "user".
+  entity_user: ResolvedIdentity | null;
   before_value: Record<string, unknown> | null;
   after_value: Record<string, unknown> | null;
   context: Record<string, unknown> | null;
