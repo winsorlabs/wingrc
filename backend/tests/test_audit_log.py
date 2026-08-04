@@ -131,11 +131,13 @@ def test_newest_first_and_pagination(client, db_session, fake_msp_admin):
         )
 
     r = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log?limit=2&offset=0")
+    assert r.status_code == 200
     body = r.json()
     assert body["total"] == 5
     assert [i["action"] for i in body["items"]] == ["test.event.4", "test.event.3"]
 
     r2 = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log?limit=2&offset=2")
+    assert r2.status_code == 200
     assert [i["action"] for i in r2.json()["items"]] == ["test.event.2", "test.event.1"]
 
 
@@ -147,6 +149,7 @@ def test_scoped_to_org(client, db_session, fake_msp_admin):
     _seed_row(db_session, org_id=other_org.id)
 
     r = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log")
+    assert r.status_code == 200
     assert r.json()["total"] == 1
 
 
@@ -162,6 +165,7 @@ def test_filter_by_action_exact_match(client, db_session, fake_msp_admin):
     _seed_row(db_session, org_id=org.id, action="user.unlock")
 
     r = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log?action=user.unlock")
+    assert r.status_code == 200
     body = r.json()
     assert body["total"] == 1
     assert body["items"][0]["action"] == "user.unlock"
@@ -175,6 +179,7 @@ def test_filter_by_actor_substring(client, db_session, fake_msp_admin):
     _seed_row(db_session, org_id=org.id, actor="system")
 
     r = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log?actor={target_actor[:8]}")
+    assert r.status_code == 200
     body = r.json()
     assert body["total"] == 1
     assert body["items"][0]["actor"] == target_actor
@@ -191,14 +196,26 @@ def test_filter_by_date_range(client, db_session, fake_msp_admin):
         db_session, org_id=org.id, action="test.recent", created_at=now - timedelta(hours=1)
     )
 
+    # params=, not an f-string: isoformat()'s "+00:00" offset contains a
+    # literal "+", which a naive f-string in a query string decodes as a
+    # space server-side (application/x-www-form-urlencoded: "+" means
+    # space; a literal "+" must be percent-encoded as "%2B" to survive).
+    # httpx's params= dict handles that encoding correctly, matching what
+    # the frontend's URLSearchParams does (see frontend/src/api.ts's
+    # listAuditLog) — this was a real bug caught on real Postgres: the
+    # corrupted "... 00:00" (space) value made Pydantic 422 the request,
+    # and this test previously read body["total"] off that 422 body
+    # without ever checking status_code first.
     start = (now - timedelta(days=1)).isoformat()
-    r = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log?start={start}")
+    r = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log", params={"start": start})
+    assert r.status_code == 200
     body = r.json()
     assert body["total"] == 1
     assert body["items"][0]["action"] == "test.recent"
 
     end = (now - timedelta(days=5)).isoformat()
-    r2 = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log?end={end}")
+    r2 = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log", params={"end": end})
+    assert r2.status_code == 200
     body2 = r2.json()
     assert body2["total"] == 1
     assert body2["items"][0]["action"] == "test.old"
@@ -213,6 +230,7 @@ def test_filter_by_ip_address_substring(client, db_session, fake_msp_admin):
     _seed_row(db_session, org_id=org.id, action="test.other_ip", ip_address="192.168.1.1")
 
     r = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log?ip_address=10.0.0")
+    assert r.status_code == 200
     body = r.json()
     assert body["total"] == 1
     assert body["items"][0]["action"] == "test.matching_ip"
@@ -230,6 +248,7 @@ def test_null_ip_never_matches_active_ip_filter(client, db_session, fake_msp_adm
     _seed_row(db_session, org_id=org.id, action="test.has_ip", ip_address="203.0.113.5")
 
     r = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log?ip_address=203.0.113.5")
+    assert r.status_code == 200
     body = r.json()
     assert body["total"] == 1
     assert body["items"][0]["action"] == "test.has_ip"
@@ -237,6 +256,7 @@ def test_null_ip_never_matches_active_ip_filter(client, db_session, fake_msp_adm
     # Without the filter, both rows (including the NULL one) are visible —
     # NULL means "unknown", not "hidden".
     r_unfiltered = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log")
+    assert r_unfiltered.status_code == 200
     items = r_unfiltered.json()["items"]
     actions = {i["action"] for i in items}
     assert actions == {"test.no_ip_captured", "test.has_ip"}
@@ -255,6 +275,7 @@ def test_filters_combine_with_and(client, db_session, fake_msp_admin):
     r = client.get(
         f"/orgs/{fake_msp_admin.org_id}/audit-log?action=user.unlock&actor=admin-a"
     )
+    assert r.status_code == 200
     body = r.json()
     assert body["total"] == 1
 
@@ -282,6 +303,7 @@ def test_real_request_captures_client_ip_via_middleware(client, db_session, fake
     assert row.ip_address == "203.0.113.77"
 
     listed = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log?ip_address=203.0.113.77")
+    assert listed.status_code == 200
     assert listed.json()["total"] == 1
 
 

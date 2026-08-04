@@ -977,6 +977,43 @@ step as the ADR 0006 section above, for the same reason (no DB/Node
 reachable from this box). wl-util-1, after `git pull`:
 `pytest tests/test_audit_log.py -m integration -v`.
 
+**Fixed after first real-Postgres run (339/340 passed):**
+`test_filter_by_date_range` built its query with an f-string
+(`f"...?start={start}"`) instead of encoding it. `datetime.isoformat()`'s
+`+00:00` UTC offset contains a literal `+`, and in a raw, unencoded query
+string a literal `+` decodes as a space (`application/x-www-form-urlencoded`
+semantics) — the backend received `... 00:00` instead of `...+00:00`,
+Pydantic rejected it, and the endpoint 422'd. The test never checked
+`status_code` before reading `r.json()["total"]`, so the failure surfaced
+as a confusing `KeyError: 'total'` on the 422 error body instead of the
+real 422. Confirmed the whole causal chain by direct execution (not
+assumed): `urllib.parse.parse_qs` on the naive URL reproduces the exact
+space-corrupted value; `pydantic.TypeAdapter(datetime)` (pydantic 2.13.4,
+what the endpoint actually validates against) rejects that corrupted value
+and accepts the correct one; `httpx.Request(..., params={"start": start})`
+— what the fix now uses — round-trips the original value exactly, verified
+by encoding then re-parsing it back to the identical string. Fixed by
+switching to `params=` (httpx dict, correctly percent-encodes) and adding
+`assert r.status_code == 200` to every request in this file that reads
+`.json()`, not just the one that broke — the whole point being that a test
+reading a key off an unvalidated response body will keep hiding errors
+like this one.
+
+**Frontend checked, not assumed fine:** `frontend/src/api.ts`'s
+`listAuditLog` already builds its query with `URLSearchParams` +
+`.set()`/`.toString()`, not string interpolation — the UI's date filter was
+never affected by this. `URLSearchParams.toString()` percent-encodes a
+literal `+` as `%2B` per the WHATWG URL Standard's
+`application/x-www-form-urlencoded` serializer (a fixed byte-safelist, `+`
+not included) — this box has no Node/JS runtime to execute that literally,
+so confidence rests on the spec being deterministic (not
+implementation/browser-varying) plus direct execution of the identical
+encoding class via Python's `urlencode`/`httpx.QueryParams`, both of which
+implement the same named standard for the same reason. No frontend test
+added for this specifically — it would be testing a spec-guaranteed Web
+API's built-in encoding behavior, not application logic that this
+codebase's changes could regress.
+
 ---
 
 ## Order of merge
