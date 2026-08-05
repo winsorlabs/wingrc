@@ -61,6 +61,13 @@ body {
   gap: 1.25rem;
 }
 
+/* Single-org roles (customer_poc, c3pao_assessor): one card, no org list
+   or create-org form to sit beside. */
+.picker-grid-single {
+  max-width: 480px;
+  grid-template-columns: 1fr;
+}
+
 /* ── Cards ── */
 .card {
   background: var(--surface);

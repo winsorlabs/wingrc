@@ -1,6 +1,6 @@
 # Plan — Auth/RBAC completion (roadmap item I) + frontend admin surface
 
-**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4 ✅ merged · I.5 ✅ closed (5 deviations — see I.5; 308/308 integration tests green on wl-util-1, browser smoke test confirmed) · I.6 ✅ merged (all 6 items) · I.7 ✅ merged (users + API tokens admin panels, invite-redemption page) · I.8 implemented pending commit/review (see I.8) · I.9 not started · **User deletion (ADR 0006) implemented, out-of-band — see that section below, not part of I.1–I.9** · **Audit log viewer implemented, out-of-band — see that section below, not part of I.1–I.9**
+**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4 ✅ merged · I.5 ✅ closed (5 deviations — see I.5; 308/308 integration tests green on wl-util-1, browser smoke test confirmed) · I.6 ✅ merged (all 6 items) · I.7 ✅ merged (users + API tokens admin panels, invite-redemption page) · I.8 implemented pending commit/review (see I.8) · I.9 not started · **User deletion (ADR 0006) implemented, out-of-band — see that section below, not part of I.1–I.9** · **Audit log viewer implemented, out-of-band — see that section below, not part of I.1–I.9** · **Non-MSP org-picker landing gap implemented, out-of-band — see that section below, not part of I.1–I.9**
 **Baseline:** 0088757
 **Scope:** close the gaps identified in the audit of item I, then land the frontend
 surface those endpoints require.
@@ -1074,6 +1074,117 @@ ID, not the resolved name shown in the User column." Also switched
 Actor field is now taller than its siblings (label + input + hint vs. just
 label + input) and `end` would have pulled its input down out of line with
 the rest of the filter row.
+
+---
+
+## Non-MSP org-picker landing gap — implemented, out-of-band
+
+**Not part of the I.1–I.9 numbering**, same footing as the ADR 0006 and
+audit-log-viewer sections above — this fixes a navigation gap found during
+manual browser verification of I.8, but it is not an I.8 miss (see "Why
+this isn't I.8" below). Recorded here so a future reader diffing this plan
+against `git log` doesn't conclude it was folded into I.8's read-only
+scope.
+
+**The bug:** a `c3pao_assessor` logging in landed on `OrgPicker`, which
+unconditionally calls `GET /orgs` on mount. That endpoint is correctly
+gated `require_role("msp_admin", "msp_engineer")` (`orgs.py:248-251`) — the
+403 itself is not a bug, there's a passing test for exactly that. But
+`App.tsx` has no other screen for an authenticated user to land on, so the
+403 surfaced as "Could not load orgs" plus a "No organizations yet" empty
+state, alongside a still-rendered "New organization name" / Add create
+form the assessor could never use. No path existed from login to the
+assessor's own org.
+
+**Confirmed not assessor-specific.** Nothing in `OrgPicker.tsx` or
+`App.tsx` branched on role at all — the mechanism is role-blind. Checking
+`customer_poc` (canWrite, not in `READ_ONLY_ROLES`) hit the identical dead
+end. That by itself proves this sits on a different axis than I.8's
+read/write distinction: a role that *can* write was still stranded, so the
+fix can't be "thread `canWrite`" — see below.
+
+**Root cause was purely a missing frontend branch, not a backend gap.**
+Both endpoints a single-org user actually needs already worked for every
+role: `GET /orgs/{org_id}` (`orgs.py:258-261`) and
+`GET /orgs/{org_id}/assessments` (`assessments.py`'s router-level
+`Depends(require_org_access())`) both gate only on
+`current_user.org_id == org_id`, no role check. Only the list-*all*
+endpoint (`GET /orgs`) is MSP-gated. `AuthUser.org_id` (`types.ts`) was
+already on every login response (`GET /auth/me`) — nothing needed to be
+added to `/auth/me` or any router. `frontend/src/api.ts` was simply
+missing a `getOrg(orgId)` wrapper for the single-org endpoint that already
+existed.
+
+**Why this isn't I.8:** I.8 was scoped explicitly to the read/write axis
+("Stated plainly: this is UX... I.8 fulfills [the read-only enforcement]
+reference") with an 11-component inventory built around threading
+`canWrite`. `OrgPicker` was never a `canWrite` candidate, and — critically
+— `canWrite` is the *wrong tool* here: `customer_poc` has `canWrite: true`
+but must still never see the cross-org list or create-org form, because
+browsing/creating other orgs is an MSP multi-tenant operation, orthogonal
+to whether this user can write to their own org's data. Gating the create
+form on `canWrite` would have left it visible-but-disabled for
+`customer_poc`, which is wrong on its own terms, not just incomplete.
+
+**Fix — a third, independent frontend axis, not a variant of `canWrite`:**
+
+- `lib/roles.ts`: added `MULTI_ORG_ROLES = new Set(["msp_admin",
+  "msp_engineer"])` and `canListOrgs(role)`, mirroring
+  `orgs.py`'s inline `require_role("msp_admin", "msp_engineer")` on
+  `GET /orgs`, the same hand-mirror convention as `ROLE_RANK` and
+  `READ_ONLY_ROLES`. The file header now says explicitly that these are
+  three independent axes (seniority, write-capability, cross-org
+  visibility) — not tiers of one permission model — so a future addition
+  doesn't get folded into the wrong one.
+- `api.ts`: added `getOrg(orgId)` → `GET /orgs/{org_id}`.
+- `OrgPicker.tsx`: takes `currentUser: AuthUser` and `canWrite: boolean`
+  as required props (App.tsx already holds both at the render site — same
+  required-prop convention I.8 used for `canWrite` elsewhere, for the same
+  compile-time-catches-an-omission reason). Branches on `canListOrgs`:
+  multi-org roles get the unchanged two-card picker; everyone else skips
+  `GET /orgs` entirely, fetches only their own org via the new `getOrg`,
+  auto-selects it (reusing the existing `selectOrg` → `getAssessments` →
+  cache-hit-auto-enters-board path unchanged), and renders a single card
+  with no org list and no create-org form — the concept doesn't apply to
+  them, so it's hidden, not disabled (unlike I.8's convention of disabling
+  controls on data the user should still see — there's no such data here).
+- **Necessary consequence of the fix, not scope creep:** this makes
+  `OrgPicker`'s assessments card reachable by a `c3pao_assessor` for the
+  first time (it was previously unreachable — the picker 403'd before
+  ever rendering it). Left unguarded, "Start New Assessment" would have
+  been a new 403-on-click instance of the exact bug I.8 fixed everywhere
+  else. Gated it on `canWrite` (disabled, list still visible) — consistent
+  with I.8's own rule, not a new pattern.
+- **`getOrg` failure path:** a single-org user has no picker to fall back
+  to if the single `getOrg` call fails, so a caught error renders inline
+  in the one card ("Could not load your organization. Contact your
+  administrator.") instead of falling through to a "No organizations yet"
+  empty state that would misrepresent a load failure as an empty account.
+  The pre-existing `getAssessments` call inside `selectOrg` still has no
+  `.catch()` — true before this fix for every role, unchanged by it, and
+  out of scope here since it wasn't the failure mode asked for. Flagged,
+  not fixed.
+- Not touched: org-settings access from the picker screen (the per-row ⚙
+  in the hidden left card) has no single-org equivalent. Single-org users
+  still reach `OrgSettings` via the header gear once inside an assessment
+  board, same as before this fix — just not from the landing screen
+  itself. Not asked for, not added.
+
+**Tests:** `lib/permissions.test.ts` gained a `canListOrgs` describe block
+mirroring the existing `deriveCanWrite` block's shape exactly — explicit
+per-role cases including both `customer_poc` and `c3pao_assessor` (the
+pair that proves this is a role-blind gap, not an assessor-only one), a
+null/undefined default-closed case, and the same
+fails-loudly-on-a-new-role exhaustive check against `ALL_ROLES`.
+
+**Verification status:** no local Node on this box (same limitation as
+I.8/ADR-0006/audit-log-viewer above), so this has not been run through
+`tsc -b` or vitest locally. Outstanding on wl-util-1 after `git pull`:
+frontend build/typecheck, `vitest run` (covers the new
+`permissions.test.ts` cases), and a browser smoke test logging in as both
+a `c3pao_assessor` and a `customer_poc` to confirm each lands directly on
+their own org's assessment view with no picker and no create-org form
+visible.
 
 ---
 

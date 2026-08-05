@@ -113,6 +113,8 @@ export function App() {
 
       {screen === "orgs" && (
         <OrgPicker
+          currentUser={user}
+          canWrite={canWrite}
           onEnterBoard={enterBoard}
           onEnterOnboarding={enterOnboarding}
           onOpenSettings={(o) => { setOrg(o); setSettingsReturnScreen("orgs"); setScreen("settings"); }}
