@@ -407,14 +407,19 @@ def test_bundle_audit_logged(client, db_session, storage, fake_msp_admin):
 
 @pytest.mark.integration
 def test_bundle_embeds_evidence_file(client, db_session, storage, fake_msp_admin):
+    """Evidence lands under evidence/<family>/<control>/<objective>/ (ADR 0007).
+
+    _seed() links the one evidence item only to cs_a (objective [a]) of
+    AC.L2-3.1.1, so its copy must live at exactly that folder.
+    """
     d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
     with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
         names = zf.namelist()
-        evidence_paths = [n for n in names if "evidence/files/" in n]
-        assert len(evidence_paths) >= 1, "No evidence files embedded in bundle"
+        evidence_paths = [n for n in names if "/evidence/AC/AC.L2-3.1.1/a/" in n]
+        assert len(evidence_paths) == 1, f"Expected one file under the [a] folder, got: {names}"
 
         embedded = zf.read(evidence_paths[0])
         assert embedded == d["ev_bytes"]
@@ -539,8 +544,10 @@ def test_bundle_artifact_log_zip_consistency(client, db_session, storage, fake_m
     (except cover.html and artifact_log.txt) has a corresponding log entry.
 
     This catches any drift between the path-generation logic used to write the
-    log and the logic used to write the ZIP entries — both go through the shared
-    _ev_zip_rel() helper, so this test would catch a regression that splits them.
+    log and the logic used to write the ZIP entries — both iterate the same
+    snapshot.evidence_files/evidence_hashes dicts (keyed by ZIP path, one
+    entry per duplicated copy per ADR 0007), so this test would catch a
+    regression that splits them.
     """
     d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     r = client.get(_bundle_url(d))
@@ -576,12 +583,16 @@ def test_bundle_artifact_log_zip_consistency(client, db_session, storage, fake_m
 
 @pytest.mark.integration
 def test_bundle_manifest_links_resolve(client, db_session, storage, fake_msp_admin):
-    """Every href='files/...' link in manifest.html points to a real ZIP entry.
+    """Every file href in manifest.html points to a real ZIP entry.
 
-    Regression guard: if _ev_zip_rel() and _render_manifest()'s relative-path
-    computation ever drift apart, broken links would be silently embedded in
-    every exported bundle.  posixpath.relpath() makes the href robust, and this
-    test catches any regression in that derivation.
+    Regression guard: if _objective_evidence_folder()/_assign_evidence_path()
+    and _render_manifest()'s relative-path computation (posixpath.relpath)
+    ever drift apart, broken links would be silently embedded in every
+    exported bundle. Since ADR 0007, hrefs are nested (e.g.
+    "AC/AC.L2-3.1.1/a/network_diagram.pdf") rather than a flat "files/..."
+    prefix — this matches any non-anchor href ending in a file extension
+    rather than assuming a fixed prefix, so it stays valid as the folder
+    depth changes.
     """
     d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
     r = client.get(_bundle_url(d))
@@ -595,12 +606,13 @@ def test_bundle_manifest_links_resolve(client, db_session, storage, fake_msp_adm
     # Derive the root prefix from the first ZIP entry (e.g. "acme_msp_20260713")
     root = names[0].split("/")[0]
 
-    # Extract every href="files/..." from the manifest
-    hrefs = re.findall(r'href="(files/[^"]+)"', manifest_html)
+    # Extract every non-anchor href ending in a file extension (skips the
+    # "#control-id" jump-to-section links, which aren't file references).
+    hrefs = re.findall(r'href="((?!#)[^"]+\.\w+)"', manifest_html)
     assert hrefs, "manifest.html contains no file links — expected at least one"
 
     # manifest.html lives at {root}/evidence/manifest.html, so a relative
-    # href="files/foo.png" resolves to {root}/evidence/files/foo.png in the ZIP.
+    # href resolves against that directory, not the ZIP root.
     zip_names = set(names)
     for href in hrefs:
         abs_path = f"{root}/evidence/{href}"
@@ -684,3 +696,183 @@ def test_bundle_stale_hash_excluded_on_fetch_failure(client, db_session, storage
 
     # Manifest must show "unavailable" (not the stale hash) for the ghost file
     assert "unavailable" in manifest_html
+
+
+# ---------------------------------------------------------------------------
+# ADR 0007 — per-objective evidence folders
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_bundle_duplicates_evidence_across_linked_objectives(
+    client, db_session, storage, fake_msp_admin
+):
+    """One evidence item linked to two objectives gets two independent copies.
+
+    Not a canonical file with two pointers: two ZIP entries, two artifact_log
+    lines, identical bytes and hash, different paths — per ADR 0007.
+    """
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    # _seed() already links d["evidence"] to cs_a only; also link it to cs_b.
+    db_session.add(EvidenceStateLink(evidence_id=d["evidence"].id, control_state_id=d["cs_b"].id))
+    db_session.flush()
+
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        names = zf.namelist()
+        path_a = next(n for n in names if "/evidence/AC/AC.L2-3.1.1/a/" in n)
+        path_b = next(n for n in names if "/evidence/AC/AC.L2-3.1.1/b/" in n)
+        assert path_a != path_b
+        assert zf.read(path_a) == d["ev_bytes"]
+        assert zf.read(path_b) == d["ev_bytes"]
+
+        log_name = next(n for n in names if n.endswith("artifact_log.txt"))
+        log_lines = zf.read(log_name).decode().splitlines()
+
+    line_a = next(ln for ln in log_lines if ln.endswith(path_a))
+    line_b = next(ln for ln in log_lines if ln.endswith(path_b))
+    hash_a = line_a.split(" | ")[1]
+    hash_b = line_b.split(" | ")[1]
+    assert hash_a == hash_b
+    assert hash_a == hashlib.sha256(d["ev_bytes"]).hexdigest()
+
+
+@pytest.mark.integration
+def test_bundle_unlinked_evidence_appears_in_manifest(client, db_session, storage, fake_msp_admin):
+    """Evidence with zero links to this assessment's control states is not
+    silently dropped — it lands under evidence/unlinked/ and in a dedicated
+    manifest section, per ADR 0007."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+
+    orphan_bytes = b"%PDF-1.4 orphan"
+    orphan_id = uuid.uuid4()
+    orphan_key = f"{d['org'].id}/evidence/{orphan_id}/{orphan_id}.pdf"
+    storage.upload_file(orphan_key, orphan_bytes, "application/pdf")
+    orphan = Evidence(
+        id=orphan_id,
+        org_id=d["org"].id,
+        kind="file",
+        title="Orphaned Export",
+        artifact_type="export",
+        storage_key=orphan_key,
+        mime_type="application/pdf",
+        file_size_bytes=len(orphan_bytes),
+        collected_at=datetime.now(UTC),
+    )
+    db_session.add(orphan)
+    db_session.flush()
+    # Deliberately no EvidenceStateLink for this row.
+
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        names = zf.namelist()
+        unlinked_paths = [n for n in names if "/evidence/unlinked/" in n]
+        assert len(unlinked_paths) == 1
+        assert zf.read(unlinked_paths[0]) == orphan_bytes
+
+        manifest_html = zf.read(next(n for n in names if n.endswith("manifest.html"))).decode()
+
+    assert "Unlinked Evidence" in manifest_html
+    assert "Orphaned Export" in manifest_html
+
+
+@pytest.mark.integration
+def test_bundle_archived_link_evidence_excluded_from_unlinked_section(
+    client, db_session, storage, fake_msp_admin
+):
+    """Evidence whose only link into this assessment was archived (e.g. a
+    deactivated product) must NOT resurface in the "Unlinked Evidence"
+    section — that would show a C3PAO evidence the customer deliberately
+    took out of scope. Per ADR 0007, this is excluded entirely, not
+    relabeled."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+
+    retired_bytes = b"%PDF-1.4 retired"
+    retired_id = uuid.uuid4()
+    retired_key = f"{d['org'].id}/evidence/{retired_id}/{retired_id}.pdf"
+    storage.upload_file(retired_key, retired_bytes, "application/pdf")
+    retired = Evidence(
+        id=retired_id,
+        org_id=d["org"].id,
+        kind="file",
+        title="Retired Coverage Export",
+        artifact_type="export",
+        storage_key=retired_key,
+        mime_type="application/pdf",
+        file_size_bytes=len(retired_bytes),
+        collected_at=datetime.now(UTC),
+    )
+    db_session.add(retired)
+    db_session.flush()
+    db_session.add(
+        EvidenceStateLink(
+            evidence_id=retired_id,
+            control_state_id=d["cs_b"].id,
+            is_archived=True,
+            archived_at=datetime.now(UTC),
+        )
+    )
+    db_session.flush()
+
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        names = zf.namelist()
+        manifest_html = zf.read(next(n for n in names if n.endswith("manifest.html"))).decode()
+        embedded_bytes = {
+            zf.read(n) for n in names if n.startswith(f"{names[0].split('/')[0]}/evidence/")
+            and not n.endswith((".html",))
+        }
+
+    # The retired file's bytes must not have been embedded anywhere in the ZIP.
+    assert retired_bytes not in embedded_bytes
+    assert "Retired Coverage Export" not in manifest_html
+    assert not any("/evidence/unlinked/" in n for n in names)
+
+
+@pytest.mark.integration
+def test_bundle_evidence_filename_collision_in_same_objective_folder(
+    client, db_session, storage, fake_msp_admin
+):
+    """Two evidence items with the same title linked to the same objective
+    get distinct, independently-openable filenames in that folder (a real
+    collision, not hypothetical — e.g. two screenshots both left at their
+    tool's default "Screenshot.png" name)."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+
+    second_bytes = b"%PDF-1.4 second-copy-different-bytes"
+    second_id = uuid.uuid4()
+    second_key = f"{d['org'].id}/evidence/{second_id}/{second_id}.pdf"
+    storage.upload_file(second_key, second_bytes, "application/pdf")
+    second = Evidence(
+        id=second_id,
+        org_id=d["org"].id,
+        kind="file",
+        title=d["evidence"].title,  # same title as the _seed()'d evidence
+        artifact_type="document",
+        storage_key=second_key,
+        mime_type="application/pdf",
+        file_size_bytes=len(second_bytes),
+        collected_at=datetime.now(UTC),
+    )
+    db_session.add(second)
+    db_session.flush()
+    db_session.add(EvidenceStateLink(evidence_id=second_id, control_state_id=d["cs_a"].id))
+    db_session.flush()
+
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        names = zf.namelist()
+        folder_paths = sorted(n for n in names if "/evidence/AC/AC.L2-3.1.1/a/" in n)
+        assert len(folder_paths) == 2, f"Expected two distinct files, got: {folder_paths}"
+        assert folder_paths[0] != folder_paths[1]
+
+        contents = {zf.read(p) for p in folder_paths}
+        assert contents == {d["ev_bytes"], second_bytes}

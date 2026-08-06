@@ -243,9 +243,10 @@ class BundleSnapshot:
     assessment: AssessmentSnap
     contacts: list[ContactSnap]
     controls: list[ControlSnap]
-    evidence_files: dict[uuid.UUID, tuple[str, bytes]]
-    evidence_hashes: dict[uuid.UUID, str]
+    evidence_files: dict[str, bytes]
+    evidence_hashes: dict[str, str]
     unavailable_ev_ids: set[uuid.UUID]
+    unlinked_evidence: list[EvidenceSnap]
     open_tasks: list[OpenTaskSnap]
     findings: list[FindingSnap]
 
@@ -314,17 +315,55 @@ def _html_page(title: str, body: str) -> str:
     )
 
 
-def _ev_zip_rel(ev_id: uuid.UUID, title: str, mime_type: str | None) -> str:
-    """Canonical ZIP-relative path for an embedded evidence file.
+# See ADR 0007 for the decision this implements: evidence linked to several
+# objectives is duplicated into each objective's own folder (not one canonical
+# file with pointers), and evidence with an archived link is excluded from the
+# bundle entirely rather than resurfaced as "unlinked" — see
+# _UNLINKED_EVIDENCE_FOLDER's docstring below and snapshot_bundle's unlinked
+# query for why that distinction matters.
+_UNLINKED_EVIDENCE_FOLDER = "evidence/unlinked"
 
-    Single source of truth used by both snapshot assembly (where the path is
-    stored in EvidenceSnap.zip_path) and render (where the path is written to
-    the artifact log and the ZIP entry).  Keeping this in one function prevents
-    slug-generation drift between the two code paths.
+
+def _objective_evidence_folder(family: str, control_id: str, objective_key: str) -> str:
+    """ZIP-relative folder for one objective's copy of its linked evidence.
+
+    family/control_id/objective_key come from the reference catalog, never
+    from free user text, so no slug-sanitization is needed on these segments
+    (see ADR 0007) — unlike the filename itself, which is still derived from
+    the evidence title.
+    """
+    return f"evidence/{family}/{control_id}/{objective_key}"
+
+
+def _assign_evidence_path(
+    seen: dict[str, dict[str, int]],
+    folder: str,
+    title: str,
+    mime_type: str | None,
+    ev_id: uuid.UUID,
+) -> str:
+    """Assign a ZIP-relative path for one evidence file inside `folder`.
+
+    Filenames are derived from the evidence title, not an id prefix — the
+    folder path already disambiguates which objective (or "unlinked") a copy
+    belongs to, so an id prefix is no longer needed for that purpose (ADR
+    0007). It's still needed as a fallback for two failure modes: an empty/
+    unsafe title (`_safe_slug` can reduce to ""), and two evidence items
+    that share a title and land in the *same* folder (e.g. two screenshots
+    both titled "Screenshot.png" linked to the same objective) — a real,
+    not hypothetical, collision given titles are free text. `seen` tracks a
+    per-folder, case-insensitive name count across the whole bundle so a
+    repeat gets a stable "-2", "-3", ... suffix instead of overwriting the
+    first file assigned that name.
     """
     ext = _ext_from_mime(mime_type)
-    slug = _safe_slug(title or str(ev_id)[:8])
-    return f"evidence/files/{str(ev_id)[:8]}_{slug}{ext}"
+    slug = _safe_slug(title) or str(ev_id)[:8]
+    counts = seen.setdefault(folder, {})
+    key = f"{slug}{ext}".lower()
+    n = counts.get(key, 0)
+    counts[key] = n + 1
+    name = f"{slug}{ext}" if n == 0 else f"{slug}-{n + 1}{ext}"
+    return f"{folder}/{name}"
 
 
 def _hash_cell(ev: EvidenceSnap) -> str:
@@ -515,29 +554,28 @@ def snapshot_bundle(
         .order_by(Evidence.collected_at)
     ).all()
 
-    # Fetch file bytes (deduplicated by evidence_id).
+    # Fetch file bytes once per evidence_id regardless of how many objectives
+    # it's linked to (ADR 0007: the file is duplicated into every linked
+    # objective's folder, but storage is only ever read once per evidence_id).
     #
-    # Invariant: evidence_files and evidence_hashes have identical key sets.
-    # An ev_id enters both dicts only on a successful get_bytes() call.
-    # Fetch failure → unavailable_ev_ids only; the DB sha256_hash value is
-    # intentionally ignored so a stale cached hash never appears next to a
-    # file that is absent from this bundle.
+    # Invariant: bytes_by_ev and hash_by_ev have identical key sets. An ev_id
+    # enters both dicts only on a successful get_bytes() call. Fetch failure →
+    # unavailable_ev_ids only; the DB sha256_hash value is intentionally
+    # ignored so a stale cached hash never appears next to a file that is
+    # absent from this bundle.
     seen_ev: set[uuid.UUID] = set()
-    evidence_files: dict[uuid.UUID, tuple[str, bytes]] = {}
-    evidence_hashes: dict[uuid.UUID, str] = {}
+    bytes_by_ev: dict[uuid.UUID, bytes] = {}
+    hash_by_ev: dict[uuid.UUID, str] = {}
     unavailable_ev_ids: set[uuid.UUID] = set()
-    for er in ev_rows:
-        if er.kind != "file" or not er.storage_key:
-            continue
-        ev_id: uuid.UUID = er.ev_id
+
+    def _fetch_evidence_bytes(ev_id: uuid.UUID, storage_key: str, cached_hash: str | None) -> None:
         if ev_id in seen_ev:
-            continue
+            return
         seen_ev.add(ev_id)
-        zip_path = _ev_zip_rel(ev_id, er.ev_title or "", er.mime_type)
         try:
-            file_bytes = storage.get_bytes(er.storage_key)
+            file_bytes = storage.get_bytes(storage_key)
             if file_bytes:
-                h = er.sha256_hash
+                h = cached_hash
                 if h is None:
                     h = hashlib.sha256(file_bytes).hexdigest()
                     session.execute(
@@ -545,24 +583,44 @@ def snapshot_bundle(
                         .where(Evidence.id == ev_id)
                         .values(sha256_hash=h)
                     )
-                evidence_files[ev_id] = (zip_path, file_bytes)
-                evidence_hashes[ev_id] = h
+                bytes_by_ev[ev_id] = file_bytes
+                hash_by_ev[ev_id] = h
             else:
                 unavailable_ev_ids.add(ev_id)
         except Exception:  # noqa: BLE001
             unavailable_ev_ids.add(ev_id)
 
+    for er in ev_rows:
+        if er.kind == "file" and er.storage_key:
+            _fetch_evidence_bytes(er.ev_id, er.storage_key, er.sha256_hash)
+
+    # evidence_files/evidence_hashes are keyed by ZIP path, not evidence_id —
+    # one evidence_id can now own several paths (ADR 0007's duplication
+    # decision), each with the identical hash from hash_by_ev above.
+    evidence_files: dict[str, bytes] = {}
+    evidence_hashes: dict[str, str] = {}
+    _folder_name_counts: dict[str, dict[str, int]] = {}
+
+    # family/control_id/objective_key per control_state, for folder placement.
+    cs_meta: dict[uuid.UUID, tuple[str, str, str]] = {
+        row.cs_id: (row.family, row.control_id, row.objective_key) for row in ctrl_rows
+    }
+
     ev_by_cs: dict[uuid.UUID, list[EvidenceSnap]] = {}
     for er in ev_rows:
         cs_id: uuid.UUID = er.cs_id
         ev_id = er.ev_id
-        if er.kind == "file":
-            hit = evidence_files.get(ev_id)
-            zip_path_for_ev = hit[0] if hit else None
-            ev_hash = evidence_hashes.get(ev_id)
-        else:
-            zip_path_for_ev = None
-            ev_hash = None
+        zip_path_for_ev: str | None = None
+        ev_hash: str | None = None
+        if er.kind == "file" and ev_id in bytes_by_ev:
+            family, control_id, objective_key = cs_meta[cs_id]
+            folder = _objective_evidence_folder(family, control_id, objective_key)
+            zip_path_for_ev = _assign_evidence_path(
+                _folder_name_counts, folder, er.ev_title or "", er.mime_type, ev_id
+            )
+            evidence_files[zip_path_for_ev] = bytes_by_ev[ev_id]
+            evidence_hashes[zip_path_for_ev] = hash_by_ev[ev_id]
+            ev_hash = hash_by_ev[ev_id]
         ev_snap = EvidenceSnap(
             evidence_id=ev_id,
             kind=er.kind,
@@ -575,6 +633,77 @@ def snapshot_bundle(
             sha256_hash=ev_hash,
         )
         ev_by_cs.setdefault(cs_id, []).append(ev_snap)
+
+    # --- evidence linked to no objective in this assessment (ADR 0007) ---
+    #
+    # Two cases both look like "not linked" but must NOT be treated the same:
+    #   1. Never linked at all (no evidence_state_link row into this
+    #      assessment, active or archived) — a silent gap today; this is the
+    #      case included below.
+    #   2. Every link into this assessment was archived (e.g.
+    #      engine.deactivate_org_product) — a deliberate, reversible
+    #      retirement of that evidence from current scope. Resurfacing it in
+    #      an "unlinked" section would show a C3PAO evidence the customer
+    #      intentionally took out of scope, which is worse than the current
+    #      silence. Excluded: the NOT IN subquery below has no is_archived
+    #      filter, so the mere existence of an archived link (not just an
+    #      active one) is enough to exclude an evidence row here.
+    _linked_ev_ids = (
+        select(EvidenceStateLink.evidence_id)
+        .join(ControlState, EvidenceStateLink.control_state_id == ControlState.id)
+        .where(ControlState.assessment_id == assessment_id)
+    )
+    unlinked_rows = session.execute(
+        select(
+            Evidence.id.label("ev_id"),
+            Evidence.kind,
+            Evidence.title.label("ev_title"),
+            Evidence.artifact_type,
+            Evidence.storage_key,
+            Evidence.mime_type,
+            Evidence.file_size_bytes,
+            Evidence.reference_location,
+            Evidence.collected_at,
+            Evidence.sha256_hash,
+        )
+        .where(
+            Evidence.org_id == org_id,
+            ~Evidence.id.in_(_linked_ev_ids),
+        )
+        .order_by(Evidence.collected_at)
+    ).all()
+
+    unlinked_evidence: list[EvidenceSnap] = []
+    for er in unlinked_rows:
+        ev_id = er.ev_id
+        zip_path_for_ev = None
+        ev_hash = None
+        if er.kind == "file" and er.storage_key:
+            _fetch_evidence_bytes(ev_id, er.storage_key, er.sha256_hash)
+            if ev_id in bytes_by_ev:
+                zip_path_for_ev = _assign_evidence_path(
+                    _folder_name_counts,
+                    _UNLINKED_EVIDENCE_FOLDER,
+                    er.ev_title or "",
+                    er.mime_type,
+                    ev_id,
+                )
+                evidence_files[zip_path_for_ev] = bytes_by_ev[ev_id]
+                evidence_hashes[zip_path_for_ev] = hash_by_ev[ev_id]
+                ev_hash = hash_by_ev[ev_id]
+        unlinked_evidence.append(
+            EvidenceSnap(
+                evidence_id=ev_id,
+                kind=er.kind,
+                title=er.ev_title or "",
+                artifact_type=er.artifact_type,
+                zip_path=zip_path_for_ev,
+                location=er.reference_location,
+                file_size_bytes=er.file_size_bytes,
+                collected_at=er.collected_at,
+                sha256_hash=ev_hash,
+            )
+        )
 
     # --- RACI per control state ---
     all_cs_ids = [r.cs_id for r in ctrl_rows]
@@ -698,6 +827,7 @@ def snapshot_bundle(
         evidence_files=evidence_files,
         evidence_hashes=evidence_hashes,
         unavailable_ev_ids=unavailable_ev_ids,
+        unlinked_evidence=unlinked_evidence,
         open_tasks=open_tasks,
         findings=findings,
     )
@@ -737,8 +867,11 @@ def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
     # HTML documents are hashed from their rendered bytes.
     # Evidence files use the stored sha256_hash from evidence_hashes (computed
     # at upload time or lazily during this snapshot_bundle call — never re-read
-    # from storage here).  evidence_hashes and evidence_files share the same
-    # key set, so the direct index lookup below is always valid.
+    # from storage here).  evidence_hashes and evidence_files are both keyed by
+    # ZIP path (ADR 0007 — one evidence_id can own several paths, each with
+    # the identical hash), so the direct index lookup below is always valid:
+    # one log line per PATH, not per evidence_id, exactly matching the
+    # duplicated files actually written to the ZIP below.
     log_lines = ["Algorithm | Hash | Path"]
     for rel_path, content in [
         (f"{root}/index.html", index_html),
@@ -752,9 +885,9 @@ def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
         h = hashlib.sha256(content.encode()).hexdigest()
         log_lines.append(f"{_ARTIFACT_HASH_ALGO} | {h} | {rel_path}")
 
-    for ev_id, (zip_rel, _) in snapshot.evidence_files.items():
+    for zip_rel in snapshot.evidence_files:
         log_lines.append(
-            f"{_ARTIFACT_HASH_ALGO} | {snapshot.evidence_hashes[ev_id]} | {root}/{zip_rel}"
+            f"{_ARTIFACT_HASH_ALGO} | {snapshot.evidence_hashes[zip_rel]} | {root}/{zip_rel}"
         )
 
     artifact_log_filename = "artifact_log.txt"
@@ -776,7 +909,7 @@ def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
         zf.writestr(f"{root}/summary/scoring.html", scoring_html)
         zf.writestr(f"{root}/summary/outstanding.html", outstanding_html)
         zf.writestr(f"{root}/{artifact_log_filename}", artifact_log_bytes)
-        for _ev_id, (zip_rel, file_bytes) in snapshot.evidence_files.items():
+        for zip_rel, file_bytes in snapshot.evidence_files.items():
             zf.writestr(f"{root}/{zip_rel}", file_bytes)
 
     filename = f"wingrc_bundle_{slug}_{date_str}.zip"
@@ -1035,8 +1168,39 @@ def _render_personnel(snapshot: BundleSnapshot) -> str:
     return _html_page("Personnel", body)
 
 
+def _render_evidence_li(ev: EvidenceSnap, manifest_dir: str) -> str:
+    """One manifest <li> for a single evidence item — shared by the
+    per-objective sections and the unlinked-evidence section, since both
+    render the same file/reference/unavailable cases (ADR 0007)."""
+    if ev.kind == "file":
+        if ev.zip_path:
+            href = posixpath.relpath(ev.zip_path, manifest_dir)
+            hash_html = (
+                f"<br><span class='ev-path'>{_esc(ev.sha256_hash)}</span>"
+                if ev.sha256_hash
+                else ""
+            )
+            return (
+                f'<li><a href="{_esc(href)}">{_esc(ev.title)}</a>'
+                f' <span class="s-tag">{_esc(ev.artifact_type)}</span>'
+                f"{hash_html}</li>"
+            )
+        return (
+            f"<li>{_esc(ev.title)}"
+            f' <span class="s-tag">{_esc(ev.artifact_type)}</span>'
+            f" <em style='color:#9ca3af'>"
+            f"(file unavailable in this bundle)</em></li>"
+        )
+    return (
+        f"<li>&#x2197;&nbsp;{_esc(ev.title)}"
+        f" &mdash; {_esc(ev.location or '')}"
+        f"&nbsp;<span style='color:#9ca3af;font-style:italic'>"
+        f"not applicable &mdash; reference only</span></li>"
+    )
+
+
 def _render_manifest(snapshot: BundleSnapshot) -> str:
-    if not snapshot.controls:
+    if not snapshot.controls and not snapshot.unlinked_evidence:
         body = (
             f"{_stamp(snapshot)}"
             "<h1>Evidence Manifest</h1>"
@@ -1045,8 +1209,9 @@ def _render_manifest(snapshot: BundleSnapshot) -> str:
         return _html_page("Evidence Manifest", body)
 
     # manifest.html sits at evidence/manifest.html within the zip root.
-    # posixpath.relpath computes the correct relative href to any evidence file
-    # regardless of _ev_zip_rel()'s prefix — robust against future path changes.
+    # posixpath.relpath computes the correct relative href to any evidence
+    # file regardless of folder depth (ADR 0007's per-objective/unlinked
+    # folders) — robust against future path changes.
     _MANIFEST_DIR = "evidence"
 
     toc_links: list[str] = []
@@ -1070,36 +1235,7 @@ def _render_manifest(snapshot: BundleSnapshot) -> str:
         )
 
         for obj in ev_objectives:
-            items = ""
-            for ev in obj.evidence:
-                if ev.kind == "file":
-                    if ev.zip_path:
-                        href = posixpath.relpath(ev.zip_path, _MANIFEST_DIR)
-                        hash_html = (
-                            f"<br><span class='ev-path'>{_esc(ev.sha256_hash)}</span>"
-                            if ev.sha256_hash
-                            else ""
-                        )
-                        items += (
-                            f'<li><a href="{_esc(href)}">{_esc(ev.title)}</a>'
-                            f' <span class="s-tag">{_esc(ev.artifact_type)}</span>'
-                            f"{hash_html}</li>"
-                        )
-                    else:
-                        items += (
-                            f"<li>{_esc(ev.title)}"
-                            f' <span class="s-tag">{_esc(ev.artifact_type)}</span>'
-                            f" <em style='color:#9ca3af'>"
-                            f"(file unavailable in this bundle)</em></li>"
-                        )
-                else:
-                    items += (
-                        f"<li>&#x2197;&nbsp;{_esc(ev.title)}"
-                        f" &mdash; {_esc(ev.location or '')}"
-                        f"&nbsp;<span style='color:#9ca3af;font-style:italic'>"
-                        f"not applicable &mdash; reference only</span></li>"
-                    )
-
+            items = "".join(_render_evidence_li(ev, _MANIFEST_DIR) for ev in obj.evidence)
             sections += (
                 f'<div class="obj">'
                 f'<span class="obj-k">[{_esc(obj.objective_key)}]</span>'
@@ -1108,7 +1244,28 @@ def _render_manifest(snapshot: BundleSnapshot) -> str:
                 f"</div>"
             )
 
-    if not sections:
+    # --- unlinked evidence (ADR 0007) ---
+    # Evidence that has never been linked to any objective in this
+    # assessment — deliberately excludes evidence whose only link(s) were
+    # archived (e.g. a deactivated product), since that's a retired-from-scope
+    # state, not a gap. See the unlinked_rows query in snapshot_bundle.
+    unlinked_html = ""
+    if snapshot.unlinked_evidence:
+        toc_links.append('<a href="#unlinked">Unlinked Evidence</a>')
+        items = "".join(
+            _render_evidence_li(ev, _MANIFEST_DIR) for ev in snapshot.unlinked_evidence
+        )
+        unlinked_html = (
+            '<h2 id="unlinked">Unlinked Evidence</h2>'
+            '<p style="font-size:.85rem;color:#6b7280">'
+            "Not linked to any objective in this assessment. Evidence "
+            "retired via a deactivated product is intentionally omitted from "
+            "this section — see Outstanding Items for controls under "
+            "review.</p>"
+            f"<ul>{items}</ul>"
+        )
+
+    if not sections and not unlinked_html:
         body = (
             f"{_stamp(snapshot)}"
             "<h1>Evidence Manifest</h1>"
@@ -1126,7 +1283,10 @@ def _render_manifest(snapshot: BundleSnapshot) -> str:
         "File links open the embedded artifact directly. "
         "SHA-256 Hash shown per DoD-CIO-00008 artifact hashing requirements.</p>"
     )
-    body = f"{_stamp(snapshot)}<h1>Evidence Manifest</h1>{toc_html}{note}{sections}"
+    body = (
+        f"{_stamp(snapshot)}<h1>Evidence Manifest</h1>{toc_html}{note}"
+        f"{sections}{unlinked_html}"
+    )
     return _html_page("Evidence Manifest", body)
 
 
@@ -1305,7 +1465,11 @@ def _render_index(snapshot: BundleSnapshot) -> str:
         "<ul>"
         "<li>Open <code>index.html</code> in any browser "
         "— all documents are self-contained HTML.</li>"
-        "<li>Evidence files are in <code>evidence/files/</code> and linked from the manifest.</li>"
+        "<li>Evidence files are organized under "
+        "<code>evidence/&lt;family&gt;/&lt;control&gt;/&lt;objective&gt;/</code> — "
+        "one copy per objective it satisfies — and linked from the manifest. "
+        "Evidence not linked to any objective is under "
+        "<code>evidence/unlinked/</code>.</li>"
         "<li><code>artifact_log.txt</code> lists SHA-256 hashes for all artifacts "
         "per DoD-CIO-00008. The second-order hash on the cover page is the eMASS "
         "<em>Hash Value</em> field.</li>"
