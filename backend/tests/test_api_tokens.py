@@ -66,6 +66,7 @@ def _as_role(role: str, *, org_id: uuid.UUID) -> CurrentUser:
         role=role,
         is_active=True,
         login_method="local",
+        mfa_enrolled=True,
     )
 
 

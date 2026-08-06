@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { AccountSettings } from "./components/AccountSettings";
 import { AssessmentBoard } from "./components/AssessmentBoard";
 import { InviteAcceptPage } from "./components/InviteAcceptPage";
 import { LoginPage } from "./components/LoginPage";
@@ -8,7 +9,7 @@ import { OrgSettings } from "./components/OrgSettings";
 import { useAuth } from "./hooks/useAuth";
 import type { Assessment, Org } from "./types";
 
-type Screen = "orgs" | "board" | "onboarding" | "settings";
+type Screen = "orgs" | "board" | "onboarding" | "settings" | "account";
 
 // Separate from Screen (which only makes sense once `user` exists): this
 // picks between the two pre-auth pages. There's no router in this codebase
@@ -21,7 +22,9 @@ export function App() {
   const [screen, setScreen] = useState<Screen>("orgs");
   const [org, setOrg] = useState<Org | null>(null);
   const [assessment, setAssessment] = useState<Assessment | null>(null);
-  const [settingsReturnScreen, setSettingsReturnScreen] = useState<Screen>("orgs");
+  // Shared by both drawer overlays (org settings, account settings) — each
+  // remembers where to return the user when closed.
+  const [drawerReturnScreen, setDrawerReturnScreen] = useState<Screen>("orgs");
   const [preAuthScreen, setPreAuthScreen] = useState<PreAuthScreen>("login");
 
   function enterBoard(o: Org, a: Assessment) {
@@ -36,12 +39,21 @@ export function App() {
   }
 
   function openSettings() {
-    setSettingsReturnScreen(screen);
+    setDrawerReturnScreen(screen);
     setScreen("settings");
   }
 
   function closeSettings() {
-    setScreen(settingsReturnScreen);
+    setScreen(drawerReturnScreen);
+  }
+
+  function openAccount() {
+    setDrawerReturnScreen(screen);
+    setScreen("account");
+  }
+
+  function closeAccount() {
+    setScreen(drawerReturnScreen);
   }
 
   function goBack() {
@@ -49,6 +61,7 @@ export function App() {
   }
 
   const showGear = org !== null && screen !== "settings" && screen !== "orgs";
+  const showAccountButton = screen !== "account";
 
   if (isLoading) return <div className="app-loading">Loading…</div>;
   if (!user) {
@@ -97,6 +110,16 @@ export function App() {
             ⚙
           </button>
         )}
+        {showAccountButton && (
+          <button
+            className="header-gear"
+            onClick={openAccount}
+            aria-label="My account"
+            title={`My account (${user.email})`}
+          >
+            👤
+          </button>
+        )}
         <button
           className="header-logout"
           onClick={logout}
@@ -117,7 +140,7 @@ export function App() {
           canWrite={canWrite}
           onEnterBoard={enterBoard}
           onEnterOnboarding={enterOnboarding}
-          onOpenSettings={(o) => { setOrg(o); setSettingsReturnScreen("orgs"); setScreen("settings"); }}
+          onOpenSettings={(o) => { setOrg(o); setDrawerReturnScreen("orgs"); setScreen("settings"); }}
         />
       )}
       {screen === "board" && org && assessment && (
@@ -138,6 +161,13 @@ export function App() {
           currentUserRole={user.role}
           canWrite={canWrite}
           onClose={closeSettings}
+        />
+      )}
+      {screen === "account" && (
+        <AccountSettings
+          user={user}
+          onClose={closeAccount}
+          onSignedOutEverywhere={refresh}
         />
       )}
     </>

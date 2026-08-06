@@ -1,6 +1,6 @@
 # Plan — Auth/RBAC completion (roadmap item I) + frontend admin surface
 
-**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4 ✅ merged · I.5 ✅ closed (5 deviations — see I.5; 308/308 integration tests green on wl-util-1, browser smoke test confirmed) · I.6 ✅ merged (all 6 items) · I.7 ✅ merged (users + API tokens admin panels, invite-redemption page) · I.8 implemented pending commit/review (see I.8) · I.9 not started · **User deletion (ADR 0006) implemented, out-of-band — see that section below, not part of I.1–I.9** · **Audit log viewer implemented, out-of-band — see that section below, not part of I.1–I.9** · **Non-MSP org-picker landing gap implemented, out-of-band — see that section below, not part of I.1–I.9**
+**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4 ✅ merged · I.5 ✅ closed (5 deviations — see I.5; 308/308 integration tests green on wl-util-1, browser smoke test confirmed) · I.6 ✅ merged (all 6 items) · I.7 ✅ merged (users + API tokens admin panels, invite-redemption page) · I.8 implemented pending commit/review (see I.8) · I.9 implemented pending commit/review (see I.9) · **User deletion (ADR 0006) implemented, out-of-band — see that section below, not part of I.1–I.9** · **Audit log viewer implemented, out-of-band — see that section below, not part of I.1–I.9** · **Non-MSP org-picker landing gap implemented, out-of-band — see that section below, not part of I.1–I.9** · **MFA QR code third-party disclosure fixed (ADR 0008), out-of-band — see that ADR, not part of I.1–I.9**
 **Baseline:** 0088757
 **Scope:** close the gaps identified in the audit of item I, then land the frontend
 surface those endpoints require.
@@ -779,6 +779,106 @@ step, same gap I.5 had before its "closed" line above.
 - Show active sessions with last activity, and a "sign out everywhere" action.
   This depends on `last_activity_at` from I.4 and is the user-visible payoff for
   that column.
+
+**I.9 implemented.** Scope check done before implementation (same drift
+check as I.5/I.8) found the spec undersold the backend work: I.4/I.5 built
+the validation *primitives* (`validate_password_policy`,
+`check_pwned_password`, `check_password_reuse`, `record_password`,
+`revoke_user_sessions`, `last_activity_at`) but zero self-service
+*endpoints* — every bullet above needed a new route. Six landed, all under
+`/auth/*`, all `Depends(get_current_user)` (session-authenticated, acting
+on the caller's own account — automatically covered by
+`test_route_guards.py`'s deny-by-default harness, no allowlist edit):
+`POST /auth/change-password`, `POST /auth/mfa/reenroll` +
+`POST /auth/mfa/reenroll/confirm` (step-up gated — current password or
+current TOTP code, checked by a new `_verify_step_up` helper; password
+covers the "lost my authenticator" case, TOTP covers "still have it, want
+to rotate proactively"), `POST /auth/mfa/backup-codes/regenerate`
+(step-up gated), `GET /auth/sessions`, `POST /auth/sessions/revoke-all`.
+`CurrentUser`/`GET /auth/me` gained `mfa_enrolled` (not in the original
+spec — the frontend needs it and nothing exposed it before).
+
+**Not gated by `canWrite` (I.8) — confirmed structurally, not just by
+judgment call.** `require_write()` is applied at router level to
+`assessments`/`evidence`/`contacts`/`bundle`/`orgs`/`users`; the `auth`
+router has never carried it. A `c3pao_assessor` already calls
+`/auth/logout` with no gate today; the same is true of every new endpoint
+here. The real axis is `AuthUser.login_method`: change-password,
+MFA re-enrollment, and backup-code regeneration are `local`-only (SSO users
+have no local password/TOTP — `sso_callback` never touches `mfa_enrolled`;
+API-token principals never load the SPA at all), while sessions
+list/revoke-all apply to every login method, since `create_session` runs
+in both the local and SSO paths. Same "wrong axis" lesson as the OrgPicker
+landing-gap fix, a third time in this codebase.
+
+**`MfaEnrollmentFlow`/`MfaVerifyFlow` were not directly reusable for
+self-service** (confirmed before implementing, not assumed): the pre-auth
+enroll/confirm endpoints are keyed by signed state cookies
+(`wingrc_mfa_pending`/`wingrc_mfa_setup`), not `get_current_user`, and
+`mfa_enroll_confirm` unconditionally mints a new session — correct
+pre-auth (that's how first login completes), wrong for an already-logged-in
+user, whose session it would silently rotate as a side effect. Self-service
+re-enrollment also needs step-up proof a valid session alone doesn't carry
+(a hijacked session could otherwise swap the second factor and entrench
+takeover past a later password change). New: `mfa_reenroll` stages a
+candidate secret in a distinct signed cookie (`wingrc_mfa_reenroll`, same
+generic `set_state_cookie`/`verify_state_cookie` mechanism, new name since
+there's no `wingrc_mfa_pending` to key off of here);
+`mfa_reenroll_confirm` verifies the staged cookie's `user_id` against the
+confirming session's own id (rejects a stolen/replayed cookie from a
+different account), commits the rotated secret + fresh backup codes, and
+deliberately never touches `wingrc_session`.
+
+**Extraction landed as proposed**, but only after ADR 0008 (below) shipped
+first: `MfaQrEnrollStep.tsx` (QR display + code-entry form) and
+`BackupCodesDisplay.tsx` (backup-codes list + continue button) pulled out
+of `MfaEnrollmentFlow.tsx`, shared verbatim by the new self-service
+`MfaReenrollFlow.tsx`. Sequencing this after the QR fix meant the
+extracted component and the new self-service flow never had an
+`api.qrserver.com` code path to inherit in the first place.
+
+**Mount point: top-level, not nested under `OrgSettings`.** Every
+`OrgSettings` tab acts on `orgId`; account self-service acts on the
+viewer's own account, orthogonal to which org's board is open — the same
+axis distinction as the OrgPicker fix. New `AccountSettings.tsx`, a
+`"account"` `Screen` state in `App.tsx`, and a header button (👤, next to
+the existing org-settings gear and logout) visible whenever a user is
+authenticated, independent of `org` state (unlike the org-settings gear,
+which requires `org !== null`). `App.tsx`'s `settingsReturnScreen` was
+renamed `drawerReturnScreen` since it's now shared by both drawer
+overlays.
+
+**Sign out everywhere is deliberately unconditional** — reuses
+`revoke_user_sessions` as-is (no "except this session" carve-out), which
+revokes the calling session too. Correct for "I think my account is
+compromised"; the endpoint clears the `wingrc_session` cookie in its
+response for the same reason `/auth/logout` does, and the frontend treats
+a successful call exactly like a logout (`onSignedOutEverywhere` wired to
+`useAuth`'s `refresh`, which 401s and drops back to the login screen).
+
+**Tests:** `backend/tests/test_auth.py` gained `mfa_enrolled` to every
+direct `CurrentUser(...)` construction across 6 files (dataclass field has
+no default, matching the existing no-defaults convention for `is_active`/
+`login_method`). New `backend/tests/test_account_self_service.py` (17
+cases, `@pytest.mark.integration`): change-password happy path + wrong
+current password + weak new password + SSO rejection; MFA reenroll with
+password step-up, with TOTP step-up, missing step-up, wrong step-up, SSO
+rejection, and the mismatched-user-cookie rejection; backup-code
+regeneration happy path, not-enrolled rejection, missing step-up; session
+listing scoped to the caller only and excluding revoked rows, and
+revoke-all revoking every session (including the caller's) without
+touching other users'.
+
+**Verification status:** no local Node/pytest on this box (same limitation
+as every prior frontend-touching slice in this plan) — `ruff check` is
+clean and both new/changed Python files parse; frontend changes reviewed
+by hand, not run through `tsc -b`. Outstanding on wl-util-1 after
+`git pull`: `pytest tests/test_account_self_service.py tests/test_auth.py
+-m integration -v`, frontend build/typecheck, and a browser smoke test —
+change password, re-enroll MFA end-to-end (confirm the old authenticator
+code stops working and the new one is required at next login), regenerate
+backup codes, and sign out everywhere (confirm it actually redirects to
+login).
 
 ---
 

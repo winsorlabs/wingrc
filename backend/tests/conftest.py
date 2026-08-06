@@ -94,6 +94,7 @@ def _make_fake_user(**kwargs):
         role="msp_admin",
         is_active=True,
         login_method="local",
+        mfa_enrolled=True,
     )
     defaults.update(kwargs)
     return CurrentUser(**defaults)

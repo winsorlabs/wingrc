@@ -72,6 +72,7 @@ class CurrentUser:
     role: str
     is_active: bool
     login_method: str
+    mfa_enrolled: bool
 
 
 # ---------------------------------------------------------------------------
@@ -533,6 +534,7 @@ def _resolve_session(db: Session, raw: str) -> CurrentUser:
         role=user.role,
         is_active=user.is_active,
         login_method=user.login_method,
+        mfa_enrolled=user.mfa_enrolled,
     )
 
 
@@ -595,6 +597,7 @@ def _resolve_api_token(db: Session, raw: str) -> CurrentUser:
         role=effective_role,
         is_active=user.is_active,
         login_method=user.login_method,
+        mfa_enrolled=user.mfa_enrolled,
     )
 
 

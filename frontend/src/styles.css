@@ -1071,6 +1071,7 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .required { color: #dc3545; }
 .form-actions { display: flex; justify-content: flex-end; padding-top: 0.5rem; }
 .form-error { padding: 0.6rem 0.75rem; background: #fdecea; border: 1px solid #f5c6cb; border-radius: 5px; font-size: 0.85rem; color: #842029; }
+.form-success { padding: 0.6rem 0.75rem; background: #dcfce7; border: 1px solid #bbf7d0; border-radius: 5px; font-size: 0.85rem; color: #166534; }
 .form-info-banner { padding: 0.6rem 0.75rem; background: #fff3cd; border: 1px solid #ffe69c; border-radius: 5px; font-size: 0.82rem; color: #664d03; }
 .loading { padding: 2rem; text-align: center; color: var(--muted); font-size: 0.9rem; }
 

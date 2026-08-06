@@ -184,6 +184,7 @@ export interface AuthUser {
   display_name: string;
   role: string;
   login_method: string;
+  mfa_enrolled: boolean;
 }
 
 export interface MfaEnrollData {
@@ -192,6 +193,22 @@ export interface MfaEnrollData {
   // Server-rendered inline SVG data: URI (ADR 0008) — never a third-party
   // request; render directly as an <img src>.
   qr_data_uri: string;
+}
+
+// Step-up proof for a self-service account action (I.9) — current password
+// or a current TOTP code, never both required. Mirrors the backend's
+// StepUpIn (routers/auth.py).
+export interface StepUpIn {
+  current_password?: string;
+  totp_code?: string;
+}
+
+export interface SessionRow {
+  id: string;
+  created_at: string;
+  last_activity_at: string;
+  expires_at: string;
+  is_current: boolean;
 }
 
 export interface ApiTokenRow {

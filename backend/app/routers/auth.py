@@ -62,6 +62,7 @@ from ..auth import (
     hash_password,
     make_state_payload,
     record_password,
+    revoke_user_sessions,
     set_session_cookie,
     set_state_cookie,
     validate_password_policy,
@@ -604,6 +605,381 @@ def mfa_verify(
 
 
 # ---------------------------------------------------------------------------
+# Self-service account management (I.9)
+#
+# Everything below acts on the *caller's own* account via an existing
+# session (Depends(get_current_user)) — distinct from both the pre-auth
+# flows above (keyed by signed state cookies, no session yet) and the
+# msp_admin-gated admin actions in routers/users.py (act on someone else's
+# account). None of this is gated by canWrite/require_write: that gate
+# governs assessment/org data mutation, a different axis entirely from
+# "can this authenticated person manage their own login" — confirmed by
+# this router never having a require_write() dependency in the first
+# place. A c3pao_assessor must be able to change their own password same
+# as anyone.
+# ---------------------------------------------------------------------------
+
+
+def _verify_step_up(user: User, current_password: str | None, totp_code: str | None) -> bool:
+    """Confirm live proof of account control before a high-stakes
+    self-service action (MFA secret rotation, backup-code regeneration).
+
+    A valid session alone isn't enough here: a hijacked session cookie
+    could otherwise be used to silently swap the second factor and
+    entrench takeover past a later password change. Accepts either the
+    current password (works even if the user has lost their authenticator
+    device — the primary real-world reason to re-enroll) or a current TOTP
+    code (works if they still have the device and just want to rotate
+    proactively). Backup codes are deliberately not accepted here — they're
+    a scarce recovery resource for *login*, not step-up proof for a
+    settings action.
+    """
+    if current_password:
+        return bool(user.password_hash) and verify_password(current_password, user.password_hash)
+    if totp_code:
+        if not user.totp_secret:
+            return False
+        try:
+            import pyotp
+        except ImportError:
+            raise HTTPException(status_code=501, detail="pyotp not installed") from None
+        return pyotp.TOTP(user.totp_secret).verify(totp_code, valid_window=1)
+    return False
+
+
+class ChangePasswordIn(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class StepUpIn(BaseModel):
+    current_password: str | None = None
+    totp_code: str | None = None
+
+
+class MfaReenrollConfirmIn(BaseModel):
+    code: str
+
+
+@router.post("/change-password")
+def change_password(
+    body: ChangePasswordIn,
+    db: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Self-service password change for an already-authenticated local user.
+
+    Distinct from /set-password (I.5): that endpoint redeems a one-time
+    invite/reset token minted by someone else and never checks a live
+    password. This is the "I know my current password and just want a new
+    one" path — it requires the current password as proof, not a token,
+    and never existed before I.9.
+    """
+    if current_user.login_method != "local":
+        raise HTTPException(
+            status_code=400,
+            detail="Password change is only available for local accounts.",
+        )
+
+    user = db.get(User, current_user.id)
+    if user is None or not user.password_hash or not verify_password(
+        body.current_password, user.password_hash
+    ):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+
+    errors = validate_password_policy(body.new_password)
+    if errors:
+        raise HTTPException(status_code=422, detail="; ".join(errors))
+
+    if check_pwned_password(body.new_password):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "This password has appeared in a known data breach."
+                " Please choose a different password."
+            ),
+        )
+
+    settings = get_settings()
+    if check_password_reuse(
+        db, user.id, body.new_password, settings.password_history_generations
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Password must not match any of your last "
+                f"{settings.password_history_generations} passwords."
+            ),
+        )
+
+    user.password_hash = hash_password(body.new_password)
+    record_password(db, user.id, user.password_hash)
+    db.commit()
+
+    log_event(
+        db,
+        org_id=user.org_id,
+        action="auth.password_change",
+        entity_type="user",
+        entity_id=user.id,
+        context={"via": "self_service"},
+        actor=str(user.id),
+        actor_type="user",
+    )
+    db.commit()
+
+    return {"ok": True}
+
+
+@router.post("/mfa/reenroll")
+def mfa_reenroll(
+    body: StepUpIn,
+    db: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Start self-service MFA re-enrollment for an already-authenticated
+    local user (e.g. a lost or replaced authenticator device).
+
+    Not the same as pre-auth /mfa/enroll (I.5): that one is keyed by a
+    signed state cookie set during login/invite redemption and trusts
+    "password + one-time token" as proof of control. This one only has an
+    existing session to go on, which isn't equivalent proof for something
+    this sensitive, so it requires step-up (see _verify_step_up) before
+    staging a new candidate secret. Staging uses the same signed-cookie
+    mechanism as pre-auth enrollment (set_state_cookie/verify_state_cookie
+    are generic, not pre-auth-specific) under a distinct cookie name, since
+    there is no wingrc_mfa_pending cookie in this flow to key off of.
+    """
+    try:
+        import pyotp
+    except ImportError:
+        raise HTTPException(status_code=501, detail="pyotp not installed") from None
+
+    if current_user.login_method != "local":
+        raise HTTPException(
+            status_code=400,
+            detail="MFA re-enrollment is only available for local accounts.",
+        )
+
+    user = db.get(User, current_user.id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not _verify_step_up(user, body.current_password, body.totp_code):
+        raise HTTPException(
+            status_code=401, detail="Current password or authenticator code required"
+        )
+
+    secret = pyotp.random_base32()
+    totp = pyotp.TOTP(secret)
+    uri = totp.provisioning_uri(name=user.email, issuer_name="WinGRC")
+
+    from fastapi.responses import JSONResponse
+    resp = JSONResponse({
+        "provisioning_uri": uri,
+        "secret": secret,
+        "qr_data_uri": _mfa_qr_data_uri(uri),
+    })
+    set_state_cookie(resp, "wingrc_mfa_reenroll", make_state_payload({
+        "user_id": str(user.id),
+        "totp_secret": secret,
+    }))
+    return resp
+
+
+@router.post("/mfa/reenroll/confirm")
+def mfa_reenroll_confirm(
+    body: MfaReenrollConfirmIn,
+    db: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(get_current_user),
+    wingrc_mfa_reenroll: str | None = Cookie(default=None),
+):
+    """Verify the new TOTP code and commit the rotated secret + fresh backup
+    codes.
+
+    Deliberately does NOT mint a new session or touch wingrc_session — the
+    caller is already authenticated; re-enrolling MFA shouldn't silently
+    rotate their session as a side effect the way pre-auth
+    /mfa/enroll/confirm does (that one has to — it's how you first get
+    logged in).
+    """
+    try:
+        import pyotp
+    except ImportError:
+        raise HTTPException(status_code=501, detail="pyotp not installed") from None
+
+    if not wingrc_mfa_reenroll:
+        raise HTTPException(status_code=401, detail="No re-enrollment in progress")
+
+    staged = verify_state_cookie(wingrc_mfa_reenroll)
+    if not staged or staged.get("user_id") != str(current_user.id):
+        raise HTTPException(status_code=400, detail="Invalid or expired re-enrollment state")
+
+    totp_secret = staged["totp_secret"]
+    if not pyotp.TOTP(totp_secret).verify(body.code, valid_window=1):
+        raise HTTPException(status_code=400, detail="Invalid TOTP code")
+
+    user = db.get(User, current_user.id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.totp_secret = totp_secret
+    user.mfa_enrolled = True
+
+    db.execute(text("DELETE FROM mfa_backup_code WHERE user_id = :uid"), {"uid": user.id})
+    raw_codes = [secrets.token_hex(4) for _ in range(10)]
+    for code in raw_codes:
+        code_hash = hashlib.sha256(code.encode()).hexdigest()
+        db.add(MfaBackupCode(user_id=user.id, code_hash=code_hash))
+
+    db.commit()
+
+    log_event(
+        db,
+        org_id=user.org_id,
+        action="auth.mfa.reenrolled",
+        entity_type="user",
+        entity_id=user.id,
+        context={"via": "self_service"},
+        actor=str(user.id),
+        actor_type="user",
+    )
+    db.commit()
+
+    from fastapi.responses import JSONResponse
+    resp = JSONResponse({"backup_codes": raw_codes})
+    clear_state_cookie(resp, "wingrc_mfa_reenroll")
+    return resp
+
+
+@router.post("/mfa/backup-codes/regenerate")
+def regenerate_backup_codes(
+    body: StepUpIn,
+    db: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Replace this user's backup codes without touching their TOTP secret.
+
+    The lightweight alternative to the admin's reset-mfa
+    (POST /orgs/{org_id}/users/{user_id}/reset-mfa), which nulls the TOTP
+    secret entirely and deactivates the account (see ADR 0008's remediation
+    section) — the wrong tool for a user who just wants a fresh set of
+    codes, not full re-enrollment.
+    """
+    if current_user.login_method != "local":
+        raise HTTPException(
+            status_code=400,
+            detail="Backup codes are only available for local accounts.",
+        )
+
+    user = db.get(User, current_user.id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not user.mfa_enrolled:
+        raise HTTPException(status_code=400, detail="MFA is not enrolled")
+
+    if not _verify_step_up(user, body.current_password, body.totp_code):
+        raise HTTPException(
+            status_code=401, detail="Current password or authenticator code required"
+        )
+
+    db.execute(text("DELETE FROM mfa_backup_code WHERE user_id = :uid"), {"uid": user.id})
+    raw_codes = [secrets.token_hex(4) for _ in range(10)]
+    for code in raw_codes:
+        code_hash = hashlib.sha256(code.encode()).hexdigest()
+        db.add(MfaBackupCode(user_id=user.id, code_hash=code_hash))
+    db.commit()
+
+    log_event(
+        db,
+        org_id=user.org_id,
+        action="auth.mfa.backup_codes_regenerated",
+        entity_type="user",
+        entity_id=user.id,
+        context={"via": "self_service"},
+        actor=str(user.id),
+        actor_type="user",
+    )
+    db.commit()
+
+    return {"backup_codes": raw_codes}
+
+
+@router.get("/sessions")
+def list_sessions(
+    request: Request,
+    db: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """List this user's own active sessions — the user-visible payoff for
+    last_activity_at (I.4). No IP/device column exists on user_session, so
+    this is time-only: created_at, last_activity_at, expires_at.
+    """
+    raw_session = request.cookies.get("wingrc_session")
+    current_hash = hashlib.sha256(raw_session.encode()).hexdigest() if raw_session else None
+
+    now = datetime.now(UTC)
+    rows = db.execute(
+        text(
+            "SELECT id, token_hash, created_at, last_activity_at, expires_at"
+            " FROM user_session"
+            " WHERE user_id = :uid AND revoked_at IS NULL AND expires_at > :now"
+            " ORDER BY last_activity_at DESC"
+        ),
+        {"uid": current_user.id, "now": now},
+    ).all()
+
+    return [
+        {
+            "id": str(r.id),
+            "created_at": r.created_at.isoformat(),
+            "last_activity_at": r.last_activity_at.isoformat(),
+            "expires_at": r.expires_at.isoformat(),
+            "is_current": r.token_hash == current_hash,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/sessions/revoke-all")
+def revoke_all_sessions(
+    db: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Sign out everywhere.
+
+    Deliberately unconditional — reuses the same revoke_user_sessions
+    helper the admin unlock/reset paths already use, which revokes every
+    live session including the one making this request. The scenario this
+    exists for is "I think my account is compromised," where revoking
+    everything including the current tab is the correct, safer default.
+    The response clears the session cookie for the same reason logout
+    does — the frontend should treat this exactly like a logout, not a
+    no-op on the current tab.
+    """
+    revoke_user_sessions(db, current_user.id)
+    db.commit()
+
+    log_event(
+        db,
+        org_id=current_user.org_id,
+        action="auth.sessions.revoke_all",
+        entity_type="user",
+        entity_id=current_user.id,
+        context={"via": "self_service"},
+        actor=str(current_user.id),
+        actor_type="user",
+    )
+    db.commit()
+
+    from fastapi.responses import JSONResponse
+    resp = JSONResponse({"ok": True})
+    clear_session_cookie(resp)
+    return resp
+
+
+# ---------------------------------------------------------------------------
 # Logout + me
 # ---------------------------------------------------------------------------
 
@@ -649,4 +1025,5 @@ def me(current_user: CurrentUser = Depends(get_current_user)):
         "display_name": current_user.display_name,
         "role": current_user.role,
         "login_method": current_user.login_method,
+        "mfa_enrolled": current_user.mfa_enrolled,
     }

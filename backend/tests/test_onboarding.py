@@ -673,6 +673,7 @@ def test_contacts_scoped_to_org(client, db_session, fake_msp_admin):
         role="msp_admin",
         is_active=True,
         login_method="local",
+        mfa_enrolled=True,
     )
     app.dependency_overrides[get_current_user] = _authed(db_session, user_b)
     r_b = client.get(f"/orgs/{org_b.id}/contacts")

@@ -311,6 +311,7 @@ def _user_with_role(role: str) -> CurrentUser:
         role=role,
         is_active=True,
         login_method="local",
+        mfa_enrolled=True,
     )
 
 

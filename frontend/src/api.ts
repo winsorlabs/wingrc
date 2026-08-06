@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, Contact, ControlStateRow, CreatedApiToken, EvidenceRow, EvidenceTaskRow, Framework, InvitedUser, MfaEnrollData, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, ProductRow, StatementRow, SystemDescriptionData, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, Contact, ControlStateRow, CreatedApiToken, EvidenceRow, EvidenceTaskRow, Framework, InvitedUser, MfaEnrollData, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, ProductRow, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -99,6 +99,77 @@ export const api = {
       throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
     }
     return r.json() as Promise<{ backup_codes: string[] }>;
+  },
+
+  // --- Self-service account management (I.9) ---
+
+  changePassword: async (currentPassword: string, newPassword: string): Promise<void> => {
+    const r = await fetch(`${BASE}/auth/change-password`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+  },
+
+  mfaReenroll: async (stepUp: StepUpIn): Promise<MfaEnrollData> => {
+    const r = await fetch(`${BASE}/auth/mfa/reenroll`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(stepUp),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<MfaEnrollData>;
+  },
+
+  mfaReenrollConfirm: async (code: string): Promise<{ backup_codes: string[] }> => {
+    const r = await fetch(`${BASE}/auth/mfa/reenroll/confirm`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<{ backup_codes: string[] }>;
+  },
+
+  regenerateBackupCodes: async (stepUp: StepUpIn): Promise<{ backup_codes: string[] }> => {
+    const r = await fetch(`${BASE}/auth/mfa/backup-codes/regenerate`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(stepUp),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<{ backup_codes: string[] }>;
+  },
+
+  listSessions: async (): Promise<SessionRow[]> => {
+    const r = await fetch(`${BASE}/auth/sessions`, { credentials: "include" });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json() as Promise<SessionRow[]>;
+  },
+
+  revokeAllSessions: async (): Promise<void> => {
+    const r = await fetch(`${BASE}/auth/sessions/revoke-all`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   },
 
   getOrgs: () => req<Org[]>("/orgs"),
