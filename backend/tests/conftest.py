@@ -235,3 +235,45 @@ def _app_session(session: Session):
             conn.execute(text("RESET ROLE"))
 
     return _override
+
+
+def _set_cookie_value(response, name: str) -> str | None:
+    """Pull a cookie's raw value directly out of the response's Set-Cookie
+    headers, rather than relying on the client's cookie jar. The app scopes
+    state cookies to path=/api/auth and the session cookie to path=/api
+    (matching the deployed nginx-proxied layout, where the public path is
+    /api/...), which doesn't match the bare /auth path TestClient hits
+    directly against the FastAPI app — so jar-based auto-propagation across
+    requests can't be relied on here.
+    """
+    for raw in response.headers.get_list("set-cookie"):
+        if raw.startswith(f"{name}="):
+            first_segment = raw.split(";", 1)[0]
+            value = first_segment.split("=", 1)[1]
+            return value or None
+    return None
+
+
+def _is_cleared(response, name: str) -> bool:
+    """True if the response clears `name` via an empty value + Max-Age=0,
+    matching auth.clear_state_cookie()/clear_session_cookie().
+
+    Python's http.cookies module (which Starlette's Response.set_cookie
+    uses under the hood) renders an empty string value as a literal
+    quoted `""`, not a bare trailing `=` — e.g. `name=""; ...; Max-Age=0`,
+    not `name=; ...; Max-Age=0`. A real (non-empty) cookie value is never
+    quoted this way, so checking for either the bare or quoted-empty form
+    is sufficient and doesn't risk false-positiving on a real value.
+
+    Checking Max-Age=0 (not just the value) is the point of this helper,
+    not an extra precaution: an empty value with no expiry still persists
+    in a real cookie jar, so a test — or a frontend redirect — that only
+    checks "the value looks blank" would silently pass even if the
+    endpoint forgot to actually expire the cookie.
+    """
+    for raw in response.headers.get_list("set-cookie"):
+        if raw.startswith(f"{name}="):
+            first_segment = raw.split(";", 1)[0]
+            value = first_segment.split("=", 1)[1]
+            return value in ("", '""') and "Max-Age=0" in raw
+    return False

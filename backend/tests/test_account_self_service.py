@@ -26,7 +26,7 @@ from app.auth import CurrentUser, create_session, get_current_user, hash_passwor
 from app.db import get_session
 from app.main import app
 from app.models import MfaBackupCode, Organization, User
-from tests.conftest import _app_session, _authed
+from tests.conftest import _app_session, _authed, _is_cleared, _set_cookie_value
 
 _STRONG_PASSWORD = "correct-horse-battery-staple-and-then-some"
 
@@ -76,24 +76,6 @@ def _client_as(db_session, user: User) -> TestClient:
     app.dependency_overrides[get_session] = _app_session(db_session)
     app.dependency_overrides[get_current_user] = _authed(db_session, _current_user_for(user))
     return TestClient(app)
-
-
-def _set_cookie_value(response, name: str) -> str | None:
-    """Pull a cookie's raw value directly out of Set-Cookie headers.
-
-    State cookies (and wingrc_session) are scoped to path=/api or
-    path=/api/auth (see auth.py's set_state_cookie/set_session_cookie),
-    which doesn't match the bare /auth path TestClient hits directly
-    against the FastAPI app — jar-based auto-propagation across requests
-    can't be relied on here (same reasoning as test_session_fixation.py's
-    identical helper).
-    """
-    for raw in response.headers.get_list("set-cookie"):
-        if raw.startswith(f"{name}="):
-            first_segment = raw.split(";", 1)[0]
-            value = first_segment.split("=", 1)[1]
-            return value or None
-    return None
 
 
 @pytest.fixture(autouse=True)
@@ -441,9 +423,11 @@ def test_revoke_all_sessions_revokes_every_live_session(db_session):
     client = _client_as(db_session, user)
     r = client.post("/auth/sessions/revoke-all")
     assert r.status_code == 200
-    # Response must clear the session cookie, same as logout -- the
-    # frontend should treat this exactly like being signed out.
-    assert _set_cookie_value(r, "wingrc_session") == ""
+    # Response must actually expire the session cookie (Max-Age=0), not
+    # just blank its value -- a blanked-but-unexpired cookie would still
+    # persist in a real jar, silently defeating "sign out everywhere."
+    # Same invariant test_session_fixation.py's _is_cleared() exists for.
+    assert _is_cleared(r, "wingrc_session")
 
     db_session.refresh(row1)
     db_session.refresh(row2)

@@ -26,7 +26,7 @@ from app.auth import hash_password
 from app.db import get_session
 from app.main import app
 from app.models import Organization, User, UserSession
-from tests.conftest import _app_session
+from tests.conftest import _app_session, _is_cleared, _set_cookie_value
 
 
 @pytest.fixture
@@ -41,41 +41,6 @@ def _seed_org(db_session) -> Organization:
     db_session.add(org)
     db_session.flush()
     return org
-
-
-def _set_cookie_value(response, name: str) -> str | None:
-    """Pull a cookie's raw value directly out of the response's Set-Cookie
-    headers, rather than relying on the client's cookie jar. The app scopes
-    state cookies to path=/api/auth (matching the deployed nginx-proxied
-    layout, where the public path is /api/auth/...), which doesn't match
-    the bare /auth path TestClient hits directly against the FastAPI app —
-    so jar-based auto-propagation across requests can't be relied on here.
-    """
-    for raw in response.headers.get_list("set-cookie"):
-        if raw.startswith(f"{name}="):
-            first_segment = raw.split(";", 1)[0]
-            value = first_segment.split("=", 1)[1]
-            return value or None
-    return None
-
-
-def _is_cleared(response, name: str) -> bool:
-    """True if the response clears `name` via an empty value + Max-Age=0,
-    matching auth.clear_state_cookie().
-
-    Python's http.cookies module (which Starlette's Response.set_cookie
-    uses under the hood) renders an empty string value as a literal
-    quoted `""`, not a bare trailing `=` — e.g. `name=""; ...; Max-Age=0`,
-    not `name=; ...; Max-Age=0`. A real (non-empty) cookie value is never
-    quoted this way, so checking for either the bare or quoted-empty form
-    is sufficient and doesn't risk false-positiving on a real value.
-    """
-    for raw in response.headers.get_list("set-cookie"):
-        if raw.startswith(f"{name}="):
-            first_segment = raw.split(";", 1)[0]
-            value = first_segment.split("=", 1)[1]
-            return value in ("", '""') and "Max-Age=0" in raw
-    return False
 
 
 # ---------------------------------------------------------------------------
