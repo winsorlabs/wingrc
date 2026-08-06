@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import type { MfaEnrollData } from "../types";
 
 // Shared between LoginPage (first login after an already-set password,
 // mfa_enrolled=false) and InviteAcceptPage (right after set-password for a
@@ -15,7 +16,7 @@ interface Props {
 
 export function MfaEnrollmentFlow({ onComplete }: Props) {
   const [step, setStep] = useState<Step>("loading");
-  const [enrollData, setEnrollData] = useState<{ provisioning_uri: string; secret: string } | null>(null);
+  const [enrollData, setEnrollData] = useState<MfaEnrollData | null>(null);
   const [mfaCode, setMfaCode] = useState("");
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
   const [error, setError] = useState("");
@@ -64,8 +65,11 @@ export function MfaEnrollmentFlow({ onComplete }: Props) {
             Scan the QR code below with your authenticator app (Google Authenticator,
             Authy, Microsoft Authenticator, etc.), then enter the 6-digit code to confirm.
           </p>
+          {/* Rendered entirely server-side (ADR 0008) — never a third-party
+              request. The old api.qrserver.com <img> sent the live TOTP
+              secret to an external service in its query string. */}
           <img
-            src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(enrollData.provisioning_uri)}`}
+            src={enrollData.qr_data_uri}
             alt="TOTP QR code"
             width={200}
             height={200}

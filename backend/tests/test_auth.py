@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.auth import hash_password, validate_password_policy, verify_password
 from app.main import app
+from app.routers.auth import _mfa_qr_data_uri
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +65,28 @@ def test_policy_minimum_ok():
 
 def test_policy_too_long():
     assert any("128" in e for e in validate_password_policy("a" * 129))
+
+
+# ---------------------------------------------------------------------------
+# Unit: MFA QR rendering (ADR 0008)
+# ---------------------------------------------------------------------------
+
+
+def test_mfa_qr_data_uri_is_self_contained():
+    """Renders entirely server-side — no third-party service, no network call.
+
+    ADR 0008: this used to be an <img> pointed at api.qrserver.com, sending
+    the live TOTP secret (embedded in the provisioning URI) to a third
+    party. The regression this guards against is that reappearing — e.g. a
+    future change swapping this back to an external image-generation
+    service for convenience.
+    """
+    uri = "otpauth://totp/WinGRC:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=WinGRC"
+    data_uri = _mfa_qr_data_uri(uri)
+
+    assert data_uri.startswith("data:image/svg+xml")
+    assert "qrserver" not in data_uri
+    assert "<svg" in data_uri or "%3Csvg" in data_uri
 
 
 # ---------------------------------------------------------------------------

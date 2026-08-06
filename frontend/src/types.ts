@@ -186,6 +186,14 @@ export interface AuthUser {
   login_method: string;
 }
 
+export interface MfaEnrollData {
+  provisioning_uri: string;
+  secret: string;
+  // Server-rendered inline SVG data: URI (ADR 0008) — never a third-party
+  // request; render directly as an <img src>.
+  qr_data_uri: string;
+}
+
 export interface ApiTokenRow {
   id: string;
   name: string;

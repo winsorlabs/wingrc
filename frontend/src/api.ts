@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, Contact, ControlStateRow, CreatedApiToken, EvidenceRow, EvidenceTaskRow, Framework, InvitedUser, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, ProductRow, StatementRow, SystemDescriptionData, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, Contact, ControlStateRow, CreatedApiToken, EvidenceRow, EvidenceTaskRow, Framework, InvitedUser, MfaEnrollData, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, ProductRow, StatementRow, SystemDescriptionData, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -75,7 +75,7 @@ export const api = {
     return r.json() as Promise<{ next: string }>;
   },
 
-  mfaEnroll: async (): Promise<{ provisioning_uri: string; secret: string }> => {
+  mfaEnroll: async (): Promise<MfaEnrollData> => {
     const r = await fetch(`${BASE}/auth/mfa/enroll`, {
       method: "POST",
       credentials: "include",
@@ -84,7 +84,7 @@ export const api = {
       const body = await r.json().catch(() => ({}));
       throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
     }
-    return r.json() as Promise<{ provisioning_uri: string; secret: string }>;
+    return r.json() as Promise<MfaEnrollData>;
   },
 
   mfaEnrollConfirm: async (code: string): Promise<{ backup_codes: string[] }> => {

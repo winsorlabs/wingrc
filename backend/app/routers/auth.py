@@ -376,6 +376,27 @@ def set_password(
 # MFA enrollment
 # ---------------------------------------------------------------------------
 
+def _mfa_qr_data_uri(provisioning_uri: str) -> str:
+    """Render the TOTP provisioning URI as an inline SVG QR code, generated
+    entirely server-side.
+
+    ADR 0008: this used to be the frontend's job — it sent `provisioning_uri`
+    (which embeds the live TOTP shared secret) to a third-party QR-rendering
+    service (api.qrserver.com) as a query parameter, disclosing the secret to
+    an operator WinGRC has no relationship with. Rendering server-side means
+    the secret never leaves the deployment's own trust boundary; the caller
+    just displays the returned `data:` URI directly as an <img src>, with no
+    outbound request at enrollment time at all.
+    """
+    try:
+        import segno
+    except ImportError:
+        raise HTTPException(status_code=501, detail="segno not installed") from None
+
+    qr = segno.make(provisioning_uri, error="M")
+    return qr.svg_data_uri(scale=4, border=2)
+
+
 @router.post("/mfa/enroll")
 def mfa_enroll(
     db: Session = Depends(get_session),
@@ -407,7 +428,11 @@ def mfa_enroll(
     uri = totp.provisioning_uri(name=user.email, issuer_name="WinGRC")
 
     from fastapi.responses import JSONResponse
-    resp = JSONResponse({"provisioning_uri": uri, "secret": secret})
+    resp = JSONResponse({
+        "provisioning_uri": uri,
+        "secret": secret,
+        "qr_data_uri": _mfa_qr_data_uri(uri),
+    })
     set_state_cookie(resp, "wingrc_mfa_setup", make_state_payload({
         "user_id": str(user_id),
         "org_id": str(org_id),
