@@ -1,7 +1,12 @@
 # 9. Multi-org user access
 
 Date: 2026-08-07
-Status: Proposed — not implemented.
+Status: Accepted — implementation in progress. M.1 (schema), M.2
+(auto-provisioning), M.3 (`User.org_id` → `home_org_id` rename), and M.4
+(`require_org_access`/`get_current_user` enforcement cutover — the fix
+for the defect this ADR documents) are landed pending live wl-util-1
+verification (create a second org, open it, complete OnboardingWizard,
+confirm scoping). M.5 (`GET /orgs`/`OrgPicker` reshape) not started.
 
 **Severity: this documents a functional defect in already-shipped
 behavior, not groundwork for unbuilt features.** An msp_admin cannot open

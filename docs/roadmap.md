@@ -20,7 +20,7 @@ Items without a status are planned but not yet started.
 - **Findings + POA&M models** — `finding` and `poa_m_item` tables; gap/deficiency/weakness/observation types; severity; remediation milestones.
 - **Assessor Bundle Export** — downloadable ZIP (SSP + evidence + scores + status) for C3PAO handoff; `backend/app/bundle_service.py` assembly, `GET /orgs/{org_id}/assessments/{assessment_id}/bundle`, "Generate Assessor Bundle" button on the board. Verified against a real downloaded zip. **Amended 2026-08-06** (out-of-band, not a new roadmap slice): evidence folder in the export restructured to `evidence/<family>/<control>/<objective>/` so an assessor can navigate to one objective's evidence directly — see `docs/adr/0007-per-objective-evidence-folders-in-bundle-export.md`.
 - **Onboarding Wizard v1** — Organization Profile (SSP header fields: CAGE/UEI/address/phone/logo), System Description (system type, CUI categories/storage/boundary/flow narrative), and Personnel Repository (contacts + documentation-role assignment) — migrations 0011/0012/0013; `GET/PATCH /orgs/{org_id}/profile`, `POST /orgs/{org_id}/logo`, `GET/PUT /orgs/{org_id}/system-description`, contacts CRUD + role endpoints (`contacts.py`). 3-step wizard on org creation, plus a persistent tabbed Settings page for later edits.
-- **Authentication** — session-based login (opaque tokens, HttpOnly+Secure cookie), local password (PBKDF2-HMAC-SHA256, FIPS-140 rationale) + TOTP MFA + backup codes, Microsoft Entra ID SSO, API tokens for machine access — migration 0015. Four roles shipped (`msp_admin`/`msp_engineer`/`customer_poc`/`c3pao_assessor`); see Deferred for role-guard coverage. **Known defect (2026-08-07):** `require_org_access()`'s single-org gate means MSP staff cannot open any org but their own — see Known defects below.
+- **Authentication** — session-based login (opaque tokens, HttpOnly+Secure cookie), local password (PBKDF2-HMAC-SHA256, FIPS-140 rationale) + TOTP MFA + backup codes, Microsoft Entra ID SSO, API tokens for machine access — migration 0015. Four roles shipped (`msp_admin`/`msp_engineer`/`customer_poc`/`c3pao_assessor`); see Deferred for role-guard coverage. **Known defect (2026-08-07), fixed 2026-08-11 pending live verification:** `require_org_access()`'s single-org gate meant MSP staff couldn't open any org but their own — see Known defects below.
 
 ---
 
@@ -28,19 +28,23 @@ Items without a status are planned but not yet started.
 
 - **MSP staff cannot open any org but their own — the core multi-tenant
   premise is broken in already-shipped code, not an unbuilt feature.**
-  `require_org_access()` (`backend/app/auth.py`) gates on strict
+  **Fixed 2026-08-11 (ADR 0009 M.4), pending live wl-util-1 verification —
+  not yet re-tested against real data.** `require_org_access()`
+  (`backend/app/auth.py`) used to gate on strict
   `current_user.org_id == org_id` with no role exemption. An `msp_admin`
-  can list every org (`GET /orgs`) and create new ones (`POST /orgs`), but
-  gets 403 on everything else for any org beyond their own — including one
-  they just created. Traced end to end: `create_org()` produces an
-  ownerless org, `invite_user()` requires the caller to already belong to
+  could list every org (`GET /orgs`) and create new ones (`POST /orgs`), but
+  got 403 on everything else for any org beyond their own — including one
+  they'd just created. Traced end to end: `create_org()` produced an
+  ownerless org, `invite_user()` required the caller to already belong to
   the target org as `msp_admin` (circular for a brand-new org), and
-  `OnboardingWizard`'s very first API call 403s. The only working
-  onboarding path today is `manage.py`'s one-time bootstrap CLI, not a
-  real per-customer flow. Full investigation, recommended fix (many-to-many
-  `org_membership`), and an implementation slice plan:
-  `docs/adr/0009-multi-org-user-access.md`. Should be prioritized as a bug
-  fix ahead of the "Planned" items below, not queued behind them.
+  `OnboardingWizard`'s very first API call 403'd. The only working
+  onboarding path was `manage.py`'s one-time bootstrap CLI, not a
+  real per-customer flow. Now a real `org_membership` lookup, per the
+  many-to-many model and implementation slice plan in
+  `docs/adr/0009-multi-org-user-access.md`. Exit criteria for closing this
+  entry entirely: live walkthrough on wl-util-1 (create a second org as
+  msp_admin, open it, complete OnboardingWizard end to end, confirm data
+  stays scoped between the two orgs).
 
 ---
 
