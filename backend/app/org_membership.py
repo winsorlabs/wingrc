@@ -20,45 +20,65 @@ moment it's made, not a live link back to the grantee's role elsewhere —
 if their role in one org changes later, their other memberships are
 unaffected (this is the whole point of "role travels with the membership,
 not the person").
+
+Every read of "every existing MSP user" and every write of an
+org_membership row here goes through the SECURITY DEFINER functions from
+migration 0025 (auth.msp_role_users / auth.grant_org_membership), not a
+plain ORM query. See docs/adr/0009-multi-org-user-access.md's "System-
+level cross-org operations" subsection for why: both operations must see
+or write across every org in the deployment within one request, which is
+not expressible as any single value of RLS's per-request app.current_org
+GUC. A first attempt at this used plain SQLAlchemy queries and crashed
+(or silently under-scoped) against real Postgres — see that ADR section
+for the incident. Both org_membership.py functions call the SECURITY
+DEFINER functions uniformly for every insert, including the one grant
+(a newly invited user's own org) that would actually be RLS-legal without
+the bypass — one code path, not a conditional one, matching the
+migration's own reasoning for why grant_org_membership takes no
+authorization shortcuts of its own: the caller here has already decided
+every grant it makes is authorized (it's downstream of require_role/
+require_org_access), so there's nothing to special-case.
 """
 from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from .models import Organization, OrgMembership, User
+from .models import Organization
 
 _AUTO_PROVISION_ROLES = frozenset({"msp_admin", "msp_engineer"})
+
+_GRANT_SQL = text(
+    "SELECT auth.grant_org_membership(:user_id, :org_id, :role)"
+)
+
+
+def _grant(db: Session, *, user_id: uuid.UUID, org_id: uuid.UUID, role: str) -> bool:
+    """True if a new membership row was actually inserted (False if one
+    already existed for this (user_id, org_id) pair — grant_org_membership
+    is idempotent via ON CONFLICT DO NOTHING and returns NULL in that
+    case)."""
+    result = db.execute(
+        _GRANT_SQL, {"user_id": user_id, "org_id": org_id, "role": role}
+    ).scalar()
+    return result is not None
 
 
 def provision_new_org_memberships(db: Session, org_id: uuid.UUID) -> int:
     """A new org was just created: grant every existing msp_admin/
     msp_engineer a membership in it, at their own current role.
 
-    Existence-checked (not blind-inserted) so this is safe to call more
-    than once for the same org — matches this codebase's established
-    dedup idiom (see engine.py's evidence-task fan-out) rather than
-    reaching for a database-level ON CONFLICT, which nothing else here
-    uses. Returns the number of memberships granted.
+    Idempotent (safe to call more than once for the same org) via
+    grant_org_membership's own ON CONFLICT DO NOTHING — no existence
+    check needed on this side. Returns the number of memberships granted.
     """
-    already_granted = set(
-        db.execute(
-            select(OrgMembership.user_id).where(OrgMembership.org_id == org_id)
-        ).scalars().all()
+    candidates = db.execute(text("SELECT id, role FROM auth.msp_role_users()")).all()
+    return sum(
+        _grant(db, user_id=user_id, org_id=org_id, role=role)
+        for user_id, role in candidates
     )
-    candidates = db.execute(
-        select(User.id, User.role).where(User.role.in_(_AUTO_PROVISION_ROLES))
-    ).all()
-
-    granted = 0
-    for user_id, role in candidates:
-        if user_id in already_granted:
-            continue
-        db.add(OrgMembership(user_id=user_id, org_id=org_id, role=role))
-        granted += 1
-    return granted
 
 
 def provision_new_user_memberships(
@@ -70,22 +90,21 @@ def provision_new_user_memberships(
     membership in every other existing org too, at the role they were
     invited with.
 
-    `user_id` is always brand new here (invite_user() only ever creates a
-    fresh User row as of M.2 — the re-invite-into-a-second-org path for an
-    *existing* identity is M.8), so no existence check is needed before
-    inserting: there cannot already be a membership row for a user_id that
-    didn't exist a moment ago. Returns the number of memberships granted.
+    Returns the number of memberships granted.
     """
-    db.add(OrgMembership(user_id=user_id, org_id=org_id, role=role))
-    granted = 1
+    granted = int(_grant(db, user_id=user_id, org_id=org_id, role=role))
 
     if role not in _AUTO_PROVISION_ROLES:
         return granted
 
+    # Organization carries no RLS policy of its own (it's the tenant
+    # boundary itself, not something scoped by one) — this read needs no
+    # SECURITY DEFINER bypass, unlike the grants below.
     other_org_ids = db.execute(
         select(Organization.id).where(Organization.id != org_id)
     ).scalars().all()
-    for other_org_id in other_org_ids:
-        db.add(OrgMembership(user_id=user_id, org_id=other_org_id, role=role))
-        granted += 1
+    granted += sum(
+        _grant(db, user_id=user_id, org_id=other_org_id, role=role)
+        for other_org_id in other_org_ids
+    )
     return granted
