@@ -1,0 +1,498 @@
+# 9. Multi-org user access
+
+Date: 2026-08-07
+Status: Proposed — not implemented. This ADR settles the model before any
+nav/dashboard work (roadmap items depending on "which orgs can this user
+reach") touches it.
+
+## Context
+
+### Current state, verified against code and tests — not assumed
+
+**`User` is single-org, full stop.** `org_id` is a `NOT NULL` FK to
+`organization.id` (`models.py:1107-1109`), one row per person. There is no
+membership table, no notion of a "home" org distinct from an "only" org.
+`UserSession.org_id` (`models.py:1169`) is explicitly documented as
+"denormalized from `user.org_id`."
+
+**`require_org_access()` gates on strict equality, no role exemption —
+confirmed in the source, not summarized:**
+
+```python
+# auth.py:604-625
+def require_org_access(*roles: str):
+    def _check(org_id: uuid.UUID, current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+        if current_user.org_id != org_id:
+            raise HTTPException(status_code=403, detail="Cross-org access denied")
+        if roles and current_user.role not in roles:
+            raise HTTPException(status_code=403, detail=f"Requires one of: {', '.join(roles)}")
+        return current_user
+    return _check
+```
+
+There is no `if current_user.role in {"msp_admin", ...}: return current_user`
+early-out anywhere. This is applied to every org-scoped route in
+`assessments.py`, `evidence.py`, `contacts.py`, `bundle.py`, `orgs.py`
+(profile/system-description/onboarding-status), and `users.py`.
+
+**`GET /orgs` / `POST /orgs` are role-gated, not org-gated** — they have no
+`org_id` in their own path, so they use a separate dependency,
+`require_role("msp_admin", "msp_engineer")` (`orgs.py:227-255`), with no
+membership check of any kind.
+
+**Test evidence that these two facts combine into a dead end.**
+`test_org_access_guard.py` seeds a second org and asserts, using a
+`fake_msp_admin` identity, flat 403 against it on every router: `assessments`
+(`test_assessments_get_cross_org_403`), `evidence`
+(`test_evidence_list_cross_org_403`), `contacts`
+(`test_contacts_list_cross_org_403`), `orgs` profile
+(`test_orgs_profile_get_cross_org_403`), and `bundle`
+(`test_bundle_cross_org_403`) — every one passing today, all with `role =
+"msp_admin"`. Separately, `test_create_org_allowed_for_msp_roles` proves an
+msp_admin can create a new org (201). No test anywhere combines the two —
+create an org, then access it — because it cannot succeed: `require_org_access`
+would 403 the creator against the org they just made, identically to every
+other cross-org case above.
+
+**Traced end to end, not just at the API boundary.** `invite_user`
+(`POST /orgs/{org_id}/users`, `users.py:73-78`) requires
+`Depends(require_org_access("msp_admin"))` — the caller must *already*
+belong to `org_id` as `msp_admin` before they can invite anyone into it.
+`create_org` (`orgs.py:233-245`) inserts a bare `Organization` row with no
+owner, no membership, no link back to whoever created it. So a freshly
+created org has no path by which anyone — including its creator — can ever
+invite the first user into it through the API. The only account-creation
+path that doesn't run into this circularity is `app/manage.py`'s
+`bootstrap-admin` CLI command, explicitly documented as "first-boot
+bootstrap," a one-time manual operation, not a per-customer onboarding
+mechanism.
+
+**Confirmed against the actual frontend flow.** `OrgPicker`'s "Add"
+button → `api.createOrg()` → `App.tsx`'s `onEnterOnboarding` →
+`OnboardingWizard`, whose first action is `api.getOnboardingStatus(orgId)`
+→ `GET /orgs/{org_id}/onboarding-status`, gated by
+`Depends(require_org_access())` (`orgs.py:456-459`). For any org beyond the
+msp_admin's own, this 403s immediately — the very first screen of the
+onboarding flow that `OrgPicker`'s own "Add" button exists to launch.
+
+**Net finding: today, an msp_admin can *see* every org (`GET /orgs`) and
+*create* new ones, but can only ever successfully open, configure, or work
+inside the one org their own `User.org_id` happens to point at.** This is
+not a deliberate design choice recorded anywhere — the plan doc
+(`docs/PLAN-auth-rbac-completion.md`) never discusses cross-org MSP access
+as an open question the way it does assessor per-assessment scoping (I.2).
+It reads as a side effect: `require_org_access` was built (I.1-era) to close
+unauthorized cross-org access — correctly — from a pure isolation lens,
+without the "MSP staff need legitimate cross-org access as their actual job"
+requirement being in view at the time. `test_org_access_guard.py`'s own
+docstring frames its purpose purely as "an authenticated user from Org A
+must not be able to read or mutate Org B's data" — true and necessary, but
+incomplete once the same deployment's MSP staff are Org A and need
+legitimate access to Org B, C, D.
+
+**"MSP org" vs. "customer org" is not a structural distinction today.**
+`Organization` (`models.py:58-86`) has no `org_type`, no `is_msp` flag, no
+parent/child relationship, nothing. Every org row is identical in shape.
+"MSP-ness" exists only as an emergent property of which users (by role)
+happen to have their fixed `org_id` pointing at a given org — and per ADR
+0005, there is exactly one MSP per deployment, so in practice exactly one
+org row is "the MSP's own," established once by `bootstrap-admin` and never
+marked as such anywhere in the schema.
+
+**RLS is uniform, single-value, and — this matters for the design below —
+already correctly scoped for a per-request active org, not a per-user
+static one.** Every RLS-protected table, across every migration that adds
+one (`0001`, `0002`'s `_enable_rls` helper applied to "every table with a
+direct org_id column," `0015`, `0019`), uses the identical pattern:
+
+```sql
+CREATE POLICY {table}_tenant_isolation ON {table}
+USING (org_id = current_setting('app.current_org', true)::uuid)
+```
+
+This is a single scalar comparison against one GUC, set per-request via
+`SET LOCAL app.current_org = ...`. It says nothing about *how many* orgs a
+user may cause that GUC to be set to across different requests — it only
+constrains what's visible *within* whichever value is set for *this*
+request. That's the right invariant to keep: a request should still act
+within exactly one org's data at a time even for a multi-org user. What
+needs to change is upstream — the authorization check that decides which
+values a given user is *allowed* to cause `app.current_org` to take.
+
+**Session-resolution already runs org-independent for identity, but
+org-fixed for RLS-setting — and that's the one real structural wrinkle.**
+`auth.find_user_for_login(oid, email)` (`0015_auth_users.py:198-208`) looks
+up a user by `entra_oid`/`email` with **no `org_id` parameter at all** —
+identity resolution at login is already global, not org-scoped. But
+`auth.resolve_session(token_hash)` (`0015_auth_users.py:183-195`) returns
+`(user_id, org_id, expires_at)` where `org_id` comes from
+`user_session.org_id` — and `_resolve_session` (`auth.py`) uses that value
+to `SET LOCAL app.current_org` immediately, before any route's own `org_id`
+path parameter has even been parsed. Today this is harmless because there
+is only one possible value. Under multi-org it stops being harmless: the
+session-resolution step doesn't yet know which org a *specific* request
+targets, so it cannot correctly pre-set `app.current_org` for that request's
+business-data reads (assessments, evidence, contacts, ...). But it does need
+*some* `app.current_org` value set immediately, because `user`,
+`user_session`, `mfa_backup_code`, `api_token`, and `password_history` are
+themselves RLS-protected by the same pattern — including the read of the
+caller's *own* `User` row that `get_current_user` and every I.9 self-service
+endpoint performs. These are two genuinely different notions of "org" that
+happen to be the same value today only because of the single-org
+constraint:
+
+1. **The user's home/account org** — governs RLS on the account-mechanics
+   tables (`user`, `user_session`, `mfa_backup_code`, `api_token`,
+   `password_history`). Needed immediately at session resolution,
+   independent of whatever business org a specific request is about.
+2. **The per-request target org** — governs RLS on business/assessment
+   tables (`assessment`, `evidence`, `contact`, `control_state`, ...),
+   resolved from the URL path's `org_id` once membership is checked.
+
+Conflating these was invisible under single-org and becomes a real design
+decision under multi-org (see Design below).
+
+## Options considered — membership shape
+
+**A. Many-to-many `org_membership` table** (`user_id`, `org_id`, `role`,
+one row per grant). `User.org_id`/`User.role` stop being authoritative for
+access; a person's accessible orgs and their role in each come entirely
+from their membership rows.
+
+**B. Role-implied access** — no membership table; `require_org_access`
+grows an early-out: if `current_user.role in {"msp_admin", "msp_engineer"}`,
+skip the org-equality check entirely. MSP roles reach every org in the
+deployment by role alone.
+
+**C. Something else** — e.g. a `parent_org_id` on `Organization` marking
+which orgs "belong to" the MSP, with access derived from that relationship
+rather than either a membership table or a role check.
+
+**Option B is coherent, not naive, given ADR 0005** — "per-MSP instance,
+not shared SaaS" guarantees exactly one MSP per deployment, so "MSP role ⇒
+every org in this deployment" isn't actually a data-shape assumption, it's
+a true structural fact of the topology this product already commits to.
+It's also the cheapest possible change: one `if` in `require_org_access`,
+no migration, no new table. But it can only ever express one thing — "all
+MSP roles see all orgs, uniformly" — and cannot express the plausible case
+raised for this ADR: an `msp_engineer` on one customer and something more
+restricted on another (staffing tiers by account, not just by person).
+Option B has no way to grow into that without becoming Option A anyway.
+
+**Option C doesn't actually solve the problem it looks like it solves.** A
+`parent_org_id`-style relationship encodes "org B belongs to MSP org A" —
+but access is a *user* fact ("can Alice see org B"), not an *org* fact
+("does org B belong to the MSP"). Every MSP-role user would still need
+identical access to every "child" org, which is Option B's exact
+expressiveness ceiling, just recorded on the wrong table. It also
+reintroduces the "which org is *the* MSP org" structural flag this ADR's
+Context section already established the schema doesn't have and — per the
+Decision below — doesn't need to gain.
+
+## Options considered — role scope
+
+**Global** (today's shape): one `role` value per `User`, applies
+everywhere they have access.
+
+**Per-membership**: role travels with the grant, not the person. The same
+human can be `msp_admin` on one org's membership row and `msp_engineer` (or
+even `c3pao_assessor`) on another's.
+
+Per-membership is the only one of the two that can express the scenario
+this ADR was asked to consider — account-tiered staffing (senior engineer
+gets admin-level access on a large enterprise client, the same person gets
+narrower access shadowing on a smaller one) is a plain, ordinary MSP
+staffing pattern, not a hypothetical. One flagged caveat, stated plainly
+rather than waved through: the specific example given —
+`msp_engineer`/`c3pao_assessor` on the *same person* — is a separation-of-
+duties smell in real compliance practice (the party implementing controls
+shouldn't also be the party attesting to them), and the product may want to
+discourage or block that specific combination later. That's a policy
+decision for whoever owns role assignment, not a reason to reject
+per-membership role scope generally — the mechanism should allow it (many
+real, unobjectionable combinations exist), even if a future guard chooses
+to flag or block that one pairing specifically.
+
+Per-membership role scope also quietly resolves the "MSP vs. customer org"
+distinction this ADR was asked to address: it's not a fact about the org at
+all, and doesn't need a new column on `Organization`. It's a fact about
+what role a given *membership* carries. An org doesn't need to declare
+itself a customer org — it just accumulates memberships, most carrying
+`msp_admin`/`msp_engineer` (because the MSP serves it) and typically one or
+a few carrying `customer_poc` (the client's own staff). "MSP-ness" was
+already living in `role`; per-membership scope just stops requiring it to
+also live redundantly on a single fixed `User.org_id`.
+
+## Decision
+
+**Adopt Option A (many-to-many `org_membership`), with per-membership role,
+plus one deliberate ergonomic rule layered on top: MSP-role memberships are
+auto-provisioned, not manually granted per org.**
+
+New table:
+
+```sql
+CREATE TABLE org_membership (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+    org_id      UUID NOT NULL REFERENCES organization(id) ON DELETE CASCADE,
+    role        VARCHAR(40) NOT NULL,  -- same CHECK constraint values as today's user.role
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, org_id)
+);
+```
+
+Auto-provisioning rule (application logic, not a DB trigger — keeps it
+visible and testable rather than implicit): whenever a new `Organization`
+is created, insert an `org_membership` row for every existing
+`msp_admin`/`msp_engineer` user. Whenever a new user is invited with role
+`msp_admin`/`msp_engineer`, insert a membership row for every existing
+org. `customer_poc` and `c3pao_assessor` memberships are always explicit,
+one grant at a time — matching their inherently narrow, client-specific
+scope, and leaving room for the exact "assessor on two engagements over
+time, but not automatically on every client" case ADR 0005's topology
+makes plausible (a C3PAO firm assessing more than one of this MSP's
+clients, in different years, within the same deployment).
+
+This gets Option B's ergonomic property (an msp_admin never has to be
+manually re-granted access to every new customer) without needing a
+structural "is this the MSP org" flag anywhere — the auto-provisioning
+rule fires off *role*, exactly like every other role-based decision in this
+codebase already does, not off a new org-level marker.
+
+**Why not B alone:** it's cheaper today but a dead end for the plausible
+per-org role variance this ADR was explicitly asked to evaluate, and this
+codebase is ~22 migrations in — retrofitting a membership table onto more
+entrenched single-org assumptions later is a strictly worse time to do this
+than now, before nav/dashboard work adds more code that assumes
+`current_user.org_id` is a fixed scalar.
+
+## Design: `require_org_access`, RLS, and active-org selection
+
+**`require_org_access` becomes a membership lookup, not an equality
+check:**
+
+```python
+def require_org_access(*roles: str):
+    def _check(org_id: uuid.UUID, current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+        membership = get_membership(current_user.id, org_id)  # SELECT ... WHERE user_id=, org_id=
+        if membership is None:
+            raise HTTPException(status_code=403, detail="Cross-org access denied")
+        if roles and membership.role not in roles:
+            raise HTTPException(status_code=403, detail=f"Requires one of: {', '.join(roles)}")
+        db.execute(text("SET LOCAL app.current_org = :org_id"), {"org_id": org_id})
+        return current_user_with_org_role(current_user, org_id, membership.role)
+    return _check
+```
+
+The RLS policies themselves — `org_id = current_setting('app.current_org')`
+— **do not change**. They were already correctly scoped to "one org per
+request"; what changes is who's allowed to cause that GUC to hold a given
+value. This is a smaller blast radius than it might sound: every
+domain-table policy in the codebase is already written this way.
+
+**`get_current_user` can no longer resolve `org_id`/`role` — those become
+contextual to which org a specific request targets, not properties of
+identity alone.** This is the one real structural change.
+`get_current_user` should resolve pure identity only — `id`, `email`,
+`display_name`, `login_method`, `mfa_enrolled` — and immediately
+`SET LOCAL app.current_org` to the user's **home org** (a field that must
+be retained, see Migration below) so the account-mechanics tables (`user`,
+`user_session`, `mfa_backup_code`, `api_token`, `password_history`) resolve
+correctly regardless of which business org, if any, the request later
+turns out to target. `require_org_access` then does the second,
+route-specific `SET LOCAL` once the path's `org_id` and membership are
+known — for the account tables this is a no-op re-set to the same GUC name
+but a business-table-relevant value; for routes with no `org_id` in their
+path at all (`/auth/me`, `/auth/change-password`, `GET /orgs`, every I.9
+self-service endpoint) it never happens, which is correct — those aren't
+org-scoped operations and shouldn't need to be.
+
+**How the active org is selected and carried across requests: it already
+is, via the URL — no new mechanism needed.** Every org-scoped route already
+carries `org_id` in its path (`/orgs/{org_id}/assessments/...`). There is
+no server-side "current active org" session state to introduce, no
+"switch org" endpoint, nothing new for the frontend to persist beyond what
+`OrgPicker` already does (pick an org, then every subsequent call embeds
+its id in the URL). This is a case where the existing design already
+anticipated the right shape; it just needs the authorization check
+underneath it to stop assuming one fixed value.
+
+**`GET /orgs` changes shape, and gets simpler, not more complex.** Instead
+of `require_role("msp_admin", "msp_engineer")` gating a query that returns
+every `Organization` row, it becomes: authenticated, return every org the
+caller has a membership row for. No role check needed at the endpoint level
+at all — a `customer_poc` naturally gets back a list of exactly one org
+(their only membership), an MSP user gets back everything they've been
+auto-provisioned into. This is a strict simplification of the current
+special-cased gate, not an added one.
+
+**`UserSession.org_id` needs a settled, deliberate meaning, not a silent
+repurpose.** Recommend: keep it as "org active when this session was
+created" for display purposes only (I.9's Active Sessions list could show
+it later) — never treat it as authoritative for `app.current_org` on any
+request after the first. `auth.resolve_session()` should stop returning
+`org_id` for RLS-setting purposes; `get_current_user` sets
+`app.current_org` from the user's home org (see above), not from the
+session row.
+
+## Migration path for existing single-org users
+
+1. New migration adds `org_membership` (schema above).
+2. Backfill: `INSERT INTO org_membership (user_id, org_id, role) SELECT id, org_id, role FROM "user"` —
+   one membership per existing user, identical access to today, zero
+   behavior change on deploy.
+3. Backfill pass 2, msp roles only: for every existing `msp_admin`/
+   `msp_engineer`, insert membership rows into every *other* existing org
+   in the deployment. This is the step that actually fixes the dead end
+   documented in Context — every current MSP user becomes able to open
+   every existing customer org the moment this migration lands, with no
+   manual re-grant.
+4. `User.org_id` → rename to `User.home_org_id`, kept permanently (not a
+   throwaway migration artifact) — needed for session-resolution's
+   immediate `app.current_org` set (Design, above) and as the audit-log
+   anchor for account-level events that aren't scoped to any business org
+   (see Audit log, below). `User.role` is removed from the `user` table
+   entirely once call sites are migrated — a column that looks
+   authoritative but isn't invites exactly the kind of drift this
+   codebase's own `lib/roles.ts` comments already warn about for its
+   hand-mirrored constants. Dropped in a **separate, later migration**
+   after `org_membership` has been live and verified, per this plan's own
+   standing convention of small, independently-shippable, always-green
+   commits — not bundled into the introducing migration.
+5. `uq_user_org_email` (`org_id`, `email`) → becomes a plain global
+   `UNIQUE(email)`, since `org_id` is no longer identity-distinguishing on
+   `User`. This also closes a latent, currently-unexercised ambiguity:
+   `auth.find_user_for_login` already looks up by email/`entra_oid` with no
+   `org_id` filter (`0015_auth_users.py:198-208`) — under today's schema,
+   two `User` rows with the same email in different orgs would make that
+   lookup's `LIMIT 1` resolve arbitrarily. A global unique constraint
+   removes the possibility outright, as a side benefit of the migration
+   rather than a new bug being introduced by it.
+6. `invite_user` (`POST /orgs/{org_id}/users`) stops writing `role` onto
+   the `User` row and instead inserts (or upserts) an `org_membership` row
+   for `(new_user_id, org_id, body.role)`. Re-inviting an existing user
+   (identified by email) into a *second* org becomes a real, supported
+   operation for the first time — today `invite_user` can only ever create
+   a brand-new `User` row, there's no path to grant an existing person
+   access to another org at all.
+
+## Impact on the audit log
+
+**No change needed to `AuditLog.org_id` or the resolution mechanism —
+confirmed by reading `log_event()`'s actual call sites, not assumed.**
+`log_event()` takes `org_id` as a required keyword argument
+(`audit.py:86-99`), and every call site passes the *resource's* org — the
+path's `org_id` in admin/business routes, not `current_user.org_id` — so
+this already generalizes correctly to a multi-org actor without any code
+change: an msp_admin editing org B's contacts already logs `org_id=B`
+(from the path), never their own identity's org. The one place this ADR's
+own new endpoints (I.9 self-service: change-password, MFA reenroll, backup
+codes, session revoke) pass `org_id=current_user.org_id` needs revisiting —
+see below.
+
+**Actor identity resolution is unaffected, and this is a real point in
+favor of Option A over any per-org-row-per-user alternative.** `actor`
+stores `str(user.id)` (`audit.py`), resolved at read time to a `User` row
+by id (the "GUID identity resolution" work from this session,
+`routers/audit_log.py`). Under Option A there remains exactly one `User`
+row, one stable `id`, per human, regardless of how many orgs they can
+access — "who did this" stays continuous across every org they've ever
+touched. A design that instead gave a multi-org user a *separate* `User`
+row per org (never proposed above, but worth naming as a rejected shape)
+would fragment that continuity: the same person's actions in org A and org
+B would resolve to different, unrelated actor ids, breaking exactly the
+"who confirmed this control met, and when" guarantee ADR 0006 built the
+whole anonymize-don't-delete model to protect.
+
+**Account-level events need a stable org anchor that isn't "whichever org
+happens to be in the URL," because several of them have no org in the URL
+at all.** `auth.login`, `auth.logout`, `auth.mfa.enrolled`,
+`auth.password_change`, `auth.mfa.reenrolled`,
+`auth.mfa.backup_codes_regenerated`, `auth.sessions.revoke_all` (all in
+`routers/auth.py`, several added this session under I.9) currently log
+`org_id=current_user.org_id` or `org_id=user.org_id` — correct today only
+because that value is unambiguous. Under multi-org, a login event isn't "in"
+any particular customer org yet; recommend these continue to log against
+the user's **home org** (`User.home_org_id`, retained per Migration above)
+rather than `NULL`. `NULL` would make these events invisible in every org's
+own audit-log viewer (`GET /orgs/{org_id}/audit-log` filters
+`WHERE org_id = :org_id`) — a compliance product silently dropping
+identity-lifecycle events from every audit trail is a worse outcome than
+anchoring them to a slightly-approximate-but-real org.
+
+## Flagged: I.1–I.9 work that needs revisiting under this model
+
+- **`CurrentUser` dataclass** (`auth.py`) — `org_id`/`role` currently
+  resolved once, at `get_current_user` time. Needs splitting: identity-only
+  at `get_current_user`, org+role resolved per-request by
+  `require_org_access` once the path's `org_id` is known (Design, above).
+  Every direct `CurrentUser(...)` construction in tests — six files, per
+  this session's own `mfa_enrolled` addition (`conftest.py`,
+  `test_api_tokens.py`, `test_assessor_readonly.py`, `test_onboarding.py`,
+  `test_org_access_guard.py`, plus `test_account_self_service.py`) — will
+  need another mechanical pass. Worth a shared test-fixture builder at that
+  point rather than six more manual edits next time a field changes.
+- **`test_org_access_guard.py`** — its entire cross-org-403 suite currently
+  asserts flat 403 for *any* `org_id != current_user.org_id`, regardless of
+  role. Every one of those tests needs rewriting to the real invariant:
+  403 *without* a membership row, 200 *with* one — not 403 unconditionally.
+  This is the largest single test-file rewrite this migration implies.
+- **`require_role("msp_admin", "msp_engineer")` on `GET /orgs`/`POST
+  /orgs`** (`orgs.py:227,251`) — `POST /orgs` (create) still makes sense
+  gated by role alone (anyone with an MSP role can create a new customer
+  org; there's no "org" to check membership against yet). `GET /orgs`
+  changes shape entirely per Design above — role gate replaced by "return
+  my memberships."
+- **`OrgPicker.tsx` / `lib/roles.ts`'s `MULTI_ORG_ROLES`/`canListOrgs`**
+  (this session's own org-picker landing-gap fix) — currently a hard,
+  role-keyed binary: MSP roles get the two-card picker, everyone else gets
+  auto-selected into their one fixed org. Under this ADR's model, *any*
+  role can have more than one membership (a `c3pao_assessor` across two
+  engagements is the explicit example this ADR's Decision keeps open). The
+  branch needs to key off "does this user have more than one
+  `org_membership` row" — a per-user fact from `GET /orgs`'s response
+  length — not a per-role constant. `MULTI_ORG_ROLES` as a concept goes
+  away; nothing replaces it as a *role* set, because it was never really a
+  role fact in the first place.
+- **I.9's self-service audit calls** — `org_id=current_user.org_id` in
+  `change_password`, `mfa_reenroll`/`_confirm`, `regenerate_backup_codes`,
+  `revoke_all_sessions` (`routers/auth.py`) need to read
+  `current_user.home_org_id` once that field exists, not whatever
+  `CurrentUser.org_id` ends up meaning post-split (Audit log, above).
+- **`OrgSettings.tsx`'s per-tab role gates** (`canSeeUsers`,
+  `canSeeAuditLog`, `API_TOKEN_ROLES`, all keyed on `currentUserRole`) —
+  **no change needed.** These are already scoped to "role in the context of
+  the one org currently open in Settings," which is exactly what a
+  per-membership role becomes — same shape, sourced from the active
+  membership instead of a global field. Called out explicitly so this
+  migration isn't assumed to touch more than it does.
+- **`invite_user`** (`users.py`) — needs the re-invite-into-a-second-org
+  path described in Migration step 6; today it can only create new
+  identities, never grant an existing one broader access.
+
+## Consequences
+
+- One new table, one new migration for it, one later migration to drop
+  `User.role` — not a single big-bang change, matching this codebase's
+  standing "small commits, always green" discipline.
+- Fixes a real, currently-shipped dead end: MSP staff cannot open any org
+  but their own today, confirmed above with exact code and test citations.
+  This is not a speculative future need — it's a gap in already-merged
+  behavior.
+- `GET /orgs` gets simpler (membership lookup replaces a role special
+  case); `require_org_access` gets one more query (membership lookup
+  instead of a field comparison) on every org-scoped request — negligible
+  cost, indexed by `(user_id, org_id)`.
+- Nothing about RLS policy definitions changes; every existing
+  `{table}_tenant_isolation` policy stays exactly as written.
+- No new frontend session-state mechanism — the URL already carries
+  active-org selection.
+- Real migration cost is concentrated in two places: the
+  `test_org_access_guard.py` rewrite, and the `CurrentUser` identity/role
+  split rippling through every test file that constructs one directly.
+  Both are known and bounded, not open-ended.
+- Blocks nothing already shipped — every existing single-org user's access
+  is preserved byte-for-byte by the backfill in Migration step 2, and step
+  3 only *adds* access (existing MSP users gain reach into other existing
+  orgs), never removes any.
