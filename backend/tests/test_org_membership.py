@@ -437,3 +437,26 @@ def test_invite_customer_poc_stays_single_org(client, db_session, fake_msp_admin
 
     assert _membership_role(db_session, user_id=new_user_id, org_id=home_org.id) == "customer_poc"
     assert _membership_role(db_session, user_id=new_user_id, org_id=other_org.id) is None
+
+
+@pytest.mark.integration
+def test_create_api_user_grants_membership(client, db_session, fake_msp_admin):
+    """POST /orgs/{org_id}/users/api (create_api_user) previously never
+    called provision_new_user_memberships at all -- an API user created
+    this way had zero org_membership rows, including none at its own home
+    org. Harmless under M.2 (nothing read org_membership yet), but would
+    break that account's authentication entirely once M.4 makes
+    org_membership authoritative. Fixed to match invite_user()'s existing
+    call."""
+    home_org = Organization(id=fake_msp_admin.org_id, name=f"HomeOrg-{uuid.uuid4().hex[:8]}")
+    db_session.add(home_org)
+    db_session.flush()
+
+    r = client.post(
+        f"/orgs/{home_org.id}/users/api",
+        json={"display_name": "CI Bot", "role": "customer_poc"},
+    )
+    assert r.status_code == 201
+    new_user_id = uuid.UUID(r.json()["id"])
+
+    assert _membership_role(db_session, user_id=new_user_id, org_id=home_org.id) == "customer_poc"

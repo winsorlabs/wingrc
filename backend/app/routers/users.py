@@ -519,6 +519,13 @@ def create_api_user(
     db.add(user)
     db.flush()
 
+    # ADR 0009: same base grant invite_user() already makes. Without this,
+    # an API user created here would have zero org_membership rows -- once
+    # M.4 makes org_membership authoritative for auth, that account
+    # couldn't be resolved to a role anywhere, including at its own home
+    # org.
+    provision_new_user_memberships(db, user_id=user.id, org_id=org_id, role=body.role)
+
     raw, token_hash = generate_secret("wingrc_")
     token = ApiToken(
         org_id=org_id,
