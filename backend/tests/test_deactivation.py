@@ -59,7 +59,7 @@ from app.models import (
     OrgProduct,
     Product,
 )
-from tests.conftest import _app_session, _authed
+from tests.conftest import _app_session, _authed, _grant
 
 pytestmark = pytest.mark.integration
 
@@ -565,9 +565,10 @@ def test_audit_log_creates_distinct_row_per_event(db_session: Session, ref: dict
 # ---------------------------------------------------------------------------
 
 
-def test_patch_archived_task_returns_422(client, db_session: Session, ref: dict):
+def test_patch_archived_task_returns_422(client, db_session: Session, ref: dict, fake_msp_admin):
     a, _ = _setup(db_session, ref)
     db_session.flush()
+    _grant(db_session, fake_msp_admin)
 
     task = db_session.scalars(
         select(EvidenceTask).where(EvidenceTask.assessment_id == a.id)
@@ -585,9 +586,10 @@ def test_patch_archived_task_returns_422(client, db_session: Session, ref: dict)
     assert r.status_code == 422
 
 
-def test_patch_active_task_updates_status(client, db_session: Session, ref: dict):
+def test_patch_active_task_updates_status(client, db_session: Session, ref: dict, fake_msp_admin):
     a, _ = _setup(db_session, ref)
     db_session.flush()
+    _grant(db_session, fake_msp_admin)
 
     task = db_session.scalars(
         select(EvidenceTask).where(EvidenceTask.assessment_id == a.id)

@@ -19,7 +19,7 @@ from app.models import (
     ImplementationStatement,
     Organization,
 )
-from tests.conftest import _app_session, _authed
+from tests.conftest import _app_session, _authed, _grant
 
 
 @pytest.fixture
@@ -30,14 +30,21 @@ def client(db_session, fake_msp_admin):
     app.dependency_overrides.clear()
 
 
-def _seed(db_session, *, org_id: uuid.UUID | None = None) -> dict:
-    """Seed org -> framework -> control -> 3 objectives -> assessment."""
+def _seed(db_session, *, org_id: uuid.UUID | None = None, fake_msp_admin=None) -> dict:
+    """Seed org -> framework -> control -> 3 objectives -> assessment.
+
+    Pass fake_msp_admin (whenever org_id=fake_msp_admin.org_id) to also grant
+    that identity org_membership on the seeded org — required for
+    require_org_access to authorize any client request against it.
+    """
     org_kwargs: dict = {"name": f"StmtTestOrg-{uuid.uuid4().hex}"}
     if org_id is not None:
         org_kwargs["id"] = org_id
     org = Organization(**org_kwargs)
     db_session.add(org)
     db_session.flush()
+    if fake_msp_admin is not None:
+        _grant(db_session, fake_msp_admin, org_id=org.id)
 
     fw = Framework(key=f"fw-{uuid.uuid4().hex}", name="Test FW", version="r2")
     db_session.add(fw)
@@ -109,7 +116,7 @@ def _base_url(d: dict) -> str:
 
 @pytest.mark.integration
 def test_get_statements_empty(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_base_url(d))
     assert r.status_code == 200
     items = r.json()
@@ -123,7 +130,7 @@ def test_get_statements_empty(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_get_statements_returns_guidance(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     items = client.get(_base_url(d)).json()
     obj_a_item = next(i for i in items if i["objective_key"] == "a")
     obj_c_item = next(i for i in items if i["objective_key"] == "c")
@@ -133,7 +140,7 @@ def test_get_statements_returns_guidance(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_get_statements_returns_control_discussion(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     items = client.get(_base_url(d)).json()
     assert all(
         item["control_discussion"]
@@ -149,7 +156,7 @@ def test_get_statements_returns_control_discussion(client, db_session, fake_msp_
 
 @pytest.mark.integration
 def test_put_creates_statements(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     payload = [
         {"objective_id": str(d["obj_a"].id), "body": "We identify users via AD.",
          "status": "draft"},
@@ -168,7 +175,7 @@ def test_put_creates_statements(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_put_all_valid_statuses(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     for status in ("draft", "reviewed", "approved"):
         payload = [{"objective_id": str(d["obj_a"].id), "body": "text", "status": status}]
         r = client.put(_base_url(d), json=payload)
@@ -178,7 +185,7 @@ def test_put_all_valid_statuses(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_put_invalid_status_returns_422(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     payload = [{"objective_id": str(d["obj_a"].id), "body": "text", "status": "invalid"}]
     assert client.put(_base_url(d), json=payload).status_code == 422
 
@@ -190,7 +197,7 @@ def test_put_invalid_status_returns_422(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_get_after_put_reflects_saved_data(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     payload = [
         {"objective_id": str(d["obj_a"].id), "body": "Our approach is...", "status": "reviewed"},
         {"objective_id": str(d["obj_b"].id), "body": "Devices tracked in...", "status": "draft"},
@@ -213,7 +220,7 @@ def test_get_after_put_reflects_saved_data(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_put_is_idempotent(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     p1 = [{"objective_id": str(d["obj_a"].id), "body": "Version 1", "status": "draft"}]
     p2 = [{"objective_id": str(d["obj_a"].id), "body": "Version 2", "status": "approved"}]
     r1 = client.put(_base_url(d), json=p1)
@@ -238,7 +245,7 @@ def test_put_is_idempotent(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_put_statement_does_not_modify_control_state(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     cs = ControlState(
         assessment_id=d["assessment"].id,
         org_id=d["org"].id,
@@ -264,7 +271,7 @@ def test_put_statement_does_not_modify_control_state(client, db_session, fake_ms
 
 @pytest.mark.integration
 def test_put_partial_subset_does_not_affect_others(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     # Write obj_a
     client.put(
         _base_url(d),
@@ -295,6 +302,7 @@ def test_get_wrong_org_returns_404(client, db_session, fake_msp_admin):
     d = _seed(db_session)  # unrelated org holds the real assessment
     db_session.add(Organization(id=fake_msp_admin.org_id, name="Caller Org"))
     db_session.flush()
+    _grant(db_session, fake_msp_admin)
     url = (
         f"/orgs/{fake_msp_admin.org_id}/assessments/{d['assessment'].id}"
         f"/controls/{d['ctrl'].id}/statements"
@@ -308,6 +316,7 @@ def test_put_wrong_org_returns_404(client, db_session, fake_msp_admin):
     d = _seed(db_session)  # unrelated org holds the real assessment
     db_session.add(Organization(id=fake_msp_admin.org_id, name="Caller Org"))
     db_session.flush()
+    _grant(db_session, fake_msp_admin)
     url = (
         f"/orgs/{fake_msp_admin.org_id}/assessments/{d['assessment'].id}"
         f"/controls/{d['ctrl'].id}/statements"
@@ -318,14 +327,14 @@ def test_put_wrong_org_returns_404(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_get_wrong_assessment_returns_404(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     url = f"/orgs/{d['org'].id}/assessments/{uuid.uuid4()}/controls/{d['ctrl'].id}/statements"
     assert client.get(url).status_code == 404
 
 
 @pytest.mark.integration
 def test_put_control_wrong_framework_returns_404(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     other_fw = Framework(key=f"fw-{uuid.uuid4().hex}", name="Other FW", version="r1")
     db_session.add(other_fw)
     db_session.flush()

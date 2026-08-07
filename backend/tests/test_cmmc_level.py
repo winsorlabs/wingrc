@@ -21,7 +21,7 @@ from app.db import get_session
 from app.main import app
 from app.models import Assessment, Control, Organization
 from app.seeds.catalog import seed_catalog
-from tests.conftest import _app_session, _authed
+from tests.conftest import _app_session, _authed, _grant
 
 
 @pytest.fixture
@@ -113,6 +113,7 @@ def test_control_states_expose_is_level_1(client, db_session, seeded, fake_msp_a
     org = Organization(id=fake_msp_admin.org_id, name=f"L1TestOrg-{uuid.uuid4().hex}")
     db_session.add(org)
     db_session.flush()
+    _grant(db_session, fake_msp_admin)
 
     assessment = Assessment(org_id=org.id, framework_id=fw_id, name="L1 Test")
     db_session.add(assessment)

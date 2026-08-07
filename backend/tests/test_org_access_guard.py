@@ -6,11 +6,27 @@ bundle.py — the five routers that were previously authentication-only
 org_id in the URL path).
 
 Each router gets:
-  - a 403 test for a GET/list endpoint against another org
+  - a 403 test for a GET/list endpoint against another org, with no
+    org_membership row at all
   - a 403 test for a mutating endpoint against another org (where one exists;
-    bundle.py has none — it's a single GET route)
+    bundle.py has none — it's a single GET route), same "no membership"
+    reason
   - a same-org sanity check, proving the fix isn't over-broad (the caller's
     own org still works normally)
+  - (ADR 0009 M.4) a cross-org SUCCESS test: the exact same "another org"
+    request as the 403 case above, except the caller now holds a real
+    org_membership row there — this is the literal regression test for the
+    defect ADR 0009 exists to fix (an msp_admin could not open any org but
+    their own, not even one they legitimately have access to). Without M.4,
+    this would still 403 unconditionally; without the corresponding 403
+    tests, granting access to everyone would trivially pass. The pair
+    together is what actually proves the fix.
+
+require_org_access does a real org_membership lookup as of M.4 — every test
+below that expects success (same-org or cross-org-with-membership) needs
+tests.conftest._grant() to seed a real User + org_membership row for
+fake_msp_admin, since the old equality-based check never needed a backing
+DB row for the fake identity at all.
 
 frameworks.py is intentionally not covered — no org_id in its path, correctly
 global/unscoped, not part of this fix. users.py already had this class of
@@ -23,7 +39,8 @@ role-only gate (require_role("msp_admin", "msp_engineer")) instead, per ADR
 0005's per-org isolation boundary. That gate is tested at the bottom of this
 file: customer_poc/c3pao_assessor get 403, msp_admin/msp_engineer succeed.
 This is NOT the broader role-differentiation pass for the other ~36 routes —
-just these two, which had no isolation at all before this.
+just these two, which had no isolation at all before this. require_role does
+no membership lookup, so these are unaffected by M.4.
 """
 from __future__ import annotations
 
@@ -46,7 +63,7 @@ from app.models import (
     Organization,
 )
 from app.storage import StorageClient, get_storage_client
-from tests.conftest import _app_session, _authed
+from tests.conftest import _app_session, _authed, _grant
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -184,7 +201,22 @@ def test_statements_put_cross_org_403(client, db_session):
 @pytest.mark.integration
 def test_assessments_same_org_still_works(client, db_session, fake_msp_admin):
     a = _seed(db_session, org_id=fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
     url = f"/orgs/{a['org'].id}/assessments/{a['assessment'].id}/control-states"
+    assert client.get(url).status_code == 200
+
+
+@pytest.mark.integration
+def test_assessments_cross_org_with_membership_200(client, db_session, fake_msp_admin):
+    """ADR 0009 M.4's regression test: the same cross-org request as
+    test_assessments_get_cross_org_403, except the caller now holds a
+    real org_membership row in that org — this is the exact case that
+    was structurally impossible before M.4 (an msp_admin could not open
+    any org but their own, ever, no matter what access they'd been
+    granted)."""
+    b = _seed(db_session)
+    _grant(db_session, fake_msp_admin, org_id=b["org"].id)
+    url = f"/orgs/{b['org'].id}/assessments/{b['assessment'].id}/control-states"
     assert client.get(url).status_code == 200
 
 
@@ -221,9 +253,21 @@ def test_evidence_upload_cross_org_403(client, db_session):
 @pytest.mark.integration
 def test_evidence_same_org_still_works(client, db_session, fake_msp_admin):
     a = _seed(db_session, org_id=fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
     url = (
         f"/orgs/{a['org'].id}/assessments/{a['assessment'].id}"
         f"/control-states/{a['cs'].id}/evidence"
+    )
+    assert client.get(url).status_code == 200
+
+
+@pytest.mark.integration
+def test_evidence_cross_org_with_membership_200(client, db_session, fake_msp_admin):
+    b = _seed(db_session)
+    _grant(db_session, fake_msp_admin, org_id=b["org"].id)
+    url = (
+        f"/orgs/{b['org'].id}/assessments/{b['assessment'].id}"
+        f"/control-states/{b['cs'].id}/evidence"
     )
     assert client.get(url).status_code == 200
 
@@ -249,7 +293,17 @@ def test_contacts_create_cross_org_403(client, db_session):
 @pytest.mark.integration
 def test_contacts_same_org_still_works(client, db_session, fake_msp_admin):
     a = _seed(db_session, org_id=fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
     r = client.get(f"/orgs/{a['org'].id}/contacts")
+    assert r.status_code == 200
+    assert len(r.json()) == 1
+
+
+@pytest.mark.integration
+def test_contacts_cross_org_with_membership_200(client, db_session, fake_msp_admin):
+    b = _seed(db_session)
+    _grant(db_session, fake_msp_admin, org_id=b["org"].id)
+    r = client.get(f"/orgs/{b['org'].id}/contacts")
     assert r.status_code == 200
     assert len(r.json()) == 1
 
@@ -275,7 +329,15 @@ def test_orgs_profile_patch_cross_org_403(client, db_session):
 @pytest.mark.integration
 def test_orgs_profile_same_org_still_works(client, db_session, fake_msp_admin):
     a = _seed(db_session, org_id=fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
     assert client.get(f"/orgs/{a['org'].id}/profile").status_code == 200
+
+
+@pytest.mark.integration
+def test_orgs_profile_cross_org_with_membership_200(client, db_session, fake_msp_admin):
+    b = _seed(db_session)
+    _grant(db_session, fake_msp_admin, org_id=b["org"].id)
+    assert client.get(f"/orgs/{b['org'].id}/profile").status_code == 200
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +355,16 @@ def test_bundle_cross_org_403(client, db_session):
 @pytest.mark.integration
 def test_bundle_same_org_still_works(client, db_session, fake_msp_admin):
     a = _seed(db_session, org_id=fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
     url = f"/orgs/{a['org'].id}/assessments/{a['assessment'].id}/bundle"
+    assert client.get(url).status_code == 200
+
+
+@pytest.mark.integration
+def test_bundle_cross_org_with_membership_200(client, db_session, fake_msp_admin):
+    b = _seed(db_session)
+    _grant(db_session, fake_msp_admin, org_id=b["org"].id)
+    url = f"/orgs/{b['org'].id}/assessments/{b['assessment'].id}/bundle"
     assert client.get(url).status_code == 200
 
 

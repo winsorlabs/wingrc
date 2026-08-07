@@ -24,8 +24,8 @@ from fastapi.testclient import TestClient
 from app.auth import CurrentUser, create_session, get_current_user
 from app.db import get_session
 from app.main import app
-from app.models import Organization, User
-from tests.conftest import _app_session, _authed
+from app.models import Organization, OrgMembership, User
+from tests.conftest import _app_session, _authed, _grant
 
 
 @pytest.fixture
@@ -44,6 +44,15 @@ def _seed_org(db_session, org_id: uuid.UUID) -> Organization:
 
 
 def _seed_user(db_session, *, org_id: uuid.UUID, role: str) -> User:
+    """A real User row plus a matching org_membership row at the same
+    (org_id, role) — the shape a user created via invite_user() would
+    actually have. Needed as of ADR 0009 M.4: require_org_access reads
+    org_membership, and several tests below act on this user through
+    patch_user (role changes) then check the *effect* of that change via
+    a real Bearer-token request — that only exercises the real mechanism
+    (org_membership.role) rather than accidentally passing via
+    auth.py's User.role fallback if there's no membership row to update.
+    """
     user = User(
         home_org_id=org_id,
         email=f"{uuid.uuid4().hex[:8]}@example.com",
@@ -53,6 +62,8 @@ def _seed_user(db_session, *, org_id: uuid.UUID, role: str) -> User:
         is_active=True,
     )
     db_session.add(user)
+    db_session.flush()
+    db_session.add(OrgMembership(user_id=user.id, org_id=org_id, role=role))
     db_session.flush()
     return user
 
@@ -78,6 +89,7 @@ def _as_role(role: str, *, org_id: uuid.UUID) -> CurrentUser:
 @pytest.mark.integration
 def test_api_user_token_actually_authenticates(client, db_session, fake_msp_admin):
     _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
 
     r = client.post(
         f"/orgs/{fake_msp_admin.org_id}/users/api",
@@ -109,9 +121,13 @@ def test_create_api_token_on_behalf_of_by_engineer_403(client, db_session, fake_
     _seed_org(db_session, fake_msp_admin.org_id)
     target = _seed_user(db_session, org_id=fake_msp_admin.org_id, role="msp_engineer")
 
-    app.dependency_overrides[get_current_user] = lambda: _as_role(
-        "msp_engineer", org_id=fake_msp_admin.org_id
-    )
+    # Built once and granted *before* installing the override: _as_role()
+    # assigns a fresh random .id every call, so overriding with
+    # `lambda: _as_role(...)` (re-invoking it per request) would grant a
+    # membership row for one id and then authenticate as a different one.
+    engineer = _as_role("msp_engineer", org_id=fake_msp_admin.org_id)
+    _grant(db_session, engineer)
+    app.dependency_overrides[get_current_user] = lambda: engineer
     r = client.post(
         f"/orgs/{fake_msp_admin.org_id}/api-tokens",
         json={"name": "x", "role": "msp_engineer", "user_id": str(target.id)},
@@ -126,6 +142,12 @@ def test_create_api_token_on_behalf_of_by_engineer_403(client, db_session, fake_
 
 @pytest.mark.integration
 def test_create_api_token_on_behalf_of_wrong_org_404(client, db_session, fake_msp_admin):
+    # This test never seeded an Organization at fake_msp_admin.org_id at
+    # all — harmless under the old equality-based require_org_access,
+    # but a membership grant (needed as of M.4) needs a real org row to
+    # satisfy User.home_org_id's FK.
+    _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
     other_org = Organization(name=f"OtherOrg-{uuid.uuid4().hex[:8]}")
     db_session.add(other_org)
     db_session.flush()
@@ -146,6 +168,7 @@ def test_create_api_token_on_behalf_of_wrong_org_404(client, db_session, fake_ms
 @pytest.mark.integration
 def test_create_api_token_on_behalf_of_exceeds_target_role_403(client, db_session, fake_msp_admin):
     _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
     target = _seed_user(db_session, org_id=fake_msp_admin.org_id, role="customer_poc")
 
     r = client.post(
@@ -161,7 +184,9 @@ def test_create_api_token_on_behalf_of_exceeds_target_role_403(client, db_sessio
 
 
 @pytest.mark.integration
-def test_invite_user_rejects_api_login_method(client, fake_msp_admin):
+def test_invite_user_rejects_api_login_method(client, db_session, fake_msp_admin):
+    _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
     payload = {
         "email": f"{uuid.uuid4().hex[:8]}@example.com",
         "display_name": "Sneaky",
@@ -182,6 +207,7 @@ def test_invite_user_rejects_api_login_method(client, fake_msp_admin):
 @pytest.mark.integration
 def test_api_token_role_clamps_after_demotion(client, db_session, fake_msp_admin):
     _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
     target = _seed_user(db_session, org_id=fake_msp_admin.org_id, role="msp_admin")
 
     minted = client.post(
@@ -220,6 +246,7 @@ def test_api_token_role_clamps_after_demotion(client, db_session, fake_msp_admin
 @pytest.mark.integration
 def test_api_token_role_not_escalated_after_promotion(client, db_session, fake_msp_admin):
     _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
     target = _seed_user(db_session, org_id=fake_msp_admin.org_id, role="customer_poc")
 
     minted = client.post(
@@ -251,6 +278,7 @@ def test_api_token_role_not_escalated_after_promotion(client, db_session, fake_m
 @pytest.mark.integration
 def test_patch_user_is_active_false_revokes_sessions(client, db_session, fake_msp_admin):
     _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
     target = _seed_user(db_session, org_id=fake_msp_admin.org_id, role="customer_poc")
 
     session_row, _raw = create_session(db_session, target)

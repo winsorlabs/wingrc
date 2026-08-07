@@ -25,7 +25,7 @@ from app.models import (
     Organization,
     Product,
 )
-from tests.conftest import _app_session, _authed
+from tests.conftest import _app_session, _authed, _grant
 
 
 @pytest.fixture
@@ -41,8 +41,13 @@ def client(db_session, fake_msp_admin):
 # ---------------------------------------------------------------------------
 
 
-def _seed_empty(db_session, *, org_id: uuid.UUID | None = None) -> dict:
-    """Org + framework + assessment with no products in the baseline."""
+def _seed_empty(db_session, *, org_id: uuid.UUID | None = None, fake_msp_admin=None) -> dict:
+    """Org + framework + assessment with no products in the baseline.
+
+    Pass fake_msp_admin (whenever org_id=fake_msp_admin.org_id) to also grant
+    that identity org_membership on the seeded org — required for
+    require_org_access to authorize any client request against it.
+    """
     org_kwargs: dict = {"name": f"ProdTestOrg-{uuid.uuid4().hex[:6]}"}
     if org_id is not None:
         org_kwargs["id"] = org_id
@@ -50,6 +55,8 @@ def _seed_empty(db_session, *, org_id: uuid.UUID | None = None) -> dict:
     fw = Framework(key=f"fw-prod-{uuid.uuid4().hex[:6]}", name="NIST r2", version="r2")
     db_session.add_all([org, fw])
     db_session.flush()
+    if fake_msp_admin is not None:
+        _grant(db_session, fake_msp_admin, org_id=org.id)
 
     ctrl = Control(
         framework_id=fw.id,
@@ -74,13 +81,19 @@ def _seed_empty(db_session, *, org_id: uuid.UUID | None = None) -> dict:
     return {"org": org, "fw": fw, "assessment": assessment}
 
 
-def _seed_rocketcyber(db_session, *, org_id: uuid.UUID | None = None) -> dict:
+def _seed_rocketcyber(
+    db_session, *, org_id: uuid.UUID | None = None, fake_msp_admin=None
+) -> dict:
     """Seed a RocketCyber-style product covering AU (provider_satisfies)
     and explicitly disclaiming IA (customer_owns).
 
     Framework has two controls:
       AU.L2-3.3.1  objective [a]  -- authoritative SIEM; RC owns this
       IA.L2-3.5.1  objective [a]  -- customer IdP owns this; RC does NOT
+
+    Pass fake_msp_admin (whenever org_id=fake_msp_admin.org_id) to also grant
+    that identity org_membership on the seeded org — required for
+    require_org_access to authorize any client request against it.
     """
     org_kwargs: dict = {"name": f"ProdTestOrg-RC-{uuid.uuid4().hex[:6]}"}
     if org_id is not None:
@@ -89,6 +102,8 @@ def _seed_rocketcyber(db_session, *, org_id: uuid.UUID | None = None) -> dict:
     fw = Framework(key=f"fw-rc-{uuid.uuid4().hex[:6]}", name="NIST r2", version="r2")
     db_session.add_all([org, fw])
     db_session.flush()
+    if fake_msp_admin is not None:
+        _grant(db_session, fake_msp_admin, org_id=org.id)
 
     au_ctrl = Control(
         framework_id=fw.id,
@@ -193,7 +208,7 @@ def _activate_url(d: dict) -> str:
 @pytest.mark.integration
 def test_list_products_empty_when_no_baseline(client, db_session, fake_msp_admin):
     """Returns empty list when no products are seeded for this framework."""
-    d = _seed_empty(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed_empty(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_products_url(d))
     assert r.status_code == 200
     assert r.json() == []
@@ -202,7 +217,7 @@ def test_list_products_empty_when_no_baseline(client, db_session, fake_msp_admin
 @pytest.mark.integration
 def test_list_products_shows_rocketcyber(client, db_session, fake_msp_admin):
     """RocketCyber product appears with correct coverage counts."""
-    d = _seed_rocketcyber(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed_rocketcyber(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_products_url(d))
     assert r.status_code == 200
     products = r.json()
@@ -220,7 +235,7 @@ def test_list_products_shows_rocketcyber(client, db_session, fake_msp_admin):
 @pytest.mark.integration
 def test_list_products_shows_active_after_activate(client, db_session, fake_msp_admin):
     """After activation, is_active flips to True."""
-    d = _seed_rocketcyber(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed_rocketcyber(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     assert client.get(_products_url(d)).json()[0]["is_active"] is False
 
     act = client.post(_activate_url(d))
@@ -239,7 +254,7 @@ def test_list_products_shows_active_after_activate(client, db_session, fake_msp_
 @pytest.mark.integration
 def test_control_states_include_product_key_after_activate(client, db_session, fake_msp_admin):
     """After activation, sourced_from_product_key appears on covered objectives."""
-    d = _seed_rocketcyber(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed_rocketcyber(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     client.post(_activate_url(d))
 
     rows = client.get(_states_url(d)).json()
@@ -269,7 +284,7 @@ def test_activate_rocketcyber_au_pending_evidence_not_met(client, db_session, fa
     evidence. 'met' requires confirmed config + attached evidence by an engineer.
     Activation alone must never produce 'met'.
     """
-    d = _seed_rocketcyber(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed_rocketcyber(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.post(_activate_url(d))
     assert r.status_code == 200
     result = r.json()
@@ -294,7 +309,7 @@ def test_activate_rocketcyber_ia_family_untouched(client, db_session, fake_msp_a
     RocketCyber's baseline explicitly disclaims the IA family — the customer's
     IdP owns identity. This test proves the engine does not over-credit the vendor.
     """
-    d = _seed_rocketcyber(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed_rocketcyber(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     client.post(_activate_url(d))
 
     rows = client.get(_states_url(d)).json()
@@ -319,6 +334,7 @@ def test_list_products_wrong_org_returns_404(client, db_session, fake_msp_admin)
     d = _seed_rocketcyber(db_session)  # unrelated org holds the real assessment
     db_session.add(Organization(id=fake_msp_admin.org_id, name="Caller Org"))
     db_session.flush()
+    _grant(db_session, fake_msp_admin)
     url = f"/orgs/{fake_msp_admin.org_id}/assessments/{d['assessment'].id}/products"
     assert client.get(url).status_code == 404
 
@@ -343,6 +359,7 @@ def test_platform_only_controls_excluded_from_activation(client, db_session, fak
     fw = Framework(key=f"fw-plat-{uuid.uuid4().hex[:6]}", name="NIST r2", version="r2")
     db_session.add_all([org, fw])
     db_session.flush()
+    _grant(db_session, fake_msp_admin)
 
     # Two controls: AU (customer_system) and AC.3.1.11 (platform_only)
     au_ctrl = Control(
@@ -430,6 +447,7 @@ def test_coverage_basis_counts_in_product_list(client, db_session, fake_msp_admi
     fw = Framework(key=f"fw-basis-{uuid.uuid4().hex[:6]}", name="NIST r2", version="r2")
     db_session.add_all([org, fw])
     db_session.flush()
+    _grant(db_session, fake_msp_admin)
 
     ctrls = []
     for i, cid in enumerate(["AU.L2-3.3.1", "AU.L2-3.3.2", "AC.L2-3.1.11", "IA.L2-3.5.1"]):

@@ -40,7 +40,7 @@ from app.auth import (
 from app.db import get_session
 from app.main import app
 from app.models import AuditLog, Organization, PasswordHistory, User, UserSession
-from tests.conftest import _app_session, _authed, _make_fake_user
+from tests.conftest import _app_session, _authed, _grant, _make_fake_user
 
 _PASSWORD_HISTORY_GENERATIONS = 5
 _STRONG_PASSWORD = "correct-horse-battery-staple-and-then-some"
@@ -58,6 +58,17 @@ def _seed_org(db_session, org_id: uuid.UUID) -> Organization:
     org = Organization(id=org_id, name=f"PwLifecycleOrg-{uuid.uuid4().hex[:8]}")
     db_session.add(org)
     db_session.flush()
+    return org
+
+
+def _seed_own_org(db_session, fake_msp_admin) -> Organization:
+    """_seed_org at fake_msp_admin's own org_id, plus the org_membership
+    grant require_org_access now needs there (ADR 0009 M.4). Separate
+    from _seed_org, which two tests here also use to seed an org with no
+    connection to fake_msp_admin at all (db_session-only, no HTTP
+    request, no grant needed)."""
+    org = _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
     return org
 
 
@@ -119,7 +130,7 @@ def test_reuse_allows_password_beyond_generation_window(db_session):
 
 @pytest.mark.integration
 def test_set_password_rejects_reuse_via_http(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_local_user(
         db_session, org_id=org.id, password_hash=hash_password(_STRONG_PASSWORD)
     )
@@ -143,7 +154,7 @@ def test_set_password_rejects_reuse_via_http(client, db_session, fake_msp_admin)
 
 @pytest.mark.integration
 def test_unlock_clears_lockout_preserves_mfa(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_local_user(
         db_session,
         org_id=org.id,
@@ -180,7 +191,7 @@ def test_unlock_clears_lockout_preserves_mfa(client, db_session, fake_msp_admin)
 
 @pytest.mark.integration
 def test_unlock_does_not_touch_password(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     stored_hash = hash_password(_STRONG_PASSWORD)
     user = _seed_local_user(
         db_session,
@@ -203,7 +214,7 @@ def test_unlock_does_not_touch_password(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_reset_issues_working_one_time_token(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_local_user(
         db_session, org_id=org.id, password_hash=hash_password(_STRONG_PASSWORD)
     )
@@ -226,7 +237,7 @@ def test_reset_issues_working_one_time_token(client, db_session, fake_msp_admin)
 
 @pytest.mark.integration
 def test_reset_token_single_use(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_local_user(
         db_session, org_id=org.id, password_hash=hash_password(_STRONG_PASSWORD)
     )
@@ -249,7 +260,7 @@ def test_reset_token_single_use(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_reset_token_expired_rejected(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_local_user(
         db_session, org_id=org.id, password_hash=hash_password(_STRONG_PASSWORD)
     )
@@ -273,7 +284,7 @@ def test_reset_token_expired_rejected(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_reset_revokes_live_sessions(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_local_user(
         db_session, org_id=org.id, password_hash=hash_password(_STRONG_PASSWORD)
     )
@@ -302,7 +313,7 @@ def test_reset_revokes_live_sessions(client, db_session, fake_msp_admin):
 def test_reset_of_already_enrolled_user_responds_verify_not_enroll(
     client, db_session, fake_msp_admin
 ):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_local_user(
         db_session,
         org_id=org.id,
@@ -329,7 +340,7 @@ def test_reset_of_already_enrolled_user_responds_verify_not_enroll(
 @pytest.mark.integration
 def test_fresh_invite_still_responds_enroll(client, db_session, fake_msp_admin):
     """Regression guard: the mfa_enrolled branch must not change invite behavior."""
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     raw_invite_token = f"invite-{uuid.uuid4().hex}"
     user = _seed_local_user(
         db_session,
@@ -358,7 +369,7 @@ def test_fresh_invite_still_responds_enroll(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_reset_token_redeems_for_already_active_user(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_local_user(
         db_session,
         org_id=org.id,
@@ -392,6 +403,7 @@ def test_non_admin_403_on_unlock_and_reset_password(db_session, role):
     org_id = uuid.uuid4()
     org = _seed_org(db_session, org_id)
     non_admin = _make_fake_user(org_id=org.id, role=role)
+    _grant(db_session, non_admin)
     target = _seed_local_user(db_session, org_id=org.id)
 
     app.dependency_overrides[get_session] = _app_session(db_session)
@@ -411,7 +423,7 @@ def test_non_admin_403_on_unlock_and_reset_password(db_session, role):
 
 @pytest.mark.integration
 def test_user_list_exposes_locked_until_and_lockout_count(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     locked_until = datetime.now(UTC) + timedelta(minutes=45)
     _seed_local_user(
         db_session,

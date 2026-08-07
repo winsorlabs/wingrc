@@ -39,7 +39,7 @@ from app.models import (
     Organization,
 )
 from app.storage import StorageClient, get_storage_client
-from tests.conftest import _app_session, _authed
+from tests.conftest import _app_session, _authed, _grant
 
 # ---------------------------------------------------------------------------
 # In-memory storage mock
@@ -96,8 +96,13 @@ def client(db_session, storage, fake_msp_admin):
 # ---------------------------------------------------------------------------
 
 
-def _seed(db_session, *, org_id: uuid.UUID | None = None) -> dict:
-    """Org + framework (one control AC.L2-3.1.1 with objective [a]) + assessment."""
+def _seed(db_session, *, org_id: uuid.UUID | None = None, fake_msp_admin=None) -> dict:
+    """Org + framework (one control AC.L2-3.1.1 with objective [a]) + assessment.
+
+    Pass fake_msp_admin (whenever org_id=fake_msp_admin.org_id) to also grant
+    that identity org_membership on the seeded org — required for
+    require_org_access to authorize any client request against it.
+    """
     org_kwargs: dict = {"name": f"EvTestOrg-{uuid.uuid4().hex[:6]}"}
     if org_id is not None:
         org_kwargs["id"] = org_id
@@ -105,6 +110,8 @@ def _seed(db_session, *, org_id: uuid.UUID | None = None) -> dict:
     fw = Framework(key=f"fw-ev-{uuid.uuid4().hex[:6]}", name="NIST r2", version="r2")
     db_session.add_all([org, fw])
     db_session.flush()
+    if fake_msp_admin is not None:
+        _grant(db_session, fake_msp_admin, org_id=org.id)
 
     ctrl = Control(
         framework_id=fw.id,
@@ -176,7 +183,7 @@ def test_upload_creates_evidence_and_does_not_change_status(
     client, db_session, storage, fake_msp_admin
 ):
     """Upload stores the bytes, returns EvidenceOut, and leaves status untouched."""
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.post(
         _upload_url(d),
         files={"file": ("screenshot.png", b"\x89PNG\r\n\x1a\n extra", "image/png")},
@@ -206,7 +213,7 @@ def test_upload_creates_evidence_and_does_not_change_status(
 
 @pytest.mark.integration
 def test_list_evidence_returns_uploaded_item(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     client.post(
         _upload_url(d),
         files={"file": ("config.xlsx", b"PK\x03\x04 fake xlsx",
@@ -228,7 +235,7 @@ def test_list_evidence_returns_uploaded_item(client, db_session, fake_msp_admin)
 
 @pytest.mark.integration
 def test_evidence_count_increments_in_control_states(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
 
     before = client.get(_states_url(d)).json()
     assert before[0]["evidence_count"] == 0
@@ -245,7 +252,7 @@ def test_evidence_count_increments_in_control_states(client, db_session, fake_ms
 
 @pytest.mark.integration
 def test_download_redirects_to_presigned_url(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     up = client.post(
         _upload_url(d),
         files={"file": ("mfa.png", b"\x89PNG\r\n\x1a\n", "image/png")},
@@ -265,7 +272,7 @@ def test_download_filename_uses_custom_title_with_extension_appended(
 ):
     """A custom title without an extension still gets one on the download link,
     so the saved file has the right type — see storage.download_filename()."""
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     up = client.post(
         _upload_url(d),
         files={"file": ("original-name.pdf", b"%PDF-1.4", "application/pdf")},
@@ -285,7 +292,7 @@ def test_download_filename_uses_custom_title_with_extension_appended(
 def test_delete_removes_evidence_and_does_not_change_status(
     client, db_session, storage, fake_msp_admin
 ):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     up = client.post(
         _upload_url(d),
         files={"file": ("doc.pdf", b"%PDF-1.4", "application/pdf")},
@@ -311,7 +318,7 @@ def test_delete_removes_evidence_and_does_not_change_status(
 
 @pytest.mark.integration
 def test_upload_disallowed_mime_type_rejected(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.post(
         _upload_url(d),
         files={"file": ("malware.exe", b"MZ\x90\x00", "application/x-msdownload")},
@@ -322,7 +329,7 @@ def test_upload_disallowed_mime_type_rejected(client, db_session, fake_msp_admin
 
 @pytest.mark.integration
 def test_upload_disallowed_extension_rejected(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.post(
         _upload_url(d),
         files={"file": ("script.php", b"<?php echo 1; ?>", "application/pdf")},
@@ -334,7 +341,7 @@ def test_upload_disallowed_extension_rejected(client, db_session, fake_msp_admin
 @pytest.mark.integration
 def test_upload_magic_byte_mismatch_rejected(client, db_session, fake_msp_admin):
     """File claims to be PNG but bytes don't start with the PNG magic header."""
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.post(
         _upload_url(d),
         files={"file": ("not_really.png", b"this is definitely not a PNG", "image/png")},
@@ -346,7 +353,7 @@ def test_upload_magic_byte_mismatch_rejected(client, db_session, fake_msp_admin)
 @pytest.mark.integration
 def test_upload_magic_byte_mismatch_pdf_rejected(client, db_session, fake_msp_admin):
     """File claims to be PDF but bytes don't start with %PDF."""
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.post(
         _upload_url(d),
         files={"file": ("fake.pdf", b"MZ\x90\x00 not a pdf", "application/pdf")},
@@ -357,7 +364,7 @@ def test_upload_magic_byte_mismatch_pdf_rejected(client, db_session, fake_msp_ad
 
 @pytest.mark.integration
 def test_upload_oversized_file_rejected(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     big = b"\x89PNG\r\n\x1a\n" + b"x" * (51 * 1024 * 1024)
     r = client.post(
         _upload_url(d),
@@ -375,6 +382,7 @@ def test_upload_wrong_org_returns_404(client, db_session, fake_msp_admin):
     d = _seed(db_session)  # unrelated org holds the real assessment
     db_session.add(Organization(id=fake_msp_admin.org_id, name="Caller Org"))
     db_session.flush()
+    _grant(db_session, fake_msp_admin)
 
     bad_url = (
         f"/orgs/{fake_msp_admin.org_id}/assessments/{d['assessment'].id}"
@@ -390,7 +398,7 @@ def test_upload_wrong_org_returns_404(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_delete_nonexistent_returns_404(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.delete(f"{_upload_url(d)}/{uuid.uuid4()}")
     assert r.status_code == 404
 
@@ -402,7 +410,7 @@ def test_delete_nonexistent_returns_404(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_add_references_batch(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.post(_refs_url(d), json=[
         {
             "title": "SharePoint Policy",
@@ -435,7 +443,7 @@ def test_add_references_batch(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_add_reference_unix_path(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.post(_refs_url(d), json=[
         {"title": "Unix path", "location": "/mnt/nas/cmmc/evidence.pdf",
          "artifact_type": "document"}
@@ -446,7 +454,7 @@ def test_add_reference_unix_path(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_add_reference_empty_location_rejected(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.post(_refs_url(d), json=[
         {"title": "Bad ref", "location": "", "artifact_type": "document"}
     ])
@@ -456,7 +464,7 @@ def test_add_reference_empty_location_rejected(client, db_session, fake_msp_admi
 @pytest.mark.integration
 def test_add_reference_invalid_location_rejected(client, db_session, fake_msp_admin):
     """A bare word (not a URL or path) must be rejected."""
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.post(_refs_url(d), json=[
         {"title": "Bad ref", "location": "just_a_word_no_scheme", "artifact_type": "document"}
     ])
@@ -465,7 +473,7 @@ def test_add_reference_invalid_location_rejected(client, db_session, fake_msp_ad
 
 @pytest.mark.integration
 def test_add_reference_empty_title_rejected(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.post(_refs_url(d), json=[
         {"title": "   ", "location": "https://example.com/doc.pdf", "artifact_type": "document"}
     ])
@@ -474,7 +482,7 @@ def test_add_reference_empty_title_rejected(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_add_reference_bad_artifact_type_rejected(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.post(_refs_url(d), json=[
         {"title": "Ref", "location": "https://example.com/", "artifact_type": "video"}
     ])
@@ -483,7 +491,7 @@ def test_add_reference_bad_artifact_type_rejected(client, db_session, fake_msp_a
 
 @pytest.mark.integration
 def test_add_reference_empty_list_rejected(client, db_session, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.post(_refs_url(d), json=[])
     assert r.status_code == 422
 
@@ -491,7 +499,7 @@ def test_add_reference_empty_list_rejected(client, db_session, fake_msp_admin):
 @pytest.mark.integration
 def test_download_reference_returns_404(client, db_session, fake_msp_admin):
     """References have no stored file — download endpoint must 404."""
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     ref = client.post(_refs_url(d), json=[
         {"title": "SP link", "location": "https://sp.example.com/doc.pdf",
          "artifact_type": "document"}
@@ -504,7 +512,7 @@ def test_download_reference_returns_404(client, db_session, fake_msp_admin):
 @pytest.mark.integration
 def test_delete_reference_does_not_call_storage(client, db_session, storage, fake_msp_admin):
     """Deleting a reference only removes the DB row — no storage.delete_file call."""
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     ref = client.post(_refs_url(d), json=[
         {"title": "Ref", "location": "https://example.com/f.pdf", "artifact_type": "document"}
     ])
@@ -518,7 +526,7 @@ def test_delete_reference_does_not_call_storage(client, db_session, storage, fak
 
 @pytest.mark.integration
 def test_list_shows_both_file_and_reference(client, db_session, storage, fake_msp_admin):
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
 
     client.post(
         _upload_url(d),
@@ -554,7 +562,7 @@ def test_list_shows_both_file_and_reference(client, db_session, storage, fake_ms
 @pytest.mark.integration
 def test_evidence_never_changes_control_state_status(client, db_session, fake_msp_admin):
     """Attaching evidence (both kinds) must never alter control_state.status."""
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     initial_status = d["cs"].status
 
     client.post(
@@ -580,7 +588,7 @@ def test_evidence_never_changes_control_state_status(client, db_session, fake_ms
 @pytest.mark.integration
 def test_customer_owns_objective_accepts_evidence(client, db_session, storage, fake_msp_admin):
     """Evidence attachment must not be blocked on customer_owns responsibility."""
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     d["cs"].responsibility = "customer_owns"
     db_session.flush()
 
@@ -611,7 +619,7 @@ def test_evidence_manifest_shape_and_human_readable_ids(
     client, db_session, storage, fake_msp_admin
 ):
     """Manifest uses control_id / objective_key as human-readable identifiers."""
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
 
     client.post(
         _upload_url(d),
@@ -666,7 +674,7 @@ def test_evidence_manifest_shape_and_human_readable_ids(
 @pytest.mark.integration
 def test_evidence_manifest_objective_with_no_evidence(client, db_session, fake_msp_admin):
     """Objectives with no evidence appear in the manifest with an empty evidence list."""
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
 
     r = client.get(_manifest_url(d))
     assert r.status_code == 200
@@ -683,6 +691,7 @@ def test_evidence_manifest_wrong_org_returns_404(client, db_session, fake_msp_ad
     d = _seed(db_session)  # unrelated org holds the real assessment
     db_session.add(Organization(id=fake_msp_admin.org_id, name="Caller Org"))
     db_session.flush()
+    _grant(db_session, fake_msp_admin)
 
     url = f"/orgs/{fake_msp_admin.org_id}/assessments/{d['assessment'].id}/evidence-manifest"
     r = client.get(url)
@@ -697,7 +706,7 @@ def test_evidence_manifest_wrong_org_returns_404(client, db_session, fake_msp_ad
 @pytest.mark.integration
 def test_upload_populates_sha256(client, db_session, storage, fake_msp_admin):
     """File upload endpoint stores sha256_hash matching the uploaded bytes."""
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     data = b"%PDF-1.4 test content for hashing"
     expected_hash = hashlib.sha256(data).hexdigest()
 
@@ -723,7 +732,7 @@ def test_upload_hash_matches_storage_roundtrip(client, db_session, storage, fake
     wrong.  InMemoryStorageClient stores and returns bytes faithfully, proving
     the contract.
     """
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     data = b"%PDF-1.4 roundtrip test"
 
     r = client.post(
@@ -744,7 +753,7 @@ def test_upload_hash_matches_storage_roundtrip(client, db_session, storage, fake
 @pytest.mark.integration
 def test_collect_task_populates_sha256(client, db_session, storage, fake_msp_admin):
     """Task-collect endpoint stores sha256_hash matching the uploaded bytes."""
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     data = b"%PDF-1.4 task collect hashing test"
     expected_hash = hashlib.sha256(data).hexdigest()
 
@@ -779,7 +788,7 @@ def test_collect_task_populates_sha256(client, db_session, storage, fake_msp_adm
 @pytest.mark.integration
 def test_references_do_not_get_sha256(client, db_session, fake_msp_admin):
     """Reference evidence (no stored bytes) must have sha256_hash = NULL."""
-    d = _seed(db_session, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
 
     r = client.post(
         _refs_url(d),

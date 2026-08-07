@@ -50,7 +50,7 @@ from app.models import (
     SystemDescription,
 )
 from app.storage import StorageClient, get_storage_client
-from tests.conftest import _app_session, _authed
+from tests.conftest import _app_session, _authed, _grant
 
 # ---------------------------------------------------------------------------
 # In-memory storage with get_bytes support
@@ -103,12 +103,20 @@ def client(db_session, storage, fake_msp_admin):
 
 
 def _seed(
-    db_session, storage: InMemoryStorageClient, *, org_id: uuid.UUID | None = None
+    db_session,
+    storage: InMemoryStorageClient,
+    *,
+    org_id: uuid.UUID | None = None,
+    fake_msp_admin=None,
 ) -> dict:
     """Create org + framework + two-objective control + assessment + extras.
 
     Returns a dict with keys: org, fw, assessment, ctrl, obj_a, obj_b, cs_a, cs_b,
     contact, evidence, ev_key.
+
+    Pass fake_msp_admin (whenever org_id=fake_msp_admin.org_id) to also grant
+    that identity org_membership on the seeded org — required for
+    require_org_access to authorize any client request against it.
     """
     org_kwargs: dict = {"name": f"BundleOrg-{uuid.uuid4().hex[:6]}"}
     if org_id is not None:
@@ -121,6 +129,8 @@ def _seed(
     )
     db_session.add_all([org, fw])
     db_session.flush()
+    if fake_msp_admin is not None:
+        _grant(db_session, fake_msp_admin, org_id=org.id)
 
     ctrl = Control(
         framework_id=fw.id,
@@ -259,12 +269,15 @@ def _bundle_url(d: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.integration
-def test_bundle_missing_org(client, fake_msp_admin):
-    """URL org_id is the caller's own org (passes the ownership guard) but no
-    such org/assessment exists — still 404s from the handler's own lookup."""
-    r = client.get(f"/orgs/{fake_msp_admin.org_id}/assessments/{uuid.uuid4()}/bundle")
-    assert r.status_code == 404
+# test_bundle_missing_org removed (ADR 0009 M.4): it hit fake_msp_admin.org_id
+# with no Organization row created at all, proving the handler's own 404
+# fires after require_org_access's ownership check passes. That scenario is
+# now structurally unreachable: require_org_access passing means a real
+# org_membership row exists, and org_membership.org_id is a NOT NULL FK to
+# organization.id (ON DELETE CASCADE) — there is no longer any way to pass
+# the access check against an org_id with no Organization row behind it.
+# See the identical removal in test_onboarding.py
+# (test_org_profile_patch_404_unknown_org) for the same reasoning.
 
 
 @pytest.mark.integration
@@ -275,13 +288,14 @@ def test_bundle_wrong_org_assessment(client, db_session, storage, fake_msp_admin
     other_org_id = fake_msp_admin.org_id
     db_session.add(Organization(id=other_org_id, name="Caller Org"))
     db_session.flush()
+    _grant(db_session, fake_msp_admin)
     r = client.get(f"/orgs/{other_org_id}/assessments/{d['assessment'].id}/bundle")
     assert r.status_code == 404
 
 
 @pytest.mark.integration
 def test_bundle_returns_200_zip(client, db_session, storage, fake_msp_admin):
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/zip"
@@ -290,7 +304,7 @@ def test_bundle_returns_200_zip(client, db_session, storage, fake_msp_admin):
 
 @pytest.mark.integration
 def test_bundle_content_disposition(client, db_session, storage, fake_msp_admin):
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
     cd = r.headers.get("content-disposition", "")
@@ -300,7 +314,7 @@ def test_bundle_content_disposition(client, db_session, storage, fake_msp_admin)
 
 @pytest.mark.integration
 def test_bundle_zip_contains_required_files(client, db_session, storage, fake_msp_admin):
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -323,7 +337,7 @@ def test_bundle_zip_contains_required_files(client, db_session, storage, fake_ms
 
 @pytest.mark.integration
 def test_bundle_cover_contains_org_name(client, db_session, storage, fake_msp_admin):
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -336,7 +350,7 @@ def test_bundle_cover_contains_org_name(client, db_session, storage, fake_msp_ad
 
 @pytest.mark.integration
 def test_bundle_cover_contains_sprs_score(client, db_session, storage, fake_msp_admin):
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -351,7 +365,7 @@ def test_bundle_cover_contains_sprs_score(client, db_session, storage, fake_msp_
 
 @pytest.mark.integration
 def test_bundle_implementation_contains_objective(client, db_session, storage, fake_msp_admin):
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -365,7 +379,7 @@ def test_bundle_implementation_contains_objective(client, db_session, storage, f
 
 @pytest.mark.integration
 def test_bundle_implementation_contains_statement(client, db_session, storage, fake_msp_admin):
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -378,7 +392,7 @@ def test_bundle_implementation_contains_statement(client, db_session, storage, f
 
 @pytest.mark.integration
 def test_bundle_manifest_contains_evidence(client, db_session, storage, fake_msp_admin):
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -391,7 +405,7 @@ def test_bundle_manifest_contains_evidence(client, db_session, storage, fake_msp
 
 @pytest.mark.integration
 def test_bundle_audit_logged(client, db_session, storage, fake_msp_admin):
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -412,7 +426,7 @@ def test_bundle_embeds_evidence_file(client, db_session, storage, fake_msp_admin
     _seed() links the one evidence item only to cs_a (objective [a]) of
     AC.L2-3.1.1, so its copy must live at exactly that folder.
     """
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -432,7 +446,7 @@ def test_bundle_embeds_evidence_file(client, db_session, storage, fake_msp_admin
 
 @pytest.mark.integration
 def test_bundle_artifact_log_present(client, db_session, storage, fake_msp_admin):
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -443,7 +457,7 @@ def test_bundle_artifact_log_present(client, db_session, storage, fake_msp_admin
 @pytest.mark.integration
 def test_bundle_artifact_log_format(client, db_session, storage, fake_msp_admin):
     """artifact_log.txt has the required Algorithm | Hash | Path header and entries."""
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -460,7 +474,7 @@ def test_bundle_artifact_log_format(client, db_session, storage, fake_msp_admin)
 @pytest.mark.integration
 def test_bundle_second_order_hash_on_cover(client, db_session, storage, fake_msp_admin):
     """cover.html surfaces Hashed Data List and Hash Value using exact eMASS field names."""
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -476,7 +490,7 @@ def test_bundle_second_order_hash_on_cover(client, db_session, storage, fake_msp
 @pytest.mark.integration
 def test_bundle_manifest_hash_column(client, db_session, storage, fake_msp_admin):
     """Evidence manifest table includes a SHA-256 Hash column header."""
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -490,7 +504,7 @@ def test_bundle_manifest_hash_column(client, db_session, storage, fake_msp_admin
 @pytest.mark.integration
 def test_bundle_manifest_reference_not_applicable(client, db_session, storage, fake_msp_admin):
     """Reference evidence shows 'not applicable — reference only' in the hash column."""
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
 
     # Add a reference evidence item linked to cs_a
     ref_ev = Evidence(
@@ -520,7 +534,7 @@ def test_bundle_manifest_reference_not_applicable(client, db_session, storage, f
 @pytest.mark.integration
 def test_bundle_audit_log_includes_hash_fields(client, db_session, storage, fake_msp_admin):
     """bundle.export audit row carries hashed_data_list and hash_value."""
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -549,7 +563,7 @@ def test_bundle_artifact_log_zip_consistency(client, db_session, storage, fake_m
     entry per duplicated copy per ADR 0007), so this test would catch a
     regression that splits them.
     """
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -594,7 +608,7 @@ def test_bundle_manifest_links_resolve(client, db_session, storage, fake_msp_adm
     rather than assuming a fixed prefix, so it stays valid as the folder
     depth changes.
     """
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
 
@@ -629,7 +643,7 @@ def test_bundle_lazy_backfill_populates_sha256(client, db_session, storage, fake
     sha256_hash=NULL but the bytes are present in storage.  After the bundle
     export the column must be populated with the correct hash.
     """
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     ev = d["evidence"]
 
     # Simulate pre-migration state: clear the hash that _seed may have set
@@ -653,7 +667,7 @@ def test_bundle_stale_hash_excluded_on_fetch_failure(client, db_session, storage
     hash must NOT appear in artifact_log.txt or the manifest — showing it next
     to a missing file would be misleading.
     """
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
 
     # Seed a second evidence item with a pre-populated hash but no bytes in storage
     stale_hash = "a" * 64
@@ -712,7 +726,7 @@ def test_bundle_duplicates_evidence_across_linked_objectives(
     Not a canonical file with two pointers: two ZIP entries, two artifact_log
     lines, identical bytes and hash, different paths — per ADR 0007.
     """
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     # _seed() already links d["evidence"] to cs_a only; also link it to cs_b.
     db_session.add(EvidenceStateLink(evidence_id=d["evidence"].id, control_state_id=d["cs_b"].id))
     db_session.flush()
@@ -744,7 +758,7 @@ def test_bundle_unlinked_evidence_appears_in_manifest(client, db_session, storag
     """Evidence with zero links to this assessment's control states is not
     silently dropped — it lands under evidence/unlinked/ and in a dedicated
     manifest section, per ADR 0007."""
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
 
     orphan_bytes = b"%PDF-1.4 orphan"
     orphan_id = uuid.uuid4()
@@ -789,7 +803,7 @@ def test_bundle_archived_link_evidence_excluded_from_unlinked_section(
     section — that would show a C3PAO evidence the customer deliberately
     took out of scope. Per ADR 0007, this is excluded entirely, not
     relabeled."""
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
 
     retired_bytes = b"%PDF-1.4 retired"
     retired_id = uuid.uuid4()
@@ -843,7 +857,7 @@ def test_bundle_evidence_filename_collision_in_same_objective_folder(
     get distinct, independently-openable filenames in that folder (a real
     collision, not hypothetical — e.g. two screenshots both left at their
     tool's default "Screenshot.png" name)."""
-    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id)
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
 
     second_bytes = b"%PDF-1.4 second-copy-different-bytes"
     second_id = uuid.uuid4()

@@ -35,7 +35,7 @@ from app.models import (
     User,
     UserSession,
 )
-from tests.conftest import _app_session, _authed, _make_fake_user
+from tests.conftest import _app_session, _authed, _grant, _make_fake_user
 
 _STRONG_PASSWORD_HASH = "not-a-real-pbkdf2-hash-just-a-fixture-value"
 
@@ -52,6 +52,14 @@ def _seed_org(db_session, org_id: uuid.UUID) -> Organization:
     org = Organization(id=org_id, name=f"DeletionOrg-{uuid.uuid4().hex[:8]}")
     db_session.add(org)
     db_session.flush()
+    return org
+
+
+def _seed_own_org(db_session, fake_msp_admin) -> Organization:
+    """_seed_org at fake_msp_admin's own org_id, plus the org_membership
+    grant require_org_access now needs there (ADR 0009 M.4)."""
+    org = _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
     return org
 
 
@@ -140,7 +148,7 @@ def _counts(db_session, user_id: uuid.UUID) -> dict[str, int]:
 
 @pytest.mark.integration
 def test_delete_blocked_on_active_user(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_user(db_session, org_id=org.id, is_active=True)
 
     r = client.post(f"/orgs/{fake_msp_admin.org_id}/users/{user.id}/delete")
@@ -153,7 +161,7 @@ def test_delete_blocked_on_active_user(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_anonymize_blocked_on_active_user(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_user(db_session, org_id=org.id, is_active=True)
 
     r = client.post(f"/orgs/{fake_msp_admin.org_id}/users/{user.id}/anonymize")
@@ -171,14 +179,16 @@ def test_anonymize_blocked_on_active_user(client, db_session, fake_msp_admin):
 
 
 @pytest.mark.integration
-def test_delete_blocked_on_self(client, fake_msp_admin):
+def test_delete_blocked_on_self(client, db_session, fake_msp_admin):
+    _seed_own_org(db_session, fake_msp_admin)
     r = client.post(f"/orgs/{fake_msp_admin.org_id}/users/{fake_msp_admin.id}/delete")
     assert r.status_code == 400
     assert "own account" in r.json()["detail"].lower()
 
 
 @pytest.mark.integration
-def test_anonymize_blocked_on_self(client, fake_msp_admin):
+def test_anonymize_blocked_on_self(client, db_session, fake_msp_admin):
+    _seed_own_org(db_session, fake_msp_admin)
     r = client.post(f"/orgs/{fake_msp_admin.org_id}/users/{fake_msp_admin.id}/anonymize")
     assert r.status_code == 400
     assert "own account" in r.json()["detail"].lower()
@@ -191,7 +201,7 @@ def test_anonymize_blocked_on_self(client, fake_msp_admin):
 
 @pytest.mark.integration
 def test_delete_blocked_when_history_exists_singular(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_user(db_session, org_id=org.id)
     _seed_audit_row(db_session, org_id=org.id, user_id=user.id)
 
@@ -207,7 +217,7 @@ def test_delete_blocked_when_history_exists_singular(client, db_session, fake_ms
 
 @pytest.mark.integration
 def test_delete_blocked_when_history_exists_plural(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_user(db_session, org_id=org.id)
     _seed_audit_row(db_session, org_id=org.id, user_id=user.id, action="user.role_change")
     _seed_audit_row(db_session, org_id=org.id, user_id=user.id, action="user.activation_change")
@@ -225,7 +235,7 @@ def test_delete_blocked_when_user_is_the_actor_not_just_the_entity(
     """History also counts rows where this user acted on something else —
     not only rows where they were the target (ADR 0006's OR clause).
     """
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_user(db_session, org_id=org.id)
     other = _seed_user(db_session, org_id=org.id)
     db_session.add(
@@ -251,7 +261,7 @@ def test_delete_blocked_when_user_is_the_actor_not_just_the_entity(
 
 @pytest.mark.integration
 def test_delete_succeeds_and_cascades_for_zero_history_user(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_user(db_session, org_id=org.id)
     _seed_auth_artifacts(db_session, org_id=org.id, user_id=user.id)
     assert _counts(db_session, user.id) == {
@@ -269,7 +279,7 @@ def test_delete_succeeds_and_cascades_for_zero_history_user(client, db_session, 
 
 @pytest.mark.integration
 def test_delete_writes_its_own_audit_row(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_user(db_session, org_id=org.id)
     user_id = user.id
 
@@ -285,7 +295,7 @@ def test_delete_writes_its_own_audit_row(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_delete_already_anonymized_user_is_rejected(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_user(db_session, org_id=org.id, deleted_at=datetime.now(UTC))
 
     r = client.post(f"/orgs/{fake_msp_admin.org_id}/users/{user.id}/delete")
@@ -300,7 +310,7 @@ def test_delete_already_anonymized_user_is_rejected(client, db_session, fake_msp
 
 @pytest.mark.integration
 def test_anonymize_scrubs_pii_and_sets_deleted_at(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_user(
         db_session,
         org_id=org.id,
@@ -333,7 +343,7 @@ def test_anonymize_scrubs_pii_and_sets_deleted_at(client, db_session, fake_msp_a
 
 @pytest.mark.integration
 def test_anonymize_preserves_audit_rows_byte_for_byte(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_user(db_session, org_id=org.id, email="realname@example.com")
     history_row = _seed_audit_row(db_session, org_id=org.id, user_id=user.id)
     original_before = dict(history_row.before_value)
@@ -361,7 +371,7 @@ def test_anonymize_preserves_audit_rows_byte_for_byte(client, db_session, fake_m
 
 @pytest.mark.integration
 def test_anonymize_cascades_auth_tables(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_user(db_session, org_id=org.id)
     _seed_audit_row(db_session, org_id=org.id, user_id=user.id)
     _seed_auth_artifacts(db_session, org_id=org.id, user_id=user.id)
@@ -382,7 +392,7 @@ def test_anonymize_cascades_auth_tables(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_anonymize_twice_is_rejected(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_user(db_session, org_id=org.id)
 
     first = client.post(f"/orgs/{fake_msp_admin.org_id}/users/{user.id}/anonymize")
@@ -400,7 +410,7 @@ def test_anonymize_twice_is_rejected(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_patch_is_active_true_rejected_after_anonymize(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     user = _seed_user(db_session, org_id=org.id)
 
     anon = client.post(f"/orgs/{fake_msp_admin.org_id}/users/{user.id}/anonymize")
@@ -425,6 +435,7 @@ def test_non_admin_403_on_delete_and_anonymize(db_session, role):
     org_id = uuid.uuid4()
     org = _seed_org(db_session, org_id)
     non_admin = _make_fake_user(org_id=org.id, role=role)
+    _grant(db_session, non_admin)
     target = _seed_user(db_session, org_id=org.id)
 
     app.dependency_overrides[get_session] = _app_session(db_session)

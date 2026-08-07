@@ -22,7 +22,7 @@ from app.auth import get_current_user
 from app.db import get_session
 from app.main import app
 from app.models import AuditLog, Organization, User
-from tests.conftest import _app_session, _authed
+from tests.conftest import _app_session, _authed, _grant
 
 
 @pytest.fixture
@@ -54,28 +54,6 @@ def _seed_user(db_session, *, org_id: uuid.UUID, role: str = "customer_poc") -> 
     return user
 
 
-def _seed_matching_admin(db_session, fake_msp_admin) -> User:
-    """Seed a real User row at fake_msp_admin's exact id/org_id.
-
-    fake_msp_admin is a bare CurrentUser dataclass, not a DB row. A
-    self-issued (no user_id in the body) ApiToken.user_id FKs to user.id,
-    so self-issue token creation needs a real row at that id or the INSERT
-    violates the FK constraint.
-    """
-    user = User(
-        id=fake_msp_admin.id,
-        home_org_id=fake_msp_admin.org_id,
-        email=fake_msp_admin.email,
-        display_name=fake_msp_admin.display_name,
-        login_method=fake_msp_admin.login_method,
-        role=fake_msp_admin.role,
-        is_active=fake_msp_admin.is_active,
-    )
-    db_session.add(user)
-    db_session.flush()
-    return user
-
-
 def _rows(db_session, org_id: uuid.UUID, action: str, entity_id: uuid.UUID | None = None):
     stmt = select(AuditLog).where(AuditLog.org_id == org_id, AuditLog.action == action)
     if entity_id is not None:
@@ -91,6 +69,7 @@ def _rows(db_session, org_id: uuid.UUID, action: str, entity_id: uuid.UUID | Non
 @pytest.mark.integration
 def test_role_change_writes_one_row_with_before_after(client, db_session, fake_msp_admin):
     _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
     target = _seed_user(db_session, org_id=fake_msp_admin.org_id, role="customer_poc")
 
     r = client.patch(
@@ -108,6 +87,7 @@ def test_role_change_writes_one_row_with_before_after(client, db_session, fake_m
 @pytest.mark.integration
 def test_role_unchanged_writes_no_row(client, db_session, fake_msp_admin):
     _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
     target = _seed_user(db_session, org_id=fake_msp_admin.org_id, role="customer_poc")
 
     r = client.patch(
@@ -126,6 +106,7 @@ def test_role_unchanged_writes_no_row(client, db_session, fake_msp_admin):
 @pytest.mark.integration
 def test_activation_change_writes_one_row(client, db_session, fake_msp_admin):
     _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
     target = _seed_user(db_session, org_id=fake_msp_admin.org_id)
 
     r = client.patch(
@@ -143,6 +124,7 @@ def test_activation_change_writes_one_row(client, db_session, fake_msp_admin):
 @pytest.mark.integration
 def test_deactivate_writes_one_row(client, db_session, fake_msp_admin):
     _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
     target = _seed_user(db_session, org_id=fake_msp_admin.org_id)
 
     r = client.delete(f"/orgs/{fake_msp_admin.org_id}/users/{target.id}")
@@ -162,7 +144,7 @@ def test_deactivate_writes_one_row(client, db_session, fake_msp_admin):
 @pytest.mark.integration
 def test_api_token_create_writes_one_row(client, db_session, fake_msp_admin):
     _seed_org(db_session, fake_msp_admin.org_id)
-    _seed_matching_admin(db_session, fake_msp_admin)
+    _grant(db_session, fake_msp_admin)
 
     r = client.post(
         f"/orgs/{fake_msp_admin.org_id}/api-tokens",
@@ -181,7 +163,7 @@ def test_api_token_create_writes_one_row(client, db_session, fake_msp_admin):
 @pytest.mark.integration
 def test_api_token_revoke_writes_one_row(client, db_session, fake_msp_admin):
     _seed_org(db_session, fake_msp_admin.org_id)
-    _seed_matching_admin(db_session, fake_msp_admin)
+    _grant(db_session, fake_msp_admin)
 
     created = client.post(
         f"/orgs/{fake_msp_admin.org_id}/api-tokens",
@@ -206,7 +188,7 @@ def test_api_token_revoke_writes_one_row(client, db_session, fake_msp_admin):
 @pytest.mark.integration
 def test_no_raw_api_token_leaks_into_audit_log(client, db_session, fake_msp_admin):
     _seed_org(db_session, fake_msp_admin.org_id)
-    _seed_matching_admin(db_session, fake_msp_admin)
+    _grant(db_session, fake_msp_admin)
 
     r = client.post(
         f"/orgs/{fake_msp_admin.org_id}/api-tokens",
@@ -227,6 +209,7 @@ def test_no_raw_api_token_leaks_into_audit_log(client, db_session, fake_msp_admi
 @pytest.mark.integration
 def test_no_raw_invite_token_leaks_into_audit_log(client, db_session, fake_msp_admin):
     _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
 
     r = client.post(
         f"/orgs/{fake_msp_admin.org_id}/users",

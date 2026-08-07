@@ -40,7 +40,7 @@ from app.models import (
 )
 from app.seeds.baselines import seed_baselines
 from app.seeds.catalog import seed_catalog
-from tests.conftest import _app_session, _authed
+from tests.conftest import _app_session, _authed, _grant
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -380,9 +380,10 @@ def test_reactivate_preserves_collected_status(db_session, scenario):
 
 
 @pytest.mark.integration
-def test_evidence_tasks_api(client, db_session, scenario):
+def test_evidence_tasks_api(client, db_session, scenario, fake_msp_admin):
     _activate(db_session, scenario)
     db_session.flush()
+    _grant(db_session, fake_msp_admin)
 
     org_id = scenario["org"].id
     assessment_id = scenario["assessment"].id

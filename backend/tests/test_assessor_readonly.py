@@ -52,7 +52,7 @@ from app.models import (
     User,
 )
 from app.storage import StorageClient, get_storage_client
-from tests.conftest import _app_session, _authed
+from tests.conftest import _app_session, _authed, _grant
 
 _PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"0" * 32
 
@@ -101,6 +101,15 @@ def _as_role(role: str, *, org_id: uuid.UUID) -> CurrentUser:
 
 
 def _client_as(db_session, storage: InMemoryStorageClient, actor: CurrentUser) -> TestClient:
+    # ADR 0009 M.4: require_org_access now does a real org_membership
+    # lookup, so every actor built via _as_role needs a real grant, not
+    # just app.current_org set (_authed, below, still only does that
+    # part). This is the single choke point every test in this file
+    # already routes through, so one _grant() call here covers all of
+    # them rather than touching each test function individually. Callers
+    # must have already seeded the Organization row at actor.org_id
+    # (every test here does, via _seed_scenario, before calling this).
+    _grant(db_session, actor)
     app.dependency_overrides[get_session] = _app_session(db_session)
     app.dependency_overrides[get_storage_client] = lambda: storage
     app.dependency_overrides[get_current_user] = _authed(db_session, actor)

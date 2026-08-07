@@ -31,7 +31,7 @@ from app.auth import get_current_user
 from app.db import get_session
 from app.main import app
 from app.models import AuditLog, Organization, User
-from tests.conftest import _app_session, _authed, _make_fake_user
+from tests.conftest import _app_session, _authed, _grant, _make_fake_user
 
 
 @pytest.fixture
@@ -46,6 +46,17 @@ def _seed_org(db_session, org_id: uuid.UUID) -> Organization:
     org = Organization(id=org_id, name=f"AuditLogOrg-{uuid.uuid4().hex[:8]}")
     db_session.add(org)
     db_session.flush()
+    return org
+
+
+def _seed_own_org(db_session, fake_msp_admin) -> Organization:
+    """_seed_org at fake_msp_admin's own org_id, plus the org_membership
+    grant require_org_access now needs there (ADR 0009 M.4). A separate
+    helper from _seed_org because that one is also used in this file to
+    seed an unrelated *other* org (test_scoped_to_org) that must NOT get
+    a grant."""
+    org = _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
     return org
 
 
@@ -93,6 +104,10 @@ def test_non_msp_admin_403(db_session, role):
     org_id = uuid.uuid4()
     org = _seed_org(db_session, org_id)
     non_admin = _make_fake_user(org_id=org.id, role=role)
+    # Same-org, wrong-role grant: keeps this asserting the msp_admin-only
+    # role gate specifically, not an incidental "no membership" 403 that
+    # would pass even if the role check were removed entirely.
+    _grant(db_session, non_admin)
 
     app.dependency_overrides[get_session] = _app_session(db_session)
     app.dependency_overrides[get_current_user] = _authed(db_session, non_admin)
@@ -105,7 +120,7 @@ def test_non_msp_admin_403(db_session, role):
 
 @pytest.mark.integration
 def test_msp_admin_can_read(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     _seed_row(db_session, org_id=org.id)
 
     r = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log")
@@ -120,7 +135,7 @@ def test_msp_admin_can_read(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_newest_first_and_pagination(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     base = datetime.now(UTC) - timedelta(hours=10)
     for i in range(5):
         _seed_row(
@@ -143,7 +158,7 @@ def test_newest_first_and_pagination(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_scoped_to_org(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     other_org = _seed_org(db_session, uuid.uuid4())
     _seed_row(db_session, org_id=org.id)
     _seed_row(db_session, org_id=other_org.id)
@@ -160,7 +175,7 @@ def test_scoped_to_org(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_filter_by_action_exact_match(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     _seed_row(db_session, org_id=org.id, action="user.deactivate")
     _seed_row(db_session, org_id=org.id, action="user.unlock")
 
@@ -173,7 +188,7 @@ def test_filter_by_action_exact_match(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_filter_by_actor_substring(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     target_actor = str(uuid.uuid4())
     _seed_row(db_session, org_id=org.id, actor=target_actor)
     _seed_row(db_session, org_id=org.id, actor="system")
@@ -187,7 +202,7 @@ def test_filter_by_actor_substring(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_filter_by_date_range(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     now = datetime.now(UTC)
     old_row = _seed_row(
         db_session, org_id=org.id, action="test.old", created_at=now - timedelta(days=10)
@@ -225,7 +240,7 @@ def test_filter_by_date_range(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_filter_by_ip_address_substring(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     _seed_row(db_session, org_id=org.id, action="test.matching_ip", ip_address="10.0.0.42")
     _seed_row(db_session, org_id=org.id, action="test.other_ip", ip_address="192.168.1.1")
 
@@ -243,7 +258,7 @@ def test_null_ip_never_matches_active_ip_filter(client, db_session, fake_msp_adm
     rather than surface them as if they matched — a false positive would be
     worse than the row being absent.
     """
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     _seed_row(db_session, org_id=org.id, action="test.no_ip_captured", ip_address=None)
     _seed_row(db_session, org_id=org.id, action="test.has_ip", ip_address="203.0.113.5")
 
@@ -266,7 +281,7 @@ def test_null_ip_never_matches_active_ip_filter(client, db_session, fake_msp_adm
 
 @pytest.mark.integration
 def test_filters_combine_with_and(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     ip = "1.1.1.1"
     _seed_row(db_session, org_id=org.id, action="user.unlock", actor="admin-a", ip_address=ip)
     _seed_row(db_session, org_id=org.id, action="user.unlock", actor="admin-b", ip_address=ip)
@@ -293,7 +308,7 @@ def test_filters_combine_with_and(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_actor_resolves_active_user(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     actor_user = _seed_user(
         db_session, org_id=org.id, display_name="Jarrod Winsor", email="jarrod.winsor@example.com"
     )
@@ -313,7 +328,7 @@ def test_actor_resolves_active_user(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_actor_resolves_anonymized_user(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     # Mirrors exactly what routers/users.py's anonymize_user leaves behind —
     # row survives, PII scrubbed, deleted_at set.
     actor_user = _seed_user(
@@ -341,7 +356,7 @@ def test_actor_resolves_deleted_user_when_row_gone(client, db_session, fake_msp_
     hard-delete path, not a data-integrity bug. Must be labeled distinctly
     from "anonymized", not rendered as a bare orphan GUID.
     """
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     hard_deleted_id = uuid.uuid4()
     _seed_row(db_session, org_id=org.id, actor=str(hard_deleted_id), actor_type="user")
 
@@ -363,7 +378,7 @@ def test_actor_system_literal_is_not_resolved(client, db_session, fake_msp_admin
     rather than a false "deleted" (which would misleadingly imply a user
     row once existed for this action).
     """
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     _seed_row(db_session, org_id=org.id, actor="system", actor_type="system")
 
     r = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log")
@@ -378,7 +393,7 @@ def test_entity_resolves_active_user(client, db_session, fake_msp_admin):
     """The gap Jarrod noticed: a user.deactivate row's entity_id is the
     user who was deactivated, and it must resolve the same way actor does.
     """
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     target = _seed_user(
         db_session, org_id=org.id, display_name="Target Person", email="target@example.com"
     )
@@ -404,7 +419,7 @@ def test_entity_resolves_active_user(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_entity_resolves_anonymized_user(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     target = _seed_user(
         db_session,
         org_id=org.id,
@@ -427,7 +442,7 @@ def test_entity_resolves_anonymized_user(client, db_session, fake_msp_admin):
 
 @pytest.mark.integration
 def test_entity_resolves_deleted_user_when_row_gone(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     hard_deleted_id = uuid.uuid4()
     _seed_row(
         db_session,
@@ -451,7 +466,7 @@ def test_entity_resolves_deleted_user_when_row_gone(client, db_session, fake_msp
 
 @pytest.mark.integration
 def test_entity_not_resolved_when_entity_type_is_not_user(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     _seed_row(db_session, org_id=org.id, entity_type="control_state", entity_id=uuid.uuid4())
 
     r = client.get(f"/orgs/{fake_msp_admin.org_id}/audit-log")
@@ -466,7 +481,7 @@ def test_identity_resolution_batches_into_one_query(client, db_session, fake_msp
     entity_id) must resolve via exactly one SELECT against "user", not one
     per row/per GUID.
     """
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     users = [
         _seed_user(db_session, org_id=org.id, display_name=f"User {i}", email=f"u{i}@example.com")
         for i in range(5)
@@ -525,7 +540,7 @@ def test_identity_resolution_batches_into_one_query(client, db_session, fake_msp
 
 @pytest.mark.integration
 def test_real_request_captures_client_ip_via_middleware(client, db_session, fake_msp_admin):
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     locked_until = datetime.now(UTC) + timedelta(minutes=5)
     user = _seed_user(db_session, org_id=org.id, locked_until=locked_until)
 
@@ -554,7 +569,7 @@ def test_log_event_called_directly_outside_a_request_has_null_ip(db_session, fak
     """
     from app.audit import log_event
 
-    org = _seed_org(db_session, fake_msp_admin.org_id)
+    org = _seed_own_org(db_session, fake_msp_admin)
     entry = log_event(
         db_session,
         org_id=org.id,

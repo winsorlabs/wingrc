@@ -24,6 +24,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from app.auth import CurrentUser
+from app.models import OrgMembership, User
 
 # Non-superuser, non-owner role Phase 3 introduces so RLS is an enforced
 # backstop rather than a no-op (superusers and table owners bypass RLS
@@ -105,6 +106,61 @@ def fake_msp_admin():
     return _make_fake_user()
 
 
+def _grant(
+    db_session: Session,
+    current_user: CurrentUser,
+    *,
+    org_id: _uuid.UUID | None = None,
+    role: str | None = None,
+) -> None:
+    """Give a fake identity (fake_msp_admin, or any hand-built CurrentUser)
+    real access under require_org_access's actual membership check
+    (ADR 0009 M.4): a matching User row, plus a matching org_membership
+    row.
+
+    Most fake identities have no backing User row at all — the old
+    equality-based require_org_access never needed one, but
+    org_membership.user_id is a NOT NULL FK to user.id, so a real row is
+    now required before a membership grant can exist. Creates one (at
+    current_user's own id/email/etc.) only if none exists yet — callers
+    that already seed their own matching User row (e.g. to act as the
+    target of a self-referential action) can call this after theirs
+    without a conflict.
+
+    org_id/role default to the identity's own current_user.org_id/.role —
+    the common "should succeed in my own org" case. Pass a different
+    role (default org_id) to seed a same-org-wrong-role case that should
+    still 403, via the role gate specifically rather than a missing
+    membership. Pass a different org_id for a genuine second-org grant.
+
+    Must be called after the target Organization row already exists
+    (User.home_org_id is a real FK) — typically right after whatever
+    local _seed_org/_seed/_org helper the test already uses to create it.
+    The stub User row's home_org_id is set to whichever org_id this call
+    resolves to (not necessarily current_user.org_id), so the very first
+    _grant() call for a given identity is what fixes its home org for the
+    rest of that test — later calls granting a second org for the same
+    identity reuse the existing row rather than touching home_org_id.
+    """
+    org_id = org_id if org_id is not None else current_user.org_id
+    role = role if role is not None else current_user.role
+    if db_session.get(User, current_user.id) is None:
+        db_session.add(
+            User(
+                id=current_user.id,
+                home_org_id=org_id,
+                email=current_user.email,
+                display_name=current_user.display_name,
+                login_method=current_user.login_method,
+                role=current_user.role,
+                is_active=current_user.is_active,
+            )
+        )
+        db_session.flush()
+    db_session.add(OrgMembership(user_id=current_user.id, org_id=org_id, role=role))
+    db_session.flush()
+
+
 @pytest.fixture(scope="session")
 def db_engine():
     test_url = _test_db_url()
@@ -180,6 +236,13 @@ def _authed(session: Session, user: CurrentUser):
     role, regardless of anything Phase 3 fixes. This closure is called once
     per request (FastAPI re-resolves dependencies per request), matching
     the real code's per-request SET LOCAL.
+
+    This only sets app.current_org to `user`'s own org — it says nothing
+    about whether `user` actually has an org_membership row anywhere.
+    Since require_org_access does a real membership lookup (ADR 0009
+    M.4), a test also needs `_grant()` for any org-scoped route it
+    expects to succeed (or expects to 403 for a specific reason other
+    than "no membership at all").
     """
 
     def _override() -> CurrentUser:

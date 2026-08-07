@@ -24,12 +24,13 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import time
 import urllib.request
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -39,6 +40,8 @@ from sqlalchemy.orm import Session
 
 from .config import get_settings
 from .db import get_session
+
+logger = logging.getLogger(__name__)
 
 _HASH_ALGO = "sha256"
 _PBKDF2_ITERS = 600_000
@@ -479,6 +482,44 @@ def get_current_user(
     raise HTTPException(status_code=401, detail="Not authenticated")
 
 
+def _role_for_membership(
+    db: Session, user_id: uuid.UUID, org_id: uuid.UUID, *, fallback: str
+) -> str:
+    """Look up the caller's role for (user_id, org_id) from org_membership.
+
+    Callers must already have app.current_org set to org_id — this is
+    then an ordinary, RLS-respecting same-org read, not a bypass. See
+    require_org_access's docstring for why setting the GUC to exactly the
+    org being asked about is the correct, narrowest context, not a
+    broader one being opened up.
+
+    Falls back to `fallback` (the legacy User.role column) if no
+    membership row exists. This should never actually fire once every
+    user-creation path provisions a membership at creation time (see
+    org_membership.py, and the create_api_user fix at 41886f1) — logged
+    loudly rather than silently, so a missing-membership bug doesn't
+    masquerade as ordinary auth. Remove this fallback at M.9, once
+    User.role itself is dropped and there's no longer a value to fall
+    back to.
+    """
+    from .models import OrgMembership
+
+    role = db.execute(
+        select(OrgMembership.role).where(
+            OrgMembership.user_id == user_id, OrgMembership.org_id == org_id
+        )
+    ).scalar_one_or_none()
+    if role is not None:
+        return role
+    logger.warning(
+        "No org_membership row for user_id=%s org_id=%s -- falling back to "
+        "User.role (%s). This should not happen once every user-creation "
+        "path provisions membership; see org_membership.py.",
+        user_id, org_id, fallback,
+    )
+    return fallback
+
+
 def _resolve_session(db: Session, raw: str) -> CurrentUser:
     from .models import User
     h = _token_hash(raw)
@@ -526,12 +567,19 @@ def _resolve_session(db: Session, raw: str) -> CurrentUser:
     if user is None or not user.is_active:
         raise HTTPException(status_code=403, detail="Account deactivated")
 
+    # Default org/role: the user's home org and their membership there.
+    # This is only the default — require_org_access overwrites both once
+    # a specific request's path org_id is known (ADR 0009 M.4). Safe to
+    # read under ordinary RLS: app.current_org is already set to
+    # user.home_org_id, above.
+    role = _role_for_membership(db, user.id, user.home_org_id, fallback=user.role)
+
     return CurrentUser(
         id=user.id,
         org_id=user.home_org_id,
         email=user.email,
         display_name=user.display_name,
-        role=user.role,
+        role=role,
         is_active=user.is_active,
         login_method=user.login_method,
         mfa_enrolled=user.mfa_enrolled,
@@ -584,10 +632,18 @@ def _resolve_api_token(db: Session, raw: str) -> CurrentUser:
         raise HTTPException(status_code=403, detail="Account deactivated")
 
     # Clamp to whichever is lower: the role frozen on the token at mint time,
-    # or the user's current role. A demotion after mint must not leave the
-    # token running at its old (now-excessive) privilege; a promotion after
-    # mint must not retroactively escalate a token minted at a lower role.
-    effective_role = min(row.role, user.role, key=lambda r: _ROLE_RANK[r])
+    # or the user's current role IN THIS TOKEN'S OWN ORG (row.org_id, not
+    # necessarily the user's home org — a token is minted for one specific
+    # org and self-issuing into a non-home org is possible once M.4 lands,
+    # since access is membership-based, not home-org equality). A demotion
+    # after mint — including a demotion that's specific to this one org,
+    # leaving the user's role elsewhere untouched — must not leave the
+    # token running at its old (now-excessive) privilege; a promotion must
+    # not retroactively escalate a token minted at a lower role. Safe to
+    # read under ordinary RLS: app.current_org is already set to
+    # row.org_id, above.
+    current_role = _role_for_membership(db, user.id, row.org_id, fallback=user.role)
+    effective_role = min(row.role, current_role, key=lambda r: _ROLE_RANK[r])
 
     return CurrentUser(
         id=user.id,
@@ -602,26 +658,61 @@ def _resolve_api_token(db: Session, raw: str) -> CurrentUser:
 
 
 def require_org_access(*roles: str):
-    """FastAPI dependency factory: confirms the authenticated user's org_id
-    matches the org_id path parameter (403 if not), and optionally the
-    user's role (403 if roles are given and the user's role isn't among
-    them).
+    """FastAPI dependency factory: confirms the authenticated user has an
+    org_membership row for the org_id path parameter (403 if not), and
+    optionally that membership's role (403 if roles are given and it
+    isn't among them). Returns a CurrentUser copy with org_id/role
+    overwritten to this org's membership — the caller's identity stays
+    the same, but which org/role they're acting as becomes whatever the
+    URL actually targets, not whatever get_current_user defaulted to
+    (ADR 0009 M.4).
 
     Usage:  Depends(require_org_access())                   # org-scope only
             Depends(require_org_access("msp_admin"))         # + role gate
+
+    Sets app.current_org to org_id *before* reading org_membership. This
+    is not a bypass: org_id is exactly the one org this check is about,
+    so scoping the read to it is the correct, narrowest-possible RLS
+    context, not a broader one being opened up. Contrast with M.2/M.5's
+    SECURITY DEFINER functions (migration 0025), which exist for reads
+    that must see *every* org in one query — no single app.current_org
+    value can serve those; this one only ever needs exactly one, and the
+    URL already tells us which.
+
+    Uses set_config(..., true) (the parameterized equivalent of
+    SET LOCAL) rather than the f-string-embedded SET LOCAL used
+    elsewhere in this module (_resolve_session/_resolve_api_token, and
+    tests/conftest.py's _authed) — SET/SET LOCAL itself doesn't accept
+    bind parameters, which is why those call sites embed org_id via
+    f-string instead (safe there only because it's already a uuid.UUID
+    by that point, per their own comments). set_config is available and
+    parameterizable, so new code should prefer it; the older call sites
+    aren't being touched here since that's a separate, non-M.4 cleanup.
     """
     def _check(
         org_id: uuid.UUID,
+        db: Session = Depends(get_session),
         current_user: CurrentUser = Depends(get_current_user),
     ) -> CurrentUser:
-        if current_user.org_id != org_id:
+        from .models import OrgMembership
+
+        db.execute(
+            text("SELECT set_config('app.current_org', :org_id, true)"),
+            {"org_id": str(org_id)},
+        )
+        membership = db.execute(
+            select(OrgMembership).where(
+                OrgMembership.user_id == current_user.id, OrgMembership.org_id == org_id
+            )
+        ).scalar_one_or_none()
+        if membership is None:
             raise HTTPException(status_code=403, detail="Cross-org access denied")
-        if roles and current_user.role not in roles:
+        if roles and membership.role not in roles:
             raise HTTPException(
                 status_code=403,
                 detail=f"Requires one of: {', '.join(roles)}",
             )
-        return current_user
+        return replace(current_user, org_id=org_id, role=membership.role)
     return _check
 
 

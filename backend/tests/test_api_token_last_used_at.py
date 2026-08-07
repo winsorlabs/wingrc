@@ -34,7 +34,7 @@ from app.auth import get_current_user
 from app.db import get_session
 from app.main import app
 from app.models import ApiToken, Organization
-from tests.conftest import _app_session, _authed
+from tests.conftest import _app_session, _authed, _grant
 
 
 @pytest.fixture
@@ -57,6 +57,7 @@ def test_api_token_last_used_at_set_after_authenticated_request(
     client, db_session, fake_msp_admin
 ):
     _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
 
     created = client.post(
         f"/orgs/{fake_msp_admin.org_id}/users/api",
