@@ -38,9 +38,19 @@ restricted for the same reason, not because either function is uniquely
 dangerous compared to 0016's, but because "rely on the implicit default"
 is worth stopping doing going forward rather than only in hindsight.
 
-Revision ID: 0025_org_membership_security_definer
+Revision ID: 0025_org_membership_secdef
 Revises: 0024_msp_membership_backfill
 Create Date: 2026-08-08
+
+Note (2026-08-11): revision id shortened from
+0025_org_membership_security_definer (36 chars) to fit Alembic's default
+alembic_version.version_num column, VARCHAR(32) -- the original id
+overflowed it, so `alembic upgrade head` could never actually complete
+this step on any real database (confirmed: wl-util-1 was still parked at
+0024, backend crash-looping). Safe to rename in place rather than treat
+as already-applied history, since it never successfully applied
+anywhere. See test_migrations.py's revision-id-length guard, added at
+the same time so this can't recur silently.
 """
 from __future__ import annotations
 
@@ -48,7 +58,7 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0025_org_membership_security_definer"
+revision: str = "0025_org_membership_secdef"
 down_revision: str | None = "0024_msp_membership_backfill"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

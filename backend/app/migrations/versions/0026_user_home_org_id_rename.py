@@ -29,7 +29,7 @@ doesn't keep saying "org_email" once the column it constrains no longer
 does.
 
 Revision ID: 0026_user_home_org_id_rename
-Revises: 0025_org_membership_security_definer
+Revises: 0025_org_membership_secdef
 Create Date: 2026-08-09
 """
 from __future__ import annotations
@@ -39,7 +39,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "0026_user_home_org_id_rename"
-down_revision: str | None = "0025_org_membership_security_definer"
+down_revision: str | None = "0025_org_membership_secdef"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
