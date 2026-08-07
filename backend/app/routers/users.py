@@ -38,6 +38,7 @@ from ..auth import (
 )
 from ..db import get_session
 from ..models import ApiToken, AuditLog, User
+from ..org_membership import provision_new_user_memberships
 
 router = APIRouter(
     prefix="/orgs/{org_id}",
@@ -106,6 +107,11 @@ def invite_user(
     )
     db.add(user)
     db.flush()
+
+    # ADR 0009 (M.2): grant membership in the org being invited into (every
+    # role), plus — for MSP roles only — every other existing org, at the
+    # role they're invited with. See org_membership.py's module docstring.
+    provision_new_user_memberships(db, user_id=user.id, org_id=org_id, role=body.role)
 
     log_event(
         db,

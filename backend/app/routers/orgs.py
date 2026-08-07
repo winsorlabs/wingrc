@@ -31,6 +31,7 @@ from ..models import (
     Organization,
     SystemDescription,
 )
+from ..org_membership import provision_new_org_memberships
 from ..storage import StorageClient, download_filename, get_storage_client
 from .evidence import _verify_magic_bytes
 
@@ -240,6 +241,12 @@ def create_org(body: OrgIn, session: Session = Depends(get_session)) -> OrgOut:
         )
     org = Organization(name=body.name)
     session.add(org)
+    session.flush()
+    # ADR 0009 (M.2): every existing msp_admin/msp_engineer gets a
+    # membership in the new org, at their own current role — see
+    # org_membership.py's module docstring for why there's no special
+    # case for the caller specifically.
+    provision_new_org_memberships(session, org.id)
     session.commit()
     session.refresh(org)
     return OrgOut.model_validate(org)

@@ -16,10 +16,12 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.auth import get_current_user
 from app.db import get_session
 from app.main import app
+from app.models import Organization, OrgMembership, User
 from tests.conftest import _app_session, _authed
 
 
@@ -64,6 +66,52 @@ def test_create_org_duplicate_returns_409(client, org_name):
     client.post("/orgs", json={"name": org_name})
     r = client.post("/orgs", json={"name": org_name})
     assert r.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# POST /orgs — auto-provisioning (ADR 0009, M.2)
+#
+# wl-util-1 has exactly one org, so its own data can never exercise this —
+# every scenario here seeds a multi-org fixture synthetically for exactly
+# that reason.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_create_org_grants_membership_to_existing_msp_users(client, db_session, org_name):
+    org_a = Organization(name=f"ExistingOrgA-{uuid.uuid4().hex[:8]}")
+    org_b = Organization(name=f"ExistingOrgB-{uuid.uuid4().hex[:8]}")
+    db_session.add_all([org_a, org_b])
+    db_session.flush()
+
+    admin = User(
+        org_id=org_a.id, email=f"{uuid.uuid4().hex[:8]}@example.com",
+        display_name="Admin", login_method="local", role="msp_admin", is_active=True,
+    )
+    engineer = User(
+        org_id=org_b.id, email=f"{uuid.uuid4().hex[:8]}@example.com",
+        display_name="Engineer", login_method="local", role="msp_engineer", is_active=True,
+    )
+    poc = User(
+        org_id=org_a.id, email=f"{uuid.uuid4().hex[:8]}@example.com",
+        display_name="POC", login_method="local", role="customer_poc", is_active=True,
+    )
+    db_session.add_all([admin, engineer, poc])
+    db_session.flush()
+
+    r = client.post("/orgs", json={"name": org_name})
+    assert r.status_code == 201
+    new_org_id = uuid.UUID(r.json()["id"])
+
+    granted = {
+        m.user_id: m.role
+        for m in db_session.scalars(
+            select(OrgMembership).where(OrgMembership.org_id == new_org_id)
+        ).all()
+    }
+    assert granted.get(admin.id) == "msp_admin"
+    assert granted.get(engineer.id) == "msp_engineer"
+    assert poc.id not in granted
 
 
 # ---------------------------------------------------------------------------
