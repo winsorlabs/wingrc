@@ -369,11 +369,24 @@ def require_org_access(*roles: str):
     return _check
 ```
 
-The RLS policies themselves — `org_id = current_setting('app.current_org')`
-— **do not change**. They were already correctly scoped to "one org per
-request"; what changes is who's allowed to cause that GUC to hold a given
-value. This is a smaller blast radius than it might sound: every
-domain-table policy in the codebase is already written this way.
+**Correction (2026-08-08, found during M.2's wl-util-1 verification —
+see the "System-level cross-org operations" subsection below for the
+full incident): the original claim here — "RLS policies do not change" —
+is true only for ordinary per-org business requests, and was incomplete
+as written.** For a request that legitimately acts on exactly one org
+(the case this paragraph was written about), the RLS policies themselves
+— `org_id = current_setting('app.current_org')` — really do stay
+unchanged; what changes is who's allowed to cause that GUC to hold a
+given value. That part held up. What this section failed to consider at
+all: **system-level operations that must read or write across more than
+one org within a single request** (M.2's auto-provisioning; M.5's
+`GET /orgs` reshape, below) cannot be expressed as "one org per request"
+at any GUC value — RLS's single-org-per-request model is the wrong shape
+for them by construction, not something a smarter GUC value fixes. Those
+need a different, explicit mechanism — see below — and the first attempt
+at one of them (M.2, implemented without reading this ADR's own
+forward-flagged note in `OrgMembership`'s docstring) shipped without it
+and crashed on real Postgres.
 
 **`get_current_user` can no longer resolve `org_id`/`role` — those become
 contextual to which org a specific request targets, not properties of
@@ -409,7 +422,96 @@ caller has a membership row for. No role check needed at the endpoint level
 at all — a `customer_poc` naturally gets back a list of exactly one org
 (their only membership), an MSP user gets back everything they've been
 auto-provisioned into. This is a strict simplification of the current
-special-cased gate, not an added one.
+special-cased gate, not an added one. **This read is cross-org against
+`org_membership`** (the whole point is seeing every membership row for
+the caller, not just whichever one matches `app.current_org`) — it needs
+the same SECURITY DEFINER treatment as M.2's auto-provisioning, below,
+not a plain ORM query. Flagged now so M.5 doesn't repeat M.2's mistake.
+
+### System-level cross-org operations need a different mechanism than per-request RLS
+
+**Incident, M.2 (2026-08-08):** `provision_new_org_memberships()`'s read
+of every existing `msp_admin`/`msp_engineer` user — by design, a query
+that must see across every org, not just one — was implemented as a plain
+`select(User.id, User.role).where(...)`, which runs under `user`'s RLS
+policy (`org_id = current_setting('app.current_org', true)::uuid`,
+migration `0015`) like any other query. Two failure modes resulted,
+both symptoms of the same root design error, not two separate bugs:
+
+- When `app.current_org` happened to be an empty string rather than a
+  valid UUID at that point in the request (an order-dependent artifact of
+  Postgres's `RESET` behavior on a never-declared custom GUC — see the
+  incident writeup in the M.2 commit history for the full mechanism),
+  the cast `''::uuid` raised `DataError: invalid input syntax for type
+  uuid: ""` and the request 500'd.
+- When `app.current_org` was validly set to the *caller's own* org, the
+  query silently returned only that one org's MSP users instead of every
+  MSP user in the deployment — RLS did exactly what it's supposed to do
+  for a normal request, which is precisely wrong for this one.
+
+Neither failure mode is fixable by setting the GUC "more correctly" —
+there is no single value of `app.current_org` that makes "every org's
+MSP users" a one-org-scoped query. The operation needs to bypass RLS
+deliberately and narrowly, not work around it by chance.
+
+**Fix: SECURITY DEFINER SQL functions, matching the existing
+`auth.resolve_session`/`auth.find_user_for_login`/`auth.resolve_api_token`
+precedent (migration `0015`) exactly** — the same tool this codebase
+already uses for "must read/write before this request's own org context
+applies." Considered and rejected: running the operation under the
+RLS-bypassing owner role (reintroduces the exact blast radius the
+`wingrc_app` cutover exists to shrink, for a request path that should
+stay ordinary-privileged everywhere except this one narrow call); looping
+`SET LOCAL app.current_org = <target>` once per org (works without ever
+bypassing RLS, but mutates request-scoped state repeatedly and needs
+careful save/restore so nothing *after* the loop inherits the wrong org
+— fragile, and O(N) round trips for what should be one query).
+
+```sql
+CREATE FUNCTION auth.msp_role_users()
+RETURNS TABLE (id UUID, role VARCHAR)
+SECURITY DEFINER SET search_path = public, pg_catalog
+LANGUAGE sql STABLE AS $$
+    SELECT id, role FROM public."user" WHERE role IN ('msp_admin', 'msp_engineer');
+$$;
+
+CREATE FUNCTION auth.grant_org_membership(p_user_id UUID, p_org_id UUID, p_role VARCHAR)
+RETURNS UUID
+SECURITY DEFINER SET search_path = public, pg_catalog
+LANGUAGE sql AS $$
+    INSERT INTO public.org_membership (id, user_id, org_id, role)
+    VALUES (gen_random_uuid(), p_user_id, p_org_id, p_role)
+    ON CONFLICT (user_id, org_id) DO NOTHING
+    RETURNING id;
+$$;
+```
+
+`grant_org_membership`'s `ON CONFLICT DO NOTHING` replaces a Python-side
+existence check that would otherwise be a second RLS-affected read
+needing the same bypass — inside a SECURITY DEFINER SQL boundary
+function this is the natural tool, same as migrations already use raw
+SQL freely; it is not a reach for a new idiom in *application* code,
+where this codebase's established dedup pattern (query first, check in
+Python — see `engine.py`'s evidence-task fan-out) still governs.
+
+**This is now the standing pattern for every future cross-org system
+operation**, not just M.2's — `GET /orgs`'s reshape (above) is the next
+one and needs the equivalent `auth.my_org_memberships(p_user_id)`.
+Ordinary per-org business requests are unaffected and keep working
+exactly as the rest of this Design section describes: `app.current_org`
+set once per request from the path's `org_id`, RLS policies unchanged,
+no bypass anywhere in that path.
+
+**Not resolved here, flagged for a deliberate decision later:** migration
+`0015`/`0019`'s policies (`user`, `user_session`, `mfa_backup_code`,
+`api_token`, `password_history`) lack the `NULLIF(current_setting(...),
+'')` guard that migration `0002`'s later template added. Adding it would
+turn the empty-string crash above into a silent zero-rows result
+instead — arguably worse for a security boundary, since this bug was
+only caught *because* it failed loudly. Whether "fail loud" or "fail
+empty" is the right default for an RLS policy hitting an unexpectedly
+unset GUC is a real question this ADR doesn't resolve, not an
+inconsistency to silently paper over in one direction.
 
 **`UserSession.org_id` needs a settled, deliberate meaning, not a silent
 repurpose.** Recommend: keep it as "org active when this session was
