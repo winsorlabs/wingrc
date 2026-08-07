@@ -1,9 +1,20 @@
 # 9. Multi-org user access
 
 Date: 2026-08-07
-Status: Proposed — not implemented. This ADR settles the model before any
-nav/dashboard work (roadmap items depending on "which orgs can this user
-reach") touches it.
+Status: Proposed — not implemented.
+
+**Severity: this documents a functional defect in already-shipped
+behavior, not groundwork for unbuilt features.** An msp_admin cannot open
+any org but their own today — not even one they just created — which
+breaks the MSP-serves-many-clients premise the product is built around
+(`CLAUDE.md`, "What WinGRC is": "select the security tools a tenant
+runs..."; the entire five-layer model assumes an MSP working inside many
+client orgs). This is not a gap in a not-yet-built feature to be triaged
+behind roadmap "Planned" work — it's a bug in already-merged I.1–I.9 auth
+work, confirmed end-to-end below. Settling the access model here is a
+prerequisite for the fix, and nav/dashboard work is a secondary reason to
+do this, not the primary one. See `docs/roadmap.md`'s "Known defects"
+section for the tracking entry.
 
 ## Context
 
@@ -89,6 +100,11 @@ docstring frames its purpose purely as "an authenticated user from Org A
 must not be able to read or mutate Org B's data" — true and necessary, but
 incomplete once the same deployment's MSP staff are Org A and need
 legitimate access to Org B, C, D.
+
+Classified plainly: this is a **functional defect** in the product's core
+multi-tenant premise, present in already-merged code, not a design gap in
+work that hasn't shipped yet. It should be triaged and prioritized as a
+bug fix, not queued behind "Planned" roadmap features.
 
 **"MSP org" vs. "customer org" is not a structural distinction today.**
 `Organization` (`models.py:58-86`) has no `org_type`, no `is_msp` flag, no
@@ -267,6 +283,74 @@ entrenched single-org assumptions later is a strictly worse time to do this
 than now, before nav/dashboard work adds more code that assumes
 `current_user.org_id` is a fixed scalar.
 
+## Boundary: auto-provisioning depends on ADR 0005 by name
+
+Auto-provisioning MSP-role memberships across *every* org in the
+deployment is only sound because **ADR 0005** guarantees exactly one MSP
+per deployment ("per-MSP instance, not shared multi-tenant SaaS... Each
+deployment continues to support multiple internal organizations... an MSP
+and the client organizations they serve collaborating within one shared,
+self-hosted platform"). This ADR's Decision leans on that guarantee
+directly: "every org in the deployment" is treated as synonymous with
+"every org this one MSP serves" *only because* ADR 0005 makes those the
+same set by construction. This dependency needs to be named, not left
+implicit the way "MSP org vs. customer org" was left implicit in the
+schema before this ADR — the exact kind of silent assumption this whole
+investigation exists to stop making.
+
+**What breaks if that guarantee is ever relaxed.** If a future deployment
+model change allowed a single deployment to host more than one unrelated
+MSP (reintroducing the shared multi-tenant SaaS shape ADR 0005 explicitly
+rejected), this ADR's auto-provisioning rule would silently grant MSP-A's
+staff membership access to MSP-B's customers' orgs — and vice versa — the
+moment any `msp_admin`/`msp_engineer` is invited or any org is created, with
+no additional check standing in the way. That is precisely the cross-tenant
+CUI-adjacent exposure ADR 0005 was written to prevent in the first place
+(its Context section: evidence uploads are "an uncontrolled upload surface"
+and cross-tenant exposure "lands on the platform operator... exactly the
+scenario DFARS 252.204-7012's FedRAMP-Moderate-equivalent requirement...
+exists to prevent"). Multi-MSP support is not a natural extension of this
+ADR's model — it would require re-scoping auto-provisioning to a real
+"MSP tenant" concept this ADR deliberately avoids introducing, and revisiting
+every RLS policy's implicit "one deployment, one blast radius" assumption,
+not just this ADR's membership table.
+
+**Enforce structurally, but cheaply — not merely documented, and not a
+heavyweight subsystem.** ADR 0005 itself places the actual isolation
+boundary at the infrastructure layer ("enforced by separate infrastructure
+— separate databases, object storage, and network boundaries"), and no
+application-layer check can fully substitute for that; a genuinely
+misconfigured shared database is outside what any query inside it can
+detect or prevent. But a cheap, real, fail-loud anchor is still worth
+having, for a narrower and more likely failure mode: a future contributor
+relaxing ADR 0005 without realizing this ADR's auto-provisioning rule
+depends on it by name. Add a **singleton `deployment_settings` table**:
+
+```sql
+CREATE TABLE deployment_settings (
+    id          SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),  -- enforced singleton
+    msp_org_id  UUID NOT NULL REFERENCES organization(id),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+Populated once by `manage.py bootstrap-admin` at first run, alongside the
+org and admin user it already creates. No API endpoint ever writes to it —
+changing `msp_org_id` after bootstrap is a deliberate DBA/migration action,
+never a runtime one. This is **not** consulted by `require_org_access` or
+any access-control check at request time — access control stays exactly
+what Decision above describes, membership rows only, so this doesn't
+reintroduce the org-level "is this the MSP org" flag this ADR's Design
+section elsewhere argues access control doesn't need. Its only job is
+integrity, not authorization: it's the one place "this deployment serves
+one MSP, anchored at this org" is written down as a real constraint rather
+than an assumption living only in ADR 0005's prose and this ADR's Decision
+section. Concretely, it fails loudly in the way that matters most: a
+future multi-MSP pivot cannot ship without a contributor deliberately
+finding, reading, and redesigning this table and the auto-provisioning
+logic that would need to stop trusting it — it cannot be silently
+outgrown the way an undocumented assumption could be.
+
 ## Design: `require_org_access`, RLS, and active-org selection
 
 **`require_org_access` becomes a membership lookup, not an equality
@@ -338,7 +422,11 @@ session row.
 
 ## Migration path for existing single-org users
 
-1. New migration adds `org_membership` (schema above).
+1. New migration adds `org_membership` and the `deployment_settings`
+   singleton (both schemas above). Backfill `deployment_settings` with the
+   org created by whichever `bootstrap-admin` run stood up this deployment
+   — identifiable today as the org attached to the earliest-created
+   `msp_admin` user, since nothing currently marks it explicitly.
 2. Backfill: `INSERT INTO org_membership (user_id, org_id, role) SELECT id, org_id, role FROM "user"` —
    one membership per existing user, identical access to today, zero
    behavior change on deploy.
@@ -473,13 +561,20 @@ anchoring them to a slightly-approximate-but-real org.
 
 ## Consequences
 
-- One new table, one new migration for it, one later migration to drop
-  `User.role` — not a single big-bang change, matching this codebase's
-  standing "small commits, always green" discipline.
-- Fixes a real, currently-shipped dead end: MSP staff cannot open any org
-  but their own today, confirmed above with exact code and test citations.
-  This is not a speculative future need — it's a gap in already-merged
-  behavior.
+- Two new tables (`org_membership`, `deployment_settings`), one new
+  migration for them, one later migration to drop `User.role` — not a
+  single big-bang change, matching this codebase's standing "small
+  commits, always green" discipline.
+- Fixes a real, currently-shipped **defect**: MSP staff cannot open any
+  org but their own today, confirmed above with exact code and test
+  citations. This is not a speculative future need — it's a bug in
+  already-merged behavior, and should be prioritized as one.
+- The auto-provisioning rule this ADR recommends is only sound under ADR
+  0005's single-MSP-per-deployment guarantee. `deployment_settings`
+  records that dependency as a real, singleton-enforced constraint rather
+  than leaving it as prose two ADRs have to agree on by convention — any
+  future multi-MSP deployment model has to deliberately confront and
+  redesign it, not silently outgrow it.
 - `GET /orgs` gets simpler (membership lookup replaces a role special
   case); `require_org_access` gets one more query (membership lookup
   instead of a field comparison) on every org-scoped request — negligible
