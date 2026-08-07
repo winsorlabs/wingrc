@@ -18,6 +18,7 @@ DELETE /orgs/{org_id}/api-tokens/{token_id} — revoke
 """
 from __future__ import annotations
 
+import logging
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -37,8 +38,10 @@ from ..auth import (
     revoke_user_sessions,
 )
 from ..db import get_session
-from ..models import ApiToken, AuditLog, User
+from ..models import ApiToken, AuditLog, OrgMembership, User
 from ..org_membership import provision_new_user_memberships
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/orgs/{org_id}",
@@ -183,6 +186,28 @@ def patch_user(
                 actor_type=_actor_type(current_user),
             )
         user.role = body.role
+        # ADR 0009: org_membership.role, not User.role, is what
+        # require_org_access actually reads once M.4 lands -- keep the two
+        # in sync so a role change here doesn't silently fail to take
+        # effect. _get_user() only ever returns users whose home_org_id is
+        # org_id, and every such user should already have a membership row
+        # here (invite_user/create_api_user/bootstrap-admin all provision
+        # one) -- the warning below exists to surface it loudly if that
+        # invariant is ever violated, not to make the gap silently okay.
+        membership = db.execute(
+            select(OrgMembership).where(
+                OrgMembership.user_id == user.id, OrgMembership.org_id == org_id
+            )
+        ).scalar_one_or_none()
+        if membership is not None:
+            membership.role = body.role
+        else:
+            logger.warning(
+                "No org_membership row for user_id=%s org_id=%s during role "
+                "change -- User.role was updated but org_membership could "
+                "not be kept in sync.",
+                user.id, org_id,
+            )
     if body.is_active is not None:
         if body.is_active and user.deleted_at is not None:
             raise HTTPException(

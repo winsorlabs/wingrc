@@ -460,3 +460,26 @@ def test_create_api_user_grants_membership(client, db_session, fake_msp_admin):
     new_user_id = uuid.UUID(r.json()["id"])
 
     assert _membership_role(db_session, user_id=new_user_id, org_id=home_org.id) == "customer_poc"
+
+
+@pytest.mark.integration
+def test_patch_user_role_change_updates_org_membership(client, db_session, fake_msp_admin):
+    """PATCH /orgs/{org_id}/users/{user_id} previously only wrote
+    User.role -- org_membership.role for that same (user, org) pair was
+    never touched. Harmless under M.2 (nothing read org_membership yet),
+    but once M.4 makes org_membership authoritative, a role change here
+    would appear to succeed (200) while silently not taking effect."""
+    home_org = Organization(id=fake_msp_admin.org_id, name=f"HomeOrg-{uuid.uuid4().hex[:8]}")
+    db_session.add(home_org)
+    db_session.flush()
+    target = _seed_user(db_session, org_id=home_org.id, role="customer_poc")
+    db_session.add(OrgMembership(user_id=target.id, org_id=home_org.id, role="customer_poc"))
+    db_session.flush()
+
+    r = client.patch(
+        f"/orgs/{home_org.id}/users/{target.id}",
+        json={"role": "msp_engineer"},
+    )
+    assert r.status_code == 200
+
+    assert _membership_role(db_session, user_id=target.id, org_id=home_org.id) == "msp_engineer"
