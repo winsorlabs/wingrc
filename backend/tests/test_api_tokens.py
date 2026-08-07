@@ -45,7 +45,7 @@ def _seed_org(db_session, org_id: uuid.UUID) -> Organization:
 
 def _seed_user(db_session, *, org_id: uuid.UUID, role: str) -> User:
     user = User(
-        org_id=org_id,
+        home_org_id=org_id,
         email=f"{uuid.uuid4().hex[:8]}@example.com",
         display_name="Seeded User",
         login_method="local",

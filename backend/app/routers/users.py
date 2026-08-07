@@ -84,7 +84,7 @@ def invite_user(
         raise HTTPException(status_code=422, detail=f"Invalid login_method: {body.login_method}")
 
     existing = db.execute(
-        select(User).where(User.org_id == org_id, User.email == body.email)
+        select(User).where(User.home_org_id == org_id, User.email == body.email)
     ).scalar_one_or_none()
     if existing is not None:
         raise HTTPException(
@@ -95,7 +95,7 @@ def invite_user(
     raw_token, token_hash = generate_secret()
 
     user = User(
-        org_id=org_id,
+        home_org_id=org_id,
         contact_id=body.contact_id,
         email=body.email,
         display_name=body.display_name,
@@ -145,7 +145,7 @@ def list_users(
     current_user: CurrentUser = Depends(require_org_access()),
 ):
     rows = db.execute(
-        select(User).where(User.org_id == org_id).order_by(User.created_at)
+        select(User).where(User.home_org_id == org_id).order_by(User.created_at)
     ).scalars().all()
     return [_user_out(u) for u in rows]
 
@@ -508,7 +508,7 @@ def create_api_user(
     email = f"api-{secrets.token_urlsafe(6)}@{org_id.hex[:8]}.internal"
 
     user = User(
-        org_id=org_id,
+        home_org_id=org_id,
         contact_id=None,
         email=email,
         display_name=body.display_name,
@@ -698,7 +698,7 @@ def revoke_api_token(
 
 def _get_user(db: Session, org_id: uuid.UUID, user_id: uuid.UUID) -> User:
     user = db.execute(
-        select(User).where(User.id == user_id, User.org_id == org_id)
+        select(User).where(User.id == user_id, User.home_org_id == org_id)
     ).scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -708,7 +708,9 @@ def _get_user(db: Session, org_id: uuid.UUID, user_id: uuid.UUID) -> User:
 def _user_out(u: User) -> dict:
     return {
         "id": str(u.id),
-        "org_id": str(u.org_id),
+        # JSON key stays "org_id" -- this is the API response contract,
+        # unaffected by the User.home_org_id rename (M.3).
+        "org_id": str(u.home_org_id),
         "contact_id": str(u.contact_id) if u.contact_id else None,
         "email": u.email,
         "display_name": u.display_name,

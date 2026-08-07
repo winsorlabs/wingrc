@@ -42,7 +42,7 @@ def _seed_org(db_session, org_id: uuid.UUID) -> Organization:
 
 def _seed_user(db_session, *, org_id: uuid.UUID, role: str = "customer_poc") -> User:
     user = User(
-        org_id=org_id,
+        home_org_id=org_id,
         email=f"{uuid.uuid4().hex[:8]}@example.com",
         display_name="Target User",
         login_method="local",
@@ -64,7 +64,7 @@ def _seed_matching_admin(db_session, fake_msp_admin) -> User:
     """
     user = User(
         id=fake_msp_admin.id,
-        org_id=fake_msp_admin.org_id,
+        home_org_id=fake_msp_admin.org_id,
         email=fake_msp_admin.email,
         display_name=fake_msp_admin.display_name,
         login_method=fake_msp_admin.login_method,

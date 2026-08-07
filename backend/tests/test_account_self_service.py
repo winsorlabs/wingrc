@@ -45,7 +45,7 @@ def _seed_org(db_session) -> Organization:
 
 def _seed_local_user(db_session, *, org_id: uuid.UUID, **overrides) -> User:
     defaults = dict(
-        org_id=org_id,
+        home_org_id=org_id,
         email=f"{uuid.uuid4().hex[:8]}@example.com",
         display_name="Self Service User",
         login_method="local",
@@ -62,7 +62,7 @@ def _seed_local_user(db_session, *, org_id: uuid.UUID, **overrides) -> User:
 def _current_user_for(user: User) -> CurrentUser:
     return CurrentUser(
         id=user.id,
-        org_id=user.org_id,
+        org_id=user.home_org_id,
         email=user.email,
         display_name=user.display_name,
         role=user.role,

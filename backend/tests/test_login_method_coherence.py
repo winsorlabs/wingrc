@@ -39,7 +39,7 @@ def _seed_user(db_session, *, login_method: str) -> User:
     db_session.add(org)
     db_session.flush()
     user = User(
-        org_id=org.id,
+        home_org_id=org.id,
         email=f"{uuid.uuid4().hex[:8]}@example.com",
         display_name="Login Method Test User",
         login_method=login_method,

@@ -180,14 +180,14 @@ def sso_callback(
         user.is_active = True
 
     user.last_login_at = datetime.now(UTC)
-    db.execute(text(f"SET LOCAL app.current_org = '{user.org_id}'"))
+    db.execute(text(f"SET LOCAL app.current_org = '{user.home_org_id}'"))
 
     _, raw_token = create_session(db, user)
     db.commit()
 
     log_event(
         db,
-        org_id=user.org_id,
+        org_id=user.home_org_id,
         action="auth.login",
         entity_type="user",
         entity_id=user.id,
@@ -243,7 +243,7 @@ def local_login(
     # db.get() immediately below — not just before the writes later in this
     # function. (It previously was only set inside the bad-password branch,
     # after this read had already run unscoped.)
-    db.execute(text(f"SET LOCAL app.current_org = '{user_row.org_id}'"))
+    db.execute(text(f"SET LOCAL app.current_org = '{user_row.home_org_id}'"))
 
     user = db.get(User, user_row.id)
     if user is None:
@@ -266,7 +266,7 @@ def local_login(
         db.commit()
         log_event(
             db,
-            org_id=user.org_id,
+            org_id=user.home_org_id,
             action="auth.login.failed",
             entity_type="user",
             entity_id=user.id,
@@ -285,7 +285,7 @@ def local_login(
     resp = JSONResponse({"next": phase})
     set_state_cookie(resp, "wingrc_mfa_pending", make_state_payload({
         "user_id": str(user.id),
-        "org_id": str(user.org_id),
+        "org_id": str(user.home_org_id),
         "phase": phase,
     }))
     db.commit()
@@ -342,7 +342,7 @@ def set_password(
     if user is None:
         raise HTTPException(status_code=400, detail="User not found")
 
-    db.execute(text(f"SET LOCAL app.current_org = '{user.org_id}'"))
+    db.execute(text(f"SET LOCAL app.current_org = '{user.home_org_id}'"))
 
     settings = get_settings()
     if user.password_hash and check_password_reuse(
@@ -367,7 +367,7 @@ def set_password(
     resp = JSONResponse({"next": phase}, status_code=200)
     set_state_cookie(resp, "wingrc_mfa_pending", make_state_payload({
         "user_id": str(user.id),
-        "org_id": str(user.org_id),
+        "org_id": str(user.home_org_id),
         "phase": phase,
     }))
     return resp
@@ -718,7 +718,7 @@ def change_password(
 
     log_event(
         db,
-        org_id=user.org_id,
+        org_id=user.home_org_id,
         action="auth.password_change",
         entity_type="user",
         entity_id=user.id,
@@ -836,7 +836,7 @@ def mfa_reenroll_confirm(
 
     log_event(
         db,
-        org_id=user.org_id,
+        org_id=user.home_org_id,
         action="auth.mfa.reenrolled",
         entity_type="user",
         entity_id=user.id,
@@ -893,7 +893,7 @@ def regenerate_backup_codes(
 
     log_event(
         db,
-        org_id=user.org_id,
+        org_id=user.home_org_id,
         action="auth.mfa.backup_codes_regenerated",
         entity_type="user",
         entity_id=user.id,

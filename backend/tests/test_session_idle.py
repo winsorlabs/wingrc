@@ -51,7 +51,7 @@ def _seed_user(db_session) -> User:
     db_session.add(org)
     db_session.flush()
     user = User(
-        org_id=org.id,
+        home_org_id=org.id,
         email=f"{uuid.uuid4().hex[:8]}@example.com",
         display_name="Idle Test User",
         login_method="local",

@@ -77,7 +77,7 @@ def _bootstrap_admin_core(
         db.flush()
 
     existing = db.execute(
-        select(User).where(User.org_id == org_row.id, User.email == email)
+        select(User).where(User.home_org_id == org_row.id, User.email == email)
     ).scalar_one_or_none()
     if existing is not None:
         raise ValueError(f"user {email!r} already exists in this org")
@@ -86,7 +86,7 @@ def _bootstrap_admin_core(
     db.execute(text(f"SET LOCAL app.current_org = '{org_row.id}'"))
 
     user = User(
-        org_id=org_row.id,
+        home_org_id=org_row.id,
         email=email,
         display_name=display_name,
         login_method="local",

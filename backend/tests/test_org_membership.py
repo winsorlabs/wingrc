@@ -8,9 +8,9 @@ M.2: auto-provisioning. Neither create_org()/invite_user() nor migration
 deployment can't exhibit the multi-org case at all) — every multi-org
 scenario below is seeded synthetically for exactly that reason.
 
-require_org_access() still gates on User.org_id/User.role exclusively as
-of M.2 — org_membership is fully correct and complete after this slice,
-but nothing reads it for authorization yet. That's M.4.
+require_org_access() still gates on User.home_org_id/User.role exclusively
+as of M.2 — org_membership is fully correct and complete after this
+slice, but nothing reads it for authorization yet. That's M.4.
 
 Run in-container:
     docker compose exec backend pytest tests/test_org_membership.py -m integration -v
@@ -73,7 +73,7 @@ def _membership_role(db_session, *, user_id: uuid.UUID, org_id: uuid.UUID) -> st
 
 def _seed_user(db_session, *, org_id: uuid.UUID, **overrides) -> User:
     defaults = dict(
-        org_id=org_id,
+        home_org_id=org_id,
         email=f"{uuid.uuid4().hex[:8]}@example.com",
         display_name="Membership Test User",
         login_method="local",

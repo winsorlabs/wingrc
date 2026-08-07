@@ -54,7 +54,7 @@ def test_mfa_verify_mints_fresh_session_and_clears_pending_cookie(client, db_ses
     secret = pyotp.random_base32()
     password = "correct-horse-battery-staple-and-then-some"
     user = User(
-        org_id=org.id,
+        home_org_id=org.id,
         email=f"{uuid.uuid4().hex[:8]}@example.com",
         display_name="Fixation Test User",
         login_method="local",
@@ -112,7 +112,7 @@ def test_mfa_enroll_confirm_mints_fresh_session_and_clears_pending_cookies(clien
     org = _seed_org(db_session)
     raw_invite_token = f"invite-{uuid.uuid4().hex}"
     user = User(
-        org_id=org.id,
+        home_org_id=org.id,
         email=f"{uuid.uuid4().hex[:8]}@example.com",
         display_name="Fixation Enroll User",
         login_method="local",

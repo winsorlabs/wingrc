@@ -356,7 +356,7 @@ def create_session(db: Session, user: Any) -> tuple[Any, str]:
 
     session_row = UserSession(
         user_id=user.id,
-        org_id=user.org_id,
+        org_id=user.home_org_id,
         token_hash=token_hash,
         created_at=now,
         expires_at=now + timedelta(hours=settings.session_expiry_hours),
@@ -528,7 +528,7 @@ def _resolve_session(db: Session, raw: str) -> CurrentUser:
 
     return CurrentUser(
         id=user.id,
-        org_id=user.org_id,
+        org_id=user.home_org_id,
         email=user.email,
         display_name=user.display_name,
         role=user.role,

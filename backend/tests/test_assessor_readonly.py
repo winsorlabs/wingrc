@@ -239,7 +239,7 @@ def _seed_scenario(db_session, *, org_id: uuid.UUID) -> dict:
     db_session.flush()
 
     target_user = User(
-        org_id=org.id,
+        home_org_id=org.id,
         email=f"{uuid.uuid4().hex[:8]}@example.com",
         display_name="Target User",
         login_method="local",

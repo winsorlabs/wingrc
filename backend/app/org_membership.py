@@ -4,8 +4,8 @@ Two entry points, called from routers/orgs.py's create_org() and
 routers/users.py's invite_user() respectively — the two places a new
 (user, org) pairing can come into existence. Neither is wired into
 require_org_access() yet; that's M.4. As of M.2, org_membership rows are
-fully correct and complete, but User.org_id/User.role remain the only
-thing access control actually reads.
+fully correct and complete, but User.home_org_id/User.role remain the
+only thing access control actually reads.
 
 Role-at-grant-time semantics (ADR 0009's Decision, stated explicitly per
 that section rather than left to fall out of the loop): every grant made

@@ -1093,7 +1093,7 @@ class User(Base):
 
     __tablename__ = "user"
     __table_args__ = (
-        UniqueConstraint("org_id", "email", name="uq_user_org_email"),
+        UniqueConstraint("home_org_id", "email", name="uq_user_home_org_id_email"),
         CheckConstraint("login_method IN ('sso','local','api')", name="ck_user_login_method"),
         CheckConstraint(
             "role IN ('msp_admin','msp_engineer','customer_poc','c3pao_assessor')",
@@ -1104,7 +1104,14 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    org_id: Mapped[uuid.UUID] = mapped_column(
+    # Renamed from org_id (migration 0026, ADR 0009 M.3): under multi-org
+    # membership, a user's accessible orgs come from org_membership, not
+    # this column — this is the anchor RLS uses for the account-mechanics
+    # tables (user, user_session, mfa_backup_code, api_token,
+    # password_history) and the audit-log anchor for account-level events
+    # that aren't scoped to any particular business org (login, password
+    # change, ...). It is not "the org this user has access to" anymore.
+    home_org_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("organization.id", ondelete="CASCADE"), index=True
     )
     contact_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -1154,8 +1161,8 @@ class User(Base):
 class UserSession(Base):
     """Server-side session record. Raw token is stored as SHA-256 hash only.
 
-    org_id is denormalized from user.org_id so the session-resolution function
-    can set app.current_org before any RLS-gated query runs.
+    org_id is denormalized from user.home_org_id so the session-resolution
+    function can set app.current_org before any RLS-gated query runs.
     """
 
     __tablename__ = "user_session"
@@ -1272,25 +1279,29 @@ class ApiToken(Base):
 class OrgMembership(Base):
     """One user's access grant to one org, with a role scoped to that grant.
 
-    See docs/adr/0009-multi-org-user-access.md. Schema-only as of migration
-    0023 (M.1) — nothing reads or writes this table yet; `User.org_id`/
-    `User.role` remain authoritative for access until the M.4 enforcement
-    cutover. Role travels with the membership, not the person: the same
-    user can hold a different role on each org they're a member of.
+    See docs/adr/0009-multi-org-user-access.md. `User.home_org_id`/
+    `User.role` remain authoritative for *authorization* until the M.4
+    enforcement cutover — require_org_access() doesn't consult this table
+    yet. As of M.2, rows here are fully correct and complete: auto-
+    provisioning (routers/orgs.py's create_org(), routers/users.py's
+    invite_user(), via org_membership.py) keeps every existing
+    msp_admin/msp_engineer granted into every org. Role travels with the
+    membership, not the person: the same user can hold a different role
+    on each org they're a member of.
 
     RLS is enabled (`org_membership_tenant_isolation`, same single-org
     `app.current_org` pattern as every other org-scoped table) for
     defense-in-depth consistency with the rest of the schema, even though
-    nothing queries this table under RLS enforcement yet. The one lookup
-    that must run *before* app.current_org is known for a given request —
-    "does this user have a membership in the org this request's path
-    names" — will need a SECURITY DEFINER resolver function, matching
-    auth.resolve_session/find_user_for_login, added when M.4 wires up the
-    actual enforcement. Cross-org writes (auto-provisioning a new org's
-    membership rows for every existing MSP user, M.2) have the same
-    before-app.current_org-is-known shape and will need the equivalent
-    SECURITY DEFINER treatment on the write side — flagged here so it
-    isn't rediscovered as a surprise mid-M.2.
+    nothing queries this table under RLS enforcement in the normal
+    per-request path yet (M.4). The cross-org reads/writes auto-
+    provisioning needs — "every existing MSP user," "grant into every
+    other org" — cannot be expressed as any single value of
+    app.current_org at all; those go through SECURITY DEFINER functions
+    (auth.msp_role_users/auth.grant_org_membership, migration 0025),
+    matching auth.resolve_session/find_user_for_login's existing
+    precedent, not a plain RLS-scoped query. See ADR 0009's "System-level
+    cross-org operations" subsection for the incident that established
+    this pattern.
     """
 
     __tablename__ = "org_membership"

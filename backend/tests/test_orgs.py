@@ -85,15 +85,15 @@ def test_create_org_grants_membership_to_existing_msp_users(client, db_session, 
     db_session.flush()
 
     admin = User(
-        org_id=org_a.id, email=f"{uuid.uuid4().hex[:8]}@example.com",
+        home_org_id=org_a.id, email=f"{uuid.uuid4().hex[:8]}@example.com",
         display_name="Admin", login_method="local", role="msp_admin", is_active=True,
     )
     engineer = User(
-        org_id=org_b.id, email=f"{uuid.uuid4().hex[:8]}@example.com",
+        home_org_id=org_b.id, email=f"{uuid.uuid4().hex[:8]}@example.com",
         display_name="Engineer", login_method="local", role="msp_engineer", is_active=True,
     )
     poc = User(
-        org_id=org_a.id, email=f"{uuid.uuid4().hex[:8]}@example.com",
+        home_org_id=org_a.id, email=f"{uuid.uuid4().hex[:8]}@example.com",
         display_name="POC", login_method="local", role="customer_poc", is_active=True,
     )
     db_session.add_all([admin, engineer, poc])

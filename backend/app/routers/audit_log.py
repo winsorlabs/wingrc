@@ -120,7 +120,7 @@ def _resolve_identities(
         return {}
 
     users = db.execute(
-        select(User).where(User.org_id == org_id, User.id.in_(ids))
+        select(User).where(User.home_org_id == org_id, User.id.in_(ids))
     ).scalars().all()
     return {u.id: u for u in users}
 
