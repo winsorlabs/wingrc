@@ -1267,3 +1267,83 @@ class ApiToken(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class OrgMembership(Base):
+    """One user's access grant to one org, with a role scoped to that grant.
+
+    See docs/adr/0009-multi-org-user-access.md. Schema-only as of migration
+    0023 (M.1) — nothing reads or writes this table yet; `User.org_id`/
+    `User.role` remain authoritative for access until the M.4 enforcement
+    cutover. Role travels with the membership, not the person: the same
+    user can hold a different role on each org they're a member of.
+
+    RLS is enabled (`org_membership_tenant_isolation`, same single-org
+    `app.current_org` pattern as every other org-scoped table) for
+    defense-in-depth consistency with the rest of the schema, even though
+    nothing queries this table under RLS enforcement yet. The one lookup
+    that must run *before* app.current_org is known for a given request —
+    "does this user have a membership in the org this request's path
+    names" — will need a SECURITY DEFINER resolver function, matching
+    auth.resolve_session/find_user_for_login, added when M.4 wires up the
+    actual enforcement. Cross-org writes (auto-provisioning a new org's
+    membership rows for every existing MSP user, M.2) have the same
+    before-app.current_org-is-known shape and will need the equivalent
+    SECURITY DEFINER treatment on the write side — flagged here so it
+    isn't rediscovered as a surprise mid-M.2.
+    """
+
+    __tablename__ = "org_membership"
+    __table_args__ = (
+        UniqueConstraint("user_id", "org_id", name="uq_org_membership_user_org"),
+        CheckConstraint(
+            "role IN ('msp_admin','msp_engineer','customer_poc','c3pao_assessor')",
+            name="ck_org_membership_role",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"), index=True
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id", ondelete="CASCADE"), index=True
+    )
+    role: Mapped[str] = mapped_column(String(40), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class DeploymentSettings(Base):
+    """Singleton anchor: which org is this deployment's own MSP org.
+
+    See docs/adr/0009-multi-org-user-access.md's Boundary section. Exists
+    purely as an integrity constraint, not an access-control input — no
+    request-time authorization check consults this table. Its only job is
+    naming, structurally, the ADR 0005 assumption ("one MSP per
+    deployment") that M.2's auto-provisioning rule depends on, so a future
+    multi-MSP deployment model has to deliberately confront and redesign
+    this table rather than silently outgrow an assumption that only ever
+    lived in prose.
+
+    Populated once by `manage.py bootstrap-admin` at first run. No API
+    endpoint ever writes to it — changing `msp_org_id` after bootstrap is a
+    deliberate DBA/migration action, never a runtime one. `id` is pinned to
+    `1` by the CHECK constraint, enforcing exactly one row can ever exist.
+    """
+
+    __tablename__ = "deployment_settings"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_deployment_settings_singleton"),
+    )
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, default=1)
+    msp_org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
