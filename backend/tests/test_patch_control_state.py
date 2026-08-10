@@ -311,7 +311,9 @@ def test_sprs_deducts_full_weight_when_one_of_two_objectives_not_met(
     client, db_session, fake_msp_admin
 ):
     # control weight = 3; obj_a → met, obj_b still not_met → full 3 deducted → 107
-    d = _seed_two_objectives(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    d = _seed_two_objectives(
+        db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin
+    )
     url_a = (
         f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}"
         f"/control-states/{d['cs_a'].id}"
@@ -323,7 +325,9 @@ def test_sprs_deducts_full_weight_when_one_of_two_objectives_not_met(
 @pytest.mark.integration
 def test_sprs_no_deduction_when_all_objectives_met(client, db_session, fake_msp_admin):
     # Both objectives met → control satisfied → no deduction → 110
-    d = _seed_two_objectives(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    d = _seed_two_objectives(
+        db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin
+    )
     base = f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/control-states"
     client.patch(f"{base}/{d['cs_a'].id}", json={"status": "met"})
     r = client.patch(f"{base}/{d['cs_b'].id}", json={"status": "met"})
