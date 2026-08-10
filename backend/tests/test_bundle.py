@@ -269,15 +269,23 @@ def _bundle_url(d: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-# test_bundle_missing_org removed (ADR 0009 M.4): it hit fake_msp_admin.org_id
-# with no Organization row created at all, proving the handler's own 404
-# fires after require_org_access's ownership check passes. That scenario is
-# now structurally unreachable: require_org_access passing means a real
-# org_membership row exists, and org_membership.org_id is a NOT NULL FK to
-# organization.id (ON DELETE CASCADE) — there is no longer any way to pass
-# the access check against an org_id with no Organization row behind it.
-# See the identical removal in test_onboarding.py
-# (test_org_profile_patch_404_unknown_org) for the same reasoning.
+@pytest.mark.integration
+def test_bundle_missing_org_returns_403(client, fake_msp_admin):
+    """A client can still send an org_id/assessment_id pair with no
+    Organization row at all — that part of the scenario is unchanged.
+    What changed (ADR 0009 M.4) is *where* it's rejected: previously
+    require_org_access's equality check passed trivially (a bare field
+    comparison, no DB lookup) and the handler's own lookup 404'd. Now
+    require_org_access itself does a real org_membership lookup, and
+    since org_membership.org_id is a NOT NULL FK to organization.id, no
+    membership row can exist for an org with no Organization row behind
+    it either — the membership check fails first, so this 403s before
+    the handler is ever reached. See the identical case in
+    test_onboarding.py (test_org_profile_patch_unknown_org_returns_403)
+    and the ADR's note on why an unknown org and a real-but-inaccessible
+    org are deliberately indistinguishable to the caller."""
+    r = client.get(f"/orgs/{uuid.uuid4()}/assessments/{uuid.uuid4()}/bundle")
+    assert r.status_code == 403
 
 
 @pytest.mark.integration

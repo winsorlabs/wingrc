@@ -374,6 +374,35 @@ def require_org_access(*roles: str):
     return _check
 ```
 
+**Correction (2026-08-11, found during M.4 implementation): an unknown
+or nonexistent `org_id` now returns 403, not 404 — a deliberate,
+previously-undocumented consequence of moving the ownership check from
+a bare field comparison to a real `org_membership` lookup.** Before
+M.4, `require_org_access`'s equality check (`current_user.org_id !=
+org_id`) never touched the database, so a request against an `org_id`
+with no `Organization` row at all sailed through the access check and
+404'd only once the route handler did its own lookup (`_get_org`,
+`_get_assessment`, etc.). After M.4, the access check *is* a database
+lookup — and since `org_membership.org_id` is a `NOT NULL` FK to
+`organization.id`, no membership row can exist for an org_id with no
+`Organization` row behind it either. The membership lookup fails first,
+so every such request now 403s at `require_org_access` before the
+handler's own not-found branch is ever reached. This is not a scenario
+that became unreachable — a client can still send any `org_id`,
+nonexistent or otherwise — only the response code and which layer
+produces it changed.
+
+**This is also the right behavior, not just an accepted side effect.**
+Under the old shape, "org doesn't exist" (404) and "org exists but
+you're not a member" (403) were distinguishable to the caller —
+enumerable, in the sense that probing org_ids could reveal which UUIDs
+correspond to real organizations even without access to any of them.
+Collapsing both cases to a uniform 403 removes that side channel: an
+unauthorized caller learns only "you can't access this," never whether
+the org exists at all. Regression coverage:
+`test_onboarding.py::test_org_profile_patch_unknown_org_returns_403`,
+`test_bundle.py::test_bundle_missing_org_returns_403`.
+
 **Correction (2026-08-08, found during M.2's wl-util-1 verification —
 see the "System-level cross-org operations" subsection below for the
 full incident): the original claim here — "RLS policies do not change" —

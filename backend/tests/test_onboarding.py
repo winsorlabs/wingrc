@@ -198,15 +198,21 @@ def test_org_profile_patch_null_clears_field(client, db_session, fake_msp_admin)
     assert r.json()["industry"] is None
 
 
-# test_org_profile_patch_404_unknown_org removed (ADR 0009 M.4): it hit
-# fake_msp_admin.org_id with no Organization row created at all, proving
-# _get_org()'s own 404 fires after require_org_access's ownership check
-# passes. That scenario is now structurally unreachable: require_org_access
-# passing means a real org_membership row exists, and org_membership.org_id
-# is a NOT NULL FK to organization.id (ON DELETE CASCADE) — there is no
-# longer any way to pass the access check against an org_id with no
-# Organization row behind it. _get_org()'s 404 branch isn't dead for every
-# caller (other call sites may reach it differently), just for this one.
+def test_org_profile_patch_unknown_org_returns_403(client, fake_msp_admin):
+    """A client can still send any org_id, including one with no
+    Organization row at all — that part of the scenario is unchanged.
+    What changed (ADR 0009 M.4) is *where* it's rejected: previously
+    require_org_access's equality check passed trivially (a bare field
+    comparison, no DB lookup) and _get_org()'s own lookup 404'd. Now
+    require_org_access itself does a real org_membership lookup, and
+    since org_membership.org_id is a NOT NULL FK to organization.id, no
+    membership row can exist for an org_id with no Organization behind
+    it either — the membership check fails first, so this 403s before
+    the handler is ever reached. See the ADR's note on why an unknown
+    org and a real-but-inaccessible org are deliberately indistinguishable
+    to the caller."""
+    r = client.patch(f"/orgs/{uuid.uuid4()}/profile", json={"industry": "Defense"})
+    assert r.status_code == 403
 
 
 def test_org_profile_patch_audit_log(client, db_session, fake_msp_admin):
