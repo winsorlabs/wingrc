@@ -32,7 +32,7 @@ from app.main import app
 from app.manage import _bootstrap_admin_core
 from app.models import DeploymentSettings, Organization, OrgMembership, User
 from app.org_membership import provision_new_org_memberships, provision_new_user_memberships
-from tests.conftest import _app_session, _authed
+from tests.conftest import _app_session, _authed, _grant
 
 _STRONG_PASSWORD = "correct-horse-battery-staple-and-then-some"
 
@@ -400,6 +400,7 @@ def test_invite_msp_user_spans_every_existing_org(client, db_session, fake_msp_a
     other_org = _seed_org(db_session)
     db_session.add(home_org)
     db_session.flush()
+    _grant(db_session, fake_msp_admin)
 
     r = client.post(
         f"/orgs/{home_org.id}/users",
@@ -423,6 +424,7 @@ def test_invite_customer_poc_stays_single_org(client, db_session, fake_msp_admin
     other_org = _seed_org(db_session)
     db_session.add(home_org)
     db_session.flush()
+    _grant(db_session, fake_msp_admin)
 
     r = client.post(
         f"/orgs/{home_org.id}/users",
@@ -451,6 +453,7 @@ def test_create_api_user_grants_membership(client, db_session, fake_msp_admin):
     home_org = Organization(id=fake_msp_admin.org_id, name=f"HomeOrg-{uuid.uuid4().hex[:8]}")
     db_session.add(home_org)
     db_session.flush()
+    _grant(db_session, fake_msp_admin)
 
     r = client.post(
         f"/orgs/{home_org.id}/users/api",
@@ -472,6 +475,7 @@ def test_patch_user_role_change_updates_org_membership(client, db_session, fake_
     home_org = Organization(id=fake_msp_admin.org_id, name=f"HomeOrg-{uuid.uuid4().hex[:8]}")
     db_session.add(home_org)
     db_session.flush()
+    _grant(db_session, fake_msp_admin)
     target = _seed_user(db_session, org_id=home_org.id, role="customer_poc")
     db_session.add(OrgMembership(user_id=target.id, org_id=home_org.id, role="customer_poc"))
     db_session.flush()

@@ -425,7 +425,7 @@ def test_non_admin_403_on_unlock_and_reset_password(db_session, role):
 def test_user_list_exposes_locked_until_and_lockout_count(client, db_session, fake_msp_admin):
     org = _seed_own_org(db_session, fake_msp_admin)
     locked_until = datetime.now(UTC) + timedelta(minutes=45)
-    _seed_local_user(
+    target = _seed_local_user(
         db_session,
         org_id=org.id,
         locked_until=locked_until,
@@ -435,10 +435,14 @@ def test_user_list_exposes_locked_until_and_lockout_count(client, db_session, fa
 
     r = client.get(f"/orgs/{fake_msp_admin.org_id}/users")
     assert r.status_code == 200
-    rows = r.json()
-    assert len(rows) == 1
-    assert rows[0]["locked_until"] is not None
-    assert rows[0]["lockout_count"] == 1
+    # Not a single-row list any more: _seed_own_org's _grant() gives
+    # fake_msp_admin a real User row in this same org too (ADR 0009 M.4),
+    # so this list now legitimately contains both. Look up the specific
+    # target row rather than asserting a total count / index 0.
+    rows = {row["id"]: row for row in r.json()}
+    row = rows[str(target.id)]
+    assert row["locked_until"] is not None
+    assert row["lockout_count"] == 1
     # This is exactly the case the gap covers: locked without having
     # tripped requires_admin_reset yet.
-    assert rows[0]["requires_admin_reset"] is False
+    assert row["requires_admin_reset"] is False
