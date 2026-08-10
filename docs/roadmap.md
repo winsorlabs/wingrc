@@ -46,6 +46,25 @@ Items without a status are planned but not yet started.
   msp_admin, open it, complete OnboardingWizard end to end, confirm data
   stays scoped between the two orgs).
 
+- **`app/cli.py::_reset_dev()` would fail against the current schema —
+  found 2026-08-11 while investigating a one-off wl-util-1 cleanup script,
+  not fixed here.** `_reset_dev()` deletes all non-"Acme MSP" organization
+  rows and their assessment-layer data in FK-safe tiers, but was written
+  before the auth/audit layer (migrations 0010, 0015+) existed and was
+  never updated for it. It never deletes `audit_log` rows, and
+  `audit_log.org_id` has no `ON DELETE` action (no CASCADE, no SET NULL) —
+  so its final `DELETE FROM organization` would raise a foreign-key
+  violation the moment any test org has an audit_log row referencing it,
+  which any integration test exercising an authenticated endpoint against
+  the dev DB will have created. It also never explicitly handles `user`/
+  `user_session`/`api_token`/`org_membership` (these do cascade correctly
+  from `organization`'s own `ON DELETE CASCADE`, so that part is
+  incidentally fine, just unexplained by the function's own tiered
+  comments). Not fixed as part of this entry — out of scope for the
+  one-off cleanup that surfaced it — but recorded so it doesn't quietly
+  stay broken until someone runs `reset-dev` on a dev box with real audit
+  history and gets a confusing FK error.
+
 ---
 
 ## Planned
