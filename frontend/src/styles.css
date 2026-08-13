@@ -1195,9 +1195,21 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .item-row:hover .org-row-actions { opacity: 1; }
 .btn-xs { padding: 0.15rem 0.35rem; font-size: 0.72rem; }
 
-/* ── Header gear ─────────────────────────────────────────────────────────── */
+/* ── Header icon group (org settings gear, my account, sign out) ──────────── */
+/* margin-left: auto lives on the group, not on the individual buttons: the
+   gear and account buttons render conditionally (App.tsx's showGear /
+   showAccountButton), so each carrying its own margin-left: auto used to
+   mean two adjacent flex items independently claiming the row's free
+   space whenever both were visible at once, instead of the group being
+   pushed right as a single unit — the cause of the two icons crowding/
+   overlapping instead of sitting cleanly side by side. flex-shrink: 0
+   keeps the group from being squeezed under a narrow header. */
+.header-icons {
+  margin-left: auto; display: flex; align-items: center; gap: 0.75rem;
+  flex-shrink: 0;
+}
 .header-gear {
-  margin-left: auto; background: none; border: none; cursor: pointer;
+  background: none; border: none; cursor: pointer;
   font-size: 1.1rem; color: var(--muted); padding: 0.25rem 0.5rem;
   border-radius: 4px; line-height: 1;
 }

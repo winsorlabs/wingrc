@@ -100,34 +100,36 @@ export function App() {
             <span>Setup</span>
           </nav>
         )}
-        {showGear && (
+        <div className="header-icons">
+          {showGear && (
+            <button
+              className="header-gear"
+              onClick={openSettings}
+              aria-label="Org settings"
+              title="Org settings"
+            >
+              ⚙
+            </button>
+          )}
+          {showAccountButton && (
+            <button
+              className="header-gear"
+              onClick={openAccount}
+              aria-label="My account"
+              title={`My account (${user.email})`}
+            >
+              👤
+            </button>
+          )}
           <button
-            className="header-gear"
-            onClick={openSettings}
-            aria-label="Org settings"
-            title="Org settings"
+            className="header-logout"
+            onClick={logout}
+            title={`Sign out (${user.email})`}
+            aria-label="Sign out"
           >
-            ⚙
+            ⏏
           </button>
-        )}
-        {showAccountButton && (
-          <button
-            className="header-gear"
-            onClick={openAccount}
-            aria-label="My account"
-            title={`My account (${user.email})`}
-          >
-            👤
-          </button>
-        )}
-        <button
-          className="header-logout"
-          onClick={logout}
-          title={`Sign out (${user.email})`}
-          aria-label="Sign out"
-        >
-          ⏏
-        </button>
+        </div>
       </header>
 
       {!canWrite && (
