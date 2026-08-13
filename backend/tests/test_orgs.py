@@ -22,7 +22,7 @@ from app.auth import get_current_user
 from app.db import get_session
 from app.main import app
 from app.models import Organization, OrgMembership, User
-from tests.conftest import _app_session, _authed
+from tests.conftest import _app_session, _authed, _grant
 
 
 @pytest.fixture
@@ -127,7 +127,17 @@ def test_list_orgs_returns_200_and_list(client):
 
 
 @pytest.mark.integration
-def test_list_orgs_returns_created_orgs(client):
+def test_list_orgs_returns_created_orgs(client, db_session, fake_msp_admin):
+    # ADR 0009 M.5: GET /orgs is scoped to the caller's own org_membership
+    # rows, and create_org()'s auto-provisioning (M.2) only grants existing
+    # *User* rows found via auth.msp_role_users() -- fake_msp_admin needs a
+    # real one (via _grant, which also needs its home org to already exist)
+    # or it won't be picked up as an "existing msp_admin" when org_a/org_b
+    # are created below, and the new orgs won't show up in its own list.
+    db_session.add(Organization(id=fake_msp_admin.org_id, name=f"HomeOrg-{uuid.uuid4().hex[:8]}"))
+    db_session.flush()
+    _grant(db_session, fake_msp_admin)
+
     prefix = uuid.uuid4().hex
     name_a = f"Alpha-{prefix}"
     name_b = f"Beta-{prefix}"
@@ -139,7 +149,12 @@ def test_list_orgs_returns_created_orgs(client):
 
 
 @pytest.mark.integration
-def test_list_orgs_ordered_by_name(client):
+def test_list_orgs_ordered_by_name(client, db_session, fake_msp_admin):
+    # Same reasoning as test_list_orgs_returns_created_orgs above.
+    db_session.add(Organization(id=fake_msp_admin.org_id, name=f"HomeOrg-{uuid.uuid4().hex[:8]}"))
+    db_session.flush()
+    _grant(db_session, fake_msp_admin)
+
     prefix = uuid.uuid4().hex
     client.post("/orgs", json={"name": f"Zulu-{prefix}"})
     client.post("/orgs", json={"name": f"Alpha-{prefix}"})

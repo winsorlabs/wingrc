@@ -34,13 +34,14 @@ guard before this change (via the pre-existing _own_org() helper, now
 migrated onto require_org_access itself) and isn't re-tested here.
 
 Separately, GET/POST /orgs (list_orgs/create_org) have no org_id in their own
-path — require_org_access doesn't apply to them — so they got a narrow,
-role-only gate (require_role("msp_admin", "msp_engineer")) instead, per ADR
-0005's per-org isolation boundary. That gate is tested at the bottom of this
-file: customer_poc/c3pao_assessor get 403, msp_admin/msp_engineer succeed.
-This is NOT the broader role-differentiation pass for the other ~36 routes —
-just these two, which had no isolation at all before this. require_role does
-no membership lookup, so these are unaffected by M.4.
+path — require_org_access doesn't apply to them. POST /orgs (create) stays
+role-gated (require_role("msp_admin", "msp_engineer")) per ADR 0005's
+per-org isolation boundary — creating a brand-new org isn't something to
+check membership against, since there's no org yet to hold one. GET /orgs
+(list) changed shape entirely under ADR 0009 M.5: no role gate any more,
+scoped instead by a real org_membership lookup — every role gets 200,
+scoped to exactly the orgs they belong to. Both are tested at the bottom of
+this file.
 """
 from __future__ import annotations
 
@@ -387,10 +388,41 @@ def _user_with_role(role: str) -> CurrentUser:
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("role", ["customer_poc", "c3pao_assessor"])
-def test_list_orgs_forbidden_for_non_msp_roles(client, role):
-    app.dependency_overrides[get_current_user] = lambda: _user_with_role(role)
-    assert client.get("/orgs").status_code == 403
+@pytest.mark.parametrize("role", ["msp_admin", "msp_engineer", "customer_poc", "c3pao_assessor"])
+def test_list_orgs_returns_only_callers_memberships(client, db_session, role):
+    """ADR 0009 M.5: GET /orgs is no longer role-gated -- every role gets
+    200 (a customer_poc/c3pao_assessor isn't blocked from the endpoint
+    itself, that would break the single-org auto-select path every
+    non-MSP UI flow depends on). What actually scopes the response is a
+    real org_membership lookup: exactly the orgs the caller belongs to,
+    never an org they have no membership in, regardless of role. This
+    replaces the old require_role("msp_admin", "msp_engineer") gate over
+    every Organization row -- a strict simplification, not an added
+    restriction."""
+    actor = _user_with_role(role)
+    mine = Organization(name=f"MineOrg-{uuid.uuid4().hex[:8]}")
+    other = Organization(name=f"OtherOrg-{uuid.uuid4().hex[:8]}")
+    db_session.add_all([mine, other])
+    db_session.flush()
+    _grant(db_session, actor, org_id=mine.id)
+
+    app.dependency_overrides[get_current_user] = lambda: actor
+    r = client.get("/orgs")
+    assert r.status_code == 200
+    ids = {o["id"] for o in r.json()}
+    assert ids == {str(mine.id)}
+
+
+@pytest.mark.integration
+def test_list_orgs_empty_when_no_memberships(client):
+    """No org_membership rows at all -> an empty list, not a 403 and not
+    every org in the deployment. GET /orgs has no role gate to fall back
+    on any more, so this is the only thing standing between "no access"
+    and "sees everything.\""""
+    app.dependency_overrides[get_current_user] = lambda: _user_with_role("msp_admin")
+    r = client.get("/orgs")
+    assert r.status_code == 200
+    assert r.json() == []
 
 
 @pytest.mark.integration
@@ -399,13 +431,6 @@ def test_create_org_forbidden_for_non_msp_roles(client, role):
     app.dependency_overrides[get_current_user] = lambda: _user_with_role(role)
     r = client.post("/orgs", json={"name": f"Should Not Exist {uuid.uuid4().hex[:6]}"})
     assert r.status_code == 403
-
-
-@pytest.mark.integration
-@pytest.mark.parametrize("role", ["msp_admin", "msp_engineer"])
-def test_list_orgs_allowed_for_msp_roles(client, role):
-    app.dependency_overrides[get_current_user] = lambda: _user_with_role(role)
-    assert client.get("/orgs").status_code == 200
 
 
 @pytest.mark.integration

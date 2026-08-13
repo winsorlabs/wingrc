@@ -19,11 +19,11 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, field_validator
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from ..audit import log_event
-from ..auth import get_current_user, require_org_access, require_role, require_write
+from ..auth import CurrentUser, get_current_user, require_org_access, require_role, require_write
 from ..db import get_session
 from ..models import (
     Contact,
@@ -252,13 +252,40 @@ def create_org(body: OrgIn, session: Session = Depends(get_session)) -> OrgOut:
     return OrgOut.model_validate(org)
 
 
-@router.get(
-    "",
-    response_model=list[OrgOut],
-    dependencies=[Depends(require_role("msp_admin", "msp_engineer"))],
-)
-def list_orgs(session: Session = Depends(get_session)) -> list[OrgOut]:
-    orgs = session.scalars(select(Organization).order_by(Organization.name)).all()
+@router.get("", response_model=list[OrgOut])
+def list_orgs(
+    session: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> list[OrgOut]:
+    """Every org the caller has an org_membership row for -- ADR 0009 M.5.
+
+    No role gate: a customer_poc naturally gets back exactly one org (their
+    only membership), an MSP user gets back everything they've been
+    auto-provisioned into. This is a strict simplification of the old
+    require_role("msp_admin", "msp_engineer") gate over every Organization
+    row, not an added restriction.
+
+    The membership lookup itself is cross-org by construction (every org
+    this one user belongs to, not just whichever org happens to be
+    app.current_org for this request) -- routed through the
+    auth.my_org_memberships() SECURITY DEFINER function (migration 0027)
+    rather than a plain ORM query, same reasoning as M.2's auto-
+    provisioning. The follow-up read of the Organization rows themselves
+    is an ordinary query: organization carries no RLS policy of its own
+    (it's the tenant boundary itself, not something scoped by one).
+    """
+    org_ids = [
+        row.org_id
+        for row in session.execute(
+            text("SELECT org_id, role FROM auth.my_org_memberships(:user_id)"),
+            {"user_id": current_user.id},
+        )
+    ]
+    if not org_ids:
+        return []
+    orgs = session.scalars(
+        select(Organization).where(Organization.id.in_(org_ids)).order_by(Organization.name)
+    ).all()
     return [OrgOut.model_validate(o) for o in orgs]
 
 
