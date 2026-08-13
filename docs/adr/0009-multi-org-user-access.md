@@ -2,11 +2,14 @@
 
 Date: 2026-08-07
 Status: Accepted — implementation in progress. M.1 (schema), M.2
-(auto-provisioning), M.3 (`User.org_id` → `home_org_id` rename), and M.4
+(auto-provisioning), M.3 (`User.org_id` → `home_org_id` rename), M.4
 (`require_org_access`/`get_current_user` enforcement cutover — the fix
-for the defect this ADR documents) are landed pending live wl-util-1
+for the defect this ADR documents), M.5 (`GET /orgs` reshape to a real
+`org_membership` lookup), and M.6 (`OrgPicker`/`lib/roles.ts` — retired
+`MULTI_ORG_ROLES`/`canListOrgs`, branches on `GET /orgs`'s response
+length instead) are landed. M.4 through M.6 are pending live wl-util-1
 verification (create a second org, open it, complete OnboardingWizard,
-confirm scoping). M.5 (`GET /orgs`/`OrgPicker` reshape) not started.
+confirm scoping) — not yet re-tested against real data.
 
 **Severity: this documents a functional defect in already-shipped
 behavior, not groundwork for unbuilt features.** An msp_admin cannot open
@@ -462,6 +465,13 @@ the caller, not just whichever one matches `app.current_org`) — it needs
 the same SECURITY DEFINER treatment as M.2's auto-provisioning, below,
 not a plain ORM query. Flagged now so M.5 doesn't repeat M.2's mistake.
 
+**Done (M.5, migration 0027):** `auth.my_org_memberships(p_user_id)`,
+matching migration 0025's precedent exactly (EXECUTE restricted to
+`wingrc_app`, not `PUBLIC`). `routers/orgs.py`'s `list_orgs` calls it,
+then does a plain `Organization` lookup for the returned org ids —
+that second read needs no bypass, `organization` carries no RLS policy
+of its own.
+
 ### System-level cross-org operations need a different mechanism than per-request RLS
 
 **Incident, M.2 (2026-08-08):** `provision_new_org_memberships()`'s read
@@ -665,20 +675,22 @@ anchoring them to a slightly-approximate-but-real org.
 - **`require_role("msp_admin", "msp_engineer")` on `GET /orgs`/`POST
   /orgs`** (`orgs.py:227,251`) — `POST /orgs` (create) still makes sense
   gated by role alone (anyone with an MSP role can create a new customer
-  org; there's no "org" to check membership against yet). `GET /orgs`
-  changes shape entirely per Design above — role gate replaced by "return
-  my memberships."
+  org; there's no "org" to check membership against yet) — **unchanged**.
+  `GET /orgs` — **done (M.5):** role gate replaced by a real
+  `org_membership` lookup via `auth.my_org_memberships()`.
 - **`OrgPicker.tsx` / `lib/roles.ts`'s `MULTI_ORG_ROLES`/`canListOrgs`**
-  (this session's own org-picker landing-gap fix) — currently a hard,
-  role-keyed binary: MSP roles get the two-card picker, everyone else gets
-  auto-selected into their one fixed org. Under this ADR's model, *any*
-  role can have more than one membership (a `c3pao_assessor` across two
-  engagements is the explicit example this ADR's Decision keeps open). The
-  branch needs to key off "does this user have more than one
-  `org_membership` row" — a per-user fact from `GET /orgs`'s response
-  length — not a per-role constant. `MULTI_ORG_ROLES` as a concept goes
-  away; nothing replaces it as a *role* set, because it was never really a
-  role fact in the first place.
+  (this session's own org-picker landing-gap fix) — **done (M.6).** Was a
+  hard, role-keyed binary: MSP roles got the two-card picker, everyone
+  else got auto-selected into their one fixed org. Under this ADR's
+  model, *any* role can have more than one membership (a `c3pao_assessor`
+  across two engagements is the explicit example this ADR's Decision
+  keeps open), so the branch now keys off "does this user have more than
+  one `org_membership` row" — `GET /orgs`'s response length — not a
+  per-role constant. `MULTI_ORG_ROLES`/`canListOrgs` are gone; replaced
+  by `ORG_CREATOR_ROLES`/`canCreateOrg`, which mirrors `POST /orgs`'s
+  still-role-gated create permission specifically (a distinct axis from
+  "which orgs can I see," which is membership-based — the two were
+  conflated under one role-keyed boolean before this).
 - **I.9's self-service audit calls** — `org_id=current_user.org_id` in
   `change_password`, `mfa_reenroll`/`_confirm`, `regenerate_backup_codes`,
   `revoke_all_sessions` (`routers/auth.py`) need to read

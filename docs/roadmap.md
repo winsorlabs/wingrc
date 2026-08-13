@@ -28,8 +28,9 @@ Items without a status are planned but not yet started.
 
 - **MSP staff cannot open any org but their own — the core multi-tenant
   premise is broken in already-shipped code, not an unbuilt feature.**
-  **Fixed 2026-08-11 (ADR 0009 M.4), pending live wl-util-1 verification —
-  not yet re-tested against real data.** `require_org_access()`
+  **Fixed 2026-08-11 through 2026-08-13 (ADR 0009 M.4-M.6), pending live
+  wl-util-1 verification — not yet re-tested against real data.**
+  `require_org_access()`
   (`backend/app/auth.py`) used to gate on strict
   `current_user.org_id == org_id` with no role exemption. An `msp_admin`
   could list every org (`GET /orgs`) and create new ones (`POST /orgs`), but
