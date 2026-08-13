@@ -173,7 +173,6 @@ export const api = {
   },
 
   getOrgs: () => req<Org[]>("/orgs"),
-  getOrg: (orgId: string) => req<Org>(`/orgs/${orgId}`),
   createOrg: (name: string) =>
     req<Org>("/orgs", { method: "POST", body: JSON.stringify({ name }) }),
 

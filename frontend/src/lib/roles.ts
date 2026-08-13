@@ -6,10 +6,15 @@
 //     (e.g. ApiTokensPanel can't mint a token above the current user's rank).
 //   - READ_ONLY_ROLES: which roles auth.py's require_write() blocks from
 //     mutating anything.
-//   - MULTI_ORG_ROLES: which roles can list/browse across orgs at all
-//     (orgs.py's inline require_role("msp_admin", "msp_engineer") on
-//     GET /orgs). Everyone else has exactly one org — their own, already on
-//     AuthUser.org_id — and never sees the org picker.
+//   - ORG_CREATOR_ROLES: which roles can create a *new* org (orgs.py's
+//     inline require_role("msp_admin", "msp_engineer") on POST /orgs).
+//     This is genuinely still a role fact — there's no existing org to
+//     check membership against when creating one — unlike which orgs a
+//     user can *see*, which is a per-user membership fact, not a role one
+//     (ADR 0009 M.5/M.6: GET /orgs is membership-scoped for every role, so
+//     OrgPicker branches on the response's length, not on role; see that
+//     ADR's "Flagged" section for why MULTI_ORG_ROLES/canListOrgs — removed
+//     here — was never really a role fact in the first place).
 // Each has its own keep-in-lockstep caveat: no endpoint exposes any of these
 // sets, so if the backend map changes, the matching constant here needs a
 // manual edit.
@@ -42,11 +47,13 @@ export function deriveCanWrite(role: string | null | undefined): boolean {
 }
 
 // Mirrors backend/app/routers/orgs.py's inline
-// require_role("msp_admin", "msp_engineer") on GET /orgs. UX only — that
+// require_role("msp_admin", "msp_engineer") on POST /orgs. UX only — that
 // dependency is the actual control; this just tells OrgPicker whether to
-// call the list-all endpoint or go straight to the caller's own org.
-export const MULTI_ORG_ROLES = new Set(["msp_admin", "msp_engineer"]);
+// show the "create a new org" affordance. Unlike the old MULTI_ORG_ROLES,
+// this does NOT decide whether the picker itself is shown — that's now a
+// per-user fact (GET /orgs response length), not a role one.
+export const ORG_CREATOR_ROLES = new Set(["msp_admin", "msp_engineer"]);
 
-export function canListOrgs(role: string | null | undefined): boolean {
-  return !!role && MULTI_ORG_ROLES.has(role);
+export function canCreateOrg(role: string | null | undefined): boolean {
+  return !!role && ORG_CREATOR_ROLES.has(role);
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, getCachedAssessmentId, setCachedAssessmentId } from "../api";
-import { canListOrgs } from "../lib/roles";
+import { canCreateOrg } from "../lib/roles";
 import type { Assessment, AuthUser, Framework, Org } from "../types";
 
 interface Props {
@@ -12,9 +12,10 @@ interface Props {
 }
 
 export function OrgPicker({ currentUser, canWrite, onEnterBoard, onEnterOnboarding, onOpenSettings }: Props) {
-  const isMultiOrg = canListOrgs(currentUser.role);
+  const canCreate = canCreateOrg(currentUser.role);
 
   const [orgs, setOrgs] = useState<Org[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [selectedOrg, setSelectedOrg] = useState<Org | null>(null);
   const [assessments, setAssessments] = useState<Assessment[]>([]);
   const [frameworks, setFrameworks] = useState<Framework[]>([]);
@@ -24,20 +25,20 @@ export function OrgPicker({ currentUser, canWrite, onEnterBoard, onEnterOnboardi
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isMultiOrg) {
-      api.getOrgs().then(setOrgs).catch(() => setError("Could not load orgs"));
-    } else {
-      // Single-org roles (customer_poc, c3pao_assessor) have no picker to
-      // fall back to if this fails — a caught, surfaced error is the only
-      // thing standing between them and a blank "no organizations" empty
-      // state that would look like a data problem instead of a load failure.
-      api.getOrg(currentUser.org_id)
-        .then((org) => {
-          setOrgs([org]);
-          selectOrg(org);
-        })
-        .catch(() => setError("Could not load your organization. Contact your administrator."));
-    }
+    // ADR 0009 M.5/M.6: GET /orgs is membership-scoped for every role now
+    // (a customer_poc gets back exactly their one org, an MSP user gets
+    // back everything they've been provisioned into) — always call the
+    // same endpoint, then decide picker-vs-auto-select from the result's
+    // length below, not from role.
+    api.getOrgs()
+      .then((list) => {
+        setOrgs(list);
+        setLoaded(true);
+        if (list.length === 1 && !canCreate) {
+          selectOrg(list[0]);
+        }
+      })
+      .catch(() => setError("Could not load your organizations."));
     api.getFrameworks().then(setFrameworks).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -93,19 +94,32 @@ export function OrgPicker({ currentUser, canWrite, onEnterBoard, onEnterOnboardi
     onEnterBoard(selectedOrg, a);
   }
 
-  // Non-multi-org roles (customer_poc, c3pao_assessor) have exactly one
-  // org — their own — and never see the cross-org list or the "create an
-  // org" affordance. That's not a canWrite distinction: customer_poc can
-  // write to its own org's data but still has no business browsing or
-  // creating other orgs, so this branches on isMultiOrg, not canWrite.
-  if (!isMultiOrg) {
+  // Whether to show the full cross-org picker (list + optional "create
+  // org" affordance) or skip straight to the caller's one org. This is a
+  // per-user fact now (do they have more than one org_membership row, or
+  // can they create new ones), not a role one — ADR 0009 M.6. A
+  // customer_poc/c3pao_assessor with exactly one membership (the common
+  // case) still gets the fast single-org path exactly as before; a role
+  // that can create orgs always gets the full picker even with only one
+  // org today, since "create my first customer org" has to be reachable
+  // from somewhere. A non-MSP role with more than one membership (ADR
+  // 0009's own example: a c3pao_assessor across two engagements) gets the
+  // picker too, just without the create-org affordance below.
+  const showPicker = canCreate || orgs.length > 1;
+
+  if (!showPicker) {
     return (
       <div className="picker-grid picker-grid-single">
         <div className="card">
           <h2>{selectedOrg ? `Assessments — ${selectedOrg.name}` : "Your organization"}</h2>
           {error && <p style={{ color: "#dc3545", marginBottom: "0.75rem" }}>{error}</p>}
-          {!selectedOrg && !error && (
+          {!selectedOrg && !error && !loaded && (
             <div className="empty">Loading your organization…</div>
+          )}
+          {!selectedOrg && !error && loaded && (
+            <div className="empty">
+              No organization is available for your account. Contact your administrator.
+            </div>
           )}
 
           {selectedOrg && (
@@ -183,19 +197,23 @@ export function OrgPicker({ currentUser, canWrite, onEnterBoard, onEnterOnboardi
           )}
         </ul>
 
-        <div className="divider" />
-        <div className="form-row">
-          <input
-            type="text"
-            placeholder="New organization name"
-            value={newOrgName}
-            onChange={(e) => setNewOrgName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && createOrg()}
-          />
-          <button className="btn-primary" onClick={createOrg} disabled={creating || !newOrgName.trim()}>
-            {creating ? "…" : "Add"}
-          </button>
-        </div>
+        {canCreate && (
+          <>
+            <div className="divider" />
+            <div className="form-row">
+              <input
+                type="text"
+                placeholder="New organization name"
+                value={newOrgName}
+                onChange={(e) => setNewOrgName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && createOrg()}
+              />
+              <button className="btn-primary" onClick={createOrg} disabled={creating || !newOrgName.trim()}>
+                {creating ? "…" : "Add"}
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Right: assessments for selected org */}
