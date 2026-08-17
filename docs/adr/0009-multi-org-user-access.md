@@ -1,15 +1,21 @@
 # 9. Multi-org user access
 
 Date: 2026-08-07
-Status: Accepted — implementation in progress. M.1 (schema), M.2
-(auto-provisioning), M.3 (`User.org_id` → `home_org_id` rename), M.4
-(`require_org_access`/`get_current_user` enforcement cutover — the fix
-for the defect this ADR documents), M.5 (`GET /orgs` reshape to a real
-`org_membership` lookup), and M.6 (`OrgPicker`/`lib/roles.ts` — retired
-`MULTI_ORG_ROLES`/`canListOrgs`, branches on `GET /orgs`'s response
-length instead) are landed. M.4 through M.6 are pending live wl-util-1
-verification (create a second org, open it, complete OnboardingWizard,
-confirm scoping) — not yet re-tested against real data.
+Status: Accepted — M.1 (schema), M.2 (auto-provisioning), M.3
+(`User.org_id` → `home_org_id` rename), M.4 (`require_org_access`/
+`get_current_user` enforcement cutover — the fix for the defect this ADR
+documents), M.5 (`GET /orgs` reshape to a real `org_membership` lookup),
+and M.6 (`OrgPicker`/`lib/roles.ts` — retired `MULTI_ORG_ROLES`/
+`canListOrgs`, branches on `GET /orgs`'s response length instead) are
+landed and **verified 2026-08-17 on wl-util-1**: full pytest suite
+(396/396 integration, 530/530 total), `tsc -b` clean, `vitest run` 25/25,
+plus a live walkthrough (created a second org as `msp_admin`, completed
+`OnboardingWizard` end to end, confirmed data stayed scoped between the
+two orgs) and a second smoke test (`c3pao_assessor`/`customer_poc` each
+land directly on their own org, no picker, no create-org form). See
+`docs/roadmap.md`'s Done section for the closed defect writeup. `M.7`/`M.8`
+(deployment-wide user directory + admin-initiated grant/revoke — see
+`docs/PLAN-gui-restructure.md`'s `G.11`) not started.
 
 **Severity: this documents a functional defect in already-shipped
 behavior, not groundwork for unbuilt features.** An msp_admin cannot open

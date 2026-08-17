@@ -1,6 +1,6 @@
 # Plan — Auth/RBAC completion (roadmap item I) + frontend admin surface
 
-**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4 ✅ merged · I.5 ✅ closed (5 deviations — see I.5; 308/308 integration tests green on wl-util-1, browser smoke test confirmed) · I.6 ✅ merged (all 6 items) · I.7 ✅ merged (users + API tokens admin panels, invite-redemption page) · I.8 implemented pending commit/review (see I.8) · I.9 implemented pending commit/review (see I.9) · **User deletion (ADR 0006) implemented, out-of-band — see that section below, not part of I.1–I.9** · **Audit log viewer implemented, out-of-band — see that section below, not part of I.1–I.9** · **Non-MSP org-picker landing gap implemented, out-of-band — see that section below, not part of I.1–I.9** · **MFA QR code third-party disclosure fixed (ADR 0008), out-of-band — see that ADR, not part of I.1–I.9**
+**Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4 ✅ merged · I.5 ✅ closed (5 deviations — see I.5; 308/308 integration tests green on wl-util-1, browser smoke test confirmed) · I.6 ✅ merged (all 6 items) · I.7 ✅ merged (users + API tokens admin panels, invite-redemption page) · I.8 ✅ closed (see I.8) · I.9 automated verification ✅ (pytest + tsc + vitest all green), one manual browser walkthrough still outstanding — see I.9 · **User deletion (ADR 0006) ✅ closed, out-of-band — see that section below, not part of I.1–I.9** · **Audit log viewer ✅ closed, out-of-band — see that section below, not part of I.1–I.9** · **Non-MSP org-picker landing gap ✅ closed, out-of-band — see that section below, not part of I.1–I.9** · **MFA QR code third-party disclosure fixed (ADR 0008), out-of-band — see that ADR, not part of I.1–I.9** · **All automated checks above (pytest, `tsc -b`, `vitest`) confirmed together in one combined pass on wl-util-1, 2026-08-17: full pytest suite (396/396 integration, 530/530 total), `tsc -b` clean, `vitest run` 25/25, plus two browser smoke tests (multi-org scoping, single-org landing) — see roadmap.md's now-closed "Known defects" entry for the full account. I.9's own self-service browser walkthrough was not part of that pass — see I.9's note.**
 **Baseline:** 0088757
 **Scope:** close the gaps identified in the audit of item I, then land the frontend
 surface those endpoints require.
@@ -762,10 +762,15 @@ components already on that path (`FamilySection`, `ControlSection`) and
 (`display: contents`, native `disabled` cascade) added to `styles.css` for
 the form-drawer cases (`ContactDrawer`, `OrgProfileForm`,
 `SystemDescriptionForm`, `ControlDrawer`'s per-objective fields) so descendant
-inputs are disabled without a `display` change to the layout. Not yet run
-against the frontend toolchain (no local Node — this box only has the
-backend Python env) or browser-smoke-tested; that verification is the next
-step, same gap I.5 had before its "closed" line above.
+inputs are disabled without a `display` change to the layout.
+
+**I.8 verified 2026-08-17 on wl-util-1.** `tsc -b` clean (exit 0), `vitest
+run` 25/25 (covers `permissions.test.ts`'s `deriveCanWrite` cases this slice
+added). Browser smoke test (as part of the combined ADR 0009 + I.1–I.9
+verification pass, see the roadmap's now-closed "Known defects" entry):
+logged in as `c3pao_assessor`, confirmed read-only rendering holds across
+the assessment board — no regression found. **I.8 closed**, same footing as
+I.5's own "closed" line above.
 
 ---
 
@@ -869,16 +874,17 @@ listing scoped to the caller only and excluding revoked rows, and
 revoke-all revoking every session (including the caller's) without
 touching other users'.
 
-**Verification status:** no local Node/pytest on this box (same limitation
-as every prior frontend-touching slice in this plan) — `ruff check` is
-clean and both new/changed Python files parse; frontend changes reviewed
-by hand, not run through `tsc -b`. Outstanding on wl-util-1 after
-`git pull`: `pytest tests/test_account_self_service.py tests/test_auth.py
--m integration -v`, frontend build/typecheck, and a browser smoke test —
-change password, re-enroll MFA end-to-end (confirm the old authenticator
-code stops working and the new one is required at next login), regenerate
-backup codes, and sign out everywhere (confirm it actually redirects to
-login).
+**Verification status, updated 2026-08-17:** `pytest tests/test_account_self_service.py
+tests/test_auth.py -m integration -v` (run as part of the full 396/396
+integration pass on wl-util-1) and `tsc -b`/`vitest run` both confirmed
+clean. **Still outstanding — not covered by the two smoke tests run for the
+combined ADR 0009 + I.1–I.9 pass (multi-org scoping, single-org landing):**
+the I.9-specific browser walkthrough — change password, re-enroll MFA
+end-to-end (confirm the old authenticator code stops working and the new
+one is required at next login), regenerate backup codes, and sign out
+everywhere (confirm it actually redirects to login). Automated coverage is
+green; this manual walkthrough is the one piece of I.9 not yet directly
+exercised by hand.
 
 ---
 
@@ -943,15 +949,13 @@ while leaving the pre-existing audit row byte-for-byte unchanged, anonymize
 cascades the same four tables, reactivation-after-anonymize 409s, and
 non-admin/assessor 403 on both endpoints.
 
-**Verification status:** `ruff check` clean; migration chain verified to
-resolve to a single head (`0021_user_deleted_at`) via Alembic's
-`ScriptDirectory` offline (no DB needed for that check); all 18 new tests
-collect cleanly under pytest. Not yet run against a real Postgres — this
-box has no reachable database — so `pytest tests/test_user_deletion.py -m
-integration -v` on wl-util-1 (after `git pull`) is the outstanding step,
-same gap I.5/I.8 had before their own "closed"/"implemented" lines above.
-Frontend not yet `tsc -b`'d or browser-smoke-tested for the same reason
-(no local Node on this box, per I.8's note).
+**Verification status, updated 2026-08-17:** `pytest tests/test_user_deletion.py
+-m integration -v` (part of the full 396/396 integration pass on wl-util-1)
+and `tsc -b`/`vitest run` both confirmed clean. No dedicated browser
+smoke test of the delete/anonymize UI flow specifically has been run — not
+covered by the two smoke tests done for the combined ADR 0009 + I.1–I.9
+pass (multi-org scoping, single-org landing) — flagged the same way as I.9's
+outstanding self-service walkthrough, not treated as closed.
 
 ---
 
@@ -1070,12 +1074,12 @@ resolve to a single head (`0022_audit_log_ip_address`) via Alembic's
 passes without any allowlist edit (the new route's `require_org_access`
 dependency satisfies it automatically); all 15 new tests (14 integration +
 1 DB-free) plus the full 472-test suite collect cleanly; all 85 DB-free
-tests pass, including the new crash-safety one above. Everything else
-(the 14 `@pytest.mark.integration` cases) not yet run against a real
-Postgres, and frontend not yet `tsc -b`'d/browser-tested — same outstanding
-step as the ADR 0006 section above, for the same reason (no DB/Node
-reachable from this box). wl-util-1, after `git pull`:
-`pytest tests/test_audit_log.py -m integration -v`.
+tests pass, including the new crash-safety one above. The 14
+`@pytest.mark.integration` cases ran against real Postgres for the first
+time as described immediately below (**"Fixed after first real-Postgres
+run"**) and have stayed green in every full-suite run since, most recently
+the 2026-08-17 combined pass (396/396 integration, 530/530 total) —
+`tsc -b`/`vitest run` confirmed clean the same day.
 
 **Fixed after first real-Postgres run (339/340 passed):**
 `test_filter_by_date_range` built its query with an f-string
@@ -1277,14 +1281,15 @@ pair that proves this is a role-blind gap, not an assessor-only one), a
 null/undefined default-closed case, and the same
 fails-loudly-on-a-new-role exhaustive check against `ALL_ROLES`.
 
-**Verification status:** no local Node on this box (same limitation as
-I.8/ADR-0006/audit-log-viewer above), so this has not been run through
-`tsc -b` or vitest locally. Outstanding on wl-util-1 after `git pull`:
-frontend build/typecheck, `vitest run` (covers the new
-`permissions.test.ts` cases), and a browser smoke test logging in as both
-a `c3pao_assessor` and a `customer_poc` to confirm each lands directly on
-their own org's assessment view with no picker and no create-org form
-visible.
+**Verified 2026-08-17 on wl-util-1.** `tsc -b` clean, `vitest run` 25/25
+(covers `permissions.test.ts`). Browser smoke test: logged in as both
+`c3pao_assessor` and `customer_poc`, both landed directly on their own
+org's assessment view, no picker, no create-org form visible — confirmed
+against the *current* mechanism (ADR 0009 M.6 replaced the `canListOrgs`
+role check this section describes with a membership-count check; the
+observable behavior this test asserts is unchanged, and this is the
+regression test proving M.6 didn't reintroduce the gap this section
+originally fixed).
 
 ---
 

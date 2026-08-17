@@ -438,8 +438,9 @@ override survives a second family-level bulk-assign of the same family.
 **Goal:** "current assessments, assessment templates (pre-built like the
 current CMMC one, or user-created)."
 
-**Needs a decision before implementation — flagged, not resolved here.**
-Two readings of "template" that imply very different scope:
+**Decided 2026-08-17 (Jarrod): reading (a), multi-framework support.**
+Recorded here so implementation can start from this plan directly; the two
+readings below are kept for the record of what was weighed.
 
 **(a) Multi-framework support.** `Framework → Control →
 AssessmentObjective` already models exactly this — the catalog is generic,
@@ -478,8 +479,11 @@ slice.
   Assessments for user-created frameworks.
 
 ### Exit criteria
-Deferred until the (a)/(b) decision is made explicitly — this slice should
-not start implementation from this plan alone.
+`pytest` green for the new framework-authoring endpoints, `tsc -b` clean,
+browser smoke test: author a second framework end to end (controls +
+assessment objectives), start an assessment against it from the picker,
+confirm SPRS scoring and the magic loop work against the new framework the
+same as they do against `nist-800-171-r2`.
 
 ---
 

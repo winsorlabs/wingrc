@@ -20,32 +20,31 @@ Items without a status are planned but not yet started.
 - **Findings + POA&M models** — `finding` and `poa_m_item` tables; gap/deficiency/weakness/observation types; severity; remediation milestones.
 - **Assessor Bundle Export** — downloadable ZIP (SSP + evidence + scores + status) for C3PAO handoff; `backend/app/bundle_service.py` assembly, `GET /orgs/{org_id}/assessments/{assessment_id}/bundle`, "Generate Assessor Bundle" button on the board. Verified against a real downloaded zip. **Amended 2026-08-06** (out-of-band, not a new roadmap slice): evidence folder in the export restructured to `evidence/<family>/<control>/<objective>/` so an assessor can navigate to one objective's evidence directly — see `docs/adr/0007-per-objective-evidence-folders-in-bundle-export.md`.
 - **Onboarding Wizard v1** — Organization Profile (SSP header fields: CAGE/UEI/address/phone/logo), System Description (system type, CUI categories/storage/boundary/flow narrative), and Personnel Repository (contacts + documentation-role assignment) — migrations 0011/0012/0013; `GET/PATCH /orgs/{org_id}/profile`, `POST /orgs/{org_id}/logo`, `GET/PUT /orgs/{org_id}/system-description`, contacts CRUD + role endpoints (`contacts.py`). 3-step wizard on org creation, plus a persistent tabbed Settings page for later edits.
-- **Authentication** — session-based login (opaque tokens, HttpOnly+Secure cookie), local password (PBKDF2-HMAC-SHA256, FIPS-140 rationale) + TOTP MFA + backup codes, Microsoft Entra ID SSO, API tokens for machine access — migration 0015. Four roles shipped (`msp_admin`/`msp_engineer`/`customer_poc`/`c3pao_assessor`); see Deferred for role-guard coverage. **Known defect (2026-08-07), fixed 2026-08-11 pending live verification:** `require_org_access()`'s single-org gate meant MSP staff couldn't open any org but their own — see Known defects below.
+- **Authentication** — session-based login (opaque tokens, HttpOnly+Secure cookie), local password (PBKDF2-HMAC-SHA256, FIPS-140 rationale) + TOTP MFA + backup codes, Microsoft Entra ID SSO, API tokens for machine access — migration 0015. Four roles shipped (`msp_admin`/`msp_engineer`/`customer_poc`/`c3pao_assessor`); see Deferred for role-guard coverage. **Known defect (2026-08-07), fixed 2026-08-11–13, verified 2026-08-17:** `require_org_access()`'s single-org gate meant MSP staff couldn't open any org but their own — full writeup moved to Done below (multi-org access entry), closed out of Known defects.
+- **Multi-org access (ADR 0009 M.1–M.6)** — many-to-many `org_membership`
+  replacing the old single-org gate. Fixed the defect above: an `msp_admin`
+  could previously list every org (`GET /orgs`) and create new ones
+  (`POST /orgs`), but got 403 on everything else for any org beyond their
+  own — including one they'd just created. Traced end to end at the time:
+  `create_org()` produced an ownerless org, `invite_user()` required the
+  caller to already belong to the target org as `msp_admin` (circular for a
+  brand-new org), and `OnboardingWizard`'s very first API call 403'd. The
+  only working onboarding path was `manage.py`'s one-time bootstrap CLI, not
+  a real per-customer flow. Full model, migration path, and slice plan:
+  `docs/adr/0009-multi-org-user-access.md`. **Verified 2026-08-17 on
+  wl-util-1:** full pytest suite (396/396 integration, 530/530 total),
+  `tsc -b` clean, `vitest run` 25/25, plus two browser smoke tests — (1) as
+  `msp_admin`, created a second org, completed `OnboardingWizard` end to
+  end, confirmed data stayed scoped between the two orgs; (2) logged in as
+  both `c3pao_assessor` and `customer_poc`, confirmed each lands directly
+  on their own org's assessment view with no picker and no create-org form
+  visible. `M.7`/`M.8` (deployment-wide user directory + admin-initiated
+  grant/revoke, prerequisites for `docs/PLAN-gui-restructure.md`'s `G.11`
+  pre-org admin screen) and `G.1`–`G.11` remain not started.
 
 ---
 
 ## Known defects
-
-- **MSP staff cannot open any org but their own — the core multi-tenant
-  premise is broken in already-shipped code, not an unbuilt feature.**
-  **Fixed 2026-08-11 through 2026-08-13 (ADR 0009 M.4-M.6), pending live
-  wl-util-1 verification — not yet re-tested against real data.**
-  `require_org_access()`
-  (`backend/app/auth.py`) used to gate on strict
-  `current_user.org_id == org_id` with no role exemption. An `msp_admin`
-  could list every org (`GET /orgs`) and create new ones (`POST /orgs`), but
-  got 403 on everything else for any org beyond their own — including one
-  they'd just created. Traced end to end: `create_org()` produced an
-  ownerless org, `invite_user()` required the caller to already belong to
-  the target org as `msp_admin` (circular for a brand-new org), and
-  `OnboardingWizard`'s very first API call 403'd. The only working
-  onboarding path was `manage.py`'s one-time bootstrap CLI, not a
-  real per-customer flow. Now a real `org_membership` lookup, per the
-  many-to-many model and implementation slice plan in
-  `docs/adr/0009-multi-org-user-access.md`. Exit criteria for closing this
-  entry entirely: live walkthrough on wl-util-1 (create a second org as
-  msp_admin, open it, complete OnboardingWizard end to end, confirm data
-  stays scoped between the two orgs).
 
 - **`app/cli.py::_reset_dev()` would fail against the current schema —
   found 2026-08-11 while investigating a one-off wl-util-1 cleanup script,
@@ -97,7 +96,7 @@ Independent initiative — does not block or get blocked by other roadmap items;
 
 **Approach:** docs-as-code — markdown/MDX content lives in git, changes go through normal PR review, same discipline as the rest of the project.
 
-**Repository — decision needed before scaffolding:** recommend a separate repo (e.g. `wingrc-docs`) rather than folding into the main app repo, so the docs deploy pipeline and contribution surface stay decoupled from the app's own CI/CD. **Jarrod to confirm before any scaffolding begins.**
+**Repository — decided 2026-08-17 (Jarrod): separate repo**, `wingrc-docs`, rather than folding into the main app repo, so the docs deploy pipeline and contribution surface stay decoupled from the app's own CI/CD.
 
 **Hosting:** static output on Cloudflare Pages, Netlify, or GitHub Pages — any of these give free automatic HTTPS for the docs domain itself. This is separate infrastructure from the app's own nginx/Certbot setup, which is for deployed WinGRC instances, not this docs site.
 
