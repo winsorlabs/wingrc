@@ -6,7 +6,6 @@ import type { Assessment, ControlStateRow, Org } from "../types";
 import { ControlDrawer } from "./ControlDrawer";
 import { EvidenceTasksPanel } from "./EvidenceTasksPanel";
 import { FamilySection } from "./FamilySection";
-import { ProductsPanel } from "./ProductsPanel";
 
 const FAMILY_ORDER = [
   "AC", "AT", "AU", "CM", "IA", "IR", "MA", "MP", "PS", "PE", "RA", "CA", "SC", "SI",
@@ -115,7 +114,6 @@ export function AssessmentBoard({ org, assessment, canWrite }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [drawerControl, setDrawerControl] = useState<DrawerControl | null>(null);
-  const [showTools, setShowTools] = useState(false);
   const [showTasks, setShowTasks] = useState(false);
 
   const [filters, setFilters] = useState<FilterOpts>(clearFilters());
@@ -138,24 +136,6 @@ export function AssessmentBoard({ org, assessment, canWrite }: Props) {
 
   function handleOpenDrawer(dbId: string, controlId: string, title: string) {
     setDrawerControl({ dbId, controlId, title });
-  }
-
-  function refreshControlStates() {
-    setLoading(true);
-    api
-      .getControlStates(org.id, assessment.id)
-      .then(setRows)
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
-  }
-
-  function handleProductActivated() {
-    setShowTools(false);
-    refreshControlStates();
-  }
-
-  function handleProductDeactivated() {
-    refreshControlStates();
   }
 
   function handleEvidenceChanged() {
@@ -232,9 +212,6 @@ export function AssessmentBoard({ org, assessment, canWrite }: Props) {
             </button>
             <button className="btn-ghost btn-sm" onClick={() => setShowTasks(true)}>
               Tasks
-            </button>
-            <button className="btn-ghost btn-sm" onClick={() => setShowTools(true)}>
-              Tools &#x2699;
             </button>
           </div>
         </div>
@@ -370,17 +347,6 @@ export function AssessmentBoard({ org, assessment, canWrite }: Props) {
           assessmentId={assessment.id}
           canWrite={canWrite}
           onClose={() => setShowTasks(false)}
-        />
-      )}
-
-      {showTools && (
-        <ProductsPanel
-          orgId={org.id}
-          assessmentId={assessment.id}
-          canWrite={canWrite}
-          onClose={() => setShowTools(false)}
-          onActivated={handleProductActivated}
-          onDeactivated={handleProductDeactivated}
         />
       )}
 

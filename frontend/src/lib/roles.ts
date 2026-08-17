@@ -57,3 +57,34 @@ export const ORG_CREATOR_ROLES = new Set(["msp_admin", "msp_engineer"]);
 export function canCreateOrg(role: string | null | undefined): boolean {
   return !!role && ORG_CREATOR_ROLES.has(role);
 }
+
+// Mirrors routers/users.py's/routers/audit_log.py's role gates on the
+// Security nav category's three sub-items (SideNav.tsx, G.1 — formerly
+// OrgSettings.tsx's inline per-tab checks, extracted here so they're
+// unit-testable the same way as every other axis in this file rather than
+// living only inside a component).
+export const API_TOKEN_ROLES = new Set(["msp_admin", "msp_engineer"]);
+
+export function canSeeApiTokens(role: string | null | undefined): boolean {
+  return !!role && API_TOKEN_ROLES.has(role);
+}
+
+// invite_user/patch_user (users.py) are gated to msp_admin only — no
+// msp_engineer rank exception, unlike API tokens above.
+export function canSeeUsers(role: string | null | undefined): boolean {
+  return role === "msp_admin";
+}
+
+// Matches GET /orgs/{org_id}/audit-log's require_org_access("msp_admin")
+// gate exactly (routers/audit_log.py).
+export function canSeeAuditLog(role: string | null | undefined): boolean {
+  return role === "msp_admin";
+}
+
+// Whether the Security nav *category* itself should render at all — hiding
+// an empty category is a nav-shell-specific concern the old per-tab-only
+// gating never had to answer (OrgSettings always showed something, since
+// Scope's tabs were never role-gated).
+export function canSeeSecurity(role: string | null | undefined): boolean {
+  return canSeeUsers(role) || canSeeApiTokens(role) || canSeeAuditLog(role);
+}

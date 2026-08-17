@@ -1,15 +1,25 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { api } from "./api";
 import { AccountSettings } from "./components/AccountSettings";
+import { ApiTokensPanel } from "./components/ApiTokensPanel";
 import { AssessmentBoard } from "./components/AssessmentBoard";
+import { AuditLogPanel } from "./components/AuditLogPanel";
+import { ContactsPanel } from "./components/ContactsPanel";
 import { InviteAcceptPage } from "./components/InviteAcceptPage";
 import { LoginPage } from "./components/LoginPage";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 import { OrgPicker } from "./components/OrgPicker";
-import { OrgSettings } from "./components/OrgSettings";
+import { OrgProfileForm } from "./components/OrgProfileForm";
+import { ProductsPanel } from "./components/ProductsPanel";
+import type { NavCategory, ScopeTab, SecurityTab } from "./components/SideNav";
+import { SideNav } from "./components/SideNav";
+import { SystemDescriptionForm } from "./components/SystemDescriptionForm";
+import { UsersPanel } from "./components/UsersPanel";
 import { useAuth } from "./hooks/useAuth";
-import type { Assessment, Org } from "./types";
+import { canSeeApiTokens, canSeeAuditLog, canSeeUsers } from "./lib/roles";
+import type { Assessment, OnboardingStatus, Org } from "./types";
 
-type Screen = "orgs" | "board" | "onboarding" | "settings" | "account";
+type Screen = "orgs" | "nav" | "onboarding" | "account";
 
 // Separate from Screen (which only makes sense once `user` exists): this
 // picks between the two pre-auth pages. There's no router in this codebase
@@ -22,15 +32,31 @@ export function App() {
   const [screen, setScreen] = useState<Screen>("orgs");
   const [org, setOrg] = useState<Org | null>(null);
   const [assessment, setAssessment] = useState<Assessment | null>(null);
-  // Shared by both drawer overlays (org settings, account settings) — each
-  // remembers where to return the user when closed.
-  const [drawerReturnScreen, setDrawerReturnScreen] = useState<Screen>("orgs");
+  // "nav" screen's own state — G.1's side nav (docs/PLAN-gui-restructure.md).
+  // Each category keeps its own last-selected sub-tab independently (switch
+  // to Security then back to Scope and you're still on whichever Scope tab
+  // you left), mirroring the old OrgSettings drawer's per-drawer `tab` state
+  // one level higher, now persistent instead of open-close.
+  const [navCategory, setNavCategory] = useState<NavCategory>("assessments");
+  const [scopeTab, setScopeTab] = useState<ScopeTab>("profile");
+  const [securityTab, setSecurityTab] = useState<SecurityTab>("users");
+  const [onboardingStatus, setOnboardingStatus] = useState<OnboardingStatus | null>(null);
   const [preAuthScreen, setPreAuthScreen] = useState<PreAuthScreen>("login");
+
+  function loadOnboardingStatus(orgId: string) {
+    api.getOnboardingStatus(orgId).then(setOnboardingStatus).catch(() => {});
+  }
+
+  useEffect(() => {
+    if (org && screen === "nav") loadOnboardingStatus(org.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [org?.id, screen]);
 
   function enterBoard(o: Org, a: Assessment) {
     setOrg(o);
     setAssessment(a);
-    setScreen("board");
+    setNavCategory("assessments");
+    setScreen("nav");
   }
 
   function enterOnboarding(o: Org) {
@@ -38,29 +64,18 @@ export function App() {
     setScreen("onboarding");
   }
 
-  function openSettings() {
-    setDrawerReturnScreen(screen);
-    setScreen("settings");
-  }
-
-  function closeSettings() {
-    setScreen(drawerReturnScreen);
-  }
-
   function openAccount() {
-    setDrawerReturnScreen(screen);
     setScreen("account");
   }
 
   function closeAccount() {
-    setScreen(drawerReturnScreen);
+    setScreen(org ? "nav" : "orgs");
   }
 
   function goBack() {
     setScreen("orgs");
   }
 
-  const showGear = org !== null && screen !== "settings" && screen !== "orgs";
   const showAccountButton = screen !== "account";
 
   if (isLoading) return <div className="app-loading">Loading…</div>;
@@ -84,12 +99,16 @@ export function App() {
     <>
       <header className="app-header">
         <h1>WinGRC</h1>
-        {screen === "board" && org && assessment && (
+        {screen === "nav" && org && (
           <nav className="breadcrumb">
             <span>›</span>
             <a onClick={goBack}>{org.name}</a>
-            <span>›</span>
-            <span>{assessment.name}</span>
+            {navCategory === "assessments" && assessment && (
+              <>
+                <span>›</span>
+                <span>{assessment.name}</span>
+              </>
+            )}
           </nav>
         )}
         {screen === "onboarding" && org && (
@@ -101,16 +120,6 @@ export function App() {
           </nav>
         )}
         <div className="header-icons">
-          {showGear && (
-            <button
-              className="header-gear"
-              onClick={openSettings}
-              aria-label="Org settings"
-              title="Org settings"
-            >
-              ⚙
-            </button>
-          )}
           {showAccountButton && (
             <button
               className="header-gear"
@@ -142,27 +151,117 @@ export function App() {
           canWrite={canWrite}
           onEnterBoard={enterBoard}
           onEnterOnboarding={enterOnboarding}
-          onOpenSettings={(o) => { setOrg(o); setDrawerReturnScreen("orgs"); setScreen("settings"); }}
+          onOpenSettings={(o) => {
+            // Reset assessment explicitly: this path sets org without ever
+            // selecting an assessment, and a stale one from a previously
+            // open org would otherwise let AssessmentBoard render with a
+            // mismatched org/assessment pairing if the user then clicks
+            // "Assessments" in the side nav.
+            setOrg(o);
+            setAssessment(null);
+            setNavCategory("scope");
+            setScreen("nav");
+          }}
         />
       )}
-      {screen === "board" && org && assessment && (
-        <AssessmentBoard org={org} assessment={assessment} canWrite={canWrite} />
+
+      {screen === "nav" && org && (
+        <div className="workspace-shell">
+          <SideNav
+            category={navCategory}
+            onSelectCategory={setNavCategory}
+            scopeTab={scopeTab}
+            onSelectScopeTab={setScopeTab}
+            securityTab={securityTab}
+            onSelectSecurityTab={setSecurityTab}
+            currentUserRole={user.role}
+            status={onboardingStatus}
+          />
+
+          {navCategory === "scope" && (
+            <div className="workspace-content">
+              {scopeTab === "profile" && (
+                <OrgProfileForm orgId={org.id} canWrite={canWrite} onSaved={() => loadOnboardingStatus(org.id)} />
+              )}
+              {scopeTab === "system" && (
+                <SystemDescriptionForm
+                  orgId={org.id}
+                  canWrite={canWrite}
+                  onSaved={() => loadOnboardingStatus(org.id)}
+                />
+              )}
+              {scopeTab === "contacts" && (
+                <ContactsPanel orgId={org.id} canWrite={canWrite} onChanged={() => loadOnboardingStatus(org.id)} />
+              )}
+            </div>
+          )}
+
+          {navCategory === "assessments" && (
+            assessment ? (
+              <AssessmentBoard org={org} assessment={assessment} canWrite={canWrite} />
+            ) : (
+              <div className="workspace-content">
+                <div className="empty">
+                  No assessment selected — go back to the org picker to choose one.
+                </div>
+              </div>
+            )
+          )}
+
+          {navCategory === "tools" && (
+            assessment ? (
+              <ProductsPanel
+                orgId={org.id}
+                assessmentId={assessment.id}
+                canWrite={canWrite}
+                onClose={() => setNavCategory("assessments")}
+                onActivated={() => setNavCategory("assessments")}
+                onDeactivated={() => setNavCategory("assessments")}
+              />
+            ) : (
+              <div className="workspace-content">
+                <div className="empty">
+                  No assessment selected — go back to the org picker to choose one.
+                </div>
+              </div>
+            )
+          )}
+
+          {navCategory === "library" && (
+            <div className="workspace-content">
+              <div className="empty">Library isn't built yet (docs/PLAN-gui-restructure.md G.10).</div>
+            </div>
+          )}
+
+          {navCategory === "security" && (
+            <div className="workspace-content">
+              {/* Re-checks role here, not just in SideNav: securityTab
+                  defaults to "users" regardless of role (React hooks can't
+                  initialize state from `user.role` conditionally — `user`
+                  isn't guaranteed non-null yet at the useState call site).
+                  Without this, an msp_engineer (sees Security via API
+                  Tokens, not Users) landing on the category for the first
+                  time would render UsersPanel anyway and hit an immediate
+                  403 from its own fetch. */}
+              {securityTab === "users" && canSeeUsers(user.role) && (
+                <UsersPanel orgId={org.id} currentUserId={user.id} />
+              )}
+              {securityTab === "api-tokens" && canSeeApiTokens(user.role) && (
+                <ApiTokensPanel orgId={org.id} currentUserRole={user.role} />
+              )}
+              {securityTab === "audit-log" && canSeeAuditLog(user.role) && (
+                <AuditLogPanel orgId={org.id} />
+              )}
+            </div>
+          )}
+        </div>
       )}
+
       {screen === "onboarding" && org && (
         <OnboardingWizard
           orgId={org.id}
           orgName={org.name}
           onClose={goBack}
-        />
-      )}
-      {screen === "settings" && org && (
-        <OrgSettings
-          orgId={org.id}
-          orgName={org.name}
-          currentUserId={user.id}
-          currentUserRole={user.role}
-          canWrite={canWrite}
-          onClose={closeSettings}
         />
       )}
       {screen === "account" && (

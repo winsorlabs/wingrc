@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { ALL_ROLES, canCreateOrg, deriveCanWrite } from "./roles";
+import {
+  ALL_ROLES,
+  canCreateOrg,
+  canSeeApiTokens,
+  canSeeAuditLog,
+  canSeeSecurity,
+  canSeeUsers,
+  deriveCanWrite,
+} from "./roles";
 
 describe("deriveCanWrite", () => {
   it("msp_admin: can write", () => {
@@ -76,5 +84,61 @@ describe("canCreateOrg", () => {
     for (const role of ALL_ROLES) {
       expect(canCreateOrg(role)).toBe(expected[role]);
     }
+  });
+});
+
+// G.1: SideNav.tsx's Security category, and the three sub-items under it —
+// extracted from what was previously inline in OrgSettings.tsx (untested
+// there too; now unit-tested the same way as every other axis in this file).
+describe("canSeeUsers / canSeeApiTokens / canSeeAuditLog / canSeeSecurity", () => {
+  const expectedUsers: Record<string, boolean> = {
+    msp_admin: true,
+    msp_engineer: false,
+    customer_poc: false,
+    c3pao_assessor: false,
+  };
+  const expectedApiTokens: Record<string, boolean> = {
+    msp_admin: true,
+    msp_engineer: true,
+    customer_poc: false,
+    c3pao_assessor: false,
+  };
+  const expectedAuditLog: Record<string, boolean> = {
+    msp_admin: true,
+    msp_engineer: false,
+    customer_poc: false,
+    c3pao_assessor: false,
+  };
+
+  it("covers every known role for each sub-item — fails loudly if a role is added without an explicit expectation above", () => {
+    expect(ALL_ROLES.sort()).toEqual(Object.keys(expectedUsers).sort());
+    for (const role of ALL_ROLES) {
+      expect(canSeeUsers(role)).toBe(expectedUsers[role]);
+      expect(canSeeApiTokens(role)).toBe(expectedApiTokens[role]);
+      expect(canSeeAuditLog(role)).toBe(expectedAuditLog[role]);
+    }
+  });
+
+  it("no user (null/undefined role): every check defaults closed, not open", () => {
+    expect(canSeeUsers(null)).toBe(false);
+    expect(canSeeUsers(undefined)).toBe(false);
+    expect(canSeeApiTokens(null)).toBe(false);
+    expect(canSeeApiTokens(undefined)).toBe(false);
+    expect(canSeeAuditLog(null)).toBe(false);
+    expect(canSeeAuditLog(undefined)).toBe(false);
+    expect(canSeeSecurity(null)).toBe(false);
+    expect(canSeeSecurity(undefined)).toBe(false);
+  });
+
+  it("canSeeSecurity is true whenever any one sub-item is visible", () => {
+    // msp_admin: all three. msp_engineer: only API tokens. Both must show
+    // the category itself.
+    expect(canSeeSecurity("msp_admin")).toBe(true);
+    expect(canSeeSecurity("msp_engineer")).toBe(true);
+  });
+
+  it("canSeeSecurity is false when every sub-item is hidden — the category itself must not render an empty room", () => {
+    expect(canSeeSecurity("customer_poc")).toBe(false);
+    expect(canSeeSecurity("c3pao_assessor")).toBe(false);
   });
 });

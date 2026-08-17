@@ -1215,34 +1215,63 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 }
 .header-gear:hover { color: var(--text); background: var(--surface); }
 
-/* ── Settings shell ──────────────────────────────────────────────────────── */
-.settings-shell {
+/* ── Account settings (top-level, not part of the workspace shell) ─────────
+   AccountSettings.tsx still needs its own single-pane shell — it has no
+   side nav of its own (see that file's own comment on why it's mounted
+   outside org/nav state entirely). Kept as dedicated classes rather than
+   reusing .workspace-shell below, which now implies a side nav alongside
+   it. */
+.account-shell {
   display: flex; flex-direction: column; height: calc(100vh - 56px);
   background: var(--bg);
 }
-.settings-header {
+.account-header {
   display: flex; align-items: center; gap: 0.75rem;
   padding: 0.75rem 1.5rem; border-bottom: 1px solid var(--border);
   background: var(--surface); flex-shrink: 0;
 }
-.settings-title { display: flex; align-items: center; gap: 0.5rem; font-size: 0.95rem; }
-.settings-org-name { font-weight: 700; }
-.settings-title-sep { color: var(--muted); }
-.settings-layout { display: flex; flex: 1; overflow: hidden; }
-.settings-nav {
-  width: 200px; flex-shrink: 0; border-right: 1px solid var(--border);
-  padding: 1rem 0.75rem; display: flex; flex-direction: column; gap: 0.25rem;
-  background: var(--surface);
+.account-title { display: flex; align-items: center; gap: 0.5rem; font-size: 0.95rem; }
+.account-title-label { font-weight: 700; }
+.account-title-sep { color: var(--muted); }
+.account-content { flex: 1; overflow-y: auto; padding: 1.5rem 2rem; }
+
+/* ── Workspace shell (persistent side nav + content pane) ──────────────────
+   Replaces the old settings-only drawer (.settings-shell/.settings-layout/
+   .settings-nav/.settings-content, OrgSettings.tsx) — G.1's side nav is the
+   same two-pane shape, just persistent and hosting Scope/Assessments/Tools/
+   Library/Security rather than only the old Settings drawer's tabs. ── */
+.workspace-shell {
+  display: flex; height: calc(100vh - 56px); background: var(--bg);
 }
-.settings-nav-item {
+.side-nav {
+  width: 200px; flex-shrink: 0; border-right: 1px solid var(--border);
+  padding: 1rem 0.75rem; display: flex; flex-direction: column; gap: 0.35rem;
+  background: var(--surface); overflow-y: auto;
+}
+.side-nav-category { display: flex; flex-direction: column; }
+.side-nav-item {
   display: flex; align-items: center; gap: 0.5rem;
   padding: 0.5rem 0.75rem; border-radius: 6px; border: none;
   background: none; cursor: pointer; text-align: left;
-  font-size: 0.88rem; color: var(--text); width: 100%;
+  font-size: 0.88rem; color: var(--text); width: 100%; font-weight: 600;
 }
-.settings-nav-item:hover { background: var(--border); }
-.settings-nav-item.active { background: #e0e7ff; color: #3730a3; font-weight: 600; }
-.settings-content { flex: 1; overflow-y: auto; padding: 1.5rem 2rem; }
+.side-nav-item:hover { background: var(--border); }
+.side-nav-item.active { background: #e0e7ff; color: #3730a3; }
+.side-nav-subitems {
+  display: flex; flex-direction: column; gap: 0.15rem;
+  padding-left: 0.75rem; margin: 0.15rem 0 0.35rem;
+}
+.side-nav-subitem {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.4rem 0.75rem; border-radius: 6px; border: none;
+  background: none; cursor: pointer; text-align: left;
+  font-size: 0.82rem; color: var(--text); width: 100%; font-weight: 400;
+}
+.side-nav-subitem:hover { background: var(--border); }
+.side-nav-subitem.active { background: #e0e7ff; color: #3730a3; font-weight: 600; }
+.side-nav-subitem--placeholder { color: var(--muted); cursor: default; }
+.side-nav-subitem--placeholder:hover { background: none; }
+.workspace-content { flex: 1; overflow-y: auto; padding: 1.5rem 2rem; }
 
 /* ── Completion dot ──────────────────────────────────────────────────────── */
 .completion-dot { font-size: 0.75rem; color: var(--muted); }

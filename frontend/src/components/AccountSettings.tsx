@@ -4,12 +4,12 @@ import type { AuthUser, SessionRow } from "../types";
 import { BackupCodesDisplay } from "./BackupCodesDisplay";
 import { MfaReenrollFlow } from "./MfaReenrollFlow";
 
-// Per-user account self-service (I.9) — deliberately NOT nested under
-// OrgSettings. Every OrgSettings tab acts on orgId; this acts on the
-// viewer's own account, which is orthogonal to which org's board happens
-// to be open (same "wrong axis" lesson as the OrgPicker landing fix).
-// Mounted at the top level in App.tsx, reachable from the header
-// regardless of org state.
+// Per-user account self-service (I.9) — deliberately NOT nested under the
+// org side nav (G.1's SideNav.tsx, formerly OrgSettings.tsx). Every side-nav
+// item acts on orgId; this acts on the viewer's own account, which is
+// orthogonal to which org's board happens to be open (same "wrong axis"
+// lesson as the OrgPicker landing fix). Mounted at the top level in
+// App.tsx, reachable from the header regardless of org state.
 //
 // None of this is gated on canWrite (I.8) — that axis governs assessment/
 // org data mutation, not "can this person manage their own login." A
@@ -27,16 +27,16 @@ export function AccountSettings({ user, onClose, onSignedOutEverywhere }: Props)
   const isLocal = user.login_method === "local";
 
   return (
-    <div className="settings-shell">
-      <div className="settings-header">
-        <div className="settings-title">
-          <span className="settings-org-name">My Account</span>
-          <span className="settings-title-sep">·</span>
+    <div className="account-shell">
+      <div className="account-header">
+        <div className="account-title">
+          <span className="account-title-label">My Account</span>
+          <span className="account-title-sep">·</span>
           <span>{user.email}</span>
         </div>
         <button className="drawer-close" onClick={onClose} aria-label="Close account settings">×</button>
       </div>
-      <div className="settings-content">
+      <div className="account-content">
         {isLocal && <PasswordSection />}
         {isLocal && <MfaSection />}
         {!isLocal && (
