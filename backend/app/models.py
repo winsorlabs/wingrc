@@ -34,6 +34,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Identity,
+    Index,
     Integer,
     SmallInteger,
     String,
@@ -568,6 +569,48 @@ class ControlStateHistory(Base):
     changed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class SprsSnapshot(Base):
+    """Point-in-time SPRS score, recorded on every recompute_sprs() call.
+
+    assessment.sprs_score only ever holds the current value — this table is
+    the historical series behind it, written once per recompute (activation,
+    deactivation, and pre-bundle-export all already call recompute_sprs, so
+    this is the single hook point for every case). Append-only, unbounded
+    retention (see G.2 in docs/PLAN-gui-restructure.md for the reasoning).
+
+    `seq`, not `computed_at`, is the ordering key — same fix as
+    PasswordHistory.seq (migration 0020): Postgres's now()/CURRENT_TIMESTAMP
+    returns transaction-start time, not statement-execution time, so two
+    recomputes in one transaction (e.g. activate-then-deactivate in the same
+    request, or this table's own test suite under the savepoint-per-test
+    fixture) get an identical computed_at and an undefined tie order. `seq`
+    is a real auto-incrementing identity, always strictly monotonic
+    regardless of transaction/clock timing. computed_at is kept for
+    display; the index for chronological reads uses seq.
+    """
+
+    __tablename__ = "sprs_snapshot"
+    __table_args__ = (
+        Index("ix_sprs_snapshot_assessment_id_seq", "assessment_id", "seq"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    assessment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("assessment.id"), index=True
+    )
+    # Denormalized for RLS policy — always equals assessment.org_id
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    score: Mapped[int] = mapped_column(SmallInteger)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True), nullable=False)
 
 
 # ---------------------------------------------------------------------------

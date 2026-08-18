@@ -39,6 +39,7 @@ from .models import (
     EvidenceTaskStateLink,
     OrgProduct,
     Product,
+    SprsSnapshot,
 )
 
 
@@ -77,6 +78,9 @@ def recompute_sprs(session: Session, assessment_id: uuid.UUID) -> int:
     assessment = session.get(Assessment, assessment_id)
     if assessment is not None:
         assessment.sprs_score = score
+        session.add(
+            SprsSnapshot(assessment_id=assessment_id, org_id=assessment.org_id, score=score)
+        )
         session.flush()
 
     return score
