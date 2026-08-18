@@ -218,6 +218,7 @@ def _reset_dev(session) -> dict[str, int]:
     deleted["finding"] = _del("DELETE FROM finding")
     deleted["poa_m_item"] = _del("DELETE FROM poa_m_item")
     deleted["implementation_statement"] = _del("DELETE FROM implementation_statement")
+    deleted["sprs_snapshot"] = _del("DELETE FROM sprs_snapshot")
 
     # ------------------------------------------------------------------ #
     # Tier 3 — core assessment tables                                     #
