@@ -1,8 +1,16 @@
 # Plan — GUI restructure: side nav, org dashboard, pre-org admin surface
 
-**Status:** Proposed — not implemented. Report only, per explicit instruction; no
-code in this plan has been written.
-**Baseline:** `83fe49f` (ADR 0009 M.1–M.6 landed; header icon-overlap fix landed).
+**Status:** G.1 implemented, pushed (`e481a00`), and verified live on
+wl-util-1 on 2026-08-18 (`npx tsc -b` clean, browser smoke test — see
+`docs/roadmap.md`'s Done section). G.2 implemented, pushed (`cca09de`,
+`e63e80f`) — migration applies and the new test file pass/fail have NOT
+yet been run against a real Postgres instance; do not read this line as
+"verified" until that run happens and this note is replaced with a real
+result (see the 2026-08-18 correction on this file's own `docs/roadmap.md`
+counterpart for why that distinction is being held to explicitly now).
+G.3–G.11 and M.7/M.8 remain proposed, not implemented.
+**Baseline:** `e481a00` (G.1 landed and verified; supersedes the prior
+`83fe49f` baseline this plan was originally written against).
 **Scope:** replace the current screen-state-machine navigation with a persistent
 side nav (Scope / Assessments / Tools / Library / Security), add an org
 dashboard as the landing screen after org selection, and add an MSP-admin
@@ -135,6 +143,13 @@ its mount point is top-level, not nested).
 screen, `OrgSettings.tsx` deleted (not just unmounted) if the zero-usage
 check in Changes confirms it's dead.
 
+**Met — verified live on wl-util-1, 2026-08-18:** `npx tsc -b` clean;
+`OrgSettings.tsx` deleted in `e481a00` itself; browser smoke test confirmed
+Org Profile, System Description, Personnel & Contacts, Users, API Tokens,
+Audit Log all working under the new shell, `AccountSettings` correctly
+styled (regression caught and fixed in review before this verification),
+and Tools activate/deactivate auto-returns to Assessments correctly.
+
 ---
 
 ## G.2 — SPRS score snapshot table
@@ -183,6 +198,17 @@ Migration applies cleanly, `pytest tests/test_sprs_snapshot.py` (new) green,
 existing `compute_sprs`/`recompute_sprs` tests unmodified and still passing —
 this slice adds a side effect, it must not change the score computation
 itself.
+
+**Implemented, pushed (`cca09de`, `e63e80f`) — not yet run against a real
+Postgres instance.** `org_id` + RLS added beyond the plan's literal column
+list (matching control_state/evidence_task/finding's convention — G.3's
+dashboard endpoint will read this table directly); `seq` (BIGINT GENERATED
+ALWAYS AS IDENTITY) added as the ordering key instead of `computed_at`,
+same fix as migration 0020's password_history precedent, so the index
+lands on `(assessment_id, seq)` rather than `(assessment_id, computed_at)`
+as literally scoped above. `ruff check` clean locally; `alembic upgrade
+head` and `pytest tests/test_sprs_snapshot.py` still need a real run on
+wl-util-1 before this line can say "verified."
 
 ---
 
