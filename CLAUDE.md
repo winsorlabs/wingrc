@@ -391,12 +391,17 @@ titles as grounding. Returns draft body, stores as `ImplementationStatement`
 with `status='draft'`. Human reviews → `reviewed` → `approved`. Provider
 abstraction already exists in `config.py` (`ai_provider` setting).
 
-### 6. SPRS score display (dashboard widget)
-Read `assessment.sprs_score` (already computed and persisted). Show score,
-trend (if multiple assessments), family breakdown. Score is already kept
-current by `engine.py:recompute_sprs` (see SPRS scoring above for its full
-call-site list); no new computation needed — just
-expose it in the UI.
+### 6. SPRS score display (dashboard widget) ✅ DONE (G.3)
+Shipped as part of a broader org dashboard, not a standalone widget as
+originally scoped here — see `docs/PLAN-gui-restructure.md`'s G.3 section
+for the full writeup (backend `routers/dashboard.py`, frontend
+`OrgDashboard.tsx`). The SPRS widget itself reads `assessment.sprs_score`
+plus G.2's `sprs_snapshot` table for trend, alongside eight other widgets
+(family completion heatmap, statement authoring progress, evidence
+expiring, needs-review queue, blocked objectives, RACI-bucketed open
+tasks, POA&M summary, recent activity). Pending live wl-util-1
+verification per that plan doc's own status line — do not infer this is
+verified from this entry alone.
 
 ### 7. Document library / SSP templates
 Org-level document store for policies, procedures, and plans that flow into
