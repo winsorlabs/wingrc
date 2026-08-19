@@ -157,15 +157,27 @@ Full model set: `Framework → Control → AssessmentObjective → ControlState`
 **SPRS scoring** (`assessment.py:compute_sprs`): groups objectives by control,
 applies worst-objective-wins rollup per control, deducts weight for any
 non-passing control (statuses: `not_met`, `partial`, `pending_evidence`,
-`needs_review`). `met`, `inherited`, `not_applicable` do not deduct. Score is
-written to `assessment.sprs_score` on every recompute and is always recomputed
-fresh before bundle export.
+`needs_review`). `met`, `inherited`, `not_applicable` do not deduct.
+`engine.py:recompute_sprs` is the single write path for
+`assessment.sprs_score` — every mutation that can change a control's status
+routes through it: assessment creation (`start_assessment`), every product
+activation/deactivation, every control-state edit
+(`routers/assessments.py:patch_control_state` — e.g. the assessment board's
+"mark met" action), and always fresh immediately before bundle export
+(`bundle_service.snapshot_bundle`). Do not describe this list as just
+"activation/deactivation/bundle export" elsewhere — that enumeration has
+been copied stale into other docs before (docs/PLAN-gui-restructure.md's
+G.2 section, 2026-08-19) precisely because it read as complete when it
+wasn't. `recompute_sprs` acquires `SELECT ... FOR UPDATE` on the assessment
+row before reading `control_state`, serializing concurrent recomputes for
+the same assessment — added 2026-08-19 after G.3's dashboard surfaced a
+lost-update race that predated it.
 
 **Magic loop** (`engine.py:_run_loop`, pure function in `assessment.py`):
 - Activating a product → objectives it covers flip `not_met → pending_evidence`
 - `coverage_basis == 'platform_only'` is excluded — vendor self-coverage never
   credits the customer's CUI environment
-- SPRS recomputed after every product activation/deactivation
+- SPRS recomputed as part of this too — see the complete call-site list above
 - Re-activation after deactivation restores archived tasks/links; restored states
   go to `needs_review` (not `pending_evidence`) — MSP must re-confirm prior
   artifacts are still current
@@ -381,8 +393,9 @@ abstraction already exists in `config.py` (`ai_provider` setting).
 
 ### 6. SPRS score display (dashboard widget)
 Read `assessment.sprs_score` (already computed and persisted). Show score,
-trend (if multiple assessments), family breakdown. Score is already in the DB
-after every product activation/deactivation; no new computation needed — just
+trend (if multiple assessments), family breakdown. Score is already kept
+current by `engine.py:recompute_sprs` (see SPRS scoring above for its full
+call-site list); no new computation needed — just
 expose it in the UI.
 
 ### 7. Document library / SSP templates
