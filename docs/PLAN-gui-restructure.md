@@ -3,12 +3,13 @@
 **Status:** G.1 implemented, pushed (`e481a00`), and verified live on
 wl-util-1 on 2026-08-18 (`npx tsc -b` clean, browser smoke test — see
 `docs/roadmap.md`'s Done section). G.2 implemented, pushed (`cca09de`,
-`e63e80f`) — migration applies and the new test file pass/fail have NOT
-yet been run against a real Postgres instance; do not read this line as
-"verified" until that run happens and this note is replaced with a real
-result (see the 2026-08-18 correction on this file's own `docs/roadmap.md`
-counterpart for why that distinction is being held to explicitly now).
-G.3–G.11 and M.7/M.8 remain proposed, not implemented.
+`e63e80f`), and verified live on wl-util-1 on 2026-08-18 (`alembic upgrade
+head` clean, `pytest tests/test_sprs_snapshot.py` 3/3 — see
+`docs/roadmap.md`'s Done section). G.3 implemented, pushed (`33eeb32`) —
+not yet run against a real Postgres instance or `tsc -b`/browser-tested;
+do not read this line as "verified" until that run happens and this note
+is replaced with a real result. G.4–G.11 and M.7/M.8 remain proposed, not
+implemented.
 **Baseline:** `e481a00` (G.1 landed and verified; supersedes the prior
 `83fe49f` baseline this plan was originally written against).
 **Scope:** replace the current screen-state-machine navigation with a persistent
@@ -265,6 +266,20 @@ objectives specifically (easiest of the nine to get subtly wrong).
 ### Exit criteria
 `pytest` green for the new dashboard endpoint, browser smoke test against a
 real org with non-trivial data in every table the widgets read.
+
+**Implemented, pushed (`33eeb32`) — not yet run against a real Postgres
+instance, `tsc -b`, or a browser.** "Recent activity" (the plan's ninth
+widget) is deliberately NOT folded into the combined payload — it stays a
+separate frontend call to the existing, unmodified, msp_admin-gated
+`GET /orgs/{org_id}/audit-log` endpoint, since embedding it would mean
+either leaking audit data to every dashboard-viewing role or
+conditionally omitting a field per role, both worse than the plan's own
+"reuse as-is." Mount point resolved with the user before implementing
+(see this file's own G.3 commit message): new top-level "Dashboard"
+SideNav category, not nested under "Assessments" — `ruff check` clean
+locally; `pytest tests/test_dashboard.py`, `alembic upgrade head`,
+`tsc -b`, and the browser smoke test against non-trivial data all still
+need a real run on wl-util-1 before this line can say "verified."
 
 ---
 
