@@ -1,15 +1,12 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { FAMILY_ORDER } from "../lib/families";
 import { applyFilters, clearFilters, filtersActive, toggleSetItem } from "../lib/filters";
 import type { FilterOpts } from "../lib/filters";
 import type { Assessment, ControlStateRow, Org } from "../types";
 import { ControlDrawer } from "./ControlDrawer";
 import { EvidenceTasksPanel } from "./EvidenceTasksPanel";
 import { FamilySection } from "./FamilySection";
-
-const FAMILY_ORDER = [
-  "AC", "AT", "AU", "CM", "IA", "IR", "MA", "MP", "PS", "PE", "RA", "CA", "SC", "SI",
-];
 
 // ---------------------------------------------------------------------------
 // SPRS: always computed from ALL rows, never from the filtered view

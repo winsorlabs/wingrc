@@ -1293,6 +1293,17 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 }
 .stat-list li span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; }
 
+/* Family radar chart — hand-rolled SVG (frontend/package.json has no
+   charting library and this is a fixed 14-axis, non-interactive chart, so
+   adding one wasn't worth it). Sized to fit a dashboard-grid card; the
+   viewBox keeps the geometry resolution-independent. */
+.radar-chart { width: 100%; max-width: 280px; display: block; margin: 0.5rem auto 0; }
+.radar-grid-ring { fill: none; stroke: var(--border); stroke-width: 1; }
+.radar-axis-line { stroke: var(--border); stroke-width: 1; }
+.radar-data-polygon { fill: var(--primary); fill-opacity: 0.18; stroke: var(--primary); stroke-width: 2; }
+.radar-data-point { fill: var(--primary); }
+.radar-label { font-size: 7px; font-weight: 600; fill: var(--muted); }
+
 /* ── Onboarding wizard ───────────────────────────────────────────────────── */
 .wizard-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.55);
