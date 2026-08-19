@@ -31,16 +31,44 @@ Items without a status are planned but not yet started.
   brand-new org), and `OnboardingWizard`'s very first API call 403'd. The
   only working onboarding path was `manage.py`'s one-time bootstrap CLI, not
   a real per-customer flow. Full model, migration path, and slice plan:
-  `docs/adr/0009-multi-org-user-access.md`. **Verified 2026-08-17 on
-  wl-util-1:** full pytest suite (396/396 integration, 530/530 total),
-  `tsc -b` clean, `vitest run` 25/25, plus two browser smoke tests — (1) as
-  `msp_admin`, created a second org, completed `OnboardingWizard` end to
-  end, confirmed data stayed scoped between the two orgs; (2) logged in as
-  both `c3pao_assessor` and `customer_poc`, confirmed each lands directly
-  on their own org's assessment view with no picker and no create-org form
-  visible. `M.7`/`M.8` (deployment-wide user directory + admin-initiated
-  grant/revoke, prerequisites for `docs/PLAN-gui-restructure.md`'s `G.11`
-  pre-org admin screen) and `G.1`–`G.11` remain not started.
+  `docs/adr/0009-multi-org-user-access.md`. **Verified 2026-08-18 on
+  wl-util-1, live, this run:** full pytest suite (396/396 integration,
+  530/530 total), `npx tsc -b` clean, `vitest run` **29/29** (2 files:
+  `permissions.test.ts` 16, `filters.test.ts` 13), plus two browser smoke
+  tests — (1) as `msp_admin`, created a second org, completed
+  `OnboardingWizard` end to end, confirmed data stayed scoped between the
+  two orgs; (2) logged in as both `c3pao_assessor` and `customer_poc`,
+  confirmed each lands directly on their own org's assessment view with no
+  picker and no create-org form visible. (An earlier "Verified 2026-08-17"
+  claim written into this file by commit `f27f06f` — before this actual
+  wl-util-1 run, and before `G.1` even existed — cited `vitest run` 25/25;
+  that number didn't match this real run's 29/29. Replaced with the
+  numbers from this live run; flagging so a future reader doesn't take a
+  "Verified" note at face value without checking it was written after,
+  not before, the run it claims.)
+- **G.1 — persistent side nav shell** (`docs/PLAN-gui-restructure.md`,
+  commit `e481a00`) — replaced `App.tsx`'s flat screen machine with a
+  nav-category state shape; `OrgSettings.tsx` deleted, its tab content
+  reused under the new shell. **Verified 2026-08-18 on wl-util-1, live:**
+  `npx tsc -b` clean, browser smoke test confirmed Org Profile, System
+  Description, Personnel & Contacts, Users, API Tokens, and Audit Log all
+  still work under the persistent nav, `AccountSettings` renders correctly
+  styled (the regression caught in review), and activating/deactivating a
+  product from Tools auto-returns to Assessments correctly. `M.7`/`M.8`
+  (deployment-wide user directory + admin-initiated grant/revoke,
+  prerequisites for `G.11`'s pre-org admin screen) and `G.3`–`G.11` remain
+  not started.
+- **G.2 — SPRS score snapshot table** (`docs/PLAN-gui-restructure.md`,
+  commits `cca09de`, `e63e80f`) — `sprs_snapshot` table, one row inserted
+  every time `engine.py:recompute_sprs` writes `assessment.sprs_score`
+  (the single write path — activation, deactivation, pre-bundle-export all
+  call into it). `org_id` + RLS and a `seq` ordering column added beyond
+  the plan's literal column list; see that section's own note for why.
+  **Verified 2026-08-18 on wl-util-1, live:** `alembic upgrade head`
+  applied `0028_sprs_snapshot` cleanly; `pytest tests/test_sprs_snapshot.py`
+  3/3; full backend suite 533/533 (399/399 integration); existing
+  `compute_sprs`/`recompute_sprs` coverage in `test_assessment_engine.py`
+  unmodified and still green.
 
 ---
 

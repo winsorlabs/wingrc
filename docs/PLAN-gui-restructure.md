@@ -199,16 +199,20 @@ existing `compute_sprs`/`recompute_sprs` tests unmodified and still passing —
 this slice adds a side effect, it must not change the score computation
 itself.
 
-**Implemented, pushed (`cca09de`, `e63e80f`) — not yet run against a real
-Postgres instance.** `org_id` + RLS added beyond the plan's literal column
-list (matching control_state/evidence_task/finding's convention — G.3's
+**Implemented, pushed (`cca09de`, `e63e80f`), verified 2026-08-18 live on
+wl-util-1.** `org_id` + RLS added beyond the plan's literal column list
+(matching control_state/evidence_task/finding's convention — G.3's
 dashboard endpoint will read this table directly); `seq` (BIGINT GENERATED
 ALWAYS AS IDENTITY) added as the ordering key instead of `computed_at`,
 same fix as migration 0020's password_history precedent, so the index
 lands on `(assessment_id, seq)` rather than `(assessment_id, computed_at)`
-as literally scoped above. `ruff check` clean locally; `alembic upgrade
-head` and `pytest tests/test_sprs_snapshot.py` still need a real run on
-wl-util-1 before this line can say "verified."
+as literally scoped above. **Verified, real run:** `alembic upgrade head`
+applied `0028_sprs_snapshot` cleanly against real Postgres;
+`pytest tests/test_sprs_snapshot.py -m integration -v` — 3/3 passed;
+full backend suite 533/533 (up from 530 pre-G.2, the 3 new tests);
+integration subset 399/399 (up from 396). `test_assessment_engine.py`'s
+existing `compute_sprs`/`recompute_sprs` coverage unmodified and still
+green, confirming this slice only added the snapshot side effect.
 
 ---
 
