@@ -171,7 +171,14 @@ G.2 section, 2026-08-19) precisely because it read as complete when it
 wasn't. `recompute_sprs` acquires `SELECT ... FOR UPDATE` on the assessment
 row before reading `control_state`, serializing concurrent recomputes for
 the same assessment — added 2026-08-19 after G.3's dashboard surfaced a
-lost-update race that predated it.
+lost-update race that predated it. `recompute_sprs` also flushes
+unconditionally as its first statement, before that lock — production's
+`SessionLocal` (`db.py`) sets `autoflush=False`, and `patch_control_state`
+used to set `cs.status` and call `recompute_sprs` with no flush between
+them, so the score computed there could miss the very edit that
+triggered it. Both fixes landed the same day; see
+`docs/PLAN-gui-restructure.md`'s G.2 section for the full incident
+writeup.
 
 **Magic loop** (`engine.py:_run_loop`, pure function in `assessment.py`):
 - Activating a product → objectives it covers flip `not_met → pending_evidence`

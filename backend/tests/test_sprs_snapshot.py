@@ -172,6 +172,66 @@ def test_patch_control_state_recompute_also_produces_a_snapshot(
     assert assessment.sprs_score == latest.score
 
 
+def test_patch_control_state_score_reflects_its_own_edit_under_autoflush_false(
+    client: TestClient, db_session: Session, ref: dict, fake_msp_admin
+):
+    """Regression test for the real bug behind a 2026-08-19 report ("Dashboard's
+    SPRS score lags the assessment screen by exactly one recompute," even after
+    the SELECT ... FOR UPDATE race fix). Root cause: app/db.py's production
+    SessionLocal sets autoflush=False, but patch_control_state set
+    cs.status = body.status and called recompute_sprs() with no flush in
+    between — recompute_sprs's own control_state SELECT never saw the pending
+    change, so it computed a score missing the very edit that triggered it,
+    deterministically one recompute behind every single call. Fixed by making
+    recompute_sprs() flush first, unconditionally, regardless of caller
+    discipline or session autoflush setting.
+
+    test_patch_control_state_recompute_also_produces_a_snapshot (above) does
+    NOT catch this: db_session's autoflush defaults to True (conftest.py's
+    Session(...) call never sets it), which silently flushes the pending
+    change before recompute_sprs's SELECT runs regardless of whether
+    recompute_sprs does its own flush — a happy-path pass that would have
+    stayed green whether or not this fix was ever applied. This test sets
+    db_session.autoflush = False first, specifically to remove that
+    accidental safety net and exercise the same ordering production hits.
+    """
+    assessment = ref["assessment"]
+    _grant(db_session, fake_msp_admin, org_id=ref["org"].id)
+
+    cs = db_session.scalars(
+        select(ControlState).where(
+            ControlState.assessment_id == assessment.id,
+            ControlState.objective_id == ref["obj"].id,
+        )
+    ).first()
+    assert cs is not None
+    assert cs.status == "not_met"
+
+    db_session.autoflush = False
+    try:
+        resp = client.patch(
+            f"/orgs/{ref['org'].id}/assessments/{assessment.id}/control-states/{cs.id}",
+            json={"status": "met"},
+        )
+    finally:
+        db_session.autoflush = True
+
+    assert resp.status_code == 200
+    body = resp.json()
+
+    # met/inherited-satisfied -> full credit, no deduction for this control.
+    # If the bug were still present, this PATCH's own response and the
+    # persisted state would both reflect the score as of BEFORE this edit
+    # (not_met still deducting ref["ctrl"]'s weight), not after it.
+    assert body["sprs_score"] == 110
+
+    db_session.refresh(assessment)
+    assert assessment.sprs_score == 110
+
+    latest = _snapshots(db_session, assessment.id)[-1]
+    assert latest.score == 110
+
+
 def test_two_recomputes_with_different_states_produce_two_distinct_rows_in_order(
     db_session: Session, ref: dict
 ):

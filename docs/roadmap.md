@@ -66,11 +66,18 @@ Items without a status are planned but not yet started.
   `deactivate_org_product`, `bundle_service.snapshot_bundle`, and
   `routers/assessments.py:patch_control_state`; the last was undercounted
   in this entry's first version — see `docs/PLAN-gui-restructure.md`'s
-  G.2 section for the 2026-08-19 correction and the race-condition bug
-  it surfaced). `org_id` + RLS and a `seq` ordering column added beyond
-  the plan's literal column list; see that section's own note for why.
-  **Verified 2026-08-18 on wl-util-1, live:** `alembic upgrade head`
-  applied `0028_sprs_snapshot` cleanly; `pytest tests/test_sprs_snapshot.py`
+  G.2 section for two 2026-08-19 corrections and the real bugs they
+  surfaced: a concurrent-recompute lost-update race (fixed `2c00b9b`,
+  `SELECT ... FOR UPDATE`), and — found because the race fix alone didn't
+  close the reported symptom — a deterministic bug where `recompute_sprs`
+  never saw its own caller's pending changes under production's
+  `autoflush=False` session setting (fixed same day, `recompute_sprs`
+  now flushes unconditionally first). `org_id` + RLS and a `seq` ordering
+  column added beyond the plan's literal column list; see that section's
+  own note for why.
+  **Verified 2026-08-18 on wl-util-1, live — predates both fixes above,
+  read together with G.2's own section, not alone:** `alembic upgrade
+  head` applied `0028_sprs_snapshot` cleanly; `pytest tests/test_sprs_snapshot.py`
   3/3; full backend suite 533/533 (399/399 integration); existing
   `compute_sprs`/`recompute_sprs` coverage in `test_assessment_engine.py`
   unmodified and still green.

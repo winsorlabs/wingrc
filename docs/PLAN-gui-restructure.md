@@ -5,11 +5,15 @@ wl-util-1 on 2026-08-18 (`npx tsc -b` clean, browser smoke test — see
 `docs/roadmap.md`'s Done section). G.2 implemented, pushed (`cca09de`,
 `e63e80f`), and verified live on wl-util-1 on 2026-08-18 (`alembic upgrade
 head` clean, `pytest tests/test_sprs_snapshot.py` 3/3 — see
-`docs/roadmap.md`'s Done section). G.3 implemented, pushed (`33eeb32`) —
-not yet run against a real Postgres instance or `tsc -b`/browser-tested;
-do not read this line as "verified" until that run happens and this note
-is replaced with a real result. G.4–G.11 and M.7/M.8 remain proposed, not
-implemented.
+`docs/roadmap.md`'s Done section) — **but that "verified" pass predates
+two real correctness bugs found afterward via G.3's smoke test (a
+concurrent-recompute race, fixed in `2c00b9b`; a deterministic
+autoflush=False bug, fixed same day) — see the two dated corrections in
+G.2's own section below before trusting this line alone.** G.3
+implemented, pushed (`33eeb32`) — not yet run against a real Postgres
+instance or `tsc -b`/browser-tested; do not read this line as "verified"
+until that run happens and this note is replaced with a real result.
+G.4–G.11 and M.7/M.8 remain proposed, not implemented.
 **Baseline:** `e481a00` (G.1 landed and verified; supersedes the prior
 `83fe49f` baseline this plan was originally written against).
 **Scope:** replace the current screen-state-machine navigation with a persistent
@@ -243,10 +247,46 @@ snapshot commits last and overwrites the more complete one. This is a
 pre-existing gap in `recompute_sprs()` itself, not something this slice
 introduced — G.2/G.3 are just the first things to surface it visibly,
 by putting the stored value next to an always-fresh live computation in
-the same UI for the first time. Not yet fixed; see the discussion in the
-session this correction was written in for the proposed fix (a row lock
-in `recompute_sprs()`, one place covering all five call sites) and
-whether/when to apply it.
+the same UI for the first time.
+
+**Fixed, pushed (`2c00b9b`):** `recompute_sprs()` now acquires
+`SELECT ... FOR UPDATE` on the assessment row first, before reading
+`control_state` — locking only at the final write (its original
+position) would not have fixed this, since both transactions' reads
+could still happen before either committed. Verified live on
+wl-util-1 — `test_recompute_sprs_locks_the_assessment_row` (a genuine
+two-connection test using `SELECT ... FOR UPDATE NOWAIT`, not a
+same-transaction sequential-calls test that wouldn't exercise real
+concurrency) passed against real Postgres.
+
+**Second correction, 2026-08-19 (same day, found because the bug report
+above persisted after the lock fix landed):** the lock fix was correct
+but incomplete — it closed the genuinely concurrent race but not a
+second, different, *deterministic* bug that was producing the exact
+same symptom ("Dashboard lags the assessment board by exactly one
+recompute," reproducible every time, not intermittent). Root cause:
+`app/db.py`'s production `SessionLocal` sets `autoflush=False`.
+`patch_control_state` sets `cs.status = body.status` and calls
+`recompute_sprs()` immediately, with no flush in between — under
+`autoflush=False`, `recompute_sprs()`'s own `control_state` SELECT never
+saw that pending change, so it computed a score missing the very edit
+that triggered it, every single call. `activate_org_product`/
+`deactivate_org_product`/`_run_loop` all happen to flush their own
+writes before reaching `recompute_sprs()` already, so this was never
+visible from those call sites — only `patch_control_state` hit it, and
+it hit it deterministically, not as a race. Not caught by this table's
+own test suite before now because `tests/conftest.py`'s test session
+never sets `autoflush`, defaulting to `True` — silently masking exactly
+this bug in every test that would otherwise have exercised it,
+including the `patch_control_state` test added in the first correction
+above. Fixed, pushed: `recompute_sprs()` now flushes unconditionally as
+its first statement, before the lock acquisition, so it's correct
+regardless of caller discipline or session `autoflush` setting. New
+regression test explicitly sets `db_session.autoflush = False` before
+calling the endpoint, to remove the accidental safety net the default
+test session setting provided and actually exercise production's
+ordering — see `test_patch_control_state_score_reflects_its_own_edit_under_autoflush_false`
+in `tests/test_sprs_snapshot.py`.
 
 ---
 

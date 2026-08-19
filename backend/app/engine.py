@@ -77,7 +77,30 @@ def recompute_sprs(session: Session, assessment_id: uuid.UUID) -> int:
     earlier plain `session.get()`, and this avoids any doubt about
     whether `Session.get()`'s identity-map short-circuit could return
     that cached instance without actually re-issuing the locking SELECT.
+
+    Flushes FIRST, before anything else: `app/db.py`'s production
+    `SessionLocal` sets `autoflush=False`, so a caller's own pending
+    unflushed ORM changes (e.g. patch_control_state's `cs.status =
+    body.status`, called immediately before this function with no flush
+    in between) are otherwise invisible to the SELECT below — this
+    function would compute a score missing the very edit that triggered
+    it, one recompute behind, every single time. `activate_org_product`/
+    `deactivate_org_product`/`_run_loop` all happen to flush their own
+    writes before reaching this function already, so this was never
+    visible from those call sites; `patch_control_state` did not, and
+    this was live and deterministic (not a race — every call from that
+    endpoint hit it) until this fix. Found via a G.3 smoke-test report
+    ("Dashboard's SPRS score lags the assessment screen's live
+    computation by exactly one recompute") after the earlier
+    SELECT ... FOR UPDATE fix (which addresses a real but different,
+    genuinely concurrent race) didn't close it. Not caught by this
+    file's own test suite before now because tests/conftest.py's test
+    session doesn't set `autoflush`, defaulting to `True` — masking
+    exactly this bug. See docs/PLAN-gui-restructure.md's G.2 section for
+    the full writeup.
     """
+    session.flush()
+
     locked_assessment = session.execute(
         select(Assessment).where(Assessment.id == assessment_id).with_for_update()
     ).scalar_one_or_none()
