@@ -61,8 +61,13 @@ Items without a status are planned but not yet started.
 - **G.2 — SPRS score snapshot table** (`docs/PLAN-gui-restructure.md`,
   commits `cca09de`, `e63e80f`) — `sprs_snapshot` table, one row inserted
   every time `engine.py:recompute_sprs` writes `assessment.sprs_score`
-  (the single write path — activation, deactivation, pre-bundle-export all
-  call into it). `org_id` + RLS and a `seq` ordering column added beyond
+  (the single write path — five call sites, all funneling through this
+  one function: `start_assessment`, `activate_org_product`,
+  `deactivate_org_product`, `bundle_service.snapshot_bundle`, and
+  `routers/assessments.py:patch_control_state`; the last was undercounted
+  in this entry's first version — see `docs/PLAN-gui-restructure.md`'s
+  G.2 section for the 2026-08-19 correction and the race-condition bug
+  it surfaced). `org_id` + RLS and a `seq` ordering column added beyond
   the plan's literal column list; see that section's own note for why.
   **Verified 2026-08-18 on wl-util-1, live:** `alembic upgrade head`
   applied `0028_sprs_snapshot` cleanly; `pytest tests/test_sprs_snapshot.py`

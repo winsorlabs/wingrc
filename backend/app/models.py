@@ -575,10 +575,16 @@ class SprsSnapshot(Base):
     """Point-in-time SPRS score, recorded on every recompute_sprs() call.
 
     assessment.sprs_score only ever holds the current value — this table is
-    the historical series behind it, written once per recompute (activation,
-    deactivation, and pre-bundle-export all already call recompute_sprs, so
-    this is the single hook point for every case). Append-only, unbounded
-    retention (see G.2 in docs/PLAN-gui-restructure.md for the reasoning).
+    the historical series behind it, written once per recompute. Every
+    recompute_sprs() call site (as of this writing: start_assessment,
+    activate_org_product, deactivate_org_product, bundle_service's
+    snapshot_bundle, AND routers/assessments.py's patch_control_state —
+    the last one predates this table, added 2026-07-09, and was missed in
+    this table's original design writeup) funnels through this one
+    function, so this remains the single hook point for every case even
+    though the call-site count was undercounted here at first. Append-only,
+    unbounded retention (see G.2 in docs/PLAN-gui-restructure.md for the
+    reasoning).
 
     `seq`, not `computed_at`, is the ordering key — same fix as
     PasswordHistory.seq (migration 0020): Postgres's now()/CURRENT_TIMESTAMP

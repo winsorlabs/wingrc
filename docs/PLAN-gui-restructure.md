@@ -215,6 +215,39 @@ integration subset 399/399 (up from 396). `test_assessment_engine.py`'s
 existing `compute_sprs`/`recompute_sprs` coverage unmodified and still
 green, confirming this slice only added the snapshot side effect.
 
+**Correction, 2026-08-19 (found via G.3's browser smoke test):** the
+"activation, deactivation, and bundle export" call-site list above (and
+this file's own paraphrase of CLAUDE.md's "SPRS recomputed after every
+product activation/deactivation") was incomplete. `recompute_sprs()` has
+five call sites in total, not the three named categories above:
+`start_assessment`, `activate_org_product`, `deactivate_org_product`,
+`bundle_service.snapshot_bundle`, and — the one missed here —
+`routers/assessments.py:patch_control_state`, which predates this slice
+entirely (added 2026-07-09, in the original "Wire live SPRS scoring"
+commit) and fires on every control-state status PATCH (e.g. marking an
+objective "met" from the assessment board). The omission was repeated
+verbatim into `models.py`'s `SprsSnapshot` docstring, now corrected
+there too. The "single write path" claim itself still holds — every
+site, including this one, funnels through the same `recompute_sprs()`
+function — only the enumerated list was wrong, not the design.
+
+That said: this *is* the mechanism behind a real bug the smoke test
+found (Dashboard's SPRS widget showing a different score than the
+assessment board's live recomputation after marking several objectives
+met). `recompute_sprs()` does an unprotected read-then-write of
+`assessment.sprs_score` with no row lock — any two concurrent calls
+(from any combination of the five sites above, e.g. a control-state PATCH
+racing a product deactivation on the same assessment) can interleave
+under READ COMMITTED such that the transaction with the *less complete*
+snapshot commits last and overwrites the more complete one. This is a
+pre-existing gap in `recompute_sprs()` itself, not something this slice
+introduced — G.2/G.3 are just the first things to surface it visibly,
+by putting the stored value next to an always-fresh live computation in
+the same UI for the first time. Not yet fixed; see the discussion in the
+session this correction was written in for the proposed fix (a row lock
+in `recompute_sprs()`, one place covering all five call sites) and
+whether/when to apply it.
+
 ---
 
 ## G.3 — Org dashboard: shell + existing-data widgets

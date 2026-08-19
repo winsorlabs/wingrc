@@ -1,11 +1,23 @@
 """Integration tests for the sprs_snapshot table (G.2).
 
 recompute_sprs (engine.py) is the single write path for assessment.sprs_score
-— activation, deactivation, and pre-bundle-export all call into it — so one
-hook point there covers every case. These tests confirm that hook fires and
-produces a correctly ordered, correctly scored history, without touching
-compute_sprs/recompute_sprs's own score computation (test_assessment_engine.py
-covers that and must stay green, unmodified, alongside these).
+— every call site (start_assessment, activate_org_product,
+deactivate_org_product, bundle_service.snapshot_bundle, and
+routers/assessments.py:patch_control_state) funnels through this one
+function, so one hook point there covers every case. These tests confirm
+that hook fires and produces a correctly ordered, correctly scored history,
+without touching compute_sprs/recompute_sprs's own score computation
+(test_assessment_engine.py covers that and must stay green, unmodified,
+alongside these).
+
+patch_control_state's call predates this table entirely (2026-07-09) but
+was missed when this file was first written, which under-listed the call
+sites as just three categories. Corrected 2026-08-19 — see
+docs/PLAN-gui-restructure.md's G.2 section for the full writeup, including
+the concurrency bug this omission's investigation surfaced (a real race in
+recompute_sprs's unprotected read-then-write of assessment.sprs_score,
+not fixed by this test file — it isn't reproducible without genuine
+concurrent transactions, which a single-threaded test can't exercise).
 
 Run in-container:
     docker compose exec backend pytest tests/test_sprs_snapshot.py -m integration -v
@@ -116,6 +128,47 @@ def test_recompute_sprs_creates_a_snapshot_row(db_session: Session, ref: dict):
     assert latest.score == score
     assert latest.assessment_id == assessment.id
     assert latest.org_id == ref["org"].id
+
+
+def test_patch_control_state_recompute_also_produces_a_snapshot(
+    client: TestClient, db_session: Session, ref: dict, fake_msp_admin
+):
+    """Confirms the hook fires on the control-state PATCH call path too —
+    no activation, deactivation, or bundle export required. This is the
+    path the assessment board's "mark met" dropdown uses
+    (ObjectiveRow.tsx -> api.patchControlState ->
+    routers/assessments.py:patch_control_state), and the one omitted from
+    this table's original call-site list (see module docstring)."""
+    assessment = ref["assessment"]
+    _grant(db_session, fake_msp_admin, org_id=ref["org"].id)
+
+    cs = db_session.scalars(
+        select(ControlState).where(
+            ControlState.assessment_id == assessment.id,
+            ControlState.objective_id == ref["obj"].id,
+        )
+    ).first()
+    assert cs is not None
+    assert cs.status == "not_met"
+
+    before = _snapshots(db_session, assessment.id)
+
+    resp = client.patch(
+        f"/orgs/{ref['org'].id}/assessments/{assessment.id}/control-states/{cs.id}",
+        json={"status": "met"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+
+    after = _snapshots(db_session, assessment.id)
+    assert len(after) == len(before) + 1
+
+    latest = after[-1]
+    assert latest.score == body["sprs_score"]
+
+    db_session.refresh(assessment)
+    assert assessment.sprs_score == body["sprs_score"]
+    assert assessment.sprs_score == latest.score
 
 
 def test_two_recomputes_with_different_states_produce_two_distinct_rows_in_order(
