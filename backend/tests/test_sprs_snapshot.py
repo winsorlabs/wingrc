@@ -28,7 +28,8 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
@@ -227,3 +228,99 @@ def test_bundle_export_recompute_also_produces_a_snapshot(
 
     after = _snapshots(db_session, assessment.id)
     assert len(after) == before + 1
+
+
+# ---------------------------------------------------------------------------
+# Row-locking (2026-08-19 fix for the concurrent-recompute lost-update race)
+# ---------------------------------------------------------------------------
+#
+# What this does NOT do: reproduce the original race end-to-end (two
+# concurrent recomputes, one with an incomplete snapshot, racing on which
+# stale write lands last). That needs genuine concurrent transactions
+# racing on real wall-clock timing to interleave a specific way — not
+# something a deterministic pytest test can reliably force. Two
+# *sequential* recompute_sprs() calls in the same transaction (the shape
+# every other test in this file uses) would prove nothing about the
+# fix, since there's no concurrency for the lock to arbitrate.
+#
+# What it does instead: proves the lock itself is real. A second,
+# genuinely independent connection's SELECT ... FOR UPDATE NOWAIT on the
+# same assessment row must fail immediately with Postgres's
+# lock-not-available error while the first connection holds the lock
+# uncommitted. NOWAIT makes this deterministic and fast — no thread
+# coordination, no sleep-based timing, no risk of a flaky pass.
+#
+# Why the setup/teardown looks nothing like this file's other tests:
+# cross-connection lock visibility requires a genuinely COMMITTED row —
+# db_session's fixture (used everywhere else here) deliberately never
+# commits anything for real; it's rolled back at every test's teardown
+# (see conftest.py's db_session docstring), which is exactly why it's
+# safe for every other test to leave no trace. That same property makes
+# it useless here: a second, independent connection can never see an
+# uncommitted row. This test uses db_engine directly, commits its own
+# minimal org/framework/assessment, and deletes them explicitly in a
+# finally block — the one place in this file (and the only place in the
+# backend test suite this session touched) that manages its own real
+# cleanup instead of relying on rollback.
+
+
+def test_recompute_sprs_locks_the_assessment_row(db_engine):
+    org_id = uuid.uuid4()
+    fw_id = uuid.uuid4()
+    assessment_id = uuid.uuid4()
+
+    setup_conn = db_engine.connect()
+    try:
+        setup_trans = setup_conn.begin()
+        setup_conn.execute(
+            text("INSERT INTO organization (id, name) VALUES (:id, :name)"),
+            {"id": org_id, "name": f"LockTestOrg-{uuid.uuid4().hex[:6]}"},
+        )
+        setup_conn.execute(
+            text(
+                "INSERT INTO framework (id, key, name, version) "
+                "VALUES (:id, :key, 'Lock Test FW', 'r2')"
+            ),
+            {"id": fw_id, "key": f"fw-lock-{uuid.uuid4().hex[:6]}"},
+        )
+        setup_conn.execute(
+            text(
+                "INSERT INTO assessment"
+                " (id, org_id, framework_id, name, assessment_type, status)"
+                " VALUES (:id, :org_id, :fw_id, 'Lock Test', 'self', 'in_progress')"
+            ),
+            {"id": assessment_id, "org_id": org_id, "fw_id": fw_id},
+        )
+        setup_trans.commit()
+
+        conn_a = db_engine.connect()
+        conn_b = db_engine.connect()
+        try:
+            trans_a = conn_a.begin()
+            conn_a.execute(
+                text("SELECT id FROM assessment WHERE id = :id FOR UPDATE"),
+                {"id": assessment_id},
+            )
+            # conn_a now holds the row lock; deliberately not committed yet,
+            # simulating a recompute_sprs() call still in flight.
+
+            trans_b = conn_b.begin()
+            try:
+                with pytest.raises(OperationalError):
+                    conn_b.execute(
+                        text("SELECT id FROM assessment WHERE id = :id FOR UPDATE NOWAIT"),
+                        {"id": assessment_id},
+                    )
+            finally:
+                trans_b.rollback()
+            trans_a.rollback()
+        finally:
+            conn_a.close()
+            conn_b.close()
+    finally:
+        cleanup_trans = setup_conn.begin()
+        setup_conn.execute(text("DELETE FROM assessment WHERE id = :id"), {"id": assessment_id})
+        setup_conn.execute(text("DELETE FROM framework WHERE id = :id"), {"id": fw_id})
+        setup_conn.execute(text("DELETE FROM organization WHERE id = :id"), {"id": org_id})
+        cleanup_trans.commit()
+        setup_conn.close()

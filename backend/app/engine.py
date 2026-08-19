@@ -49,7 +49,39 @@ def recompute_sprs(session: Session, assessment_id: uuid.UUID) -> int:
     Queries all control_state rows, runs the objective→control rollup via
     compute_sprs(), writes the result to assessment.sprs_score, and flushes.
     Returns the computed integer score.
+
+    Acquires SELECT ... FOR UPDATE on the assessment row FIRST, before
+    reading control_state — this closes a lost-update race across this
+    function's five call sites (start_assessment, activate_org_product,
+    deactivate_org_product, bundle_service.snapshot_bundle,
+    patch_control_state): under READ COMMITTED, two concurrent recomputes
+    for the same assessment could each read control_state before either
+    committed, each computing from an incomplete snapshot, and merely
+    race on which stale write landed last. Locking here first forces
+    whichever transaction acquires the lock second to wait for the first
+    to fully commit before its own control_state read even executes, so
+    that read is guaranteed to see everything the first transaction
+    changed. Locking only at the final write (as this function used to)
+    does not fix this — both reads can still happen before either commit.
+    See docs/PLAN-gui-restructure.md's G.2 section for the bug this
+    closes and why every call site's own lock-acquisition order
+    (control_state/org_product rows before reaching this function, this
+    function's assessment lock last) was checked for deadlock risk
+    against bundle export's reverse order (assessment lock first, then
+    an unrelated evidence-row update) before landing this.
+
+    Uses an explicit `select(...).with_for_update()` rather than
+    `session.get(Assessment, assessment_id, with_for_update=True)`
+    deliberately: several callers (e.g. patch_control_state) already hold
+    the same Assessment row in the session's identity map from an
+    earlier plain `session.get()`, and this avoids any doubt about
+    whether `Session.get()`'s identity-map short-circuit could return
+    that cached instance without actually re-issuing the locking SELECT.
     """
+    locked_assessment = session.execute(
+        select(Assessment).where(Assessment.id == assessment_id).with_for_update()
+    ).scalar_one_or_none()
+
     rows = session.execute(
         select(
             ControlState.objective_id,
@@ -75,11 +107,12 @@ def recompute_sprs(session: Session, assessment_id: uuid.UUID) -> int:
 
     score = compute_sprs(control_weights, objectives_by_control, objective_statuses)
 
-    assessment = session.get(Assessment, assessment_id)
-    if assessment is not None:
-        assessment.sprs_score = score
+    if locked_assessment is not None:
+        locked_assessment.sprs_score = score
         session.add(
-            SprsSnapshot(assessment_id=assessment_id, org_id=assessment.org_id, score=score)
+            SprsSnapshot(
+                assessment_id=assessment_id, org_id=locked_assessment.org_id, score=score
+            )
         )
         session.flush()
 
