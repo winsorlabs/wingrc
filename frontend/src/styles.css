@@ -1277,6 +1277,22 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .completion-dot { font-size: 0.75rem; color: var(--muted); }
 .completion-dot.complete { color: #16a34a; }
 
+/* ── Org dashboard (G.3) ─────────────────────────────────────────────────── */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1.25rem;
+  align-items: start;
+}
+.dashboard-big-stat { font-size: 2.2rem; font-weight: 700; line-height: 1; margin: 0.25rem 0; }
+.heatmap-rows { display: flex; flex-direction: column; gap: 0.6rem; }
+.stat-list { list-style: none; display: flex; flex-direction: column; gap: 0.4rem; }
+.stat-list li {
+  display: flex; justify-content: space-between; font-size: 0.85rem;
+  padding: 0.1rem 0;
+}
+.stat-list li span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; }
+
 /* ── Onboarding wizard ───────────────────────────────────────────────────── */
 .wizard-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.55);

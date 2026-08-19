@@ -1,7 +1,7 @@
 import { canSeeApiTokens, canSeeAuditLog, canSeeSecurity, canSeeUsers } from "../lib/roles";
 import type { OnboardingStatus } from "../types";
 
-export type NavCategory = "scope" | "assessments" | "tools" | "library" | "security";
+export type NavCategory = "dashboard" | "scope" | "assessments" | "tools" | "library" | "security";
 export type ScopeTab = "profile" | "system" | "contacts";
 export type SecurityTab = "users" | "api-tokens" | "audit-log";
 
@@ -49,6 +49,12 @@ export function SideNav({
 
   return (
     <nav className="side-nav">
+      <div className="side-nav-category">
+        <button className={categoryClass("dashboard")} onClick={() => onSelectCategory("dashboard")}>
+          Dashboard
+        </button>
+      </div>
+
       <div className="side-nav-category">
         <button className={categoryClass("scope")} onClick={() => onSelectCategory("scope")}>
           Scope

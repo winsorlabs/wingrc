@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, Contact, ControlStateRow, CreatedApiToken, EvidenceRow, EvidenceTaskRow, Framework, InvitedUser, MfaEnrollData, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, ProductRow, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, Contact, ControlStateRow, CreatedApiToken, DashboardData, EvidenceRow, EvidenceTaskRow, Framework, InvitedUser, MfaEnrollData, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, ProductRow, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -355,6 +355,10 @@ export const api = {
   // ── Onboarding status ─────────────────────────────────────────────────────
   getOnboardingStatus: (orgId: string) =>
     req<OnboardingStatus>(`/orgs/${orgId}/onboarding-status`),
+
+  // ── Org dashboard (G.3) ───────────────────────────────────────────────────
+  getDashboard: (orgId: string, assessmentId: string) =>
+    req<DashboardData>(`/orgs/${orgId}/assessments/${assessmentId}/dashboard`),
 
   // ── Contacts ──────────────────────────────────────────────────────────────
   getContacts: (orgId: string) =>

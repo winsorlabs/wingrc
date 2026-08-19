@@ -177,6 +177,79 @@ export interface OnboardingStatus {
   personnel: { complete: boolean; contact_count: number; roles_covered: string[] };
 }
 
+// GET /orgs/{org_id}/assessments/{assessment_id}/dashboard (G.3) — mirrors
+// backend/app/routers/dashboard.py's DashboardOut and its nested models
+// field-for-field.
+export interface FamilyHeatmapEntry {
+  family: string;
+  controls_met: number;
+  controls_total: number;
+}
+
+export interface SprsTrajectoryPoint {
+  computed_at: string;
+  score: number;
+}
+
+export interface SprsWidgetData {
+  current_score: number | null;
+  trajectory: SprsTrajectoryPoint[];
+}
+
+export interface StatementProgress {
+  draft: number;
+  reviewed: number;
+  approved: number;
+  not_started: number;
+}
+
+export interface EvidenceExpiringItem {
+  task_id: string;
+  title: string;
+  expires_at: string;
+}
+
+export interface ReviewQueueItem {
+  control_state_id: string;
+  control_id: string;
+  family: string;
+  objective_key: string;
+}
+
+export interface BlockedObjectiveItem {
+  control_state_id: string;
+  control_id: string;
+  family: string;
+  objective_key: string;
+}
+
+export interface RaciBucket {
+  contact_id: string | null;
+  contact_name: string | null;
+  open_task_count: number;
+}
+
+export interface PoamSummary {
+  open: number;
+  on_track: number;
+  delayed: number;
+  completed: number;
+  cancelled: number;
+}
+
+export interface DashboardData {
+  family_heatmap: FamilyHeatmapEntry[];
+  sprs: SprsWidgetData;
+  statement_progress: StatementProgress;
+  evidence_expiring: EvidenceExpiringItem[];
+  needs_review: ReviewQueueItem[];
+  needs_review_count: number;
+  blocked_objectives: BlockedObjectiveItem[];
+  blocked_objectives_count: number;
+  raci_open_tasks: RaciBucket[];
+  poam_summary: PoamSummary;
+}
+
 export interface AuthUser {
   id: string;
   org_id: string;

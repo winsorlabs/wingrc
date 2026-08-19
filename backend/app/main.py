@@ -27,7 +27,7 @@ from .domain import EntityType
 from .importers.workbook import parse_workbook
 from .reconcile import reconcile
 from .render import render_view
-from .routers import assessments, audit_log, bundle, contacts, evidence, frameworks, orgs
+from .routers import assessments, audit_log, bundle, contacts, dashboard, evidence, frameworks, orgs
 from .routers import auth as auth_router
 from .routers import users as users_router
 
@@ -62,6 +62,7 @@ app.include_router(evidence.router)
 app.include_router(bundle.router)
 app.include_router(users_router.router)
 app.include_router(audit_log.router)
+app.include_router(dashboard.router)
 
 
 @app.get("/health")

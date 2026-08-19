@@ -8,6 +8,7 @@ import { ContactsPanel } from "./components/ContactsPanel";
 import { InviteAcceptPage } from "./components/InviteAcceptPage";
 import { LoginPage } from "./components/LoginPage";
 import { OnboardingWizard } from "./components/OnboardingWizard";
+import { OrgDashboard } from "./components/OrgDashboard";
 import { OrgPicker } from "./components/OrgPicker";
 import { OrgProfileForm } from "./components/OrgProfileForm";
 import { ProductsPanel } from "./components/ProductsPanel";
@@ -55,7 +56,10 @@ export function App() {
   function enterBoard(o: Org, a: Assessment) {
     setOrg(o);
     setAssessment(a);
-    setNavCategory("assessments");
+    // Dashboard, not Assessments, is the landing view once org+assessment
+    // are both resolved (G.3) — Assessments still shows the existing
+    // control-state board, just no longer the first thing you see.
+    setNavCategory("dashboard");
     setScreen("nav");
   }
 
@@ -103,7 +107,7 @@ export function App() {
           <nav className="breadcrumb">
             <span>›</span>
             <a onClick={goBack}>{org.name}</a>
-            {navCategory === "assessments" && assessment && (
+            {(navCategory === "dashboard" || navCategory === "assessments") && assessment && (
               <>
                 <span>›</span>
                 <span>{assessment.name}</span>
@@ -177,6 +181,18 @@ export function App() {
             currentUserRole={user.role}
             status={onboardingStatus}
           />
+
+          {navCategory === "dashboard" && (
+            assessment ? (
+              <OrgDashboard orgId={org.id} assessmentId={assessment.id} currentUserRole={user.role} />
+            ) : (
+              <div className="workspace-content">
+                <div className="empty">
+                  No assessment selected — go back to the org picker to choose one.
+                </div>
+              </div>
+            )
+          )}
 
           {navCategory === "scope" && (
             <div className="workspace-content">
