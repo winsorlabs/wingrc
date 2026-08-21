@@ -69,6 +69,12 @@ class AssessmentOut(BaseModel):
     status: str
     started_at: datetime
     sprs_score: int | None = None
+    # G.4: derived, not stored — see list_assessments's own note on why.
+    # No default: every construction site must set this explicitly (only
+    # two exist — list_assessments and create_assessment — so there's
+    # nothing to gain from a silent fallback that could mask a spot that
+    # forgot to set it).
+    last_activity_at: datetime
 
 
 class ActivateIn(BaseModel):
@@ -194,6 +200,50 @@ class ControlStateOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _last_activity_by_assessment(
+    session: Session, assessment_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, datetime]:
+    """G.4: MAX(control_state.updated_at, implementation_statement.updated_at)
+    per assessment, derived at read time rather than stored — see
+    docs/PLAN-gui-restructure.md's G.4 section for the "derive, don't add a
+    column" reasoning (every future ControlState/ImplementationStatement
+    write already bumps its own updated_at for free; a stored column would
+    need every future mutation site to remember to also bump it, the same
+    "single choke point beats scattered discipline" lesson recompute_sprs's
+    two bugs this week were about).
+
+    Two GROUP BY queries, not a JOIN — control_state and
+    implementation_statement have no relationship to each other, only to
+    assessment, so joining them would multiply rows and need a MAX(GREATEST
+    (...)) dance for no benefit over just taking the max of two dicts here.
+    """
+    if not assessment_ids:
+        return {}
+    cs_max = dict(
+        session.execute(
+            select(ControlState.assessment_id, func.max(ControlState.updated_at))
+            .where(ControlState.assessment_id.in_(assessment_ids))
+            .group_by(ControlState.assessment_id)
+        ).all()
+    )
+    stmt_max = dict(
+        session.execute(
+            select(
+                ImplementationStatement.assessment_id,
+                func.max(ImplementationStatement.updated_at),
+            )
+            .where(ImplementationStatement.assessment_id.in_(assessment_ids))
+            .group_by(ImplementationStatement.assessment_id)
+        ).all()
+    )
+    result: dict[uuid.UUID, datetime] = {}
+    for aid in assessment_ids:
+        candidates = [t for t in (cs_max.get(aid), stmt_max.get(aid)) if t is not None]
+        if candidates:
+            result[aid] = max(candidates)
+    return result
+
+
 @router.get("/assessments", response_model=list[AssessmentOut])
 def list_assessments(
     org_id: uuid.UUID,
@@ -204,7 +254,34 @@ def list_assessments(
         .where(Assessment.org_id == org_id)
         .order_by(Assessment.started_at.desc())
     ).all()
-    return [AssessmentOut.model_validate(a) for a in assessments]
+    last_activity = _last_activity_by_assessment(session, [a.id for a in assessments])
+    # Built via explicit keyword arguments, not AssessmentOut.model_validate(a)
+    # — last_activity_at is a required field with no default and Assessment
+    # (the ORM object) has no such attribute, so model_validate(a) would
+    # raise a "field required" validation error before a later
+    # .model_copy(update=...) ever got a chance to patch it in. Constructing
+    # directly sidesteps that: every field's actual value is supplied up
+    # front, nothing is read off the ORM object by attribute-name guessing.
+    return [
+        AssessmentOut(
+            id=a.id,
+            org_id=a.org_id,
+            framework_id=a.framework_id,
+            name=a.name,
+            assessment_type=a.assessment_type,
+            status=a.status,
+            started_at=a.started_at,
+            sprs_score=a.sprs_score,
+            # started_at fallback: an assessment whose control_state rows
+            # somehow predate this feature, or (defensively) one with no
+            # rows at all — in practice _seed_control_states always seeds
+            # at least one row synchronously in start_assessment, so this
+            # fallback is not expected to be exercised by any real
+            # assessment, only belt-and-suspenders for the general case.
+            last_activity_at=last_activity.get(a.id, a.started_at),
+        )
+        for a in assessments
+    ]
 
 
 @router.post("/assessments", response_model=AssessmentOut, status_code=201)
@@ -221,7 +298,25 @@ def create_assessment(
         assessment_type=body.assessment_type,
     )
     session.commit()
-    return AssessmentOut.model_validate(assessment)
+    # A brand-new assessment's most recent activity is its own creation —
+    # _seed_control_states has already run by the time start_assessment
+    # returns, but that's the initial seed, not "worked on," so this uses
+    # started_at directly rather than re-querying _last_activity_by_assessment.
+    # Explicit construction, not .model_validate(assessment) — same reason
+    # as list_assessments above: last_activity_at has no default and isn't
+    # an Assessment attribute, so model_validate would fail before a
+    # follow-up .model_copy() could patch it in.
+    return AssessmentOut(
+        id=assessment.id,
+        org_id=assessment.org_id,
+        framework_id=assessment.framework_id,
+        name=assessment.name,
+        assessment_type=assessment.assessment_type,
+        status=assessment.status,
+        started_at=assessment.started_at,
+        sprs_score=assessment.sprs_score,
+        last_activity_at=assessment.started_at,
+    )
 
 
 @router.post(

@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { canSeeAuditLog } from "../lib/roles";
 import { familyRadarPoints } from "../lib/radarChart";
 import type {
+  Assessment,
   AuditLogRow,
   BlockedObjectiveItem,
   DashboardData,
@@ -17,26 +18,96 @@ import type {
 
 interface Props {
   orgId: string;
-  assessmentId: string;
+  // null when the caller (App.tsx) hasn't already established a specific
+  // assessment for this org — e.g. entering via the header's settings
+  // gear, which never selects one. In that case this component resolves
+  // its own default (see the auto-select effect below) rather than
+  // showing a dead end.
+  assessmentId: string | null;
   currentUserRole: string;
+  // Lifts the switcher's selection back up to App.tsx's own `assessment`
+  // state (the same state AssessmentBoard/ProductsPanel/the breadcrumb
+  // read) — switching here keeps every nav category showing the same
+  // assessment, rather than the dashboard silently diverging from what
+  // "Assessments"/"Tools" would show if the user clicked over.
+  onSwitchAssessment: (assessment: Assessment) => void;
 }
 
-// Landing screen once an org + assessment are both resolved (G.3). Nine
-// widgets from one GET call, except "Recent activity" — that one calls
-// api.listAuditLog directly, unmodified, so it keeps its existing
-// msp_admin-only gate (routers/audit_log.py) rather than needing this
-// endpoint to leak or conditionally omit audit data per role. See
+function mostRecentFirst(assessments: Assessment[]): Assessment[] {
+  return [...assessments].sort(
+    (a, b) => new Date(b.last_activity_at).getTime() - new Date(a.last_activity_at).getTime()
+  );
+}
+
+function mostRecentlyActive(assessments: Assessment[]): Assessment {
+  return mostRecentFirst(assessments)[0];
+}
+
+// Landing screen once an org is open (G.3). Nine widgets from one GET call,
+// except "Recent activity" — that one calls api.listAuditLog directly,
+// unmodified, so it keeps its existing msp_admin-only gate
+// (routers/audit_log.py) rather than needing this endpoint to leak or
+// conditionally omit audit data per role. See
 // backend/app/routers/dashboard.py's own module docstring for the same
 // reasoning on the backend side.
-export function OrgDashboard({ orgId, assessmentId, currentUserRole }: Props) {
+//
+// G.4: defaults to the most-recently-active assessment ONLY when App.tsx
+// didn't already have one selected (assessmentId === null) — it never
+// overrides an assessment already established by OrgPicker (an explicit
+// click, or OrgPicker's own separate "last opened in this browser"
+// localStorage cache). Confirmed with the user before implementing rather
+// than picking silently, since "always default to freshest on mount"
+// would have silently swapped away from a choice the user just made.
+export function OrgDashboard({ orgId, assessmentId, currentUserRole, onSwitchAssessment }: Props) {
+  const [assessments, setAssessments] = useState<Assessment[] | null>(null);
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Guards the auto-default effect from firing more than once per org
+  // mount — without it, a user who explicitly switches away right after
+  // the auto-default runs could get overridden again on the next
+  // assessments-list refetch/re-render.
+  const autoSelectedRef = useRef(false);
 
   useEffect(() => {
+    setAssessments(null);
+    autoSelectedRef.current = false;
+    api.getAssessments(orgId).then(setAssessments).catch(() => setAssessments([]));
+  }, [orgId]);
+
+  useEffect(() => {
+    if (assessmentId !== null || assessments === null || autoSelectedRef.current) return;
+    if (assessments.length === 0) return;
+    autoSelectedRef.current = true;
+    onSwitchAssessment(mostRecentlyActive(assessments));
+  }, [assessmentId, assessments, onSwitchAssessment]);
+
+  useEffect(() => {
+    if (assessmentId === null) {
+      setData(null);
+      return;
+    }
     setData(null);
     setError(null);
     api.getDashboard(orgId, assessmentId).then(setData).catch((e: Error) => setError(e.message));
   }, [orgId, assessmentId]);
+
+  if (assessmentId === null) {
+    if (assessments !== null && assessments.length === 0) {
+      return (
+        <div className="workspace-content">
+          <div className="empty">No assessments yet — start one from the org picker.</div>
+        </div>
+      );
+    }
+    // Either still loading the assessments list, or it just arrived and
+    // the auto-select effect above hasn't run yet (effects fire after
+    // render) — both are a brief "resolving" state, not an error.
+    return (
+      <div className="workspace-content">
+        <div className="loading">Loading dashboard…</div>
+      </div>
+    );
+  }
 
   if (error) {
     return (
@@ -54,17 +125,55 @@ export function OrgDashboard({ orgId, assessmentId, currentUserRole }: Props) {
   }
 
   return (
-    <div className="workspace-content dashboard-grid">
-      <FamilyHeatmapCard entries={data.family_heatmap} />
-      <FamilyRadarCard entries={data.family_heatmap} />
-      <SprsCard sprs={data.sprs} />
-      <StatementProgressCard progress={data.statement_progress} />
-      <EvidenceExpiringCard items={data.evidence_expiring} />
-      <NeedsReviewCard items={data.needs_review} count={data.needs_review_count} />
-      <BlockedObjectivesCard items={data.blocked_objectives} count={data.blocked_objectives_count} />
-      <RaciOpenTasksCard buckets={data.raci_open_tasks} />
-      <PoamSummaryCard summary={data.poam_summary} />
-      {canSeeAuditLog(currentUserRole) && <RecentActivityCard orgId={orgId} />}
+    <div className="workspace-content">
+      {assessments && assessments.length > 1 && (
+        <AssessmentSwitcher
+          assessments={assessments}
+          selectedId={assessmentId}
+          onSelect={onSwitchAssessment}
+        />
+      )}
+      <div className="dashboard-grid">
+        <FamilyHeatmapCard entries={data.family_heatmap} />
+        <FamilyRadarCard entries={data.family_heatmap} />
+        <SprsCard sprs={data.sprs} />
+        <StatementProgressCard progress={data.statement_progress} />
+        <EvidenceExpiringCard items={data.evidence_expiring} />
+        <NeedsReviewCard items={data.needs_review} count={data.needs_review_count} />
+        <BlockedObjectivesCard items={data.blocked_objectives} count={data.blocked_objectives_count} />
+        <RaciOpenTasksCard buckets={data.raci_open_tasks} />
+        <PoamSummaryCard summary={data.poam_summary} />
+        {canSeeAuditLog(currentUserRole) && <RecentActivityCard orgId={orgId} />}
+      </div>
+    </div>
+  );
+}
+
+function AssessmentSwitcher({
+  assessments,
+  selectedId,
+  onSelect,
+}: {
+  assessments: Assessment[];
+  selectedId: string;
+  onSelect: (assessment: Assessment) => void;
+}) {
+  const sorted = mostRecentFirst(assessments);
+  return (
+    <div className="assessment-switcher">
+      <label htmlFor="assessment-switcher-select">Assessment</label>
+      <select
+        id="assessment-switcher-select"
+        value={selectedId}
+        onChange={(e) => {
+          const next = assessments.find((a) => a.id === e.target.value);
+          if (next) onSelect(next);
+        }}
+      >
+        {sorted.map((a) => (
+          <option key={a.id} value={a.id}>{a.name}</option>
+        ))}
+      </select>
     </div>
   );
 }

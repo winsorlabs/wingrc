@@ -3,17 +3,28 @@
 **Status:** G.1 implemented, pushed (`e481a00`), and verified live on
 wl-util-1 on 2026-08-18 (`npx tsc -b` clean, browser smoke test — see
 `docs/roadmap.md`'s Done section). G.2 implemented, pushed (`cca09de`,
-`e63e80f`), and verified live on wl-util-1 on 2026-08-18 (`alembic upgrade
-head` clean, `pytest tests/test_sprs_snapshot.py` 3/3 — see
-`docs/roadmap.md`'s Done section) — **but that "verified" pass predates
-two real correctness bugs found afterward via G.3's smoke test (a
-concurrent-recompute race, fixed in `2c00b9b`; a deterministic
-autoflush=False bug, fixed same day) — see the two dated corrections in
-G.2's own section below before trusting this line alone.** G.3
-implemented, pushed (`33eeb32`) — not yet run against a real Postgres
-instance or `tsc -b`/browser-tested; do not read this line as "verified"
-until that run happens and this note is replaced with a real result.
-G.4–G.11 and M.7/M.8 remain proposed, not implemented.
+`e63e80f`) — its original 2026-08-18 "verified" pass (`alembic upgrade
+head` clean, `pytest tests/test_sprs_snapshot.py` 3/3) predated two real
+correctness bugs surfaced by G.3's smoke test: a concurrent-recompute
+race (fixed `2c00b9b`) and a deterministic `autoflush=False` bug (fixed
+`cbe3e57`, same day). Both fixes are now themselves verified live on
+wl-util-1, 2026-08-19 — see the dated corrections in G.2's own section
+below for the full detail. G.3 implemented, pushed (`33eeb32`), and now
+**verified live on wl-util-1, 2026-08-19**: full backend suite 545/545,
+integration subset 411/411, `tsc -b` clean, `vitest run` 37/37 (including
+`lib/radarChart.test.ts`'s 8 new cases), and a browser smoke test
+confirming the Dashboard's SPRS Score matches the assessment screen and
+the new family-radar widget renders correctly — see G.3's own section
+below and `docs/roadmap.md`'s Done entry for the full detail. A small
+radar-chart addition to the SPRS widget (per-family completion %, 14
+CMMC domains as spokes, hand-rolled SVG, no new dependency — commit
+in the same 2026-08-19 batch) shipped and is verified alongside it.
+G.4 implemented, pushed — not yet run against a real Postgres instance,
+`tsc -b`, or a browser; do not read this line as "verified" until that
+run happens and this note is replaced with a real result. Adds
+`jsdom` + `@testing-library/react` as new devDependencies (the first
+component-level test in this codebase) — see G.4's own section below
+for why. G.5–G.11 and M.7/M.8 remain proposed, not implemented.
 **Baseline:** `e481a00` (G.1 landed and verified; supersedes the prior
 `83fe49f` baseline this plan was originally written against).
 **Scope:** replace the current screen-state-machine navigation with a persistent
@@ -340,19 +351,43 @@ objectives specifically (easiest of the nine to get subtly wrong).
 `pytest` green for the new dashboard endpoint, browser smoke test against a
 real org with non-trivial data in every table the widgets read.
 
-**Implemented, pushed (`33eeb32`) — not yet run against a real Postgres
-instance, `tsc -b`, or a browser.** "Recent activity" (the plan's ninth
-widget) is deliberately NOT folded into the combined payload — it stays a
-separate frontend call to the existing, unmodified, msp_admin-gated
-`GET /orgs/{org_id}/audit-log` endpoint, since embedding it would mean
-either leaking audit data to every dashboard-viewing role or
-conditionally omitting a field per role, both worse than the plan's own
-"reuse as-is." Mount point resolved with the user before implementing
-(see this file's own G.3 commit message): new top-level "Dashboard"
-SideNav category, not nested under "Assessments" — `ruff check` clean
-locally; `pytest tests/test_dashboard.py`, `alembic upgrade head`,
-`tsc -b`, and the browser smoke test against non-trivial data all still
-need a real run on wl-util-1 before this line can say "verified."
+**Implemented, pushed (`33eeb32`), verified live on wl-util-1,
+2026-08-19.** "Recent activity" (the plan's ninth widget) is deliberately
+NOT folded into the combined payload — it stays a separate frontend call
+to the existing, unmodified, msp_admin-gated `GET
+/orgs/{org_id}/audit-log` endpoint, since embedding it would mean either
+leaking audit data to every dashboard-viewing role or conditionally
+omitting a field per role, both worse than the plan's own "reuse as-is."
+Mount point resolved with the user before implementing: new top-level
+"Dashboard" SideNav category, not nested under "Assessments."
+
+**Verified, real run:** `pytest tests/test_dashboard.py` 9/9; full
+backend suite 545/545 (up from 542 pre-G.2-fixes baseline — includes the
+autoflush regression test); integration subset 411/411; `alembic upgrade
+head` clean (no new migration for this slice, confirmed no-op); `npx tsc
+-b` clean; `vitest run` 37/37 across `permissions.test.ts` (16),
+`filters.test.ts` (13), and `radarChart.test.ts` (8, new). Browser smoke
+test confirmed: all nine widgets render against a real org with
+non-trivial data; the blocked-objectives anti-join correctly excludes
+controls with evidence attached; "Open Tasks by Owner" degrades
+gracefully to an "Unassigned" bucket since G.7 doesn't exist yet;
+Recent Activity stays `msp_admin`-gated; and — after two real bugs were
+found and fixed via this exact check (see G.2's corrections above) — the
+Dashboard's SPRS Score now matches the assessment screen's exactly, even
+after deliberately overlapping a control-state edit with a product
+activate/deactivate to try to retrigger the original race.
+
+**Family radar chart addition** (not in the original plan; small
+follow-on request, same 2026-08-19 batch): per-family completion % for
+all 14 CMMC domains as radar spokes, added alongside (not replacing) the
+existing Family Completion bar list. Hand-rolled SVG — `frontend/package.json`
+had no charting library, and a fixed 14-axis non-interactive chart didn't
+justify adding one. New `lib/radarChart.ts` (pure coordinate-mapping
+function, no DOM) and `lib/families.ts` (extracted the 14-family order
+from `AssessmentBoard.tsx` into one shared source of truth, so the radar
+and the bar list can't drift into two different orderings). 8 new tests
+in `radarChart.test.ts` — verified live, all passing. Browser smoke test
+confirmed all 14 spokes render in bar-list order with matching values.
 
 ---
 
@@ -389,6 +424,70 @@ low — one per framework per audit cycle, not a high-cardinality table).
 Backend test confirms the derived ordering; browser smoke test confirms the
 dropdown switch actually re-fetches the dashboard for the newly selected
 assessment.
+
+**Implemented, pushed — not yet run against a real Postgres instance,
+`tsc -b`, or a browser.** Two design questions confirmed with the user
+before implementing rather than picked silently:
+
+1. **Default-vs-override:** the switcher's "defaults to the entry with the
+   latest `last_activity_at`" only fires when `App.tsx` had no assessment
+   already selected (the settings-gear entry path, previously a dead end
+   showing "go back to org picker"). It never overrides an assessment
+   already established by `OrgPicker` — an explicit click, or `OrgPicker`'s
+   own separate, pre-existing "last opened in this browser" `localStorage`
+   cache (`getCachedAssessmentId`/`setCachedAssessmentId` in `api.ts`,
+   unrelated to this slice and left untouched). The alternative
+   ("always default to freshest on mount") would have silently swapped
+   away from a choice the user just made.
+2. **Component-test infrastructure:** verifying "the dropdown switch
+   actually re-fetches, not just relabels" for real means rendering
+   `OrgDashboard` and simulating a `<select>` change — this codebase had
+   zero component-rendering test infrastructure before this slice
+   (`vite.config.ts` set `test.environment: "node"`, no DOM; every
+   existing frontend test is a pure-function test in `lib/`). Added
+   `jsdom` + `@testing-library/react` as new devDependencies, scoped to
+   this one test file only via a `// @vitest-environment jsdom` comment
+   (not a global `vite.config.ts` change) —
+   `frontend/src/components/OrgDashboard.test.tsx` is the first
+   component-level test in the codebase. Confirmed with the user first,
+   same standard as the radar chart's charting-library question.
+
+Backend: `_last_activity_by_assessment` (two `GROUP BY` queries, not a
+join — `control_state`/`implementation_statement` have no relationship to
+each other, only to `assessment`) in `routers/assessments.py`.
+`AssessmentOut` gains a required `last_activity_at: datetime` (no default —
+only two construction sites exist, so nothing is gained from a silent
+fallback that could mask one that forgot to set it). Caught before
+running anything: both construction sites originally used
+`AssessmentOut.model_validate(a).model_copy(update={...})`, which is
+wrong — `model_validate(a)` validates immediately against the ORM object's
+own attributes, and `Assessment` has no `last_activity_at` attribute, so
+it would raise "field required" before `.model_copy()` ever got a chance
+to patch it in. Fixed by constructing `AssessmentOut(...)` directly with
+every field supplied as an explicit keyword argument in both places.
+
+Frontend: `OrgDashboard.tsx` fetches the org's assessment list itself,
+auto-selects per the confirmed default-vs-override rule, and lifts the
+switcher's selection back up to `App.tsx`'s own `assessment` state via a
+new `onSwitchAssessment` prop — this keeps `AssessmentBoard`/
+`ProductsPanel`/the breadcrumb showing the same assessment the dashboard
+switched to, rather than the dashboard silently diverging from the rest
+of the nav shell.
+
+Tests: `tests/test_assessments_list.py` (backend) covers the derived
+ordering — including proving it reflects `implementation_statement`
+activity too, not just `control_state` — using explicit `updated_at`
+values set directly on ORM objects rather than real wall-clock gaps,
+since this test suite runs inside one `db_session` transaction and
+Postgres's `now()` is transaction-start time, not statement-execution
+time (the same root cause as migration 0020's `password_history` bug and
+`sprs_snapshot`'s `seq` column — flagged in the test file's own module
+docstring so it isn't independently rediscovered a third time).
+`OrgDashboard.test.tsx` (frontend, new infrastructure) covers: switching
+re-fetches with the new assessment id; auto-default fires only when
+nothing was pre-selected; auto-default never overrides a pre-existing
+selection even when a fresher assessment exists; the switcher hides
+entirely when the org has only one assessment.
 
 ---
 

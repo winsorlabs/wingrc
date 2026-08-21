@@ -21,6 +21,10 @@ export interface Assessment {
   status: string;
   started_at: string;
   sprs_score: number | null;
+  // G.4: derived at read time (MAX of control_state/implementation_statement
+  // updated_at for this assessment) — see backend/app/routers/assessments.py's
+  // _last_activity_by_assessment for why this isn't a stored column.
+  last_activity_at: string;
 }
 
 export interface ControlStateRow {

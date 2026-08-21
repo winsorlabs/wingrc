@@ -1304,6 +1304,18 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .radar-data-point { fill: var(--primary); }
 .radar-label { font-size: 7px; font-weight: 600; fill: var(--muted); }
 
+/* Assessment switcher (G.4) — sits above .dashboard-grid, not inside a
+   .form-field (that class stacks label-over-input for form layouts; this
+   is a compact inline toolbar control instead). */
+.assessment-switcher { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem; }
+.assessment-switcher label { font-size: 0.8rem; font-weight: 500; color: var(--muted); }
+.assessment-switcher select {
+  padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 5px;
+  background: var(--surface); color: var(--text);
+  font-size: 0.88rem; font-family: inherit; min-width: 220px;
+}
+.assessment-switcher select:focus { outline: none; border-color: var(--primary); }
+
 /* ── Onboarding wizard ───────────────────────────────────────────────────── */
 .wizard-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.55);

@@ -183,15 +183,12 @@ export function App() {
           />
 
           {navCategory === "dashboard" && (
-            assessment ? (
-              <OrgDashboard orgId={org.id} assessmentId={assessment.id} currentUserRole={user.role} />
-            ) : (
-              <div className="workspace-content">
-                <div className="empty">
-                  No assessment selected — go back to the org picker to choose one.
-                </div>
-              </div>
-            )
+            <OrgDashboard
+              orgId={org.id}
+              assessmentId={assessment?.id ?? null}
+              currentUserRole={user.role}
+              onSwitchAssessment={setAssessment}
+            />
           )}
 
           {navCategory === "scope" && (

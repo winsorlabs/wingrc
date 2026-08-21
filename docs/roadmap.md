@@ -80,7 +80,42 @@ Items without a status are planned but not yet started.
   head` applied `0028_sprs_snapshot` cleanly; `pytest tests/test_sprs_snapshot.py`
   3/3; full backend suite 533/533 (399/399 integration); existing
   `compute_sprs`/`recompute_sprs` coverage in `test_assessment_engine.py`
-  unmodified and still green.
+  unmodified and still green. **Both fixes above independently verified
+  live on wl-util-1, 2026-08-19:** the lock fix (`2c00b9b`) via
+  `test_recompute_sprs_locks_the_assessment_row`, a genuine two-connection
+  `SELECT ... FOR UPDATE NOWAIT` test, not a same-transaction fake; the
+  autoflush fix (`cbe3e57`) via
+  `test_patch_control_state_score_reflects_its_own_edit_under_autoflush_false`.
+  Full suite at that point: 545/545 (411/411 integration). Browser
+  confirmed the Dashboard's SPRS Score finally matches the assessment
+  screen's after deliberately overlapping a control-state edit with a
+  product activate/deactivate.
+- **G.3 — org dashboard** (`docs/PLAN-gui-restructure.md`, commit
+  `33eeb32`) — new `GET /orgs/{org_id}/assessments/{assessment_id}/dashboard`
+  endpoint serving 8 of 9 widgets in one payload (Recent Activity stays a
+  separate call to the existing, unmodified, `msp_admin`-gated
+  `/audit-log` endpoint, deliberately not folded in — see plan doc for
+  why); new `OrgDashboard.tsx`, mounted as a new top-level "Dashboard"
+  SideNav category. This slice's own smoke test is what surfaced both
+  SPRS bugs recorded in the G.2 entry above — the dashboard gave the
+  stored score a second, always-fresh comparison point for the first
+  time. **Verified live on wl-util-1, 2026-08-19:** `pytest
+  tests/test_dashboard.py` 9/9; full suite 545/545 (411/411 integration);
+  `npx tsc -b` clean; `vitest run` 37/37; browser smoke test against a
+  real org with non-trivial data confirmed all nine widgets, including
+  the blocked-objectives anti-join and the RACI "Unassigned" bucket
+  fallback (G.7 doesn't exist yet).
+- **Family radar chart** (small follow-on to G.3, same 2026-08-19 batch,
+  not in the original plan) — per-family completion % for all 14 CMMC
+  domains plotted as radar spokes on the dashboard, alongside (not
+  replacing) the existing Family Completion bar list. Hand-rolled SVG, no
+  new frontend dependency added. New `lib/radarChart.ts` (pure, testable
+  coordinate mapping) and `lib/families.ts` (single shared source of
+  truth for the 14-family order, previously duplicated as a local const
+  in `AssessmentBoard.tsx`). **Verified live on wl-util-1, 2026-08-19:**
+  `radarChart.test.ts` 8/8 (part of the 37/37 `vitest` total above);
+  browser smoke test confirmed all 14 spokes render correctly against
+  real data. `G.4`–`G.11` and `M.7`/`M.8` remain not started.
 
 ---
 
