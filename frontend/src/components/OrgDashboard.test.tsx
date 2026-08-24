@@ -12,9 +12,9 @@
 // hand-rolled radar chart decision. Scoped to just this file via the
 // @vitest-environment comment above, not vite.config.ts's global
 // test.environment (left as "node" for every other test).
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, cleanup } from "@testing-library/react";
 import { useState } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api";
 import type { Assessment, DashboardData } from "../types";
 import { OrgDashboard } from "./OrgDashboard";
@@ -75,6 +75,19 @@ function Harness({ initial }: { initial: Assessment | null }) {
 }
 
 describe("OrgDashboard assessment switcher (G.4)", () => {
+  // Neither this file nor vite.config.ts registers @testing-library/react's
+  // auto-cleanup or a mock-clearing hook (no setupFiles, no clearMocks) —
+  // without this, every test after the first inherits the prior test's
+  // still-mounted DOM (screen queries aren't scoped per-render) and the
+  // prior test's spy call history (mockResolvedValue replaces the
+  // implementation but never clears .mock.calls). Scoped to this file
+  // rather than vite.config.ts's global test block, same reasoning as the
+  // @vitest-environment jsdom comment above.
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
   beforeEach(() => {
     vi.mocked(api.getDashboard).mockResolvedValue(makeDashboardData());
   });
