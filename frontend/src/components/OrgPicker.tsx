@@ -6,12 +6,18 @@ import type { Assessment, AuthUser, Framework, Org } from "../types";
 interface Props {
   currentUser: AuthUser;
   canWrite: boolean;
+  // See App.tsx's call site: true when the user explicitly navigated back
+  // to this screen rather than landing here fresh, so the cached-assessment
+  // auto-resume below doesn't bounce them straight back to where they came
+  // from — that would make the assessment list / "Start New Assessment"
+  // permanently unreachable for any org that's ever been opened.
+  skipAutoResume?: boolean;
   onEnterBoard: (org: Org, assessment: Assessment) => void;
   onEnterOnboarding: (org: Org) => void;
   onOpenSettings: (org: Org) => void;
 }
 
-export function OrgPicker({ currentUser, canWrite, onEnterBoard, onEnterOnboarding, onOpenSettings }: Props) {
+export function OrgPicker({ currentUser, canWrite, skipAutoResume = false, onEnterBoard, onEnterOnboarding, onOpenSettings }: Props) {
   const canCreate = canCreateOrg(currentUser.role);
 
   const [orgs, setOrgs] = useState<Org[]>([]);
@@ -48,6 +54,7 @@ export function OrgPicker({ currentUser, canWrite, onEnterBoard, onEnterOnboardi
     setAssessments([]);
     api.getAssessments(org.id).then((list) => {
       setAssessments(list);
+      if (skipAutoResume) return;
       const cachedId = getCachedAssessmentId(org.id);
       if (cachedId) {
         const cached = list.find((a) => a.id === cachedId);
@@ -242,18 +249,24 @@ export function OrgPicker({ currentUser, canWrite, onEnterBoard, onEnterOnboardi
                 </li>
               ))}
               {assessments.length === 0 && (
-                <li className="empty">No assessments yet — start one below.</li>
+                <li className="empty">
+                  {canWrite ? "No assessments yet — start one below." : "No assessments yet."}
+                </li>
               )}
             </ul>
 
-            <div className="divider" />
-            <button
-              className="btn-primary"
-              onClick={startAssessment}
-              disabled={starting || frameworks.length === 0}
-            >
-              {starting ? "Starting…" : "Start New Assessment"}
-            </button>
+            {canWrite && (
+              <>
+                <div className="divider" />
+                <button
+                  className="btn-primary"
+                  onClick={startAssessment}
+                  disabled={starting || frameworks.length === 0}
+                >
+                  {starting ? "Starting…" : "Start New Assessment"}
+                </button>
+              </>
+            )}
           </>
         )}
       </div>

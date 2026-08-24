@@ -153,6 +153,18 @@ export function App() {
         <OrgPicker
           currentUser={user}
           canWrite={canWrite}
+          // True once we've already had an org open this session — i.e.
+          // the user explicitly navigated back to the picker (breadcrumb
+          // click) rather than this being the fresh-login landing. Without
+          // this, OrgPicker's cached-assessment auto-resume (see its own
+          // comment) fires again on every return trip and bounces the user
+          // straight back into the board they just left, making the
+          // assessment list / "Start New Assessment" screen unreachable
+          // for any org that's ever been opened. Pre-existing bug, not
+          // introduced by G.1 — the breadcrumb "go back" path is unchanged
+          // from before G.1's nav restructure; only the reachable
+          // destination (the picker's own auto-resume) was broken.
+          skipAutoResume={org !== null}
           onEnterBoard={enterBoard}
           onEnterOnboarding={enterOnboarding}
           onOpenSettings={(o) => {
