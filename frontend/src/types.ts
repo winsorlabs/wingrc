@@ -386,3 +386,38 @@ export interface PasswordResetIssued {
   reset_token: string;
   expires_at: string;
 }
+
+// ── Scope / Assets (G.5) — mirrors backend/app/routers/scope.py's schemas ──
+export interface ScopeEntity {
+  id: string;
+  entity_type: string;
+  natural_key: string;
+  scope_category: string | null;
+  status: string;
+  in_boundary: boolean;
+  source: string;
+  source_ref: string | null;
+  attributes: Record<string, unknown>;
+}
+
+export interface ScopeChangeIncoming {
+  scope_category: string | null;
+  status: string;
+  in_boundary: boolean;
+  source: string;
+  source_ref: string | null;
+  attributes: Record<string, unknown>;
+}
+
+export interface ScopeChange {
+  change_type: "new" | "changed" | "missing" | "unchanged";
+  entity_type: string;
+  natural_key: string;
+  field_diffs: Record<string, [unknown, unknown]>;
+  incoming: ScopeChangeIncoming | null;
+}
+
+export interface DryRunResult {
+  summary: Record<string, number>;
+  changes: ScopeChange[];
+}

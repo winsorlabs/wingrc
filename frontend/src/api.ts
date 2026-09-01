@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, Contact, ControlStateRow, CreatedApiToken, DashboardData, EvidenceRow, EvidenceTaskRow, Framework, InvitedUser, MfaEnrollData, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, ProductRow, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, Contact, ControlStateRow, CreatedApiToken, DashboardData, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, InvitedUser, MfaEnrollData, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, ProductRow, ScopeChange, ScopeEntity, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -504,6 +504,64 @@ export const api = {
     }
     return req<AuditLogPage>(`/orgs/${orgId}/audit-log?${params.toString()}`);
   },
+
+  // ── Scope / Assets (G.5) ──────────────────────────────────────────────────
+  getScope: (orgId: string, entityType?: string) =>
+    req<ScopeEntity[]>(
+      `/orgs/${orgId}/scope${entityType ? `?entity_type=${encodeURIComponent(entityType)}` : ""}`
+    ),
+
+  createScopeEntity: (
+    orgId: string,
+    data: {
+      entity_type: string;
+      natural_key: string;
+      scope_category?: string | null;
+      status?: string;
+      in_boundary?: boolean;
+      attributes?: Record<string, unknown>;
+    }
+  ) => req<ScopeEntity>(`/orgs/${orgId}/scope`, { method: "POST", body: JSON.stringify(data) }),
+
+  patchScopeEntity: (
+    orgId: string,
+    entityId: string,
+    data: Partial<{
+      scope_category: string | null;
+      status: string;
+      in_boundary: boolean;
+      attributes: Record<string, unknown>;
+    }>
+  ) =>
+    req<ScopeEntity>(`/orgs/${orgId}/scope/${entityId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  deleteScopeEntity: async (orgId: string, entityId: string): Promise<void> => {
+    const r = await fetch(`/api/orgs/${orgId}/scope/${entityId}`, { method: "DELETE" });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  },
+
+  dryRunWorkbookImport: async (orgId: string, file: File): Promise<DryRunResult> => {
+    const form = new FormData();
+    form.append("file", file);
+    const r = await fetch(`/api/orgs/${orgId}/imports/workbook/dry-run`, {
+      method: "POST",
+      body: form,
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<DryRunResult>;
+  },
+
+  applyWorkbookImport: (orgId: string, changes: ScopeChange[]) =>
+    req<{ applied: number }>(`/orgs/${orgId}/imports/workbook/apply`, {
+      method: "POST",
+      body: JSON.stringify({ changes }),
+    }),
 
   downloadBundle: async (orgId: string, assessmentId: string): Promise<void> => {
     const r = await fetch(`/api/orgs/${orgId}/assessments/${assessmentId}/bundle`);

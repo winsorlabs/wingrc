@@ -3,6 +3,7 @@ import { api } from "./api";
 import { AccountSettings } from "./components/AccountSettings";
 import { ApiTokensPanel } from "./components/ApiTokensPanel";
 import { AssessmentBoard } from "./components/AssessmentBoard";
+import { AssetsPanel } from "./components/AssetsPanel";
 import { AuditLogPanel } from "./components/AuditLogPanel";
 import { ContactsPanel } from "./components/ContactsPanel";
 import { InviteAcceptPage } from "./components/InviteAcceptPage";
@@ -217,6 +218,9 @@ export function App() {
               )}
               {scopeTab === "contacts" && (
                 <ContactsPanel orgId={org.id} canWrite={canWrite} onChanged={() => loadOnboardingStatus(org.id)} />
+              )}
+              {scopeTab === "assets" && (
+                <AssetsPanel orgId={org.id} canWrite={canWrite} />
               )}
             </div>
           )}

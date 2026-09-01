@@ -169,9 +169,18 @@ def test_list_orgs_ordered_by_name(client, db_session, fake_msp_admin):
 
 
 @pytest.mark.integration
-def test_new_org_id_accepted_by_scope_endpoint(client, org_name):
+def test_new_org_id_accepted_by_scope_endpoint(client, db_session, fake_msp_admin, org_name):
     r = client.post("/orgs", json={"name": org_name})
     org_id = r.json()["id"]
+    # G.5 moved GET /scope into routers/scope.py under the standard
+    # require_org_access()/require_write() dependency pair every other
+    # router already uses -- previously this endpoint lived in main.py
+    # under bare get_current_user with no membership check at all, so any
+    # authenticated caller could read it. provision_new_org_memberships
+    # (called by POST /orgs above) only grants *existing* User rows found
+    # via auth.msp_role_users(); fake_msp_admin has no such row here, so a
+    # direct grant is needed for the now-enforced membership check to pass.
+    _grant(db_session, fake_msp_admin, org_id=uuid.UUID(org_id))
     r2 = client.get(f"/orgs/{org_id}/scope")
     assert r2.status_code == 200
     assert r2.json() == []  # new org has empty scope
