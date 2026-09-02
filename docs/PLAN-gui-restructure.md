@@ -19,12 +19,32 @@ below and `docs/roadmap.md`'s Done entry for the full detail. A small
 radar-chart addition to the SPRS widget (per-family completion %, 14
 CMMC domains as spokes, hand-rolled SVG, no new dependency — commit
 in the same 2026-08-19 batch) shipped and is verified alongside it.
-G.4 implemented, pushed — not yet run against a real Postgres instance,
-`tsc -b`, or a browser; do not read this line as "verified" until that
-run happens and this note is replaced with a real result. Adds
-`jsdom` + `@testing-library/react` as new devDependencies (the first
-component-level test in this codebase) — see G.4's own section below
-for why. G.5–G.11 and M.7/M.8 remain proposed, not implemented.
+G.4 implemented, pushed, and **verified live on wl-util-1, 2026-08-20**:
+full backend suite 549/549, `test_assessments_list.py` 4/4, `npx tsc -b`
+clean, `vitest run` 44/44 (5 files, including the new
+`OrgDashboard.test.tsx` and `OrgPicker.test.tsx`), plus a full browser
+walkthrough — assessment switcher default/override/hide-when-single all
+confirmed. Adds `jsdom` + `@testing-library/react` as new devDependencies
+(the first component-level tests in this codebase) — see G.4's own
+section below for why.
+
+G.4's browser verification also surfaced and fixed a real, pre-existing
+bug unrelated to G.4 itself — `OrgPicker`'s auto-resume-from-cache logic
+(present since the original assessment-board commit `7240bbf`, months
+before G.1) was bouncing every return trip to the org picker straight
+back into the board without ever rendering the picker or its "Start New
+Assessment" button, making it impossible to start a second assessment
+through the UI. Confirmed via diff that G.1 did not introduce or worsen
+this. Fixed (`skipAutoResume` prop, gated on whether an org was already
+open this session) and verified live alongside G.4 above — see G.4's own
+section for full detail. A second, minor issue found and fixed in the
+same commit: the multi-org branch's "Start New Assessment" button had no
+`canWrite` gate (the single-org branch did), which was a UI inconsistency
+only — the backend's `require_write()` already blocked the actual create
+for read-only roles, so this was not a security gap, just made the
+button visible-but-nonfunctional for e.g. `c3pao_assessor`.
+
+G.5–G.11 and M.7/M.8 remain proposed, not implemented.
 **Baseline:** `e481a00` (G.1 landed and verified; supersedes the prior
 `83fe49f` baseline this plan was originally written against).
 **Scope:** replace the current screen-state-machine navigation with a persistent
@@ -425,8 +445,8 @@ Backend test confirms the derived ordering; browser smoke test confirms the
 dropdown switch actually re-fetches the dashboard for the newly selected
 assessment.
 
-**Implemented, pushed — not yet run against a real Postgres instance,
-`tsc -b`, or a browser.** Two design questions confirmed with the user
+**Implemented, pushed, verified live on wl-util-1, 2026-08-20.** Two
+design questions confirmed with the user
 before implementing rather than picked silently:
 
 1. **Default-vs-override:** the switcher's "defaults to the entry with the
@@ -488,6 +508,42 @@ re-fetches with the new assessment id; auto-default fires only when
 nothing was pre-selected; auto-default never overrides a pre-existing
 selection even when a fresher assessment exists; the switcher hides
 entirely when the org has only one assessment.
+
+**Verified, real run, 2026-08-20:** `pytest tests/test_assessments_list.py`
+4/4; full backend suite 549/549; `npx tsc -b` clean;
+`vitest run` 44/44. `OrgDashboard.test.tsx`'s first pass on wl-util-1
+showed 3 of 4 cases failing — root cause was missing test isolation
+(no `afterEach(() => { cleanup(); vi.clearAllMocks(); })` in the test
+file), so calls and DOM nodes from earlier tests in the same file were
+leaking into later assertions; a static trace of `OrgDashboard.tsx`
+itself against the failures found no actual component bug, which held
+up once isolation was fixed — component code was untouched, only the
+test file changed. Fixed and reverified: 44/44 green.
+
+**Real, pre-existing bug found and fixed during this slice's browser
+verification (not a G.4 bug, not introduced by G.1 — diffed against
+`e481a00` to confirm):** `OrgPicker`'s cached-assessment auto-resume
+(present since `7240bbf`, the original assessment-board commit, months
+before this GUI restructure plan existed) unconditionally bounced any
+return trip to the org picker straight back into the board whenever a
+`localStorage` cache hit existed — including an explicit breadcrumb
+"go back," not just a fresh login. This made "Start New Assessment"
+unreachable for any org that already had one assessment open, which is
+precisely why G.4's own browser verification (needing a second
+assessment to test the switcher) surfaced it. Fixed via a
+`skipAutoResume` prop threaded from `App.tsx` (`org !== null`, i.e. true
+once an org was already opened this session) into `OrgPicker`, gating
+the auto-jump — fresh-login fast-resume is preserved, explicit
+navigate-back now shows the real picker. Also fixed in the same commit:
+the multi-org branch's "Start New Assessment" button had no `canWrite`
+gate (the single-org branch did) — UI inconsistency only, not a security
+gap, since `require_write()` already blocked the actual create
+server-side for read-only roles. New `OrgPicker.test.tsx` (3 tests,
+included in the 44/44 above) covers both the skip-vs-resume behavior and
+the `canWrite` gate. Verified live: browser walkthrough confirmed fresh
+login still fast-resumes, explicit navigate-back now shows the picker,
+and a second assessment could finally be created to exercise G.4's
+switcher.
 
 ---
 

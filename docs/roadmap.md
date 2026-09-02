@@ -115,7 +115,39 @@ Items without a status are planned but not yet started.
   in `AssessmentBoard.tsx`). **Verified live on wl-util-1, 2026-08-19:**
   `radarChart.test.ts` 8/8 (part of the 37/37 `vitest` total above);
   browser smoke test confirmed all 14 spokes render correctly against
-  real data. `G.4`–`G.11` and `M.7`/`M.8` remain not started.
+  real data.
+- **G.4 — default-to-most-recent-assessment + switcher**
+  (`docs/PLAN-gui-restructure.md`) — `GET /orgs/{org_id}/assessments`
+  gains a derived `last_activity_at` (no new column — `MAX()` over
+  `control_state`/`implementation_statement` timestamps at read time);
+  `OrgDashboard.tsx` gets an assessment switcher, defaulting to the most
+  recently active assessment only when nothing was already selected,
+  never overriding an explicit choice. First component-level tests in
+  this codebase (`jsdom` + `@testing-library/react`, scoped to the new
+  test files only). **Verified live on wl-util-1, 2026-08-20:** full
+  backend suite 549/549, `test_assessments_list.py` 4/4, `npx tsc -b`
+  clean, `vitest run` 44/44 (5 files). The frontend test's first live run
+  showed 3/4 `OrgDashboard.test.tsx` cases failing on missing test
+  isolation (stale mocks/DOM leaking across tests in the same file, not a
+  component bug — a static trace of the component held up once isolation
+  was fixed); reran green after adding `afterEach` cleanup.
+- **OrgPicker auto-resume fix** (found during G.4's browser verification,
+  pre-existing since `7240bbf` — months before this GUI restructure plan
+  and not caused by G.1, confirmed by diff) — the cached-assessment
+  auto-resume in `OrgPicker` was bouncing every return trip to the picker
+  straight back into the board, making "Start New Assessment"
+  unreachable for any org with an existing assessment. Fixed via a
+  `skipAutoResume` prop gating the auto-jump; fresh-login fast-resume
+  preserved. Also fixed in the same commit: the multi-org branch's
+  "Start New Assessment" button was missing the `canWrite` gate the
+  single-org branch already had (UI-only inconsistency — the backend's
+  `require_write()` already blocked the actual create for read-only
+  roles). New `OrgPicker.test.tsx` (3 tests, part of the 44/44 above).
+  **Verified live on wl-util-1, 2026-08-20:** browser walkthrough
+  confirmed fresh-login fast-resume still works, explicit navigate-back
+  now shows the real picker, and a second assessment could be created to
+  exercise G.4's switcher. `G.5`–`G.11` and `M.7`/`M.8` remain not
+  started.
 
 ---
 
