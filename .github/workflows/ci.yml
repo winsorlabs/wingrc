@@ -47,6 +47,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      # This job runs pytest directly on the runner, not inside backend/Dockerfile's
+      # image — WeasyPrint (SSP PDF export) needs these as system packages, not
+      # pure-Python wheels, so they must be installed here too. Keep this list in
+      # sync with backend/Dockerfile's `base` stage.
+      - name: Install system libraries (WeasyPrint: Pango/cairo/gdk-pixbuf)
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 \
+            libffi8 shared-mime-info
       - name: Install
         working-directory: backend
         run: pip install -e ".[dev]"

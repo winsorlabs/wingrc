@@ -20,6 +20,7 @@ dependencies = [
     "msal>=1.20",
     "pyotp>=2.9",
     "segno>=1.6",
+    "weasyprint>=63.0",
 ]
 
 [project.optional-dependencies]

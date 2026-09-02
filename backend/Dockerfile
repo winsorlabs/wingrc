@@ -1,6 +1,15 @@
 FROM python:3.13-slim AS base
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1
 WORKDIR /app
+# WeasyPrint (SSP PDF export, docs/pdf_ssp_template_spec.md) needs Pango/
+# cairo/gdk-pixbuf at import time — not pure-Python wheels, so they must be
+# system packages. Installed on `base` (not just `deps`) because `runtime`
+# is FROM base and only inherits the deps stage's Python site-packages/bin,
+# not its apt state.
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 \
+    libffi8 shared-mime-info \
+    && rm -rf /var/lib/apt/lists/*
 
 FROM base AS deps
 COPY backend/pyproject.toml ./

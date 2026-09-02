@@ -335,12 +335,73 @@ def test_bundle_zip_contains_required_files(client, db_session, storage, fake_ms
         "ssp/01_system_description.html",
         "ssp/02_implementation.html",
         "ssp/03_personnel.html",
+        "ssp/system_security_plan.pdf",
         "evidence/manifest.html",
         "summary/scoring.html",
         "summary/outstanding.html",
     ]
     for suffix in expected_suffixes:
         assert any(n.endswith(suffix) for n in names), f"Missing {suffix} in bundle"
+
+
+@pytest.mark.integration
+def test_bundle_ssp_pdf_is_valid_pdf(client, db_session, storage, fake_msp_admin):
+    """The consolidated SSP PDF (docs/pdf_ssp_template_spec.md) is added
+    alongside the three existing HTML SSP files, not instead of them — this
+    checks it's actually a non-trivial rendered PDF, not an empty stub."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        pdf_name = next(n for n in zf.namelist() if n.endswith("system_security_plan.pdf"))
+        pdf_bytes = zf.read(pdf_name)
+
+    assert pdf_bytes[:5] == b"%PDF-"
+    assert len(pdf_bytes) > 1000
+
+
+@pytest.mark.integration
+def test_bundle_ssp_pdf_in_artifact_log(client, db_session, storage, fake_msp_admin):
+    """The PDF must get its own artifact_log.txt entry, same as every other
+    embedded/generated file — easy to forget when adding a new render path
+    (flagged explicitly in the spec)."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        log_name = next(n for n in zf.namelist() if n.endswith("artifact_log.txt"))
+        log_text = zf.read(log_name).decode()
+        pdf_name = next(n for n in zf.namelist() if n.endswith("system_security_plan.pdf"))
+        pdf_bytes = zf.read(pdf_name)
+
+    assert pdf_name in log_text
+    expected_hash = hashlib.sha256(pdf_bytes).hexdigest()
+    assert expected_hash in log_text
+
+
+@pytest.mark.integration
+def test_bundle_second_order_hash_survives_pdf_addition(
+    client, db_session, storage, fake_msp_admin
+):
+    """Regression guard for the artifact_log ordering constraint: the PDF
+    must be hashed into log_lines BEFORE the second-order hash is computed
+    (bundle_service.py:render_bundle). If that ordering is ever broken, the
+    cover page's eMASS Hash Value stops matching a fresh hash of the actual
+    artifact_log.txt bytes shipped in the ZIP."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        log_name = next(n for n in zf.namelist() if n.endswith("artifact_log.txt"))
+        log_bytes = zf.read(log_name)
+        cover_name = next(n for n in zf.namelist() if n.endswith("cover.html"))
+        cover_html = zf.read(cover_name).decode()
+
+    actual_hash = hashlib.sha256(log_bytes).hexdigest()
+    assert actual_hash in cover_html
 
 
 @pytest.mark.integration

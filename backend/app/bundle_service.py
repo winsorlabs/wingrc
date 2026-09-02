@@ -844,11 +844,15 @@ def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
     Returns (zip_bytes, filename, artifact_log_filename, artifact_log_hash).
 
     Artifact log (DoD-CIO-00008):
-      All generated HTML documents (except cover.html) and all embedded evidence
-      files are listed with Algorithm | Hash | Path.  cover.html is excluded
-      because it carries the second-order hash — including it would be circular.
-      The artifact log itself is then hashed (second-order hash) and both values
-      are written to cover.html under the exact eMASS field names.
+      All generated HTML documents (except cover.html), the consolidated SSP
+      PDF, and all embedded evidence files are listed with
+      Algorithm | Hash | Path.  cover.html is excluded because it carries the
+      second-order hash — including it would be circular.  The artifact log
+      itself is then hashed (second-order hash) and both values are written
+      to cover.html under the exact eMASS field names.  The PDF must be
+      rendered and hashed into log_lines BEFORE that second-order hash is
+      computed, same as every other listed artifact — do not move the PDF
+      render below the artifact_log_hash line.
     """
     slug = _safe_slug(snapshot.org.name)
     date_str = snapshot.generated_at.strftime("%Y%m%d")
@@ -862,6 +866,12 @@ def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
     manifest_html = _render_manifest(snapshot)
     scoring_html = _render_scoring(snapshot)
     outstanding_html = _render_outstanding(snapshot)
+
+    # --- render the consolidated SSP PDF (docs/pdf_ssp_template_spec.md) ---
+    # Rendered once here and reused for both its artifact-log hash and the
+    # ZIP write below — PDF rendering is comparatively expensive and must
+    # not be invoked twice per export.
+    ssp_pdf_bytes = _render_ssp_pdf(snapshot)
 
     # --- build artifact log ---
     # HTML documents are hashed from their rendered bytes.
@@ -885,6 +895,10 @@ def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
         h = hashlib.sha256(content.encode()).hexdigest()
         log_lines.append(f"{_ARTIFACT_HASH_ALGO} | {h} | {rel_path}")
 
+    ssp_pdf_rel_path = f"{root}/ssp/system_security_plan.pdf"
+    ssp_pdf_hash = hashlib.sha256(ssp_pdf_bytes).hexdigest()
+    log_lines.append(f"{_ARTIFACT_HASH_ALGO} | {ssp_pdf_hash} | {ssp_pdf_rel_path}")
+
     for zip_rel in snapshot.evidence_files:
         log_lines.append(
             f"{_ARTIFACT_HASH_ALGO} | {snapshot.evidence_hashes[zip_rel]} | {root}/{zip_rel}"
@@ -905,6 +919,7 @@ def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
         zf.writestr(f"{root}/ssp/01_system_description.html", sys_desc_html)
         zf.writestr(f"{root}/ssp/02_implementation.html", impl_html)
         zf.writestr(f"{root}/ssp/03_personnel.html", personnel_html)
+        zf.writestr(ssp_pdf_rel_path, ssp_pdf_bytes)
         zf.writestr(f"{root}/evidence/manifest.html", manifest_html)
         zf.writestr(f"{root}/summary/scoring.html", scoring_html)
         zf.writestr(f"{root}/summary/outstanding.html", outstanding_html)
@@ -994,15 +1009,17 @@ def _render_cover(
     return _html_page(f"Cover — {o.name}", body)
 
 
-def _render_sys_desc(snapshot: BundleSnapshot) -> str:
+def _sys_desc_body(snapshot: BundleSnapshot) -> str:
+    """Content for the System Description section, without the stamp banner
+    or page wrapper — shared by 01_system_description.html and the
+    consolidated SSP PDF (_render_ssp_pdf) so both stay derived from the same
+    assembly logic. See docs/pdf_ssp_template_spec.md."""
     sd = snapshot.sys_desc
     if sd is None:
-        body = (
-            f"{_stamp(snapshot)}"
-            "<h1>System Description</h1>"
+        return (
+            '<h1 id="ssp-sys-desc">System Description</h1>'
             '<p class="no-stmt">No system description has been entered for this organization.</p>'
         )
-        return _html_page("System Description", body)
 
     def _list_items(items: list) -> str:
         if not items:
@@ -1027,9 +1044,8 @@ def _render_sys_desc(snapshot: BundleSnapshot) -> str:
             f"{rows}</table>"
         )
 
-    body = (
-        f"{_stamp(snapshot)}"
-        "<h1>System Description</h1>"
+    return (
+        '<h1 id="ssp-sys-desc">System Description</h1>'
         f"<h2>1.1 System Name &amp; Type</h2>"
         f"<table>"
         f"<tr><th>System Name</th><td>{_esc(sd.system_name)}</td></tr>"
@@ -1050,25 +1066,32 @@ def _render_sys_desc(snapshot: BundleSnapshot) -> str:
         f"<h2>1.7 CUI Flow</h2>"
         f"<p>{_esc(sd.cui_flow_description or 'Not provided.')}</p>"
     )
+
+
+def _render_sys_desc(snapshot: BundleSnapshot) -> str:
+    body = f"{_stamp(snapshot)}{_sys_desc_body(snapshot)}"
     return _html_page("System Description", body)
 
 
-def _render_implementation(snapshot: BundleSnapshot) -> str:
+def _implementation_body(snapshot: BundleSnapshot) -> str:
+    """Content for the Implementation Statements section (the [a]/[b]/[c]
+    per-objective grouping under each control), without the stamp banner or
+    page wrapper — shared by 02_implementation.html and the consolidated SSP
+    PDF (_render_ssp_pdf). This grouping logic is the part the PDF spec is
+    explicit must not be re-derived in a second code path."""
     if not snapshot.controls:
-        body = (
-            f"{_stamp(snapshot)}"
-            "<h1>Implementation Statements</h1>"
+        return (
+            '<h1 id="ssp-implementation">Implementation Statements</h1>'
             '<p class="no-stmt">No control states found for this assessment.</p>'
         )
-        return _html_page("Implementation Statements", body)
 
     sections = ""
     current_family = ""
     for ctrl in snapshot.controls:
         if ctrl.family != current_family:
             current_family = ctrl.family
-            sections += f"<h2>{_esc(current_family)} — Access Control</h2>" if False else (
-                f"<h2>{_esc(current_family)}</h2>"
+            sections += (
+                f'<h2 id="family-{_safe_slug(current_family)}">{_esc(current_family)}</h2>'
             )
 
         sections += (
@@ -1133,18 +1156,23 @@ def _render_implementation(snapshot: BundleSnapshot) -> str:
                 f"</div>"
             )
 
-    body = f"{_stamp(snapshot)}<h1>Implementation Statements</h1>{sections}"
+    return f'<h1 id="ssp-implementation">Implementation Statements</h1>{sections}'
+
+
+def _render_implementation(snapshot: BundleSnapshot) -> str:
+    body = f"{_stamp(snapshot)}{_implementation_body(snapshot)}"
     return _html_page("Implementation Statements", body)
 
 
-def _render_personnel(snapshot: BundleSnapshot) -> str:
+def _personnel_body(snapshot: BundleSnapshot) -> str:
+    """Content for the Personnel & Contacts section, without the stamp
+    banner or page wrapper — shared by 03_personnel.html and the
+    consolidated SSP PDF (_render_ssp_pdf)."""
     if not snapshot.contacts:
-        body = (
-            f"{_stamp(snapshot)}"
-            "<h1>Personnel &amp; Contacts</h1>"
+        return (
+            '<h1 id="ssp-personnel">Personnel &amp; Contacts</h1>'
             '<p class="no-stmt">No contacts have been added.</p>'
         )
-        return _html_page("Personnel", body)
 
     rows = "".join(
         f"<tr>"
@@ -1164,8 +1192,117 @@ def _render_personnel(snapshot: BundleSnapshot) -> str:
         "<th>Phone</th><th>Documentation Roles</th><th>Contract Ref</th></tr>"
         f"{rows}</table>"
     )
-    body = f"{_stamp(snapshot)}<h1>Personnel &amp; Contacts</h1>{table}"
+    return f'<h1 id="ssp-personnel">Personnel &amp; Contacts</h1>{table}'
+
+
+def _render_personnel(snapshot: BundleSnapshot) -> str:
+    body = f"{_stamp(snapshot)}{_personnel_body(snapshot)}"
     return _html_page("Personnel", body)
+
+
+# ---------------------------------------------------------------------------
+# Consolidated SSP PDF (docs/pdf_ssp_template_spec.md)
+# ---------------------------------------------------------------------------
+#
+# Scope for this pass: system description + implementation statements +
+# personnel, consolidated into one paginated PDF. Cover page, evidence
+# manifest, and scoring/summary stay separate HTML per the spec — do not
+# fold them in here without revisiting that decision.
+#
+# Content is assembled ONLY from _sys_desc_body / _implementation_body /
+# _personnel_body — the same functions that back the three HTML pages in
+# the ZIP. This file must never grow a second, PDF-only way of walking
+# BundleSnapshot; if the PDF's content looks wrong, the fix almost always
+# belongs in one of those three shared functions, not here.
+
+
+def _css_str(s: str) -> str:
+    """Escape a Python string for use inside a CSS `content: "...";` value."""
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _render_ssp_pdf(snapshot: BundleSnapshot) -> bytes:
+    """Render the consolidated System Security Plan PDF via WeasyPrint.
+
+    Single-pass CSS Paged Media: @page rules provide the running footer
+    (page X of Y + generation timestamp) and a lightweight TOC using
+    target-counter() against the section/family ids stamped into the shared
+    body helpers above. If WeasyPrint's TOC support proves inadequate once
+    real assessments (deep family -> control -> objective nesting) are run
+    through this, fall back to a two-pass render per the spec — render once
+    to learn page numbers, then render the TOC — rather than hand-rolling
+    page-number tracking here.
+    """
+    # Lazy import: WeasyPrint pulls in Pango/cairo/gdk-pixbuf at import time
+    # (system libraries, not pure-Python wheels — see backend/Dockerfile).
+    # Mirrors the boto3 lazy-import convention in storage.py:MinIOClient so
+    # environments/tests that never touch PDF export don't pay for it.
+    from weasyprint import HTML
+
+    org = snapshot.org
+    assessment = snapshot.assessment
+    header_text = _css_str(f"{org.name} — {assessment.name}")
+    ts = snapshot.generated_at.strftime("%Y-%m-%d %H:%M UTC")
+    footer_left = _css_str(f"Generated {ts}")
+
+    families = []
+    seen = set()
+    for ctrl in snapshot.controls:
+        if ctrl.family not in seen:
+            seen.add(ctrl.family)
+            families.append(ctrl.family)
+
+    toc_family_rows = "".join(
+        f'<li class="toc-entry"><a href="#family-{_safe_slug(fam)}">{_esc(fam)}</a>'
+        f'<span class="toc-page"></span></li>'
+        for fam in families
+    )
+    toc_html = (
+        '<section class="pdf-toc">'
+        "<h1>Table of Contents</h1>"
+        '<ul class="toc">'
+        '<li class="toc-entry"><a href="#ssp-sys-desc">System Description</a>'
+        '<span class="toc-page"></span></li>'
+        '<li class="toc-entry"><a href="#ssp-implementation">Implementation Statements</a>'
+        '<span class="toc-page"></span></li>'
+        f"{toc_family_rows}"
+        '<li class="toc-entry"><a href="#ssp-personnel">Personnel &amp; Contacts</a>'
+        '<span class="toc-page"></span></li>'
+        "</ul></section>"
+    )
+
+    body = (
+        f'<div class="pdf-section">{toc_html}</div>'
+        f'<div class="pdf-section">{_sys_desc_body(snapshot)}</div>'
+        f'<div class="pdf-section">{_implementation_body(snapshot)}</div>'
+        f'<div class="pdf-section">{_personnel_body(snapshot)}</div>'
+    )
+
+    page_css = (
+        "@page {"
+        "  size: Letter; margin: 1in 0.85in 1in 0.85in;"
+        f'  @top-center {{ content: "{header_text}"; font-size: 8pt; color: #6b7280; }}'
+        f'  @bottom-left {{ content: "{footer_left}"; font-size: 8pt; color: #6b7280; }}'
+        '  @bottom-right { content: "Page " counter(page) " of " counter(pages); '
+        "font-size: 8pt; color: #6b7280; }"
+        "}"
+        '@page :first { @top-center { content: none; } }'
+        ".pdf-toc h1 { border: none; margin-top: 0; }"
+        "ul.toc { list-style: none; padding: 0; }"
+        ".toc-entry { display: flex; justify-content: space-between; "
+        "border-bottom: 1px dotted #d1d5db; padding: .35rem 0; }"
+        ".toc-entry a { color: #1d4ed8; text-decoration: none; }"
+        '.toc-entry .toc-page::after { content: target-counter(attr(href), page); }'
+        ".pdf-section { break-before: page; }"
+        ".pdf-section:first-child { break-before: avoid; }"
+    )
+
+    html_doc = (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        f"<style>{_CSS}{page_css}</style></head>"
+        f"<body>{body}</body></html>"
+    )
+    return HTML(string=html_doc).write_pdf()
 
 
 def _render_evidence_li(ev: EvidenceSnap, manifest_dir: str) -> str:
@@ -1440,6 +1577,7 @@ def _render_index(snapshot: BundleSnapshot) -> str:
         ("SSP — System Description", "ssp/01_system_description.html"),
         ("SSP — Implementation Statements", "ssp/02_implementation.html"),
         ("SSP — Personnel &amp; Contacts", "ssp/03_personnel.html"),
+        ("SSP — Consolidated PDF", "ssp/system_security_plan.pdf"),
         ("Evidence Manifest", "evidence/manifest.html"),
         ("SPRS Scoring Summary", "summary/scoring.html"),
         ("Outstanding Items", "summary/outstanding.html"),
