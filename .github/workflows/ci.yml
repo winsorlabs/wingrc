@@ -42,6 +42,12 @@ jobs:
           - 5432:5432
     env:
       WINGRC_DATABASE_URL: postgresql+psycopg://wingrc:wingrc@localhost:5432/wingrc
+      # conftest.py's db_engine fixture only ever reads WINGRC_TEST_DATABASE_URL
+      # (and pytest.skip()s cleanly when it's unset) — WINGRC_DATABASE_URL alone
+      # left every @pytest.mark.integration test silently skipping in this job,
+      # reporting green while testing nothing. Points at a separate wingrc_test
+      # database, matching docker-compose.yml's own backend service env block.
+      WINGRC_TEST_DATABASE_URL: postgresql+psycopg://wingrc:wingrc@localhost:5432/wingrc_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -51,7 +57,7 @@ jobs:
       # image — WeasyPrint (SSP PDF export) needs these as system packages, not
       # pure-Python wheels, so they must be installed here too. Keep this list in
       # sync with backend/Dockerfile's `base` stage.
-      - name: Install system libraries (WeasyPrint: Pango/cairo/gdk-pixbuf)
+      - name: "Install system libraries (WeasyPrint: Pango/cairo/gdk-pixbuf)"
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \

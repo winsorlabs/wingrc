@@ -1253,21 +1253,17 @@ def _render_ssp_pdf(snapshot: BundleSnapshot) -> bytes:
             families.append(ctrl.family)
 
     toc_family_rows = "".join(
-        f'<li class="toc-entry"><a href="#family-{_safe_slug(fam)}">{_esc(fam)}</a>'
-        f'<span class="toc-page"></span></li>'
+        f'<li class="toc-entry"><a href="#family-{_safe_slug(fam)}">{_esc(fam)}</a></li>'
         for fam in families
     )
     toc_html = (
         '<section class="pdf-toc">'
         "<h1>Table of Contents</h1>"
         '<ul class="toc">'
-        '<li class="toc-entry"><a href="#ssp-sys-desc">System Description</a>'
-        '<span class="toc-page"></span></li>'
-        '<li class="toc-entry"><a href="#ssp-implementation">Implementation Statements</a>'
-        '<span class="toc-page"></span></li>'
+        '<li class="toc-entry"><a href="#ssp-sys-desc">System Description</a></li>'
+        '<li class="toc-entry"><a href="#ssp-implementation">Implementation Statements</a></li>'
         f"{toc_family_rows}"
-        '<li class="toc-entry"><a href="#ssp-personnel">Personnel &amp; Contacts</a>'
-        '<span class="toc-page"></span></li>'
+        '<li class="toc-entry"><a href="#ssp-personnel">Personnel &amp; Contacts</a></li>'
         "</ul></section>"
     )
 
@@ -1289,10 +1285,18 @@ def _render_ssp_pdf(snapshot: BundleSnapshot) -> bytes:
         '@page :first { @top-center { content: none; } }'
         ".pdf-toc h1 { border: none; margin-top: 0; }"
         "ul.toc { list-style: none; padding: 0; }"
-        ".toc-entry { display: flex; justify-content: space-between; "
-        "border-bottom: 1px dotted #d1d5db; padding: .35rem 0; }"
-        ".toc-entry a { color: #1d4ed8; text-decoration: none; }"
-        '.toc-entry .toc-page::after { content: target-counter(attr(href), page); }'
+        ".toc-entry { border-bottom: 1px dotted #d1d5db; padding: .35rem 0; }"
+        # TOC page numbers: content lives on the link's own ::after, not a
+        # sibling <span> inside display:flex. An earlier version put
+        # target-counter() on ::after of an EMPTY flex-item <span> — WeasyPrint
+        # 69.0 silently drew nothing for it (verified: no text-show op at all
+        # in the rendered content stream, not even "0"). leader() on the link
+        # itself is WeasyPrint's own documented TOC pattern and needs no flex:
+        # the dot-leader does the right-alignment that the flex layout was
+        # trying (and failing) to do by hand.
+        ".toc-entry a { color: #1d4ed8; text-decoration: none; display: block; }"
+        '.toc-entry a::after { content: leader(".") target-counter(attr(href), page); '
+        "color: #6b7280; }"
         ".pdf-section { break-before: page; }"
         ".pdf-section:first-child { break-before: avoid; }"
     )
