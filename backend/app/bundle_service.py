@@ -90,6 +90,9 @@ _CSS = (
     ".score-big{font-size:2.5rem;font-weight:700;color:#1e3a5f}"
     ".ev-path{font-family:monospace;font-size:.8rem;color:#4b5563;"
     "background:#f3f4f6;padding:.1rem .4rem;border-radius:2px}"
+    ".diagram-figure{margin:1.25rem 0;padding:.75rem;border:1px solid #e5e7eb;"
+    "border-radius:6px;background:#fafafa;text-align:center}"
+    ".diagram-img{max-width:100%;width:100%;height:auto;display:block;margin:0 auto}"
     "@media print{body{max-width:100%}a{color:inherit}}"
 )
 
@@ -153,6 +156,15 @@ class SysDescSnap:
     authorization_boundary_description: str | None
     external_connections: list
     cui_flow_description: str | None
+    # Diagram slots (migration 0029, docs/pdf_ssp_template_spec.md's
+    # Addendum) -- bytes embedded directly same as the org logo, mime read
+    # straight from the Evidence row (not re-detected from bytes: SVG has
+    # no fixed magic-byte signature, so _detect_image_mime can't identify
+    # it the way it does PNG/JPEG/GIF/WEBP).
+    network_diagram_bytes: bytes | None = None
+    network_diagram_mime: str | None = None
+    data_flow_diagram_bytes: bytes | None = None
+    data_flow_diagram_mime: str | None = None
 
 
 @dataclass
@@ -441,6 +453,25 @@ def snapshot_bundle(
     ).first()
     sys_desc_snap: SysDescSnap | None = None
     if sd:
+        def _diagram_bytes(evidence_id: uuid.UUID | None) -> tuple[bytes | None, str | None]:
+            if evidence_id is None:
+                return None, None
+            ev = session.get(Evidence, evidence_id)
+            if ev is None or not ev.storage_key:
+                return None, None
+            try:
+                data = storage.get_bytes(ev.storage_key) or None
+            except Exception:  # noqa: BLE001
+                return None, None
+            return (data, ev.mime_type) if data else (None, None)
+
+        network_diagram_bytes, network_diagram_mime = _diagram_bytes(
+            sd.network_diagram_evidence_id
+        )
+        data_flow_diagram_bytes, data_flow_diagram_mime = _diagram_bytes(
+            sd.data_flow_diagram_evidence_id
+        )
+
         sys_desc_snap = SysDescSnap(
             system_name=sd.system_name,
             system_type=sd.system_type,
@@ -451,6 +482,10 @@ def snapshot_bundle(
             authorization_boundary_description=sd.authorization_boundary_description,
             external_connections=list(sd.external_connections or []),
             cui_flow_description=sd.cui_flow_description,
+            network_diagram_bytes=network_diagram_bytes,
+            network_diagram_mime=network_diagram_mime,
+            data_flow_diagram_bytes=data_flow_diagram_bytes,
+            data_flow_diagram_mime=data_flow_diagram_mime,
         )
 
     # --- assessment ---
@@ -1009,6 +1044,24 @@ def _render_cover(
     return _html_page(f"Cover — {o.name}", body)
 
 
+def _diagram_img_html(data: bytes | None, mime: str | None) -> str:
+    """One diagram, full-width with clear surrounding space (not cramped
+    inline with text) -- per docs/pdf_ssp_template_spec.md's Addendum,
+    "PDF placement" section. Shared by 01_system_description.html and the
+    consolidated SSP PDF (_render_ssp_pdf), same as every other section of
+    this page -- embedded as a base64 data URI, same technique already
+    used for the org logo on the cover page.
+    """
+    if not data or not mime:
+        return '<p class="no-stmt">Not yet uploaded.</p>'
+    b64 = base64.b64encode(data).decode()
+    return (
+        '<div class="diagram-figure">'
+        f'<img class="diagram-img" src="data:{_esc(mime)};base64,{b64}" alt="Diagram">'
+        "</div>"
+    )
+
+
 def _sys_desc_body(snapshot: BundleSnapshot) -> str:
     """Content for the System Description section, without the stamp banner
     or page wrapper — shared by 01_system_description.html and the
@@ -1065,6 +1118,10 @@ def _sys_desc_body(snapshot: BundleSnapshot) -> str:
         f"{_ext_conn_table(sd.external_connections)}"
         f"<h2>1.7 CUI Flow</h2>"
         f"<p>{_esc(sd.cui_flow_description or 'Not provided.')}</p>"
+        f"<h2>1.8 Network Diagram</h2>"
+        f"{_diagram_img_html(sd.network_diagram_bytes, sd.network_diagram_mime)}"
+        f"<h2>1.9 Data Flow Diagram</h2>"
+        f"{_diagram_img_html(sd.data_flow_diagram_bytes, sd.data_flow_diagram_mime)}"
     )
 
 

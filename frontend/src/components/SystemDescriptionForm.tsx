@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { ExternalConnection, StorageLocation, SystemDescriptionData } from "../types";
 
@@ -40,6 +40,11 @@ export function SystemDescriptionForm({ orgId, canWrite, onSaved }: Props) {
   const [authBoundary, setAuthBoundary] = useState("");
   const [externalConns, setExternalConns] = useState<ExternalConnection[]>([]);
   const [cuiFlow, setCuiFlow] = useState("");
+
+  const [networkDiagramUploading, setNetworkDiagramUploading] = useState(false);
+  const [dataFlowDiagramUploading, setDataFlowDiagramUploading] = useState(false);
+  const networkDiagramRef = useRef<HTMLInputElement>(null);
+  const dataFlowDiagramRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     api.getSystemDescription(orgId).then((sd) => {
@@ -133,6 +138,50 @@ export function SystemDescriptionForm({ orgId, canWrite, onSaved }: Props) {
       setError(e instanceof Error ? e.message : "Save failed");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleNetworkDiagramUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setNetworkDiagramUploading(true);
+    setError(null);
+    try {
+      const result = await api.uploadNetworkDiagram(orgId, file);
+      setData((prev) =>
+        prev
+          ? { ...prev, network_diagram_evidence_id: result.evidence_id, network_diagram_url: result.url }
+          : prev
+      );
+    } catch (e) {
+      setError("Network diagram upload failed: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setNetworkDiagramUploading(false);
+      if (networkDiagramRef.current) networkDiagramRef.current.value = "";
+    }
+  }
+
+  async function handleDataFlowDiagramUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setDataFlowDiagramUploading(true);
+    setError(null);
+    try {
+      const result = await api.uploadDataFlowDiagram(orgId, file);
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              data_flow_diagram_evidence_id: result.evidence_id,
+              data_flow_diagram_url: result.url,
+            }
+          : prev
+      );
+    } catch (e) {
+      setError("Data flow diagram upload failed: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setDataFlowDiagramUploading(false);
+      if (dataFlowDiagramRef.current) dataFlowDiagramRef.current.value = "";
     }
   }
 
@@ -237,6 +286,62 @@ export function SystemDescriptionForm({ orgId, canWrite, onSaved }: Props) {
         <label>CUI Flow Description</label>
         <textarea rows={3} value={cuiFlow} onChange={(e) => { setCuiFlow(e.target.value); setSaved(false); }} placeholder="Describe how CUI flows through the system…" />
       </div>
+
+      <div className="form-section-heading">Network Diagram</div>
+      {!data ? (
+        <div className="field-hint">Save the system description above before uploading a diagram.</div>
+      ) : (
+        <div className="logo-upload-area">
+          {data.network_diagram_url
+            ? <img src={data.network_diagram_url} alt="Network diagram" className="diagram-preview" />
+            : <div className="diagram-placeholder">No diagram uploaded</div>}
+          <div>
+            <button
+              className="btn-ghost btn-sm"
+              onClick={() => networkDiagramRef.current?.click()}
+              disabled={networkDiagramUploading}
+            >
+              {networkDiagramUploading ? "Uploading…" : data.network_diagram_url ? "Replace" : "Upload diagram"}
+            </button>
+            <div className="field-hint">SVG or PNG · max 10 MB · SVG is sanitized on upload</div>
+          </div>
+          <input
+            ref={networkDiagramRef}
+            type="file"
+            accept="image/svg+xml,image/png"
+            style={{ display: "none" }}
+            onChange={handleNetworkDiagramUpload}
+          />
+        </div>
+      )}
+
+      <div className="form-section-heading">Data Flow Diagram</div>
+      {!data ? (
+        <div className="field-hint">Save the system description above before uploading a diagram.</div>
+      ) : (
+        <div className="logo-upload-area">
+          {data.data_flow_diagram_url
+            ? <img src={data.data_flow_diagram_url} alt="Data flow diagram" className="diagram-preview" />
+            : <div className="diagram-placeholder">No diagram uploaded</div>}
+          <div>
+            <button
+              className="btn-ghost btn-sm"
+              onClick={() => dataFlowDiagramRef.current?.click()}
+              disabled={dataFlowDiagramUploading}
+            >
+              {dataFlowDiagramUploading ? "Uploading…" : data.data_flow_diagram_url ? "Replace" : "Upload diagram"}
+            </button>
+            <div className="field-hint">SVG or PNG · max 10 MB · SVG is sanitized on upload</div>
+          </div>
+          <input
+            ref={dataFlowDiagramRef}
+            type="file"
+            accept="image/svg+xml,image/png"
+            style={{ display: "none" }}
+            onChange={handleDataFlowDiagramUpload}
+          />
+        </div>
+      )}
       </fieldset>
 
       {canWrite && (
