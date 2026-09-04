@@ -63,6 +63,13 @@ class InMemoryStorageClient(StorageClient):
     def delete_file(self, key: str) -> None:
         self.files.pop(key, None)
 
+    def get_bytes(self, key: str) -> bytes:
+        # StorageClient's own default (b"") would make snapshot_bundle's
+        # _diagram_bytes() treat every diagram as absent -- override so the
+        # bundle-embedding test actually exercises real fetch-and-embed,
+        # matching test_bundle.py's own InMemoryStorageClient.
+        return self.files.get(key, b"")
+
 
 @pytest.fixture
 def storage():
