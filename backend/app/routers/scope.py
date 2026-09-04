@@ -316,7 +316,6 @@ def create_scope_entity(
         context={"via": "api"},
     )
     session.commit()
-    session.refresh(row)
     return ScopeEntityOut.model_validate(row)
 
 
@@ -372,7 +371,6 @@ def patch_scope_entity(
         context={"via": "api"},
     )
     session.commit()
-    session.refresh(updated_row)
     return ScopeEntityOut.model_validate(updated_row)
 
 
@@ -421,7 +419,9 @@ async def import_dry_run(
         tmp.write(await file.read())
         tmp_path = tmp.name
     try:
-        incoming = parse_workbook(tmp_path)
+        # Parsing reads from the temp file, but provenance must record the
+        # name the user actually uploaded, not the generated temp filename.
+        incoming = parse_workbook(tmp_path, source_ref=file.filename)
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
