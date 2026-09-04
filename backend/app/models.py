@@ -133,6 +133,19 @@ class SystemDescription(Base):
         JSONB, server_default=text("'[]'::jsonb")
     )
     cui_flow_description: Mapped[str | None] = mapped_column(Text)
+    # Pinned diagram slots (migration 0029) -- which Evidence row currently
+    # satisfies each. Same "pointer to current version" shape as
+    # EvidenceTask.completed_evidence_id: replacing a diagram creates a new
+    # Evidence row and repoints the FK here, leaving the prior row (and its
+    # storage file) untouched. Not a bare storage key like Organization.
+    # logo_storage_key -- these deliberately go through the Evidence
+    # pipeline per docs/pdf_ssp_template_spec.md's Addendum.
+    network_diagram_evidence_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("evidence.id"), nullable=True
+    )
+    data_flow_diagram_evidence_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("evidence.id"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -639,7 +652,8 @@ class Evidence(Base):
     __tablename__ = "evidence"
     __table_args__ = (
         CheckConstraint(
-            "artifact_type IN ('screenshot', 'export', 'document', 'link', 'policy')",
+            "artifact_type IN ('screenshot', 'export', 'document', 'link', 'policy', "
+            "'network_diagram', 'data_flow_diagram')",
             name="ck_evidence_artifact_type",
         ),
         CheckConstraint(

@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, Contact, ControlStateRow, CreatedApiToken, DashboardData, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, InvitedUser, MfaEnrollData, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, ProductRow, ScopeChange, ScopeEntity, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, InvitedUser, MfaEnrollData, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, ProductRow, ScopeChange, ScopeEntity, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -346,11 +346,52 @@ export const api = {
     return r.json() as Promise<SystemDescriptionData>;
   },
 
-  putSystemDescription: (orgId: string, data: Omit<SystemDescriptionData, "id" | "org_id" | "created_at" | "updated_at">) =>
+  putSystemDescription: (
+    orgId: string,
+    data: Omit<
+      SystemDescriptionData,
+      | "id"
+      | "org_id"
+      | "created_at"
+      | "updated_at"
+      | "network_diagram_evidence_id"
+      | "network_diagram_url"
+      | "data_flow_diagram_evidence_id"
+      | "data_flow_diagram_url"
+    >
+  ) =>
     req<SystemDescriptionData>(`/orgs/${orgId}/system-description`, {
       method: "PUT",
       body: JSON.stringify(data),
     }),
+
+  uploadNetworkDiagram: async (orgId: string, file: File): Promise<DiagramUpload> => {
+    const form = new FormData();
+    form.append("file", file);
+    const r = await fetch(`/api/orgs/${orgId}/system-description/network-diagram`, {
+      method: "POST",
+      body: form,
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<DiagramUpload>;
+  },
+
+  uploadDataFlowDiagram: async (orgId: string, file: File): Promise<DiagramUpload> => {
+    const form = new FormData();
+    form.append("file", file);
+    const r = await fetch(`/api/orgs/${orgId}/system-description/data-flow-diagram`, {
+      method: "POST",
+      body: form,
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<DiagramUpload>;
+  },
 
   // ── Onboarding status ─────────────────────────────────────────────────────
   getOnboardingStatus: (orgId: string) =>

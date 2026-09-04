@@ -21,6 +21,7 @@ dependencies = [
     "pyotp>=2.9",
     "segno>=1.6",
     "weasyprint>=63.0",
+    "defusedxml>=0.7",
 ]
 
 [project.optional-dependencies]

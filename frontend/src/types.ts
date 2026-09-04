@@ -152,8 +152,20 @@ export interface SystemDescriptionData {
   authorization_boundary_description: string | null;
   external_connections: ExternalConnection[];
   cui_flow_description: string | null;
+  // Diagram slots (migration 0029) — mirrors backend/app/routers/orgs.py's
+  // SystemDescriptionOut field-for-field.
+  network_diagram_evidence_id: string | null;
+  network_diagram_url: string | null;
+  data_flow_diagram_evidence_id: string | null;
+  data_flow_diagram_url: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface DiagramUpload {
+  evidence_id: string;
+  url: string | null;
+  mime_type: string;
 }
 
 export interface ContactDocRole {

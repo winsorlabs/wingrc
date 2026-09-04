@@ -8,13 +8,16 @@ PATCH  /orgs/{org_id}/profile             Partial-update profile fields
 POST   /orgs/{org_id}/logo               Upload logo image
 GET    /orgs/{org_id}/system-description  System description (404 until first PUT)
 PUT    /orgs/{org_id}/system-description  Upsert system description
+POST   /orgs/{org_id}/system-description/network-diagram    Upload/replace network diagram
+POST   /orgs/{org_id}/system-description/data-flow-diagram  Upload/replace data flow diagram
 GET    /orgs/{org_id}/onboarding-status  Completion indicators (never gates access)
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -28,11 +31,13 @@ from ..db import get_session
 from ..models import (
     Contact,
     ContactDocumentationRole,
+    Evidence,
     Organization,
     SystemDescription,
 )
 from ..org_membership import provision_new_org_memberships
 from ..storage import StorageClient, download_filename, get_storage_client
+from ..svg_sanitize import SvgSanitizeError, sanitize_svg
 from .evidence import _verify_magic_bytes
 
 router = APIRouter(
@@ -168,6 +173,14 @@ class SystemDescriptionOut(BaseModel):
     authorization_boundary_description: str | None = None
     external_connections: list[dict[str, Any]] = []
     cui_flow_description: str | None = None
+    # Diagram slots (migration 0029) -- evidence_id maps straight from the
+    # ORM column; the _url fields are presigned URLs computed per-request
+    # in _build_system_description_out, same pattern as OrgProfileOut's
+    # logo_url (not stored, not on the model).
+    network_diagram_evidence_id: uuid.UUID | None = None
+    network_diagram_url: str | None = None
+    data_flow_diagram_evidence_id: uuid.UUID | None = None
+    data_flow_diagram_url: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -198,6 +211,12 @@ class LogoUploadOut(BaseModel):
     logo_url: str
 
 
+class DiagramUploadOut(BaseModel):
+    evidence_id: uuid.UUID
+    url: str | None
+    mime_type: str
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -217,6 +236,29 @@ def _build_profile_out(org: Organization, storage: StorageClient | None) -> OrgP
         out.logo_url = storage.presigned_url(
             org.logo_storage_key, download_filename=download_filename(org.name, ext)
         )
+    return out
+
+
+def _diagram_url(
+    session: Session, storage: StorageClient, evidence_id: uuid.UUID | None
+) -> str | None:
+    if evidence_id is None:
+        return None
+    ev = session.get(Evidence, evidence_id)
+    if ev is None or ev.kind != "file" or not ev.storage_key:
+        return None
+    ext = os.path.splitext(ev.storage_key)[1]
+    return storage.presigned_url(
+        ev.storage_key, download_filename=download_filename(ev.title, ext)
+    )
+
+
+def _build_system_description_out(
+    sd: SystemDescription, session: Session, storage: StorageClient
+) -> SystemDescriptionOut:
+    out = SystemDescriptionOut.model_validate(sd)
+    out.network_diagram_url = _diagram_url(session, storage, sd.network_diagram_evidence_id)
+    out.data_flow_diagram_url = _diagram_url(session, storage, sd.data_flow_diagram_evidence_id)
     return out
 
 
@@ -428,7 +470,9 @@ async def upload_logo(
     dependencies=[Depends(require_org_access())],
 )
 def get_system_description(
-    org_id: uuid.UUID, session: Session = Depends(get_session)
+    org_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    storage: StorageClient = Depends(get_storage_client),
 ) -> SystemDescriptionOut:
     _get_org(session, org_id)
     sd = session.scalars(
@@ -436,7 +480,7 @@ def get_system_description(
     ).first()
     if sd is None:
         raise HTTPException(status_code=404, detail="System description not yet created")
-    return SystemDescriptionOut.model_validate(sd)
+    return _build_system_description_out(sd, session, storage)
 
 
 @router.put(
@@ -448,6 +492,7 @@ def upsert_system_description(
     org_id: uuid.UUID,
     body: SystemDescriptionIn,
     session: Session = Depends(get_session),
+    storage: StorageClient = Depends(get_storage_client),
 ) -> SystemDescriptionOut:
     _get_org(session, org_id)
     sd = session.scalars(
@@ -479,7 +524,166 @@ def upsert_system_description(
     )
     session.commit()
     session.refresh(sd)
-    return SystemDescriptionOut.model_validate(sd)
+    return _build_system_description_out(sd, session, storage)
+
+
+# ---------------------------------------------------------------------------
+# Diagram slots (migration 0029) -- Network Diagram / Data Flow Diagram
+#
+# docs/pdf_ssp_template_spec.md's Addendum. Unlike the logo (bare storage
+# key, best-effort delete of the old file on replace), these go through the
+# Evidence pipeline and *never* delete a prior version: replacing a diagram
+# uploads a new Evidence row and repoints SystemDescription's FK at it,
+# leaving the old Evidence row and its stored file alone -- "retain prior
+# version, don't overwrite/lose history" per the spec, same shape as
+# EvidenceTask.completed_evidence_id's re-collect behavior.
+#
+# PNG and SVG only (the spec's own format list) -- deliberately narrower
+# than evidence.py's shared _ALLOWED_MIME_TYPES/_ALLOWED_EXTENSIONS, which
+# also now accept image/svg+xml (for the generic control-state evidence
+# pipeline) but plus everything else evidence can be. SVG is routed through
+# sanitize_svg() before it is ever hashed or stored; PNG goes through the
+# same magic-byte check the logo upload already uses.
+# ---------------------------------------------------------------------------
+
+_DIAGRAM_ALLOWED_MIME: dict[str, str] = {
+    "image/png": ".png",
+    "image/svg+xml": ".svg",
+}
+_DIAGRAM_MAX_BYTES = 10 * 1024 * 1024  # 10 MB -- diagrams are small vector/raster files
+
+_DIAGRAM_SLOTS: dict[str, dict[str, str]] = {
+    "network-diagram": {
+        "artifact_type": "network_diagram",
+        "title": "Network Diagram",
+        "fk_attr": "network_diagram_evidence_id",
+    },
+    "data-flow-diagram": {
+        "artifact_type": "data_flow_diagram",
+        "title": "Data Flow Diagram",
+        "fk_attr": "data_flow_diagram_evidence_id",
+    },
+}
+
+
+async def _upload_diagram(
+    org_id: uuid.UUID,
+    slot_key: str,
+    file: UploadFile,
+    session: Session,
+    storage: StorageClient,
+) -> DiagramUploadOut:
+    _get_org(session, org_id)
+    sd = session.scalars(
+        select(SystemDescription).where(SystemDescription.org_id == org_id)
+    ).first()
+    if sd is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Create the system description before uploading a diagram",
+        )
+
+    slot = _DIAGRAM_SLOTS[slot_key]
+
+    mime = file.content_type or ""
+    if mime not in _DIAGRAM_ALLOWED_MIME:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unsupported image type {mime!r}. Allowed: {sorted(_DIAGRAM_ALLOWED_MIME)}",
+        )
+
+    data = await file.read()
+    if len(data) > _DIAGRAM_MAX_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Diagram exceeds {_DIAGRAM_MAX_BYTES // (1024 * 1024)} MB limit",
+        )
+
+    if mime == "image/svg+xml":
+        # No fixed magic bytes for SVG (it's text/XML) -- sanitization is
+        # the real gate here, not a byte-signature check. Hash/store the
+        # sanitized bytes, never the raw upload.
+        try:
+            data = sanitize_svg(data)
+        except SvgSanitizeError as exc:
+            raise HTTPException(status_code=422, detail=f"SVG rejected: {exc}") from exc
+    elif not _verify_magic_bytes(data, mime):
+        raise HTTPException(
+            status_code=422, detail="File content does not match declared MIME type"
+        )
+
+    ext = _DIAGRAM_ALLOWED_MIME[mime]
+    evidence_id = uuid.uuid4()
+    storage_key = f"{org_id}/evidence/{evidence_id}/{evidence_id}{ext}"
+    file_sha256 = hashlib.sha256(data).hexdigest()
+    storage.upload_file(storage_key, data, mime)
+
+    ev = Evidence(
+        id=evidence_id,
+        org_id=org_id,
+        kind="file",
+        title=slot["title"],
+        artifact_type=slot["artifact_type"],
+        storage_key=storage_key,
+        mime_type=mime,
+        file_size_bytes=len(data),
+        sha256_hash=file_sha256,
+        collected_at=datetime.now(UTC),
+    )
+    session.add(ev)
+    session.flush()
+
+    old_evidence_id = getattr(sd, slot["fk_attr"])
+    setattr(sd, slot["fk_attr"], ev.id)
+    session.flush()
+
+    log_event(
+        session,
+        org_id=org_id,
+        action=f"system_description.{slot['artifact_type']}.upload",
+        entity_type="system_description",
+        entity_id=sd.id,
+        before_value={"evidence_id": str(old_evidence_id) if old_evidence_id else None},
+        after_value={"evidence_id": str(ev.id), "mime_type": mime},
+        context={"via": "api"},
+    )
+    session.commit()
+
+    return DiagramUploadOut(
+        evidence_id=ev.id,
+        url=storage.presigned_url(
+            storage_key, download_filename=download_filename(slot["title"], ext)
+        ),
+        mime_type=mime,
+    )
+
+
+@router.post(
+    "/{org_id}/system-description/network-diagram",
+    response_model=DiagramUploadOut,
+    dependencies=[Depends(require_org_access())],
+)
+async def upload_network_diagram(
+    org_id: uuid.UUID,
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+    storage: StorageClient = Depends(get_storage_client),
+) -> DiagramUploadOut:
+    return await _upload_diagram(org_id, "network-diagram", file, session, storage)
+
+
+@router.post(
+    "/{org_id}/system-description/data-flow-diagram",
+    response_model=DiagramUploadOut,
+    dependencies=[Depends(require_org_access())],
+)
+async def upload_data_flow_diagram(
+    org_id: uuid.UUID,
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+    storage: StorageClient = Depends(get_storage_client),
+) -> DiagramUploadOut:
+    return await _upload_diagram(org_id, "data-flow-diagram", file, session, storage)
 
 
 # ---------------------------------------------------------------------------

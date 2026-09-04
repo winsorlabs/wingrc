@@ -50,6 +50,7 @@ from ..models import (
     EvidenceTaskStateLink,
 )
 from ..storage import StorageClient, download_filename, get_storage_client
+from ..svg_sanitize import SvgSanitizeError, sanitize_svg
 
 router = APIRouter(
     prefix="/orgs/{org_id}",
@@ -66,6 +67,7 @@ _ALLOWED_MIME_TYPES = frozenset({
     "image/jpeg",
     "image/gif",
     "image/webp",
+    "image/svg+xml",
     "application/pdf",
     "application/msword",
     "application/vnd.ms-excel",
@@ -77,7 +79,7 @@ _ALLOWED_MIME_TYPES = frozenset({
 })
 
 _ALLOWED_EXTENSIONS = frozenset({
-    ".png", ".jpg", ".jpeg", ".gif", ".webp",
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
     ".pdf",
     ".doc", ".docx",
     ".xls", ".xlsx",
@@ -127,7 +129,26 @@ def _verify_magic_bytes(data: bytes, mime: str) -> bool:
     # ZIP-based office formats and plain zip: magic is PK\x03\x04 but we
     # cannot distinguish docx from xlsx from zip by header alone — trust
     # declared MIME + extension for these.
+    # image/svg+xml: no fixed magic bytes (it's text/XML) -- falls through
+    # to this same "not detectable, trust declared type" branch. SVG's real
+    # gate is _sanitize_if_svg() below, not a byte-signature check.
     return True
+
+
+def _sanitize_if_svg(data: bytes, mime: str) -> bytes:
+    """Route every SVG upload through the allowlist sanitizer before it's
+    hashed or stored -- applies here in the generic evidence pipeline (any
+    control-state evidence upload, any evidence-task collection) exactly as
+    much as it does on the dedicated diagram-slot endpoints in orgs.py,
+    since both paths accept image/svg+xml now that it's in
+    _ALLOWED_MIME_TYPES. Non-SVG bytes pass through untouched.
+    """
+    if mime != "image/svg+xml":
+        return data
+    try:
+        return sanitize_svg(data)
+    except SvgSanitizeError as exc:
+        raise HTTPException(status_code=422, detail=f"SVG rejected: {exc}") from exc
 
 
 def _check_assessment(
@@ -301,6 +322,12 @@ async def upload_evidence(
             status_code=415,
             detail=f"File bytes do not match declared Content-Type {mime!r}",
         )
+
+    # Sanitize before anything else touches these bytes -- the hash, the
+    # stored object, and file_size_bytes below must all reflect the
+    # sanitized content, never the raw upload, or "sanitized" would be
+    # fiction for whatever gets served back later.
+    data = _sanitize_if_svg(data, mime)
 
     display_title = title or raw_name
     evidence_id = uuid.uuid4()
@@ -762,6 +789,8 @@ async def collect_task_evidence_file(
             status_code=415,
             detail=f"File bytes do not match declared Content-Type {mime!r}",
         )
+
+    data = _sanitize_if_svg(data, mime)
 
     display_title = title or raw_name
     evidence_id = uuid.uuid4()
