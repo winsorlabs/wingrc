@@ -2,7 +2,7 @@ import { canSeeApiTokens, canSeeAuditLog, canSeeSecurity, canSeeUsers } from "..
 import type { OnboardingStatus } from "../types";
 
 export type NavCategory = "dashboard" | "scope" | "assessments" | "tools" | "library" | "security";
-export type ScopeTab = "profile" | "system" | "contacts";
+export type ScopeTab = "profile" | "system" | "contacts" | "assets";
 export type SecurityTab = "users" | "api-tokens" | "audit-log";
 
 interface Props {
@@ -73,12 +73,12 @@ export function SideNav({
               {status && indicator(status.personnel.complete)}
               Personnel &amp; Contacts
             </button>
-            {/* Assets, Network Diagram, Data Flow Diagram, Roles — not built
-                yet (docs/PLAN-gui-restructure.md G.5/G.6/G.7). Listed so the
-                intended structure is visible, not wired to any content. */}
-            <button className="side-nav-subitem side-nav-subitem--placeholder" disabled>
+            <button className={scopeSubClass("assets")} onClick={() => onSelectScopeTab("assets")}>
               Assets
             </button>
+            {/* Network Diagram, Data Flow Diagram, Roles — not built yet
+                (docs/PLAN-gui-restructure.md G.6/G.7). Listed so the
+                intended structure is visible, not wired to any content. */}
             <button className="side-nav-subitem side-nav-subitem--placeholder" disabled>
               Network Diagram
             </button>

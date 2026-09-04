@@ -80,8 +80,17 @@ def _entity_type(view: ListView) -> EntityType:
     return view.entity_type
 
 
-def parse_workbook(path: str | Path) -> list[CanonicalEntity]:
-    """Parse every supported tab of the workbook into canonical entities."""
+def parse_workbook(path: str | Path, source_ref: str | None = None) -> list[CanonicalEntity]:
+    """Parse every supported tab of the workbook into canonical entities.
+
+    `source_ref` overrides the provenance filename stamped on each entity
+    (default: the basename of `path`). Callers that read the real uploaded
+    file from disk (the CLI) never need this. Callers that read it via a
+    temp file (the API's dry-run endpoint) must pass the real uploaded
+    filename here, or every entity's provenance would point at a
+    meaningless generated temp name instead of the file the user actually
+    uploaded.
+    """
     wb = openpyxl.load_workbook(path, data_only=True)
     views_by_sheet = {
         v.sheet_title: v
@@ -146,7 +155,7 @@ def parse_workbook(path: str | Path) -> list[CanonicalEntity]:
                     ),
                     in_boundary=True,
                     source=Source.WORKBOOK,
-                    source_ref=str(Path(path).name),
+                    source_ref=source_ref or str(Path(path).name),
                 )
             )
 
