@@ -48,6 +48,7 @@ from .models import (
     ImplementationStatement,
     Organization,
     RaciAssignment,
+    ScopeEntity,
     SystemDescription,
 )
 from .storage import StorageClient
@@ -78,6 +79,10 @@ _CSS = (
     ".s-needs_review{background:#ede9fe;color:#5b21b6}"
     ".s-not_applicable{background:#f3f4f6;color:#6b7280}"
     ".s-inherited{background:#f0fdf4;color:#166534}"
+    ".s-active{background:#dcfce7;color:#166534}"
+    ".s-decommissioned{background:#f3f4f6;color:#6b7280}"
+    ".s-in_boundary{background:#dcfce7;color:#166534}"
+    ".s-out_of_boundary{background:#f3f4f6;color:#6b7280}"
     ".obj{margin:.6rem 0;padding:.5rem .75rem;border-left:3px solid #e5e7eb;background:#fafafa}"
     ".obj-k{font-weight:700;color:#374151;display:inline-block;min-width:2rem}"
     ".no-stmt{color:#9ca3af;font-style:italic}"
@@ -247,6 +252,29 @@ class FindingSnap:
 
 
 @dataclass
+class ScopeEntitySnap:
+    """One device/software row from the Scope/Assets inventory (g5-assets),
+    for the Component/Asset Inventory section (NIST CUI SSP template section
+    2.1/2.2 -- see docs/pdf_ssp_template_spec.md's Addendum 2). Only DEVICE
+    and SOFTWARE entity types carry the make_oem/model/version/
+    responsible_contact_id attributes the template asks for (see
+    routers/scope.py's DeviceSoftwareAttributes) -- PERSON/PROCESS/
+    EXTERNAL_SERVICE/etc. rows are out of scope for this section.
+    """
+
+    entity_type: str
+    natural_key: str
+    scope_category: str | None
+    status: str
+    in_boundary: bool
+    make_oem: str | None
+    model: str | None
+    version: str | None
+    responsible_contact_name: str | None
+    responsible_contact_affiliation: str | None
+
+
+@dataclass
 class BundleSnapshot:
     generated_at: datetime
     sprs_score: int
@@ -261,6 +289,7 @@ class BundleSnapshot:
     unlinked_evidence: list[EvidenceSnap]
     open_tasks: list[OpenTaskSnap]
     findings: list[FindingSnap]
+    scope_entities: list[ScopeEntitySnap] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -528,6 +557,54 @@ def snapshot_bundle(
         )
         for c in contact_rows
     ]
+
+    # --- component/asset inventory (Scope/Assets, g5-assets) ---
+    #
+    # "Complete and accurate listing" (NIST template 2.1/2.2) means every
+    # device/software row for the org, regardless of status or in_boundary --
+    # an out-of-boundary or decommissioned asset is flagged via its Status/
+    # Boundary columns in the rendered table, never silently dropped. Only
+    # DEVICE/SOFTWARE carry the make/model/version/responsible fields the
+    # template asks for; PERSON/PROCESS/EXTERNAL_SERVICE/etc. rows belong to
+    # Personnel or a future section, not this one.
+    contacts_by_id: dict[uuid.UUID, Contact] = {c.id: c for c in contact_rows}
+    entity_rows = session.scalars(
+        select(ScopeEntity)
+        .where(
+            ScopeEntity.org_id == org_id,
+            ScopeEntity.entity_type.in_(["device", "software"]),
+        )
+        .order_by(ScopeEntity.entity_type, ScopeEntity.natural_key)
+    ).all()
+
+    scope_entities: list[ScopeEntitySnap] = []
+    for e in entity_rows:
+        attrs = e.attributes or {}
+        responsible_contact_name: str | None = None
+        responsible_contact_affiliation: str | None = None
+        raw_contact_id = attrs.get("responsible_contact_id")
+        if raw_contact_id:
+            try:
+                contact = contacts_by_id.get(uuid.UUID(str(raw_contact_id)))
+            except (ValueError, AttributeError):
+                contact = None
+            if contact is not None:
+                responsible_contact_name = contact.name
+                responsible_contact_affiliation = contact.affiliation
+        scope_entities.append(
+            ScopeEntitySnap(
+                entity_type=e.entity_type,
+                natural_key=e.natural_key,
+                scope_category=e.scope_category,
+                status=e.status,
+                in_boundary=e.in_boundary,
+                make_oem=attrs.get("make_oem"),
+                model=attrs.get("model"),
+                version=attrs.get("version"),
+                responsible_contact_name=responsible_contact_name,
+                responsible_contact_affiliation=responsible_contact_affiliation,
+            )
+        )
 
     # --- control tree: states + objectives + controls + impl statements ---
     ctrl_rows = session.execute(
@@ -865,6 +942,7 @@ def snapshot_bundle(
         unlinked_evidence=unlinked_evidence,
         open_tasks=open_tasks,
         findings=findings,
+        scope_entities=scope_entities,
     )
 
 
@@ -898,6 +976,7 @@ def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
     sys_desc_html = _render_sys_desc(snapshot)
     impl_html = _render_implementation(snapshot)
     personnel_html = _render_personnel(snapshot)
+    inventory_html = _render_component_inventory(snapshot)
     manifest_html = _render_manifest(snapshot)
     scoring_html = _render_scoring(snapshot)
     outstanding_html = _render_outstanding(snapshot)
@@ -923,6 +1002,7 @@ def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
         (f"{root}/ssp/01_system_description.html", sys_desc_html),
         (f"{root}/ssp/02_implementation.html", impl_html),
         (f"{root}/ssp/03_personnel.html", personnel_html),
+        (f"{root}/ssp/04_component_inventory.html", inventory_html),
         (f"{root}/evidence/manifest.html", manifest_html),
         (f"{root}/summary/scoring.html", scoring_html),
         (f"{root}/summary/outstanding.html", outstanding_html),
@@ -954,6 +1034,7 @@ def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
         zf.writestr(f"{root}/ssp/01_system_description.html", sys_desc_html)
         zf.writestr(f"{root}/ssp/02_implementation.html", impl_html)
         zf.writestr(f"{root}/ssp/03_personnel.html", personnel_html)
+        zf.writestr(f"{root}/ssp/04_component_inventory.html", inventory_html)
         zf.writestr(ssp_pdf_rel_path, ssp_pdf_bytes)
         zf.writestr(f"{root}/evidence/manifest.html", manifest_html)
         zf.writestr(f"{root}/summary/scoring.html", scoring_html)
@@ -1257,6 +1338,72 @@ def _render_personnel(snapshot: BundleSnapshot) -> str:
     return _html_page("Personnel", body)
 
 
+def _component_inventory_body(snapshot: BundleSnapshot) -> str:
+    """Content for the Component/Asset Inventory section (NIST CUI SSP
+    template section 2.1/2.2: "a complete and accurate listing of all
+    hardware and software components, including make/OEM, model, version,
+    and person/role responsible" -- docs/pdf_ssp_template_spec.md's
+    Addendum 2), without the stamp banner or page wrapper — shared by
+    04_component_inventory.html and the consolidated SSP PDF
+    (_render_ssp_pdf), same pattern as every other SSP section here.
+
+    Every device/software ScopeEntity for the org is listed regardless of
+    status or in_boundary -- a decommissioned or out-of-boundary asset is
+    flagged via the Status/Boundary columns, never silently dropped, so the
+    listing stays defensible as "complete and accurate" to a C3PAO.
+    """
+
+    def _table(rows: list[ScopeEntitySnap]) -> str:
+        if not rows:
+            return '<p class="no-stmt">None recorded.</p>'
+        body_rows = "".join(
+            "<tr>"
+            f"<td>{_esc(r.natural_key)}</td>"
+            f"<td>{_esc(_na(r.make_oem))}</td>"
+            f"<td>{_esc(_na(r.model))}</td>"
+            f"<td>{_esc(_na(r.version))}</td>"
+            f"<td>{_esc(_na(r.scope_category))}</td>"
+            f"<td>{_status_badge(r.status)}</td>"
+            f"<td>{_status_badge('in_boundary' if r.in_boundary else 'out_of_boundary')}</td>"
+            f"<td>{_esc(_na(r.responsible_contact_name))}"
+            + (
+                f" ({_esc(r.responsible_contact_affiliation)})"
+                if r.responsible_contact_name and r.responsible_contact_affiliation
+                else ""
+            )
+            + "</td>"
+            "</tr>"
+            for r in rows
+        )
+        return (
+            "<table><tr><th>Identifier</th><th>Make/OEM</th><th>Model</th>"
+            "<th>Version</th><th>Category</th><th>Status</th>"
+            "<th>Boundary</th><th>Responsible</th></tr>"
+            f"{body_rows}</table>"
+        )
+
+    devices = [e for e in snapshot.scope_entities if e.entity_type == "device"]
+    software = [e for e in snapshot.scope_entities if e.entity_type == "software"]
+
+    return (
+        '<h1 id="ssp-inventory">Component/Asset Inventory</h1>'
+        '<p style="font-size:.85rem;color:#6b7280">Complete listing of hardware '
+        "and software components tracked in the scope graph, including "
+        "out-of-boundary and decommissioned items — flagged via the Status "
+        "and Boundary columns below, not omitted, so this listing stays "
+        "defensible as complete.</p>"
+        "<h2>4.1 Hardware (Devices)</h2>"
+        f"{_table(devices)}"
+        "<h2>4.2 Software</h2>"
+        f"{_table(software)}"
+    )
+
+
+def _render_component_inventory(snapshot: BundleSnapshot) -> str:
+    body = f"{_stamp(snapshot)}{_component_inventory_body(snapshot)}"
+    return _html_page("Component/Asset Inventory", body)
+
+
 # ---------------------------------------------------------------------------
 # Consolidated SSP PDF (docs/pdf_ssp_template_spec.md)
 # ---------------------------------------------------------------------------
@@ -1321,6 +1468,7 @@ def _render_ssp_pdf(snapshot: BundleSnapshot) -> bytes:
         '<li class="toc-entry"><a href="#ssp-implementation">Implementation Statements</a></li>'
         f"{toc_family_rows}"
         '<li class="toc-entry"><a href="#ssp-personnel">Personnel &amp; Contacts</a></li>'
+        '<li class="toc-entry"><a href="#ssp-inventory">Component/Asset Inventory</a></li>'
         "</ul></section>"
     )
 
@@ -1329,6 +1477,7 @@ def _render_ssp_pdf(snapshot: BundleSnapshot) -> bytes:
         f'<div class="pdf-section">{_sys_desc_body(snapshot)}</div>'
         f'<div class="pdf-section">{_implementation_body(snapshot)}</div>'
         f'<div class="pdf-section">{_personnel_body(snapshot)}</div>'
+        f'<div class="pdf-section">{_component_inventory_body(snapshot)}</div>'
     )
 
     page_css = (
@@ -1638,6 +1787,7 @@ def _render_index(snapshot: BundleSnapshot) -> str:
         ("SSP — System Description", "ssp/01_system_description.html"),
         ("SSP — Implementation Statements", "ssp/02_implementation.html"),
         ("SSP — Personnel &amp; Contacts", "ssp/03_personnel.html"),
+        ("SSP — Component/Asset Inventory", "ssp/04_component_inventory.html"),
         ("SSP — Consolidated PDF", "ssp/system_security_plan.pdf"),
         ("Evidence Manifest", "evidence/manifest.html"),
         ("SPRS Scoring Summary", "summary/scoring.html"),

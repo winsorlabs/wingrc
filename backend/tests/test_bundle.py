@@ -47,6 +47,7 @@ from app.models import (
     ImplementationStatement,
     Organization,
     RaciAssignment,
+    ScopeEntity,
     SystemDescription,
 )
 from app.storage import StorageClient, get_storage_client
@@ -335,6 +336,7 @@ def test_bundle_zip_contains_required_files(client, db_session, storage, fake_ms
         "ssp/01_system_description.html",
         "ssp/02_implementation.html",
         "ssp/03_personnel.html",
+        "ssp/04_component_inventory.html",
         "ssp/system_security_plan.pdf",
         "evidence/manifest.html",
         "summary/scoring.html",
@@ -959,3 +961,252 @@ def test_bundle_evidence_filename_collision_in_same_objective_folder(
 
         contents = {zf.read(p) for p in folder_paths}
         assert contents == {d["ev_bytes"], second_bytes}
+
+
+# ---------------------------------------------------------------------------
+# Component/Asset Inventory (g5-assets Scope/Assets data wired into the SSP
+# bundle -- docs/pdf_ssp_template_spec.md's Addendum 2, NIST template 2.1/2.2)
+# ---------------------------------------------------------------------------
+
+
+def _inventory_html(zf: zipfile.ZipFile) -> str:
+    name = next(n for n in zf.namelist() if n.endswith("04_component_inventory.html"))
+    return zf.read(name).decode()
+
+
+@pytest.mark.integration
+def test_bundle_inventory_contains_device_row(client, db_session, storage, fake_msp_admin):
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    db_session.add(
+        ScopeEntity(
+            org_id=d["org"].id,
+            entity_type="device",
+            natural_key="LAPTOP-001",
+            scope_category="CUI Asset",
+            status="active",
+            in_boundary=True,
+            attributes={
+                "make_oem": "Dell",
+                "model": "Latitude 5420",
+                "version": "BIOS 1.9.0",
+                "responsible_contact_id": str(d["contact"].id),
+            },
+        )
+    )
+    db_session.flush()
+
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        html = _inventory_html(zf)
+
+    assert "LAPTOP-001" in html
+    assert "Dell" in html
+    assert "Latitude 5420" in html
+    assert "BIOS 1.9.0" in html
+    # responsible_contact_id resolved to the contact's name, same as RaciSnap
+    assert d["contact"].name in html
+
+
+@pytest.mark.integration
+def test_bundle_inventory_contains_software_row(client, db_session, storage, fake_msp_admin):
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    db_session.add(
+        ScopeEntity(
+            org_id=d["org"].id,
+            entity_type="software",
+            natural_key="CrowdStrike Falcon",
+            scope_category="SPA",
+            status="active",
+            in_boundary=True,
+            attributes={"make_oem": "CrowdStrike", "model": "Falcon Sensor", "version": "7.2"},
+        )
+    )
+    db_session.flush()
+
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        html = _inventory_html(zf)
+
+    assert "4.2 Software" in html
+    assert "CrowdStrike Falcon" in html
+    assert "Falcon Sensor" in html
+    assert "7.2" in html
+
+
+@pytest.mark.integration
+def test_bundle_inventory_flags_decommissioned_out_of_boundary_not_dropped(
+    client, db_session, storage, fake_msp_admin
+):
+    """'Complete and accurate listing' means a decommissioned/out-of-boundary
+    asset still appears -- flagged via its Status/Boundary columns, never
+    silently dropped (docs/pdf_ssp_template_spec.md's Addendum 2 decision)."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    db_session.add(
+        ScopeEntity(
+            org_id=d["org"].id,
+            entity_type="device",
+            natural_key="OLD-SERVER-002",
+            scope_category="Out of Scope",
+            status="decommissioned",
+            in_boundary=False,
+            attributes={"make_oem": "HP", "model": "ProLiant DL380", "version": "Gen9"},
+        )
+    )
+    db_session.flush()
+
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        html = _inventory_html(zf)
+
+    assert "OLD-SERVER-002" in html
+    assert "decommissioned" in html
+    assert "out of boundary" in html
+
+
+@pytest.mark.integration
+def test_bundle_inventory_excludes_non_device_software_entity_types(
+    client, db_session, storage, fake_msp_admin
+):
+    """PERSON/PROCESS/etc. entities belong to Personnel or a future section,
+    not the Component/Asset Inventory -- only device/software carry the
+    make/model/version fields the NIST template section asks for."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    db_session.add(
+        ScopeEntity(
+            org_id=d["org"].id,
+            entity_type="person",
+            natural_key="unique-person-not-in-inventory@example.com",
+            status="active",
+            in_boundary=True,
+            attributes={},
+        )
+    )
+    db_session.flush()
+
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        html = _inventory_html(zf)
+
+    assert "unique-person-not-in-inventory@example.com" not in html
+
+
+@pytest.mark.integration
+def test_bundle_inventory_empty_org_shows_none_recorded(client, db_session, storage, fake_msp_admin):
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    # No ScopeEntity rows seeded for this org.
+
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        html = _inventory_html(zf)
+
+    assert "None recorded." in html
+
+
+@pytest.mark.integration
+def test_bundle_inventory_in_artifact_log(client, db_session, storage, fake_msp_admin):
+    """Same as every other generated page: must get its own hash line in
+    artifact_log.txt, matching the exact bytes shipped in the ZIP."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    db_session.add(
+        ScopeEntity(
+            org_id=d["org"].id,
+            entity_type="device",
+            natural_key="LAPTOP-001",
+            status="active",
+            in_boundary=True,
+            attributes={},
+        )
+    )
+    db_session.flush()
+
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        inv_name = next(n for n in zf.namelist() if n.endswith("04_component_inventory.html"))
+        inv_bytes = zf.read(inv_name)
+        log_name = next(n for n in zf.namelist() if n.endswith("artifact_log.txt"))
+        log_text = zf.read(log_name).decode()
+
+    assert inv_name in log_text
+    expected_hash = hashlib.sha256(inv_bytes).hexdigest()
+    assert expected_hash in log_text
+
+
+@pytest.mark.integration
+def test_bundle_second_order_hash_survives_inventory_addition(
+    client, db_session, storage, fake_msp_admin
+):
+    """Same regression guard as test_bundle_second_order_hash_survives_pdf_addition:
+    the inventory page (and the PDF section built from the same body content)
+    must be hashed into log_lines before the second-order hash is computed."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    db_session.add(
+        ScopeEntity(
+            org_id=d["org"].id,
+            entity_type="device",
+            natural_key="LAPTOP-001",
+            status="active",
+            in_boundary=True,
+            attributes={"make_oem": "Dell"},
+        )
+    )
+    db_session.flush()
+
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        log_name = next(n for n in zf.namelist() if n.endswith("artifact_log.txt"))
+        log_bytes = zf.read(log_name)
+        cover_name = next(n for n in zf.namelist() if n.endswith("cover.html"))
+        cover_html = zf.read(cover_name).decode()
+        pdf_name = next(n for n in zf.namelist() if n.endswith("system_security_plan.pdf"))
+        pdf_bytes = zf.read(pdf_name)
+
+    assert pdf_bytes[:5] == b"%PDF-"
+    assert len(pdf_bytes) > 1000
+    actual_hash = hashlib.sha256(log_bytes).hexdigest()
+    assert actual_hash in cover_html
+
+
+@pytest.mark.integration
+def test_bundle_inventory_in_pdf_toc(client, db_session, storage, fake_msp_admin):
+    """The consolidated SSP PDF's own content is assembled from
+    _component_inventory_body, same shared-function requirement as every
+    other SSP section -- assert via a nontrivial size bump on the SAME org's
+    bundle before/after adding a scope entity (cross-org bundle access 404s
+    under RLS, per test_bundle_wrong_org_assessment, so this can't compare
+    two different orgs), since PDF bytes aren't text-searchable here."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+
+    r1 = client.get(_bundle_url(d))
+    assert r1.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r1.content)) as zf:
+        pdf_name = next(n for n in zf.namelist() if n.endswith("system_security_plan.pdf"))
+        pdf_bytes_without_inventory = zf.read(pdf_name)
+
+    db_session.add(
+        ScopeEntity(
+            org_id=d["org"].id,
+            entity_type="device",
+            natural_key="LAPTOP-001-PDF-CONTENT-CHECK",
+            status="active",
+            in_boundary=True,
+            attributes={"make_oem": "Dell", "model": "Latitude 5420", "version": "1.0"},
+        )
+    )
+    db_session.flush()
+    r2 = client.get(_bundle_url(d))
+    assert r2.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r2.content)) as zf:
+        pdf_name = next(n for n in zf.namelist() if n.endswith("system_security_plan.pdf"))
+        pdf_bytes_with_inventory = zf.read(pdf_name)
+
+    assert pdf_bytes_with_inventory[:5] == b"%PDF-"
+    # Extra page (TOC entry + table) reliably adds bytes to the PDF stream.
+    assert len(pdf_bytes_with_inventory) > len(pdf_bytes_without_inventory)
