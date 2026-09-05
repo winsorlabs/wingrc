@@ -1095,7 +1095,9 @@ def test_bundle_inventory_excludes_non_device_software_entity_types(
 
 
 @pytest.mark.integration
-def test_bundle_inventory_empty_org_shows_none_recorded(client, db_session, storage, fake_msp_admin):
+def test_bundle_inventory_empty_org_shows_none_recorded(
+    client, db_session, storage, fake_msp_admin
+):
     d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     # No ScopeEntity rows seeded for this org.
 
