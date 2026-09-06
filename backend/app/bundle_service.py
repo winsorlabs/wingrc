@@ -98,6 +98,23 @@ _CSS = (
     ".diagram-figure{margin:1.25rem 0;padding:.75rem;border:1px solid #e5e7eb;"
     "border-radius:6px;background:#fafafa;text-align:center}"
     ".diagram-img{max-width:100%;width:100%;height:auto;display:block;margin:0 auto}"
+    # Fixed layout + explicit column widths: an 8-column table at the
+    # default browser-sized font wouldn't fit the printable width in the
+    # consolidated SSP PDF (Letter, 0.85in side margins) -- WeasyPrint
+    # silently dropped the last column off the page rather than wrapping
+    # it, verified by rendering a real bundle and reading the PDF back.
+    # table-layout:auto (the shared table{} rule's default) can't be
+    # trusted to keep every column on-page once there are this many.
+    ".inv-table{table-layout:fixed;font-size:.78rem}"
+    ".inv-table th:nth-child(1),.inv-table td:nth-child(1){width:15%}"
+    ".inv-table th:nth-child(2),.inv-table td:nth-child(2){width:11%}"
+    ".inv-table th:nth-child(3),.inv-table td:nth-child(3){width:14%}"
+    ".inv-table th:nth-child(4),.inv-table td:nth-child(4){width:14%}"
+    ".inv-table th:nth-child(5),.inv-table td:nth-child(5){width:11%}"
+    ".inv-table th:nth-child(6),.inv-table td:nth-child(6){width:10%}"
+    ".inv-table th:nth-child(7),.inv-table td:nth-child(7){width:10%}"
+    ".inv-table th:nth-child(8),.inv-table td:nth-child(8){width:15%}"
+    ".inv-table td{word-break:break-word}"
     "@media print{body{max-width:100%}a{color:inherit}}"
 )
 
@@ -1376,7 +1393,7 @@ def _component_inventory_body(snapshot: BundleSnapshot) -> str:
             for r in rows
         )
         return (
-            "<table><tr><th>Identifier</th><th>Make/OEM</th><th>Model</th>"
+            '<table class="inv-table"><tr><th>Identifier</th><th>Make/OEM</th><th>Model</th>'
             "<th>Version</th><th>Category</th><th>Status</th>"
             "<th>Boundary</th><th>Responsible</th></tr>"
             f"{body_rows}</table>"
