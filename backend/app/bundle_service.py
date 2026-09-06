@@ -105,7 +105,13 @@ _CSS = (
     # it, verified by rendering a real bundle and reading the PDF back.
     # table-layout:auto (the shared table{} rule's default) can't be
     # trusted to keep every column on-page once there are this many.
-    ".inv-table{table-layout:fixed;font-size:.78rem}"
+    # The base th,td{padding:.45rem .75rem} rule above is sized for
+    # 3-4 column tables -- at 8 columns that padding alone (16 side-pads x
+    # .75rem) consumes roughly a third of the printable page width, which
+    # is what pushed the Responsible column off-page even after the fixed
+    # layout/width fix above. Override padding down for this table alone.
+    ".inv-table{table-layout:fixed;font-size:.72rem}"
+    ".inv-table th,.inv-table td{padding:.25rem .3rem}"
     ".inv-table th:nth-child(1),.inv-table td:nth-child(1){width:15%}"
     ".inv-table th:nth-child(2),.inv-table td:nth-child(2){width:11%}"
     ".inv-table th:nth-child(3),.inv-table td:nth-child(3){width:14%}"
@@ -115,6 +121,11 @@ _CSS = (
     ".inv-table th:nth-child(7),.inv-table td:nth-child(7){width:10%}"
     ".inv-table th:nth-child(8),.inv-table td:nth-child(8){width:15%}"
     ".inv-table td{word-break:break-word}"
+    # The status/boundary badges (.s) carry their own padding + uppercase
+    # letter-spacing, sized for spacious HTML tables -- too wide for a
+    # ~0.7in PDF column ("IN BOUNDARY" at the base .s size alone exceeded
+    # the Boundary column's net content width). Shrunk specifically here.
+    ".inv-table .s{padding:.05rem .25rem;font-size:.65rem;letter-spacing:0}"
     "@media print{body{max-width:100%}a{color:inherit}}"
 )
 
