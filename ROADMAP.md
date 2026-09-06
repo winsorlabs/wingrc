@@ -227,6 +227,80 @@ reference. The connector fills the existing `evidence_task` / `evidence` models
 A connector populates evidence; an engineer still confirms the state. This
 preserves the "candidates, never auto-met" rule from CLAUDE.md.
 
+### D.1 — Integrations screen (connection management UI)
+
+**Added 2026-09-06 (Jarrod).** Item D above specifies the connector *backend*
+(the `collect()` interface, BYO-credential handling, evidence writes) but no
+UI surface for an MSP admin to actually set one up. This is that surface.
+
+**What:** A new top-level **Integrations** section in the side nav (peer of
+Scope / Assessments / Tools / Library / Security), listing available
+connectors and their per-org connection state. Liongard first, matching D's
+priority order.
+
+**Per-connector screen needs:**
+- Credential entry (BYO API key/secret per D's constraints — the platform
+  operator never sees these) with a **Test connection** action that proves
+  the credentials work before saving, rather than failing silently at first
+  sync.
+- Connection status: connected / never connected / last attempt failed, with
+  the actual error surfaced, not a generic failure.
+- Sync history — what ran, when, how many rows came back, what changed.
+  Without this an MSP can't answer "why did my inventory change" to an
+  assessor, which is the whole point of the audit posture elsewhere in this app.
+- Manual **Sync now**, plus whatever scheduling model we land on (decide:
+  cron-style server-side schedule vs. manual-only for v1 — manual-only is a
+  legitimate v1 and avoids building a scheduler before the connector itself
+  is proven).
+
+**Open questions to settle before building:**
+- Credential storage. D says "stored in the tenant's own vault (or passed via
+  config); the platform never holds third-party API keys" — that constraint
+  was written before there was any UI to type a key into. If an admin enters a
+  Liongard key in a WinGRC screen, WinGRC *is* holding it. Either reconcile
+  this (encrypted-at-rest per-org secret store, documented as such) or keep
+  credentials strictly in tenant config/env and make this screen read-only
+  status. This is a real architectural decision, not a detail — settle it
+  before writing the screen.
+- Where org-scoped vs. MSP-wide connections live: is a Liongard connection
+  configured once per MSP and mapped to many client orgs, or separately per
+  org? Liongard's own tenancy model should drive this — check it rather than
+  assuming.
+
+### D.2 — Scope / Inventory as a connector target
+
+**Added 2026-09-06 (Jarrod).** D's Architecture section says connector output
+"writes into the existing `evidence` + `evidence_state_link` tables" with "no
+new schema required." That's correct for evidence-collection connectors, but
+the first and highest-priority use of Liongard is pulling **inventory /
+assets** — which lands in `scope_entity`, not `evidence`. That path isn't
+specified anywhere; docs/roadmap.md carries it only as a one-line deferred
+item ("Scope connector — Liongard / Datto RMM → `scope_entity`").
+
+**What:** Liongard inventory pull populating `scope_entity` (devices,
+software, users), reusing the ingest machinery `scope.py` already has rather
+than inventing a third path.
+
+**Reuse, don't duplicate:** the workbook importer already implements
+dry-run → review → apply against `scope_entity` with natural-key upsert and
+MISSING-row flagging (apply never deletes). A connector pull is the same
+shape — fetch rows, diff against current scope, present for review, apply.
+Route it through that existing flow; do not write a direct connector→DB
+insert path that bypasses the review step. An assessor-facing inventory that
+changes without a human seeing the diff is exactly the failure mode the
+existing dry-run design avoids.
+
+**Hard dependency — canonical attribute keys:** `scope_entity.attributes`
+currently holds *different key schemas depending on entry path* — the manual
+Add Asset UI writes `make_oem`/`model`/`version`/`responsible_contact_id`,
+while the workbook importer writes raw spreadsheet headers (`Make`, `Model`,
+`OS`, `Owner / Primary User`). This was found 2026-09-05 while wiring the
+component inventory into the SSP bundle, where it renders as an all-"N/A"
+table for spreadsheet-scoped orgs. A Liongard connector would be a **third**
+writer into the same field. Normalize to canonical keys at every ingest
+boundary before building this connector, or the drift problem triples
+instead of getting fixed.
+
 ---
 
 ## E — Objective tips (MSP-flavored evidence examples)
