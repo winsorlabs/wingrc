@@ -18,7 +18,7 @@ from app import repo
 from app.auth import get_current_user
 from app.db import get_session
 from app.domain import ChangeType
-from app.importers.workbook import parse_workbook
+from app.importers.workbook import parse_workbook, resolve_canonical_device_attributes
 from app.main import app
 from app.models import Organization, ScopeEntity
 from app.reconcile import reconcile
@@ -235,6 +235,12 @@ def test_api_apply_matches_cli_seed_apply(client, db_session, fake_msp_admin):
     db_session.flush()
 
     incoming = parse_workbook(SAMPLE)
+    # cli.py's real `seed` command calls this same enrichment step between
+    # parse_workbook() and reconcile() — replicate it here too, or this
+    # "parity" test would compare the API's enriched dry-run against a CLI
+    # side that never got the canonical make_oem/model/version/
+    # responsible_contact_id keys, and legitimately fail.
+    incoming = resolve_canonical_device_attributes(db_session, cli_org.id, incoming)
     current = repo.list_entities(db_session, cli_org.id)
     result = reconcile(current, incoming)
     for c in result.of(ChangeType.NEW, ChangeType.CHANGED):

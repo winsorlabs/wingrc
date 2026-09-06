@@ -46,7 +46,7 @@ from ..auth import require_org_access, require_write
 from ..catalog import VIEWS_BY_ID
 from ..db import get_session
 from ..domain import CanonicalEntity, EntityStatus, EntityType, ScopeCategory, Source
-from ..importers.workbook import parse_workbook
+from ..importers.workbook import parse_workbook, resolve_canonical_device_attributes
 from ..models import ScopeEntity
 from ..reconcile import reconcile
 from ..render import render_view
@@ -425,6 +425,7 @@ async def import_dry_run(
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
+    incoming = resolve_canonical_device_attributes(session, org_id, incoming)
     current = repo.list_entities(session, org_id)
     result = reconcile(current, incoming)
     return DryRunOut(

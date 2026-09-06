@@ -18,7 +18,7 @@ from . import repo
 from .catalog import ALL_VIEWS, VIEWS_BY_ID
 from .db import SessionLocal
 from .domain import ChangeType, EntityType
-from .importers.workbook import parse_workbook
+from .importers.workbook import parse_workbook, resolve_canonical_device_attributes
 from .models import Organization
 from .reconcile import reconcile
 from .render import render_view
@@ -41,6 +41,7 @@ def seed(
     session = SessionLocal()
     try:
         org_row = repo.get_or_create_org(session, org)
+        incoming = resolve_canonical_device_attributes(session, org_row.id, incoming)
         current = repo.list_entities(session, org_row.id)
         result = reconcile(current, incoming)
         typer.echo(f"Reconcile summary: {result.summary()}")

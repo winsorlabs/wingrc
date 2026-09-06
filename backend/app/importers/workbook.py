@@ -11,10 +11,13 @@ rendering are shared downstream.
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 from typing import Any
 
 import openpyxl
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from ..catalog import (
     AUTHORIZED_DEVICES,
@@ -30,6 +33,7 @@ from ..domain import (
     ScopeCategory,
     Source,
 )
+from ..models import Contact
 
 _PLACEHOLDER_TOKENS = ("[placeholder]",)
 _CATEGORY_LOOKUP = {c.value.lower(): c for c in ScopeCategory}
@@ -158,5 +162,84 @@ def parse_workbook(path: str | Path, source_ref: str | None = None) -> list[Cano
                     source_ref=source_ref or str(Path(path).name),
                 )
             )
+
+    return entities
+
+
+# ---------------------------------------------------------------------------
+# Canonical-key enrichment (post-parse, DB-aware)
+# ---------------------------------------------------------------------------
+#
+# parse_workbook() above stays pure and DB-free -- it only ever produces raw,
+# source-keyed attributes (e.g. "Make"/"Model"/"OS"), preserved verbatim so
+# catalog.AUTHORIZED_DEVICES can round-trip a faithful CMMC list back out
+# (its `columns` reference those exact raw header strings). But the newer
+# manual-entry Assets UI (frontend/src/components/AssetDrawer.tsx) and
+# downstream consumers -- notably the SSP bundle's Component/Asset Inventory
+# section (docs/pdf_ssp_template_spec.md's Addendum 2) -- read a different,
+# normalized key set: make_oem/model/version/responsible_contact_id (see
+# routers/scope.py's DeviceSoftwareAttributes). A workbook-imported device
+# previously never got those keys at all, so it showed up as an all-N/A row
+# everywhere that reads the canonical schema despite the equivalent data
+# existing under the raw headers. This step adds the canonical keys
+# ALONGSIDE the raw ones (never replaces or removes a raw header) so both
+# consumers keep working from the same attributes dict.
+
+_DEVICE_CANONICAL_ALIASES: dict[str, str] = {
+    "make_oem": "Make",
+    "model": "Model",
+    # OS, not BIOS FW Ver: "version" is read here as the tracked/patched
+    # software version for the asset (the field an MSP actually monitors
+    # day to day for vulnerability/patch-level purposes), not firmware.
+    # BIOS FW Ver remains available under its own raw key for anyone who
+    # needs it; this mapping can change if that reading turns out wrong.
+    "version": "OS",
+}
+
+
+def _add_canonical_device_aliases(attributes: dict[str, Any]) -> None:
+    for canonical_key, raw_header in _DEVICE_CANONICAL_ALIASES.items():
+        if attributes.get(canonical_key):
+            continue  # never clobber an existing canonical value
+        raw_value = attributes.get(raw_header)
+        if raw_value:
+            attributes[canonical_key] = raw_value
+
+
+def resolve_canonical_device_attributes(
+    session: Session, org_id: uuid.UUID, entities: list[CanonicalEntity]
+) -> list[CanonicalEntity]:
+    """Enrich workbook-imported DEVICE entities in place with the canonical
+    make_oem/model/version/responsible_contact_id attribute keys, then
+    return `entities` (same list, for call-site convenience).
+
+    Call this once, after parse_workbook() and before reconcile() -- both
+    routers/scope.py's dry-run endpoint and cli.py's `seed` command reconcile
+    against these enriched attributes, and dry-run's response (echoed back
+    unmodified by the frontend to /imports/workbook/apply) carries the
+    enrichment through to apply without a second resolution pass.
+
+    responsible_contact_id is set ONLY on a real match: "Owner / Primary
+    User" is looked up by exact, case-insensitive name against this org's
+    actual Contact rows. Zero or ambiguous (>1 same-name) matches leave the
+    field unset -- never a raw string stuffed into the UUID slot, and never
+    a guessed match.
+    """
+    contacts_by_name: dict[str, list[uuid.UUID]] = {}
+    for c in session.scalars(select(Contact).where(Contact.org_id == org_id)):
+        contacts_by_name.setdefault(c.name.strip().lower(), []).append(c.id)
+
+    for entity in entities:
+        if entity.entity_type is not EntityType.DEVICE:
+            continue
+        _add_canonical_device_aliases(entity.attributes)
+        if entity.attributes.get("responsible_contact_id"):
+            continue
+        owner_raw = entity.attributes.get("Owner / Primary User")
+        if not owner_raw:
+            continue
+        matches = contacts_by_name.get(str(owner_raw).strip().lower(), [])
+        if len(matches) == 1:
+            entity.attributes["responsible_contact_id"] = str(matches[0])
 
     return entities
