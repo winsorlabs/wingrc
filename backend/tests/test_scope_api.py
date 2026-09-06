@@ -197,6 +197,37 @@ def test_dry_run_returns_incoming_data_for_new_rows(client, db_session, fake_msp
     # empty dict — this is what apply actually needs to write.
     device_changes = [c for c in new_changes if c["entity_type"] == "device"]
     assert any(c["incoming"]["attributes"] for c in device_changes)
+    # Canonical keys land in the response device rows read from the sample
+    # workbook's raw Make/Model/OS headers.
+    assert all(c["incoming"]["attributes"].get("make_oem") for c in device_changes)
+    assert all(c["incoming"]["attributes"].get("model") for c in device_changes)
+    assert all(c["incoming"]["attributes"].get("version") for c in device_changes)
+
+
+@pytest.mark.integration
+def test_dry_run_surfaces_unresolved_owner_warning(client, db_session, fake_msp_admin):
+    """The sample workbook's "Owner / Primary User" column holds scope-
+    category text ("CUI Asset", "SPA"), not a person's name -- every device
+    row should come back with an unresolved-owner warning rather than the
+    mismatch disappearing silently."""
+    org = _org(db_session, fake_msp_admin)
+    with open(SAMPLE, "rb") as f:
+        r = client.post(
+            f"/orgs/{org.id}/imports/workbook/dry-run",
+            files={
+                "file": (
+                    "authorized-entities.example.xlsx",
+                    f.read(),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+    assert r.status_code == 200
+    device_changes = [c for c in r.json()["changes"] if c["entity_type"] == "device"]
+    assert device_changes
+    for c in device_changes:
+        assert c["warnings"], f"expected a warning for {c['natural_key']!r}, got none"
+        assert "could not be resolved to a" in c["warnings"][0]
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +271,7 @@ def test_api_apply_matches_cli_seed_apply(client, db_session, fake_msp_admin):
     # "parity" test would compare the API's enriched dry-run against a CLI
     # side that never got the canonical make_oem/model/version/
     # responsible_contact_id keys, and legitimately fail.
-    incoming = resolve_canonical_device_attributes(db_session, cli_org.id, incoming)
+    resolve_canonical_device_attributes(db_session, cli_org.id, incoming)
     current = repo.list_entities(db_session, cli_org.id)
     result = reconcile(current, incoming)
     for c in result.of(ChangeType.NEW, ChangeType.CHANGED):

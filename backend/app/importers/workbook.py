@@ -208,10 +208,9 @@ def _add_canonical_device_aliases(attributes: dict[str, Any]) -> None:
 
 def resolve_canonical_device_attributes(
     session: Session, org_id: uuid.UUID, entities: list[CanonicalEntity]
-) -> list[CanonicalEntity]:
+) -> dict[tuple[str, str], list[str]]:
     """Enrich workbook-imported DEVICE entities in place with the canonical
-    make_oem/model/version/responsible_contact_id attribute keys, then
-    return `entities` (same list, for call-site convenience).
+    make_oem/model/version/responsible_contact_id attribute keys.
 
     Call this once, after parse_workbook() and before reconcile() -- both
     routers/scope.py's dry-run endpoint and cli.py's `seed` command reconcile
@@ -222,13 +221,25 @@ def resolve_canonical_device_attributes(
     responsible_contact_id is set ONLY on a real match: "Owner / Primary
     User" is looked up by exact, case-insensitive name against this org's
     actual Contact rows. Zero or ambiguous (>1 same-name) matches leave the
-    field unset -- never a raw string stuffed into the UUID slot, and never
-    a guessed match.
+    field unset -- never a raw string stuffed into the UUID slot (that would
+    put two different data shapes -- a resolved contact vs. free text -- under
+    the one field the renderer treats as "resolved contact"), and never a
+    guessed match. A spreadsheet cell is also never auto-created as a new
+    Contact: that would silently add rows to the Personnel section the SSP's
+    own Personnel page renders, from data an engineer never reviewed as a
+    person record.
+
+    Returns a dict of human-readable warnings for every unresolved owner,
+    keyed by `entity.key()` (the same (entity_type, natural_key.strip()
+    .lower()) tuple reconcile.py and CanonicalEntity.key() use) -- so a
+    caller can attach one to the matching dry-run change row instead of the
+    mismatch disappearing silently.
     """
     contacts_by_name: dict[str, list[uuid.UUID]] = {}
     for c in session.scalars(select(Contact).where(Contact.org_id == org_id)):
         contacts_by_name.setdefault(c.name.strip().lower(), []).append(c.id)
 
+    warnings: dict[tuple[str, str], list[str]] = {}
     for entity in entities:
         if entity.entity_type is not EntityType.DEVICE:
             continue
@@ -241,5 +252,11 @@ def resolve_canonical_device_attributes(
         matches = contacts_by_name.get(str(owner_raw).strip().lower(), [])
         if len(matches) == 1:
             entity.attributes["responsible_contact_id"] = str(matches[0])
+        else:
+            reason = "no contact with that name" if not matches else "multiple contacts share that name"
+            warnings.setdefault(entity.key(), []).append(
+                f'Owner/Primary User "{owner_raw}" could not be resolved to a '
+                f"contact ({reason}) -- responsible_contact_id left unset."
+            )
 
-    return entities
+    return warnings

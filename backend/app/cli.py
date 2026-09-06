@@ -41,12 +41,15 @@ def seed(
     session = SessionLocal()
     try:
         org_row = repo.get_or_create_org(session, org)
-        incoming = resolve_canonical_device_attributes(session, org_row.id, incoming)
+        attr_warnings = resolve_canonical_device_attributes(session, org_row.id, incoming)
         current = repo.list_entities(session, org_row.id)
         result = reconcile(current, incoming)
         typer.echo(f"Reconcile summary: {result.summary()}")
         for c in result.of(ChangeType.NEW, ChangeType.CHANGED, ChangeType.MISSING):
             typer.echo(f"  [{c.change_type.value:<8}] {c.entity_type.value}: {c.natural_key}")
+        for msgs in attr_warnings.values():
+            for msg in msgs:
+                typer.echo(f"  [warning ] {msg}")
         if apply:
             for c in result.of(ChangeType.NEW, ChangeType.CHANGED):
                 repo.upsert(session, org_row.id, c.incoming)

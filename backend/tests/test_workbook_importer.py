@@ -13,6 +13,8 @@ Covers:
     never a raw string written into the UUID slot, and never a guess when
     zero or more than one contact shares that name.
   - Non-DEVICE entity types are left untouched.
+  - An unresolved Owner/Primary User is surfaced as a warning keyed by
+    entity.key(), not just silently dropped.
 
 Run in-container:
     docker compose exec backend pytest tests/test_workbook_importer.py -v
@@ -106,9 +108,10 @@ def test_responsible_contact_resolves_on_exact_unambiguous_match(db_session):
         attributes={"Owner / Primary User": "jane smith"},  # case-insensitive match
     )
 
-    resolve_canonical_device_attributes(db_session, org.id, [entity])
+    warnings = resolve_canonical_device_attributes(db_session, org.id, [entity])
 
     assert entity.attributes["responsible_contact_id"] == str(contact.id)
+    assert warnings == {}
 
 
 @pytest.mark.integration
@@ -125,9 +128,14 @@ def test_responsible_contact_unset_when_no_match(db_session):
         attributes={"Owner / Primary User": "SPA"},
     )
 
-    resolve_canonical_device_attributes(db_session, org.id, [entity])
+    warnings = resolve_canonical_device_attributes(db_session, org.id, [entity])
 
     assert "responsible_contact_id" not in entity.attributes
+    key = entity.key()
+    assert key in warnings
+    assert len(warnings[key]) == 1
+    assert "SPA" in warnings[key][0]
+    assert "no contact with that name" in warnings[key][0]
 
 
 @pytest.mark.integration
@@ -152,9 +160,12 @@ def test_responsible_contact_unset_when_ambiguous(db_session):
         attributes={"Owner / Primary User": "Jane Smith"},
     )
 
-    resolve_canonical_device_attributes(db_session, org.id, [entity])
+    warnings = resolve_canonical_device_attributes(db_session, org.id, [entity])
 
     assert "responsible_contact_id" not in entity.attributes
+    key = entity.key()
+    assert key in warnings
+    assert "multiple contacts share that name" in warnings[key][0]
 
 
 @pytest.mark.integration

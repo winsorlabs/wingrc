@@ -199,6 +199,7 @@ class ScopeChangeOut(BaseModel):
     natural_key: str
     field_diffs: dict[str, list[Any]]
     incoming: ScopeChangeIncoming | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class DryRunOut(BaseModel):
@@ -425,7 +426,7 @@ async def import_dry_run(
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
-    incoming = resolve_canonical_device_attributes(session, org_id, incoming)
+    attr_warnings = resolve_canonical_device_attributes(session, org_id, incoming)
     current = repo.list_entities(session, org_id)
     result = reconcile(current, incoming)
     return DryRunOut(
@@ -449,6 +450,9 @@ async def import_dry_run(
                     )
                     if c.incoming is not None
                     else None
+                ),
+                warnings=attr_warnings.get(
+                    (c.entity_type.value, c.natural_key.strip().lower()), []
                 ),
             )
             for c in result.changes
