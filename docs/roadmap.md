@@ -147,7 +147,93 @@ Items without a status are planned but not yet started.
   confirmed fresh-login fast-resume still works, explicit navigate-back
   now shows the real picker, and a second assessment could be created to
   exercise G.4's switcher. `G.5`–`G.11` and `M.7`/`M.8` remain not
-  started.
+  started. **Correction (2026-09-07):** `G.5` has since shipped — see
+  below. `G.6`–`G.11` and `M.7`/`M.8` remain not started.
+- **Auth/RBAC completion (items I.1–I.9)** — status verified against code
+  2026-09-07, reading `docs/PLAN-auth-rbac-completion.md`'s own status
+  header rather than inferring from this file: I.1–I.8 merged/closed, I.9's
+  automated checks (pytest, `tsc -b`, `vitest`) are green with one manual
+  browser self-service walkthrough still outstanding (see that doc's `I.9`
+  section). `auth.py`'s `require_write()` enforces the `c3pao_assessor`
+  read-only gate (`_READ_ONLY_ROLES`) on every non-idempotent request,
+  applied at router level — confirmed present on `assessments.py`,
+  `contacts.py`, `dashboard.py`, `evidence.py`, `scope.py`, and
+  `bundle.py`'s `dependencies=[...]`. `orgs.py` carries `require_write()`
+  at router level plus `require_org_access()` per-route and
+  `require_role("msp_admin", "msp_engineer")` on org creation.
+  `frameworks.py` correctly carries only `get_current_user` — it's a single
+  GET over the global seeded framework catalog, nothing org-scoped or
+  mutating to gate. This closes out the "Role-differentiated RBAC guards"
+  entry that used to live in Deferred below, which was stale — see the
+  root `ROADMAP.md` item **I** note for the fuller role-mapping writeup.
+- **Consolidated SSP PDF export** (`bundle_service.py:_render_ssp_pdf`,
+  merged `e4e307eb`, 2026-09-03) — WeasyPrint rendering over the same
+  shared `_sys_desc_body`/`_implementation_body`/`_personnel_body` helpers
+  that back the three separate HTML pages, not a `ssp.json` intermediate
+  (the design this was originally sketched against — see the "PDF
+  rendering" entry that used to live in Deferred below). `weasyprint` is a
+  hard dependency in `backend/pyproject.toml`; covered by `test_bundle.py`
+  (PDF-validity, artifact-log-entry, and second-order-hash-survives-PDF
+  tests). Same commit fixed two real bugs found while shipping it: a TOC
+  page-number rendering bug (`target-counter()` was on the `::after` of an
+  empty flex-sibling span rather than the link's own `::after` — moved
+  onto the link, using `leader(".")` for the dotted rule) and a CI bug
+  where the `integration` job set `WINGRC_DATABASE_URL` but `conftest.py`
+  only reads `WINGRC_TEST_DATABASE_URL`, so every `@pytest.mark.integration`
+  test had been silently skipping in CI and reporting green while testing
+  nothing — fixed `afdea252`, 2026-09-03.
+- **Scope → Assets screen (G.5)** (`381dd3f5`, 2026-09-01; merged
+  `c81346e4`, 2026-09-04) — manual scope-entity CRUD
+  (`POST/PATCH/DELETE /orgs/{org_id}/scope`) in `routers/scope.py`
+  alongside the existing workbook dry-run/apply flow; frontend
+  `AssetsPanel`/`AssetDrawer`/`AssetImportWizard`. Same PR fixed two real
+  bugs: an RLS-unsafe `session.commit(); session.refresh(sd)` pattern for
+  this table, and `source_ref` provenance not surviving a workbook-import
+  round-trip (`6eb0b46e`).
+- **Network Diagram / Data Flow Diagram slots** (merged `d2ebea5d`,
+  2026-09-04) — two dedicated attachment slots on System Description (not
+  generic anonymous evidence), per `docs/pdf_ssp_template_spec.md`'s
+  Addendum. SVG sanitized on ingest via an allowlist parser
+  (`svg_sanitize.py`, `defusedxml`) that rejects `<!DOCTYPE>`/external
+  entities outright rather than attempting to sanitize them; PNG accepted
+  as fallback. Embedded in both the SSP PDF and the HTML system-description
+  page.
+- **Component/Asset Inventory in the SSP bundle** (`1f3f1433`, 2026-09-05,
+  through `38054fdf`, 2026-09-06) — new `ssp/04_component_inventory.html`
+  page plus a matching PDF section, listing every device/software
+  `scope_entity` row for the org (make/OEM, model, version, category,
+  status, boundary, responsible party) per the NIST CUI SSP template's
+  section 2.1/2.2 (`docs/pdf_ssp_template_spec.md`'s Addendum 2).
+  Out-of-boundary and decommissioned assets are flagged via Status/
+  Boundary badges, never dropped from the listing. A real PDF page-width
+  overflow bug (WeasyPrint's default table layout silently clipped the
+  last column of an 8-column table) was found and fixed by visually
+  inspecting a real rendered PDF, not caught by any automated test.
+- **Canonical `scope_entity.attributes` normalization at the workbook-import
+  boundary** (`5f828a11`, 2026-09-06; unresolved-owner warning surfaced
+  `4dd2fae2`/`3f3ea243`, 2026-09-06–07) — closes the gap the Component/
+  Asset Inventory work above surfaced: the manual Add Asset UI wrote
+  `make_oem`/`model`/`version`/`responsible_contact_id`, while the
+  workbook importer wrote raw spreadsheet headers (`Make`, `Model`, `OS`,
+  `Owner / Primary User`), so spreadsheet-scoped orgs rendered an
+  all-"N/A" inventory table.
+  `importers/workbook.py:resolve_canonical_device_attributes()` now maps
+  the known raw headers onto canonical keys at ingest time, alongside
+  (never replacing) the raw headers — `catalog.AUTHORIZED_DEVICES`'s list
+  rendering still depends on those raw keys for a faithful round-trip.
+  `responsible_contact_id` resolves against real `Contact` rows by exact,
+  case/whitespace-insensitive name match only — never a raw spreadsheet
+  string written into the UUID slot, and never an auto-created Contact.
+  An unresolved owner is surfaced as a warning in the dry-run HTTP response
+  (`ScopeChangeOut.warnings`) and in `cli.py seed`'s output, rather than
+  silently dropped. Verified against the real seeded org (Acme MSP,
+  imported from `samples/authorized-entities.example.xlsx`): re-ran the
+  import to backfill its 3 existing device rows; a direct DB query
+  confirmed Acme MSP was the only org anywhere on this environment with
+  workbook-imported `scope_entity` rows, so no data migration was needed.
+  This is the pattern any future connector (root `ROADMAP.md` **D.2**)
+  needs to follow rather than becoming a third divergent writer — see that
+  item's updated "Hard dependency" note.
 
 ---
 
@@ -178,7 +264,7 @@ Items without a status are planned but not yet started.
 
 ### N. Document Library
 
-Two new tables (a new migration — 0011 through 0015 are already in use by other shipped features, see Done above). Prerequisite: M (for `approved_by_contact_id` FK).
+Two new tables (a new migration — 0011 through 0015 are already in use by other shipped features, see Done above). Prerequisite: M (for `approved_by_contact_id` FK). **Verified 2026-09-07: this prerequisite is satisfied** — `Contact` (`models.py:906`) has existed since the Onboarding Wizard shipped (migrations 0011–0013, see Done above), well before this item was written. No remaining data-model blocker for N specifically; it's just unstarted.
 
 **Monetization boundary:** The matching engine, tagging, and publish/approve flow are core (free, open-source). The curated template content (polished ready-to-use policies) is a separately distributed seed script — not in this repo. `is_template_derived` and `template_ref` columns mark template-derived rows; no code-level paywall.
 
@@ -228,14 +314,12 @@ Document library (N)
 
 ## Deferred
 
-- **PDF rendering** — Jinja2 + WeasyPrint over `ssp.json`. Bundle export (J) has shipped and is stable, so this dependency is satisfied; not scheduled yet regardless.
-- **Document-library template content** — paid add-on seed script; depends on document library (N) mechanism being live.
-- **Personnel connector** — Liongard / M365 → auto-populate contacts; depends on M.
-- **AI implementation statements** — generation worker behind BYO-AI provider abstraction; scaffolding exists.
-- **CRM (Customer Responsibility Matrix)** — render from `raci_assignment` + `contact`; depends on M.
-- **Scope connector** — Liongard / Datto RMM → `scope_entity`; supplements manual CSV import. Now specified in root `ROADMAP.md` **D.2** (route through the existing dry-run/apply review flow, not a direct connector→DB write; blocked on canonical attribute-key normalization — see below).
-- **Integrations screen** — new side-nav section for setting up connectors (Liongard first), specified in root `ROADMAP.md` **D.1**. Added 2026-09-06 (Jarrod). Carries an unsettled architectural question: item D says the platform never holds third-party API keys, which conflicts with an in-app credential-entry screen — reconcile before building.
-- **Canonical `scope_entity.attributes` keys** — the manual Add Asset UI writes `make_oem`/`model`/`version`/`responsible_contact_id`; the workbook importer writes raw spreadsheet headers (`Make`, `Model`, `OS`, `Owner / Primary User`). Found 2026-09-05 wiring the component inventory into the SSP bundle, where spreadsheet-scoped orgs render an all-"N/A" inventory table. Blocks D.2 (a connector would be a third writer into the same field).
-- **Role-differentiated RBAC guards** — authentication shipped (see Done, migration 0015); the `require_role` guard mechanism exists and is applied to user-management endpoints (`users.py`) but not yet to the core CMMC data-surface routers (assessments, evidence, contacts, orgs, bundle, frameworks) — any authenticated user of any role currently has equal access there. The three roles named in root `ROADMAP.md` item I (MSP User / Org User / Assessor) don't map 1:1 to the four that shipped; in particular there's no enforced read-only guard for `c3pao_assessor`.
-- **Evidence download hardening** — replace presigned direct-to-MinIO download URLs with the backend streaming evidence bytes itself. Presigned URLs are bearer-token style: anyone with the link can download until it expires, with no per-request re-check of session/auth state. Worth revisiting given the investment already made in session/MFA/lockout hardening (item I) — that hardening doesn't currently extend to the download path. Surfaced while proxying MinIO behind nginx for item O.
-- **Frontend build determinism** — generate and commit `frontend/package-lock.json` (none exists yet), then switch `deploy/nginx/Dockerfile` from `npm install` to `npm ci` for reproducible builds. Low priority, not blocking anything currently in flight.
+- **Document-library template content** — paid add-on seed script; depends on document library (N) mechanism being live. **Verified 2026-09-07: N is still fully unstarted** — no `Document`/`document_objective_tag` model, no `routers/documents.py`. (`importers/document.py` is a different, already-shipped feature — AI extraction of a *product baseline* from a vendor CRM/PDF, not the tenant-facing template library N describes. Don't confuse the two on a future pass.)
+- **Personnel connector** — Liongard / M365 → auto-populate contacts; depends on M. **Note (2026-09-07):** "M" here isn't fully traceable — root `ROADMAP.md` has no item M; the only "M" in this repo is the Multi-org access work (`M.1`–`M.8`) tracked in this file's own Done section, whose core (`M.1`–`M.6`) is done and whose remainder (`M.7`/`M.8`, a deployment-wide user directory + admin grant/revoke UI) doesn't obviously relate to auto-populating contacts. Left as originally written rather than guessed at; re-derive the actual dependency before resuming this item.
+- **AI implementation statements** — generation worker behind BYO-AI provider abstraction; scaffolding exists. **Verified 2026-09-07, more specifically than before:** `config.py`'s `ai_provider` setting and `backend/app/ai/` are real and already load-bearing — `importers/document.py` (the vendor-CRM/baseline extractor) is a working consumer of that same abstraction today. What's still missing is the per-objective draft-statement path itself: no `draft-statement` endpoint exists on `assessments.py`, and `ImplementationStatement` rows are still authored by hand. The provider plumbing this item needs already exists; the feature-specific generation logic does not.
+- **CRM (Customer Responsibility Matrix)** — render from `raci_assignment` + `contact`; depends on M (see the same "M" ambiguity note under Personnel connector above). **Verified 2026-09-07: no CRM-rendering code exists** — "CRM" elsewhere in this codebase (`models.py`, `importers/document.py`, `routers/contacts.py`) refers to the generic *documentation-role* concept ("who appears in a CRM/SSP document"), not this specific render-from-RACI feature. Still genuinely unstarted.
+- **Scope connector** — Liongard / Datto RMM → `scope_entity`; supplements manual CSV import. Specified in root `ROADMAP.md` **D.2** (route through the existing dry-run/apply review flow, not a direct connector→DB write). **Updated 2026-09-07:** the canonical-attribute-key blocker this item used to cite is resolved — see the "Canonical `scope_entity.attributes` normalization" Done entry above. No connector code exists yet (verified: no Liongard/Datto files under `backend/app`, `Source.LIONGARD`/`Source.DATTO_RMM` exist only as unused enum values in `domain.py`); D.2 needs to follow the pattern `importers/workbook.py` already established, not invent a fourth attribute schema.
+- **Integrations screen** — new side-nav section for setting up connectors (Liongard first), specified in root `ROADMAP.md` **D.1**. Added 2026-09-06 (Jarrod). Carries an unsettled architectural question: item D says the platform never holds third-party API keys, which conflicts with an in-app credential-entry screen — reconcile before building. Still fully unstarted as of 2026-09-07 (no frontend Integrations route, no per-connector credential model).
+- **Evidence download hardening** — replace presigned direct-to-MinIO download URLs with the backend streaming evidence bytes itself. Presigned URLs are bearer-token style: anyone with the link can download until it expires, with no per-request re-check of session/auth state. Worth revisiting given the investment already made in session/MFA/lockout hardening (item I, now shipped — see Done) — that hardening doesn't currently extend to the download path. Surfaced while proxying MinIO behind nginx for item O. **Verified 2026-09-07: still open** — `storage.py` still defines `presigned_url()` on every storage backend, and `routers/evidence.py` still calls it at 4 call sites (`download_url=storage.presigned_url(...)` for both single-evidence and task-collection responses). Nothing streams bytes through the backend yet.
+- **Frontend build determinism** — generate and commit `frontend/package-lock.json` (none is committed — one has been observed untracked on wl-util-1 from a local `npm install`, but that's not what this item is about), then switch `deploy/nginx/Dockerfile` from `npm install` to `npm ci` for reproducible builds. Low priority, not blocking anything currently in flight. **Verified 2026-09-07: still open** — `git ls-files frontend/package-lock.json` returns nothing (not committed), `deploy/nginx/Dockerfile` still runs `npm install`, not `npm ci`.
+- **Audit log actor retrofit for core CMMC routers** — newly documented 2026-09-07, found while reconciling this file against root `ROADMAP.md` item I. `audit.py`'s own module docstring says it directly: `routers/users.py` and `auth.py` events carry the real authenticated actor (`actor=str(user.id)`), but `assessments.py`/`evidence.py`/`contacts.py`/`orgs.py`/`bundle.py` "have not been retrofitted yet and still default to `actor='system'`... that retrofit is not part of this slice." So the actual compliance-relevant audit trail — control-state changes, evidence attach/detach, implementation-statement edits, the things root `ROADMAP.md` item H's own "What it captures" list names — still records `"system"` as the actor, not the real user, even though auth has shipped and the identity is known at every one of those call sites. This is a real, currently-open gap, not resolved by auth (item I) or the audit log (item H) shipping individually.

@@ -1,11 +1,22 @@
 # WinGRC Roadmap
 
-Queued features, not yet built. Each item notes what needs to be verified or
-decided before implementation begins.
+Queued features. Each item notes what needs to be verified or decided
+before implementation begins. **Not all of these are still unbuilt** — this
+file accumulates faster than it gets reconciled against what actually
+shipped; items verified shipped carry a **Status** line at the top (A,
+C.2, H, I as of 2026-09-07). No status line means genuinely not started,
+last verified on the date named in that item, or not verified at all.
 
 ---
 
 ## A — Board filtering / sorting by SPRS weight and CMMC Level
+
+**Status: Shipped (`2b175463`, 2026-07-09) — verified 2026-09-07.**
+`control.is_level_1` exists in `models.py`; `AssessmentBoard.tsx` has the
+"L1 only" filter chip, status/responsibility filter chips, and a
+`sortByWeight` toggle ("Weight ↓") plus a tier summary. This section is now
+a historical design record, not open work — read the code for current
+behavior rather than this sketch.
 
 **What:** Let users filter and sort the control board by SPRS deduction weight
 (1 / 3 / 5 pt) and by CMMC level (L1 vs L2), so engineers can triage
@@ -85,6 +96,13 @@ assessment, plus a general visual-polish pass across all existing screens.
 
 ### C.1 — SPRS gauge
 
+**Status: still open — verified 2026-09-07.** The org dashboard (`G.3`,
+`docs/roadmap.md` Done) does show an SPRS Score card
+(`OrgDashboard.tsx`), but it's a plain number + trend arrow
+(`<div className="dashboard-big-stat">{sprs.current_score}</div>`), not a
+gauge with the 88/110 threshold lines this section specifies. Not
+superseded by G.3 — genuinely unbuilt if wanted as designed here.
+
 A single-number gauge showing the live SPRS score on a −204 to 110 scale.
 
 - **Scale:** −204 (all controls unmet) to 110 (fully met). Not red-to-green
@@ -107,6 +125,13 @@ A single-number gauge showing the live SPRS score on a −204 to 110 scale.
 
 ### C.2 — Family radar / spider chart
 
+**Status: Shipped — verified 2026-09-07.** Landed as a small follow-on to
+`G.3` (`docs/roadmap.md` Done, "Family radar chart" entry, 2026-08-19), not
+as this standalone slice, but the actual deliverable matches: hand-rolled
+SVG (no charting library added), 14 axes, one per family, percentage-met
+per axis. See `OrgDashboard.tsx` and `lib/radarChart.ts`. This section is
+now a historical design record.
+
 14-axis radar chart, one axis per NIST 800-171 control family (AC, AT, AU,
 CM, IA, IR, MA, MP, PS, PE, RA, CA, SC, SI).
 
@@ -127,6 +152,18 @@ CM, IA, IR, MA, MP, PS, PE, RA, CA, SC, SI).
 ---
 
 ### C.3 — Assessment progress dashboard
+
+**Status: still open — verified 2026-09-07.** `G.3`'s org dashboard
+(`docs/roadmap.md` Done) shipped a *different* set of widgets — Family
+Completion (heatmap + radar), SPRS Score, Statement Authoring, Evidence
+Expiring, Needs Review, Blocked Objectives, Open Tasks by Owner, POA&M
+Summary, Recent Activity — that overlaps in spirit but does not implement
+this section's four specific dimensions: no aggregate "N / 110 controls
+met" bar, no 5pt/3pt/1pt tier breakdown *on the dashboard* (that exists on
+the board itself, per item A above, not here), no evidence status broken
+out by pending/in-progress/completed/waived with an artifact count, and no
+controls-by-responsibility breakdown. Not superseded — genuinely unbuilt if
+wanted as designed here.
 
 A summary panel showing the current state of the assessment across four
 dimensions:
@@ -158,6 +195,12 @@ dimensions:
 ---
 
 ### C.4 — Visual polish pass
+
+**Status: still open — spot-checked 2026-09-07.** No dedicated polish-pass
+commit found. Some `aria-label` attributes already exist scattered across
+components (added incidentally as those screens were built, e.g. the
+dashboard's radar chart), but that's not the deliberate sweep this section
+describes — not claiming this is done.
 
 At the same time as C.1–C.3, do a targeted pass on the existing screens:
 
@@ -290,16 +333,27 @@ insert path that bypasses the review step. An assessor-facing inventory that
 changes without a human seeing the diff is exactly the failure mode the
 existing dry-run design avoids.
 
-**Hard dependency — canonical attribute keys:** `scope_entity.attributes`
-currently holds *different key schemas depending on entry path* — the manual
-Add Asset UI writes `make_oem`/`model`/`version`/`responsible_contact_id`,
-while the workbook importer writes raw spreadsheet headers (`Make`, `Model`,
-`OS`, `Owner / Primary User`). This was found 2026-09-05 while wiring the
-component inventory into the SSP bundle, where it renders as an all-"N/A"
-table for spreadsheet-scoped orgs. A Liongard connector would be a **third**
-writer into the same field. Normalize to canonical keys at every ingest
-boundary before building this connector, or the drift problem triples
-instead of getting fixed.
+**Canonical attribute keys — resolved for the two existing writers, still
+applies to this one.** `scope_entity.attributes` used to hold *different key
+schemas depending on entry path* — the manual Add Asset UI writes
+`make_oem`/`model`/`version`/`responsible_contact_id`, while the workbook
+importer wrote raw spreadsheet headers (`Make`, `Model`, `OS`,
+`Owner / Primary User`). Found 2026-09-05 while wiring the component
+inventory into the SSP bundle, where it rendered as an all-"N/A" table for
+spreadsheet-scoped orgs. **Fixed 2026-09-06–07:**
+`importers/workbook.py:resolve_canonical_device_attributes()` now maps the
+known raw headers onto canonical keys at ingest, alongside (not replacing)
+the raw ones, and resolves `responsible_contact_id` against real `Contact`
+rows by exact name match — never a raw string in the UUID slot, never an
+auto-created Contact, unresolved owners surfaced as a dry-run warning
+rather than dropped silently. See `docs/roadmap.md`'s Done section for the
+full writeup. A Liongard connector is still a **third** writer into this
+field — it needs to follow the same normalize-at-ingest pattern (map
+whatever Liongard's own field names are onto the canonical keys, resolve
+device ownership against `Contact` the same way, surface what it can't
+resolve) rather than adding a fourth divergent schema. Not a blocker
+anymore in the sense of "nothing works until this is fixed" — the fix
+already shipped for the paths that existed before this connector.
 
 ---
 
@@ -338,6 +392,19 @@ review before shipping; no C3PAO sign-off required for the initial set.
 ---
 
 ## F — Template document library
+
+**Status: unstarted, and likely duplicated by `docs/roadmap.md` item
+N ("Document Library") — flagged 2026-09-07, not reconciled here.**
+Both describe the same feature (a tenant document library tagged to
+objectives), with different table names (`template_document` /
+`template_objective_link` here vs. `document` / `document_objective_tag`
+in N) and different levels of detail — N additionally specifies a
+publish workflow, a monetization boundary (free matching engine vs. paid
+seed content), and evidence-link integration that this section doesn't.
+N reads as the more current, more developed spec; this section reads like
+an earlier draft that predates it. Neither has any code behind it yet
+(verified: no `Document`/`template_document` model, no
+`routers/documents.py`). Reconcile into one spec before building either.
 
 **What:** A library of reusable policy, procedure, plan, and list templates,
 each with a stable document ID (e.g. `AC-POL-001`). Templates tag to the
@@ -427,6 +494,18 @@ no data-model prerequisite for the control-derived source.
 
 ## H — Append-only system audit log
 
+**Status: mostly shipped — verified 2026-09-07.** `audit_log` table,
+`audit.py:log_event()`, DB-level `REVOKE UPDATE, DELETE ON audit_log`
+hardening (migration `0010`), and the paginated/filterable
+`GET /orgs/{org_id}/audit-log` export endpoint
+(`routers/audit_log.py`, `msp_admin`-only) all exist and match this
+section's design closely — see `docs/roadmap.md` Done, "Deactivation +
+audit log" entry. **One piece of this spec is not done:** the audit log is
+not included in the assessment bundle export (`bundle_service.py` has no
+audit-log section) — this section's "Export" bullet explicitly calls for
+that. Hash-chaining tamper-evidence is unbuilt too, but that's expected —
+this section's own text defers it explicitly ("not now").
+
 **What:** A central audit mechanism every mutating operation flows through.
 Records timestamp, actor, action type, entity (table + ID), before/after values,
 and freeform context/metadata. Append-only — rows are never updated or deleted.
@@ -499,12 +578,38 @@ the `audit_log` table. The table is cheap to add; the discipline of calling
 
 ## I — Authentication, users, and RBAC
 
-**Status: major dedicated slice — do NOT rush.**
+**Status: Shipped — verified 2026-09-07. This entire section is now a
+historical design record, not open work.** The "do NOT rush" framing below
+predates the actual build; auth landed as a real, staged effort
+(`docs/PLAN-auth-rbac-completion.md`, slices `I.1`–`I.9`), whose own status
+header currently reads: I.1–I.8 merged/closed, I.9's automated checks
+(pytest, `tsc -b`, `vitest`) green with one manual browser self-service
+walkthrough still outstanding. That plan doc is the authoritative live
+status — read it, don't infer from this entry.
 
-This is security-critical for a compliance tool holding CUI-adjacent data. It
-deserves a focused design sprint, independent of feature velocity.
+What shipped, checked against code: session-based local login (PBKDF2-
+HMAC-SHA256) + TOTP MFA + backup codes, Microsoft Entra ID SSO, API tokens,
+migration `0015`; `auth.py`'s `require_write()` enforces a read-only gate
+(`_READ_ONLY_ROLES = {"c3pao_assessor"}`) on every non-idempotent request,
+applied at router level on `assessments.py`, `contacts.py`, `dashboard.py`,
+`evidence.py`, `scope.py`, `bundle.py`, and `orgs.py`; `require_org_access()`
+enforces per-org membership; `require_role()` gates role-only routes like
+org creation. `docs/roadmap.md`'s Done section has the fuller writeup
+(Authentication entry, plus the Auth/RBAC-completion Done entry added
+2026-09-07).
 
-**Roles:**
+**Roles — the three-role sketch below is superseded, not unresolved.** Four
+roles shipped: `msp_admin`, `msp_engineer`, `customer_poc`, `c3pao_assessor`
+(see `_ROLE_RANK` in `auth.py`). The mapping is: **MSP User** below split
+into two tiers (`msp_admin` / `msp_engineer`, ranked, not equal); **Org
+User** → `customer_poc`; **Assessor** → `c3pao_assessor`, and its
+"read-only, cannot mutate state" requirement is enforced in code (see
+above), not just a role label. This is a real design evolution (finer MSP
+permissioning than originally sketched), not a gap that needs
+reconciling — left below as the original design intent, not because it's
+still open.
+
+**Roles (original sketch, superseded by the four shipped roles above):**
 - **MSP User** — platform operator; manages multiple tenant orgs; can activate
   products, run the magic loop, and manage evidence across all their client orgs.
 - **Org User** — scoped to a single tenant; can view and update controls, attach
@@ -528,7 +633,16 @@ deserves a focused design sprint, independent of feature velocity.
 
 **What lands when auth ships:**
 - The `audit_log.actor` field carries real user identity (no schema change needed
-  if the actor field was wired as "system" placeholders).
+  if the actor field was wired as "system" placeholders). **Partially true —
+  verified 2026-09-07, and still genuinely open:** `audit.py`'s own module
+  docstring says it plainly — `routers/users.py` (and `auth.py`) events carry
+  the real authenticated actor now, but `assessments.py`/`evidence.py`/
+  `contacts.py`/`orgs.py`/`bundle.py` "have not been retrofitted yet and
+  still default to `actor='system'`... that retrofit is not part of this
+  slice." So the core CMMC data-mutation audit trail — control-state
+  changes, evidence attach/detach, statement edits — still logs `"system"`
+  as the actor even though the real user is known via auth. This is a real
+  remaining gap, not resolved by auth shipping alone.
 - `org_id` scoping in every endpoint is enforced via the session's user context,
   not just a path parameter (the path parameter becomes a claim check).
 - RBAC guards on the router layer (FastAPI dependency injection).
