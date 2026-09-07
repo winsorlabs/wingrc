@@ -250,11 +250,17 @@ def _authed(session: Session, user: CurrentUser):
     than "no membership at all").
     """
 
-    def _override() -> CurrentUser:
-        # Postgres doesn't allow bind parameters in SET/SET LOCAL — mirrors
-        # the literal-embedding in app/auth.py's _resolve_session /
-        # _resolve_api_token. Safe here because org_id is a uuid.UUID, not
-        # unsanitized input.
+    async def _override() -> CurrentUser:
+        # async, matching the real get_current_user (see its docstring):
+        # FastAPI thread-dispatches sync dependencies, each into its own
+        # context copy, so a sync override's ContextVar.set() here would
+        # never be visible to the endpoint's own separately-dispatched
+        # thread. async makes FastAPI await this directly in the request's
+        # own task instead, so the mutation is visible to every later sync
+        # dispatch. Postgres doesn't allow bind parameters in SET/SET
+        # LOCAL — mirrors the literal-embedding in app/auth.py's
+        # _resolve_session/_resolve_api_token. Safe here because org_id is
+        # a uuid.UUID, not unsanitized input.
         session.execute(text(f"SET LOCAL app.current_org = '{user.org_id}'"))
         set_current_actor(str(user.id), actor_type_for(user))
         return user

@@ -181,7 +181,7 @@ def test_scope_create_entity_attributes_to_authenticated_user(client, db_session
         f"/orgs/{org.id}/scope",
         json={"entity_type": "device", "natural_key": "WS-ACTOR-TEST"},
     )
-    assert r.status_code == 200
+    assert r.status_code == 201
 
     row = _last_row(db_session, "scope_entity.create", org.id)
     assert row is not None
@@ -254,7 +254,7 @@ def test_api_token_authenticated_action_attributes_to_the_user_behind_the_token(
         json={"entity_type": "device", "natural_key": "WS-API-TOKEN-TEST"},
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert r.status_code == 200
+    assert r.status_code == 201
 
     row = _last_row(db_session, "scope_entity.create", org.id)
     assert row is not None

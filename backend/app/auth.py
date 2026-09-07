@@ -482,7 +482,7 @@ def clear_state_cookie(response: Response, name: str) -> None:
 # FastAPI auth dependencies
 # ---------------------------------------------------------------------------
 
-def get_current_user(
+async def get_current_user(
     request: Request,
     db: Session = Depends(get_session),
 ) -> CurrentUser:
@@ -495,6 +495,28 @@ def get_current_user(
     — FastAPI caches a dependency's result per request, so this body only
     actually runs once even when multiple dependencies in the same request
     depend on it. See audit.py's module docstring for the full rationale.
+
+    async, not sync `def`, and that is load-bearing, not stylistic: every
+    other dependency and every endpoint in this codebase is a sync `def`,
+    which FastAPI dispatches via anyio's threadpool — each such dispatch
+    runs in its OWN copy of the current context, and a ContextVar.set()
+    made inside one dispatch never propagates back out to sibling
+    dispatches (proven the hard way: set_current_actor() called from here
+    as a sync function left every log_event() call in the endpoint's own,
+    separately-dispatched thread still seeing "system", even though this
+    function's own return value/CurrentUser was correctly resolved).
+    _current_ip avoids this because it's set in main.py's `async def`
+    middleware, which runs directly in the request's own task, before any
+    threadpool dispatch happens — every subsequent sync dispatch (every
+    dependency, then the endpoint) copies its context from that
+    already-mutated ambient context. Making this function `async def`
+    puts it in the same position: FastAPI awaits it directly in the
+    request's task instead of thread-dispatching it, so set_current_actor()
+    here mutates the same ambient context every later sync dispatch copies
+    from. _resolve_session/_resolve_api_token remain plain sync helpers,
+    called directly (not awaited) — their DB work is small and this
+    mirrors how the rest of this codebase already does synchronous DB
+    access without issue; only the outer function needed to change shape.
     """
     raw_session = request.cookies.get("wingrc_session")
     if raw_session:
