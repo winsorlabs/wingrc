@@ -34,7 +34,6 @@ from app.db import get_session
 from app.engine import start_assessment
 from app.main import app
 from app.models import (
-    Assessment,
     AssessmentObjective,
     AuditLog,
     Control,
