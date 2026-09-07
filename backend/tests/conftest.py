@@ -23,7 +23,8 @@ from alembic.config import Config as AlembicConfig
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from app.auth import CurrentUser
+from app.audit import set_current_actor
+from app.auth import CurrentUser, actor_type_for
 from app.models import OrgMembership, User
 
 # Non-superuser, non-owner role Phase 3 introduces so RLS is an enforced
@@ -225,17 +226,21 @@ def db_session(db_engine):
 
 
 def _authed(session: Session, user: CurrentUser):
-    """Build a get_current_user override that also sets app.current_org.
+    """Build a get_current_user override that also sets app.current_org and
+    the audit actor ContextVar.
 
     The real get_current_user (`_resolve_session`/`_resolve_api_token` in
-    app/auth.py) sets `app.current_org` as a side effect of authenticating
-    every request. Tests bypass that function entirely via
+    app/auth.py) sets `app.current_org` and the audit-actor ContextVar
+    (`audit.set_current_actor`) as side effects of authenticating every
+    request. Tests bypass that function entirely via
     `app.dependency_overrides[get_current_user] = ...` — so without this
-    helper, `app.current_org` is never set at all, and every RLS-protected
-    query would return zero rows once running under a real (non-bypassing)
-    role, regardless of anything Phase 3 fixes. This closure is called once
-    per request (FastAPI re-resolves dependencies per request), matching
-    the real code's per-request SET LOCAL.
+    helper, neither would ever be set, and (a) every RLS-protected query
+    would return zero rows once running under a real (non-bypassing) role,
+    and (b) every log_event() call in the code under test would fall back
+    to actor="system" regardless of which fake identity the test is
+    exercising. This closure is called once per request (FastAPI
+    re-resolves dependencies per request), matching the real code's
+    per-request SET LOCAL / ContextVar.set().
 
     This only sets app.current_org to `user`'s own org — it says nothing
     about whether `user` actually has an org_membership row anywhere.
@@ -251,6 +256,7 @@ def _authed(session: Session, user: CurrentUser):
         # _resolve_api_token. Safe here because org_id is a uuid.UUID, not
         # unsanitized input.
         session.execute(text(f"SET LOCAL app.current_org = '{user.org_id}'"))
+        set_current_actor(str(user.id), actor_type_for(user))
         return user
 
     return _override
