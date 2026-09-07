@@ -38,6 +38,7 @@ from fastapi import Depends, HTTPException, Request, Response
 from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
+from .audit import set_current_actor
 from .config import get_settings
 from .db import get_session
 
@@ -76,6 +77,21 @@ class CurrentUser:
     is_active: bool
     login_method: str
     mfa_enrolled: bool
+
+
+def actor_type_for(current_user: CurrentUser) -> str:
+    """API tokens can carry any role including msp_admin, so a token-driven
+    call is not the same thing as a human at the keyboard — actor_type must
+    reflect that rather than hardcoding "user" regardless of login_method.
+
+    login_method here is the underlying account's own type (see
+    User.login_method's CHECK constraint: 'sso'/'local'/'api'), not which
+    mechanism authenticated *this* request — a human account can still
+    authenticate via a personal Bearer token (routers/users.py's
+    create_api_token) while remaining actor_type="user"; only a dedicated
+    login_method='api' service-account user is actor_type="api".
+    """
+    return "api" if current_user.login_method == "api" else "user"
 
 
 # ---------------------------------------------------------------------------
@@ -470,16 +486,28 @@ def get_current_user(
     request: Request,
     db: Session = Depends(get_session),
 ) -> CurrentUser:
-    """Resolve wingrc_session cookie or Bearer token. Raises 401 if absent/invalid."""
+    """Resolve wingrc_session cookie or Bearer token. Raises 401 if absent/invalid.
+
+    Every protected route depends on this function, directly or
+    transitively via require_org_access/require_write/require_role, so
+    stamping the audit actor ContextVar here (rather than in each of those
+    wrapper dependencies) covers every authenticated request exactly once
+    — FastAPI caches a dependency's result per request, so this body only
+    actually runs once even when multiple dependencies in the same request
+    depend on it. See audit.py's module docstring for the full rationale.
+    """
     raw_session = request.cookies.get("wingrc_session")
     if raw_session:
-        return _resolve_session(db, raw_session)
+        user = _resolve_session(db, raw_session)
+    else:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            user = _resolve_api_token(db, auth_header[7:])
+        else:
+            raise HTTPException(status_code=401, detail="Not authenticated")
 
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        return _resolve_api_token(db, auth_header[7:])
-
-    raise HTTPException(status_code=401, detail="Not authenticated")
+    set_current_actor(str(user.id), actor_type_for(user))
+    return user
 
 
 def _role_for_membership(

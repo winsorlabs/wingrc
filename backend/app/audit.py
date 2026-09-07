@@ -37,11 +37,24 @@ is set to True so consumers know the value is partial.
 DB-level append-only hardening (pending production step):
   REVOKE UPDATE, DELETE ON audit_log FROM <app_role>;
 
-Actor field: routers/users.py events carry the real authenticated actor (id +
-actor_type, "user" or "api" depending on CurrentUser.login_method) now that
-auth has landed (roadmap item I). Other routers (assessments/evidence/
-contacts/orgs/bundle) have not been retrofitted yet and still default to
-actor="system", actor_type="system" — that retrofit is not part of this slice.
+Actor field: log_event() stamps actor/actor_type from _current_actor, a
+ContextVar set once per request by auth.py's get_current_user() (every
+protected route depends on that function, directly or transitively via
+require_org_access/require_write/require_role) — same mechanism as the IP
+address below, and for the identical reason: most call sites (engine.py's
+assessment-lifecycle functions in particular, but also several router
+internals) have no CurrentUser in scope and threading one through every
+function on those call chains would be a far larger, riskier change than
+one ContextVar. routers/users.py and routers/auth.py pass actor/actor_type
+explicitly instead, since current_user is already a local variable at
+every one of their call sites — explicit takes precedence when a caller
+supplies it; the ContextVar is only the default. Falls back to "system"
+when the ContextVar is unset (a call from outside any request — CLI
+scripts, migrations, or a test calling log_event() directly): that default
+is correct there, not a bug, since there's no authenticated actor to
+attribute to. A caller that means a real system-triggered action (nothing
+under a human's control) should keep passing actor="system" explicitly so
+that's a deliberate choice, not an artifact of forgetting to pass one.
 
 IP address (out-of-band scope, audit log viewer): log_event() stamps
 ip_address from _current_ip, a ContextVar set once per request by
@@ -83,6 +96,20 @@ def set_current_ip(ip: str | None) -> None:
     _current_ip.set(ip)
 
 
+_current_actor: ContextVar[str | None] = ContextVar("_current_actor", default=None)
+_current_actor_type: ContextVar[str | None] = ContextVar("_current_actor_type", default=None)
+
+
+def set_current_actor(actor: str, actor_type: str) -> None:
+    """Called once per request by auth.py's get_current_user(), right after
+    it resolves the session/API-token identity. Not for use elsewhere —
+    log_event() is the only reader. See this module's docstring for why a
+    ContextVar rather than threading CurrentUser through every call site.
+    """
+    _current_actor.set(actor)
+    _current_actor_type.set(actor_type)
+
+
 def log_event(
     session: Session,
     *,
@@ -93,14 +120,21 @@ def log_event(
     before_value: dict[str, Any] | None = None,
     after_value: dict[str, Any] | None = None,
     context: dict[str, Any] | None = None,
-    actor: str = "system",
-    actor_type: str = "system",
+    actor: str | None = None,
+    actor_type: str | None = None,
 ) -> AuditLog:
-    """Insert one audit log entry. Never updates or deletes existing rows."""
+    """Insert one audit log entry. Never updates or deletes existing rows.
+
+    actor/actor_type default to the current request's authenticated
+    identity (see _current_actor above) when the caller doesn't pass them
+    explicitly, falling back to "system" outside any request context.
+    """
     entry = AuditLog(
         org_id=org_id,
-        actor=actor,
-        actor_type=actor_type,
+        actor=actor if actor is not None else (_current_actor.get() or "system"),
+        actor_type=(
+            actor_type if actor_type is not None else (_current_actor_type.get() or "system")
+        ),
         action=action,
         entity_type=entity_type,
         entity_id=entity_id,

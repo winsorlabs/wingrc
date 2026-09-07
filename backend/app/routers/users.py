@@ -32,6 +32,7 @@ from ..audit import log_event
 from ..auth import (
     _ROLE_RANK,
     CurrentUser,
+    actor_type_for as _actor_type,
     generate_secret,
     require_org_access,
     require_write,
@@ -52,14 +53,6 @@ router = APIRouter(
 _VALID_ROLES = {"msp_admin", "msp_engineer", "customer_poc", "c3pao_assessor"}
 _VALID_METHODS = {"local", "sso"}
 _INVITE_TTL_HOURS = 48
-
-
-def _actor_type(current_user: CurrentUser) -> str:
-    """API tokens can carry any role including msp_admin, so a token-driven
-    call is not the same thing as a human at the keyboard — actor_type must
-    reflect that rather than hardcoding "user" regardless of login_method.
-    """
-    return "api" if current_user.login_method == "api" else "user"
 
 
 # ---------------------------------------------------------------------------
