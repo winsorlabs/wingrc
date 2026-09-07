@@ -253,7 +253,11 @@ def resolve_canonical_device_attributes(
         if len(matches) == 1:
             entity.attributes["responsible_contact_id"] = str(matches[0])
         else:
-            reason = "no contact with that name" if not matches else "multiple contacts share that name"
+            reason = (
+                "no contact with that name"
+                if not matches
+                else "multiple contacts share that name"
+            )
             warnings.setdefault(entity.key(), []).append(
                 f'Owner/Primary User "{owner_raw}" could not be resolved to a '
                 f"contact ({reason}) -- responsible_contact_id left unset."
