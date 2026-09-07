@@ -166,6 +166,41 @@ Items without a status are planned but not yet started.
   mutating to gate. This closes out the "Role-differentiated RBAC guards"
   entry that used to live in Deferred below, which was stale — see the
   root `ROADMAP.md` item **I** note for the fuller role-mapping writeup.
+- **Audit log actor retrofit for core CMMC routers** (`audit.py`, `auth.py`,
+  `routers/users.py`, `tests/conftest.py` — 5 commits, 2026-09-07) — closes
+  the gap the same reconciliation that found the RBAC-guards entry above
+  also surfaced: `bundle.py`/`contacts.py`/`evidence.py`/`orgs.py`/
+  `scope.py`, and every `engine.py` assessment-lifecycle function reached
+  through them, defaulted `audit_log.actor` to `"system"` even though the
+  authenticated identity was available. `log_event()`'s `actor`/
+  `actor_type` now default to a ContextVar (`_current_actor`) stamped once
+  per request by `auth.py`'s `get_current_user()` — same mechanism as the
+  existing `_current_ip`, and for the identical reason: `engine.py`'s
+  functions and several router internals have no `CurrentUser` in scope,
+  and threading one through every call site would be a far larger change.
+  `routers/users.py`/`routers/auth.py` keep passing actor explicitly
+  (unchanged) since `current_user` was already a local variable there;
+  explicit always wins over the ContextVar default. A real bug surfaced
+  building this, not just a design gap: the ContextVar mechanism silently
+  didn't work at first — `get_current_user()` was a sync `def`, which
+  FastAPI dispatches via anyio's threadpool, and each such dispatch gets
+  its own copy of the ambient context, so a `.set()` inside one dispatch
+  never reached the endpoint's own, separately-dispatched thread. Every
+  new test failed with `actor == "system"` despite the plumbing looking
+  correct on paper. `_current_ip` avoids this because it's set in
+  `main.py`'s `async` middleware, which runs directly in the request's own
+  task before any threadpool dispatch happens. Fixed by making
+  `get_current_user()` (and the test suite's `_authed()` override, which
+  bypasses it and has to reimplement the same side effect) `async def`
+  instead of sync — FastAPI then awaits it directly in the request's task,
+  so the mutation lands in the context every later dependency and the
+  endpoint itself actually copies from. Verified beyond the test suite: a
+  real Bearer-token request against the live wl-util-1 stack's actual
+  running uvicorn process (not TestClient), followed by a direct Postgres
+  query confirming the resulting `audit_log` row's `actor` matched the
+  real user's UUID and `actor_type="api"`. Append-only discipline
+  preserved — this is forward-only; no existing `"system"` rows were
+  touched or backfilled.
 - **Consolidated SSP PDF export** (`bundle_service.py:_render_ssp_pdf`,
   merged `e4e307eb`, 2026-09-03) — WeasyPrint rendering over the same
   shared `_sys_desc_body`/`_implementation_body`/`_personnel_body` helpers
@@ -322,4 +357,3 @@ Document library (N)
 - **Integrations screen** — new side-nav section for setting up connectors (Liongard first), specified in root `ROADMAP.md` **D.1**. Added 2026-09-06 (Jarrod). Carries an unsettled architectural question: item D says the platform never holds third-party API keys, which conflicts with an in-app credential-entry screen — reconcile before building. Still fully unstarted as of 2026-09-07 (no frontend Integrations route, no per-connector credential model).
 - **Evidence download hardening** — replace presigned direct-to-MinIO download URLs with the backend streaming evidence bytes itself. Presigned URLs are bearer-token style: anyone with the link can download until it expires, with no per-request re-check of session/auth state. Worth revisiting given the investment already made in session/MFA/lockout hardening (item I, now shipped — see Done) — that hardening doesn't currently extend to the download path. Surfaced while proxying MinIO behind nginx for item O. **Verified 2026-09-07: still open** — `storage.py` still defines `presigned_url()` on every storage backend, and `routers/evidence.py` still calls it at 4 call sites (`download_url=storage.presigned_url(...)` for both single-evidence and task-collection responses). Nothing streams bytes through the backend yet.
 - **Frontend build determinism** — generate and commit `frontend/package-lock.json` (none is committed — one has been observed untracked on wl-util-1 from a local `npm install`, but that's not what this item is about), then switch `deploy/nginx/Dockerfile` from `npm install` to `npm ci` for reproducible builds. Low priority, not blocking anything currently in flight. **Verified 2026-09-07: still open** — `git ls-files frontend/package-lock.json` returns nothing (not committed), `deploy/nginx/Dockerfile` still runs `npm install`, not `npm ci`.
-- **Audit log actor retrofit for core CMMC routers** — newly documented 2026-09-07, found while reconciling this file against root `ROADMAP.md` item I. `audit.py`'s own module docstring says it directly: `routers/users.py` and `auth.py` events carry the real authenticated actor (`actor=str(user.id)`), but `assessments.py`/`evidence.py`/`contacts.py`/`orgs.py`/`bundle.py` "have not been retrofitted yet and still default to `actor='system'`... that retrofit is not part of this slice." So the actual compliance-relevant audit trail — control-state changes, evidence attach/detach, implementation-statement edits, the things root `ROADMAP.md` item H's own "What it captures" list names — still records `"system"` as the actor, not the real user, even though auth has shipped and the identity is known at every one of those call sites. This is a real, currently-open gap, not resolved by auth (item I) or the audit log (item H) shipping individually.
