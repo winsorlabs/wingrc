@@ -32,7 +32,7 @@ from ..audit import log_event
 from ..auth import (
     _ROLE_RANK,
     CurrentUser,
-    actor_type_for as _actor_type,
+    actor_type_for,
     generate_secret,
     require_org_access,
     require_write,
@@ -118,7 +118,7 @@ def invite_user(
         after_value={"email": body.email, "role": body.role, "login_method": body.login_method},
         context={"inviter": str(current_user.id)},
         actor=str(current_user.id),
-        actor_type=_actor_type(current_user),
+        actor_type=actor_type_for(current_user),
     )
     db.commit()
 
@@ -176,7 +176,7 @@ def patch_user(
                 after_value={"role": body.role},
                 context={"admin": str(current_user.id)},
                 actor=str(current_user.id),
-                actor_type=_actor_type(current_user),
+                actor_type=actor_type_for(current_user),
             )
         user.role = body.role
         # ADR 0009: org_membership.role, not User.role, is what
@@ -218,7 +218,7 @@ def patch_user(
                 after_value={"is_active": body.is_active},
                 context={"admin": str(current_user.id)},
                 actor=str(current_user.id),
-                actor_type=_actor_type(current_user),
+                actor_type=actor_type_for(current_user),
             )
             if body.is_active is False:
                 revoke_user_sessions(db, user.id)
@@ -259,7 +259,7 @@ def reset_user_mfa(
         entity_id=user_id,
         context={"admin": str(current_user.id)},
         actor=str(current_user.id),
-        actor_type=_actor_type(current_user),
+        actor_type=actor_type_for(current_user),
     )
     db.commit()
     return {"ok": True}
@@ -288,7 +288,7 @@ def deactivate_user(
         after_value={"is_active": False},
         context={"admin": str(current_user.id)},
         actor=str(current_user.id),
-        actor_type=_actor_type(current_user),
+        actor_type=actor_type_for(current_user),
     )
     db.commit()
     return {"ok": True}
@@ -354,7 +354,7 @@ def delete_user_permanent(
         after_value={"deleted": True},
         context={"admin": str(current_user.id)},
         actor=str(current_user.id),
-        actor_type=_actor_type(current_user),
+        actor_type=actor_type_for(current_user),
     )
     # user_session/mfa_backup_code/api_token/password_history all carry
     # ON DELETE CASCADE FKs to user.id (see ADR 0006) — one DELETE on the
@@ -414,7 +414,7 @@ def anonymize_user(
         after_value={"anonymized": True},
         context={"admin": str(current_user.id)},
         actor=str(current_user.id),
-        actor_type=_actor_type(current_user),
+        actor_type=actor_type_for(current_user),
     )
     db.commit()
     return _user_out(user)
@@ -457,7 +457,7 @@ def unlock_user(
         },
         context={"admin": str(current_user.id)},
         actor=str(current_user.id),
-        actor_type=_actor_type(current_user),
+        actor_type=actor_type_for(current_user),
     )
     db.commit()
     return {"ok": True}
@@ -493,7 +493,7 @@ def reset_user_password(
         entity_id=user.id,
         context={"admin": str(current_user.id)},
         actor=str(current_user.id),
-        actor_type=_actor_type(current_user),
+        actor_type=actor_type_for(current_user),
     )
     db.commit()
     return {
@@ -564,7 +564,7 @@ def create_api_user(
         after_value={"email": user.email, "role": user.role, "display_name": user.display_name},
         context={"creator": str(current_user.id), "token_id": str(token.id)},
         actor=str(current_user.id),
-        actor_type=_actor_type(current_user),
+        actor_type=actor_type_for(current_user),
     )
     db.commit()
 
@@ -650,7 +650,7 @@ def create_api_token(
         },
         context={"issuer": str(current_user.id), "user_id": str(target_user_id)},
         actor=str(current_user.id),
-        actor_type=_actor_type(current_user),
+        actor_type=actor_type_for(current_user),
     )
     db.commit()
 
@@ -711,7 +711,7 @@ def revoke_api_token(
         after_value={"revoked_at": token.revoked_at.isoformat()},
         context={"revoker": str(current_user.id), "token_name": token.name},
         actor=str(current_user.id),
-        actor_type=_actor_type(current_user),
+        actor_type=actor_type_for(current_user),
     )
     db.commit()
     return {"ok": True}
