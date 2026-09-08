@@ -136,9 +136,21 @@ def reset_dev(
     leave behind when they commit against the dev database.  Safe to run
     repeatedly; the catalog seed step is idempotent.
 
-    NEVER run this against a production database.
+    NEVER run this against a production database. Enforced below, not just
+    documented — `--yes` skips the confirmation prompt but never bypasses
+    the WINGRC_ENVIRONMENT=production check.
     """
     from sqlalchemy import select
+
+    from .config import get_settings
+
+    if get_settings().environment == "production":
+        typer.echo(
+            "Refusing to run: WINGRC_ENVIRONMENT=production. reset-dev deletes "
+            "assessment data and audit history — this must never run against "
+            "a production database."
+        )
+        raise typer.Exit(code=1)
 
     session = SessionLocal()
     try:
@@ -196,11 +208,20 @@ def _reset_dev(session) -> dict[str, int]:
     """Delete all test-generated rows in FK-safe order.
 
     Keeps: framework key='nist-800-171-r2' and org name='Acme MSP'.
-    Everything else is considered test pollution and removed.
+    Everything else is considered test pollution and removed — including
+    the assessment-layer data (control_state, evidence, findings, ...) of
+    the *kept* org too: tiers 1-3 below are unconditional, not scoped to
+    "test orgs", so Acme MSP gets a fresh assessment-layer state alongside
+    everyone else. Only Tier 6 (contact/scope_entity/organization/
+    audit_log) is scoped to non-Acme-MSP orgs, since those are the rows
+    that represent the org's identity/profile rather than in-progress
+    assessment work.
 
-    Returns a dict of {table: rows_deleted} for reporting.
+    Returns a dict of {table: rows_affected} for reporting (a couple of
+    entries are UPDATEs that clear a dangling FK pointer rather than
+    DELETEs — see Tier 0 — but the reporting shape is the same).
     """
-    # Helper that executes a DELETE and returns the rowcount.
+    # Helper that executes a DELETE/UPDATE and returns the rowcount.
     def _del(sql: str, params: dict | None = None) -> int:
         r = session.execute(text(sql), params or {})
         session.flush()
@@ -209,18 +230,42 @@ def _reset_dev(session) -> dict[str, int]:
     deleted: dict[str, int] = {}
 
     # ------------------------------------------------------------------ #
+    # Tier 0 — clear FK pointers that would block Tier 3's evidence wipe. #
+    # system_description's pinned diagram slots (migration 0029) point at #
+    # evidence.id with no ON DELETE action, and system_description itself #
+    # is never deleted here (it only cascades away when its owning org is #
+    # deleted — which never happens for Acme MSP, and Tier 3 wipes        #
+    # `evidence` unconditionally, for every org). Null the pointers first #
+    # so the evidence delete below doesn't hit a foreign-key violation.   #
+    # ------------------------------------------------------------------ #
+    deleted["system_description (diagram slots cleared)"] = _del(
+        "UPDATE system_description SET network_diagram_evidence_id = NULL, "
+        "data_flow_diagram_evidence_id = NULL "
+        "WHERE network_diagram_evidence_id IS NOT NULL "
+        "OR data_flow_diagram_evidence_id IS NOT NULL"
+    )
+
+    # ------------------------------------------------------------------ #
     # Tier 1 — junction/leaf tables: no other table FKs point at them     #
     # ------------------------------------------------------------------ #
     deleted["raci_assignment"] = _del("DELETE FROM raci_assignment")
     deleted["evidence_state_link"] = _del("DELETE FROM evidence_state_link")
+    # References evidence_task.id AND control_state.id, neither ON DELETE
+    # CASCADE — must go before both (Tier 2's evidence_task, Tier 3's
+    # control_state) or their deletes below raise a foreign-key violation.
+    deleted["evidence_task_state_link"] = _del("DELETE FROM evidence_task_state_link")
 
     # ------------------------------------------------------------------ #
     # Tier 2 — tables that reference control_state                        #
     # ------------------------------------------------------------------ #
     deleted["control_state_history"] = _del("DELETE FROM control_state_history")
     deleted["evidence_task"] = _del("DELETE FROM evidence_task")
-    deleted["finding"] = _del("DELETE FROM finding")
+    # poa_m_item.finding_id -> finding.id has no ON DELETE action, so
+    # poa_m_item must be deleted before finding, not after (the reverse of
+    # the order these two used to run in — deleting finding first raised a
+    # foreign-key violation the moment a poa_m_item referenced it).
     deleted["poa_m_item"] = _del("DELETE FROM poa_m_item")
+    deleted["finding"] = _del("DELETE FROM finding")
     deleted["implementation_statement"] = _del("DELETE FROM implementation_statement")
     deleted["sprs_snapshot"] = _del("DELETE FROM sprs_snapshot")
 
@@ -275,12 +320,49 @@ def _reset_dev(session) -> dict[str, int]:
     )
 
     # ------------------------------------------------------------------ #
-    # Tier 6 — test org data (Contact has ON DELETE CASCADE on org_id,   #
-    #           but we delete explicitly for clarity and scope_entity     #
-    #           has no FK so must be done manually)                       #
+    # Tier 6 — test org data, scoped to non-Acme-MSP orgs only (unlike     #
+    # Tiers 0-5 above, which are unconditional).                          #
+    #                                                                      #
+    # contact: has ON DELETE CASCADE on org_id, so this delete is          #
+    #   belt-and-suspenders for clarity, not load-bearing.                 #
+    # scope_entity: org_id is a plain column, not a foreign key at all —   #
+    #   must be done manually or it would silently survive with a          #
+    #   dangling org_id once the organization row is gone.                 #
+    # audit_log: org_id has NO ON DELETE action (no CASCADE, no SET        #
+    #   NULL) — deliberately: an append-only audit log must never let a    #
+    #   row disappear as a side effect of deleting the org it references   #
+    #   in production. That's exactly why this dev-only wipe utility is    #
+    #   the right place to delete audit rows explicitly rather than        #
+    #   adding a schema-level cascade — see the reset-dev command's        #
+    #   docstring. Scoped to test orgs only: Acme MSP's own audit_log      #
+    #   rows (org_id NOT IN this set) are never touched, and rows with     #
+    #   org_id IS NULL (system-level events with no org) are untouched     #
+    #   too, since NULL never matches an IN() list.                        #
+    #                                                                      #
+    # user / user_session / api_token / org_membership / system_description #
+    #   all carry ON DELETE CASCADE on their org_id (or, for               #
+    #   org_membership/api_token/user_session, transitively via user_id -> #
+    #   user.id which itself cascades from organization) — verified        #
+    #   2026-09-09 against the current schema. No explicit delete needed;  #
+    #   they disappear for free the moment the organization row below is   #
+    #   deleted. (system_description's own org_id cascades fine — its      #
+    #   *diagram* FKs to evidence.id are the part that doesn't, handled    #
+    #   in Tier 0 above.)                                                  #
+    #                                                                      #
+    # deployment_settings.msp_org_id has no ON DELETE action either, but   #
+    #   is deliberately NOT handled here: it's a singleton naming which    #
+    #   org IS this deployment's own MSP (set once at bootstrap), and on   #
+    #   a correctly-bootstrapped dev box that's always 'Acme MSP' — never  #
+    #   one of the test orgs this tier deletes. If that invariant is ever  #
+    #   violated, the DELETE FROM organization below should fail loudly    #
+    #   rather than this function silently reassigning deployment          #
+    #   identity to paper over it.                                         #
     # ------------------------------------------------------------------ #
     _TEST_ORGS = "SELECT id FROM organization WHERE name != 'Acme MSP'"
 
+    deleted["audit_log (test orgs)"] = _del(
+        f"DELETE FROM audit_log WHERE org_id IN ({_TEST_ORGS})"
+    )
     deleted["contact (test orgs)"] = _del(
         f"DELETE FROM contact WHERE org_id IN ({_TEST_ORGS})"
     )

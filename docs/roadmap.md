@@ -270,28 +270,42 @@ Items without a status are planned but not yet started.
   needs to follow rather than becoming a third divergent writer — see that
   item's updated "Hard dependency" note.
 
----
-
-## Known defects
-
-- **`app/cli.py::_reset_dev()` would fail against the current schema —
-  found 2026-08-11 while investigating a one-off wl-util-1 cleanup script,
-  not fixed here.** `_reset_dev()` deletes all non-"Acme MSP" organization
-  rows and their assessment-layer data in FK-safe tiers, but was written
-  before the auth/audit layer (migrations 0010, 0015+) existed and was
-  never updated for it. It never deletes `audit_log` rows, and
-  `audit_log.org_id` has no `ON DELETE` action (no CASCADE, no SET NULL) —
-  so its final `DELETE FROM organization` would raise a foreign-key
-  violation the moment any test org has an audit_log row referencing it,
-  which any integration test exercising an authenticated endpoint against
-  the dev DB will have created. It also never explicitly handles `user`/
-  `user_session`/`api_token`/`org_membership` (these do cascade correctly
-  from `organization`'s own `ON DELETE CASCADE`, so that part is
-  incidentally fine, just unexplained by the function's own tiered
-  comments). Not fixed as part of this entry — out of scope for the
-  one-off cleanup that surfaced it — but recorded so it doesn't quietly
-  stay broken until someone runs `reset-dev` on a dev box with real audit
-  history and gets a confusing FK error.
+- **`app/cli.py::_reset_dev()` fixed against the current schema — found
+  2026-08-11, fixed 2026-09-09.** The defect this entry used to document
+  (see git history for the original text): `_reset_dev()` never deleted
+  `audit_log` rows, and `audit_log.org_id` has no `ON DELETE` action, so
+  its final `DELETE FROM organization` raised a foreign-key violation the
+  moment any test org had an audit_log row — which any authenticated
+  request against the dev DB creates. Confirmed live: this is exactly what
+  left the "Device Field Verify Org" / `verify-device-fields@example.com`
+  throwaway account stuck on wl-util-1 after a browser verification pass.
+  **Fixed in the utility, not the schema** — `audit_log.org_id` still has
+  no CASCADE/SET NULL, deliberately: an append-only audit log must never
+  silently lose rows as a side effect of deleting the org it references in
+  production, and `_reset_dev()` is a dev-only wipe, the correct place to
+  delete audit rows explicitly since wiping dev data is its entire
+  purpose. Also found and fixed three more FK-ordering gaps while
+  reconciling the function against the current schema, none previously
+  documented: `system_description`'s pinned network/data-flow diagram
+  slots (migration 0029) point at `evidence.id` with no `ON DELETE`
+  action, and since `evidence` is wiped unconditionally while
+  `system_description` itself is never deleted (only cascades away with
+  its org, which never happens for the kept "Acme MSP" org), those
+  pointers had to be nulled before the evidence delete;
+  `evidence_task_state_link` was never deleted at all, and would
+  foreign-key-violate against either `evidence_task` or `control_state`
+  the moment a row existed; `poa_m_item` was deleted *after* `finding` despite
+  `poa_m_item.finding_id` pointing at it with no cascade, which is
+  backwards. `user`/`user_session`/`api_token`/`org_membership` were
+  re-verified as still cascading correctly from `organization`'s own `ON
+  DELETE CASCADE`, as previously noted. Added a real guard alongside the
+  fix: `reset-dev` now refuses to run at all when
+  `WINGRC_ENVIRONMENT=production`, checked before the `--yes`-skippable
+  confirmation prompt so `--yes` can never bypass it — previously the only
+  protection was the docstring's "NEVER run this against a production
+  database," which is not a guard. Regression-tested against the exact
+  broken case (a test org with audit_log rows, plus the three other gaps)
+  and against Acme MSP surviving the reset — `tests/test_cli_reset_dev.py`.
 
 ---
 
