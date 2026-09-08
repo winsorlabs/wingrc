@@ -44,7 +44,33 @@ only — the backend's `require_write()` already blocked the actual create
 for read-only roles, so this was not a security gap, just made the
 button visible-but-nonfunctional for e.g. `c3pao_assessor`.
 
-G.5–G.11 and M.7/M.8 remain proposed, not implemented.
+G.5 implemented (`381dd3f5`, 2026-09-01; merged `c81346e4`, 2026-09-04) —
+see `docs/roadmap.md`'s Done section for its own detail, not duplicated
+here. G.6 implemented per the addendum this plan defers to
+(`docs/pdf_ssp_template_spec.md`) — the upload/storage/frontend piece
+shipped `381dd3f5`'s neighbor commit (Network/Data Flow Diagram slots on
+`SystemDescription`, per `docs/roadmap.md`'s Done entry); this plan's own
+remaining piece — the two side-nav entries that were still disabled
+placeholders pointing at nothing — resolved 2026-09-08 (`7efdbe6e3`): both
+now route to the System Description tab and scroll to/highlight the
+relevant section rather than a separate page, matching the addendum's
+explicit "no separate pages" scope. G.7 implemented and **verified live on
+wl-util-1, 2026-09-08** (`7efdbe6e3`, `c81bcfa56`): there was no RACI API
+surface at all before this — `backend/app/routers/raci.py` is new
+(GET/POST/DELETE for individual assignments, `POST .../raci/bulk` for
+family-level cascade). Full backend suite 507/507 on an isolated
+throwaway stack (`docker compose -p wingrc_bench`, not the shared
+instance), including `test_raci.py`'s 8 cases with the headline
+bulk-assign-without-clobbering-an-override case; `ruff check .` clean;
+`npx tsc -b` clean; a real browser walkthrough on that same isolated
+stack confirmed bulk-assigning family AC to one contact, overriding one
+objective to a second contact, re-bulk-assigning the family, and
+confirming — both in the UI and with a direct `psql` query against
+`raci_assignment` — that the override survived; and the G.3 dashboard's
+"Open Tasks by Owner" widget (previously permanently degraded to an
+"unassigned" bucket, per that widget's own code comment) was confirmed to
+actually populate a named contact once evidence-task and RACI data
+existed together. G.8–G.11 and M.7/M.8 remain proposed, not implemented.
 **Baseline:** `e481a00` (G.1 landed and verified; supersedes the prior
 `83fe49f` baseline this plan was originally written against).
 **Scope:** replace the current screen-state-machine navigation with a persistent

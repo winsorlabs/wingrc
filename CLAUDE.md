@@ -384,12 +384,25 @@ app↔MinIO, PostgreSQL `scram-sha-256`, nginx FIPS cipher suites. Startup
 self-test (`fips_check.py`; `WINGRC_REQUIRE_FIPS` env var). All documented in
 `docs/fips.md`.
 
-### 4. RACI assignment UI
-Bulk-assign contacts to control families / individual controls in the assessment
-UI. The backend model (`RaciAssignment`) and contacts CRUD already exist.
-Magic loop pre-populates suggested assignments from `BaselineControl.
-responsibility` field (MSP-vs-customer split). UI: family-level assign cascades
-to all child control states; override at individual objective level.
+### 4. RACI assignment UI ✅ DONE (G.7)
+Shipped 2026-09-08 (`7efdbe6e3`, `c81bcfa56`) — see
+`docs/PLAN-gui-restructure.md`'s G.7 section for the full writeup. New
+`backend/app/routers/raci.py` (there was no RACI API surface at all
+before this) plus `frontend/src/components/RolesPanel.tsx` under Scope:
+family-level bulk-assign cascades to every child control state without
+clobbering objective-level overrides already in place (checked per
+`(control_state_id, raci_letter)`, not per control state), with
+individual-objective override/remove alongside it. The MSP-vs-customer
+suggestion is derived client-side from `ControlState.responsibility`
+(already returned by the existing control-states endpoint) rather than a
+second server-side lookup through `BaselineControl` — surfaced as a
+sorted/labeled default in the contact picker, never auto-written.
+Verified live on wl-util-1 (isolated throwaway stack, not the shared
+instance): 507/507 backend tests, `tsc -b` clean, and a real browser
+walkthrough confirming the override-survives-a-second-bulk-assign case
+both in the UI and via a direct `psql` query, plus the G.3 dashboard's
+"Open Tasks by Owner" widget populating a named contact instead of its
+prior permanent "unassigned" degradation.
 
 ### 5. AI-drafted implementation statements
 `POST …/assessments/{id}/objectives/{obj_id}/draft-statement` → calls the
