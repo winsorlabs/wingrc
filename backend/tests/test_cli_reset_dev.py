@@ -146,12 +146,14 @@ def test_reset_dev_succeeds_against_full_realistic_graph(db_session: Session):
     _reset_dev(db_session)  # must not raise
 
     # _reset_dev() runs raw SQL DELETEs, which don't update the ORM's
-    # identity map -- without this, session.get()/scalars() below would
-    # return the stale pre-delete objects still cached from setup above,
-    # not what's actually left in the database.
-    db_session.expire_all()
-
-    assert db_session.get(Organization, org.id) is None
+    # identity map. session.get() on a PK it already has an (now-stale)
+    # instance for raises ObjectDeletedError rather than returning None on
+    # a miss -- a plain select() doesn't have that footgun, so use that for
+    # every "is this row still there" check below, not .get().
+    remaining_org = db_session.scalars(
+        select(Organization).where(Organization.id == org.id)
+    ).first()
+    assert remaining_org is None
     remaining_audit = db_session.scalars(
         select(AuditLog).where(AuditLog.org_id == org.id)
     ).first()
@@ -168,7 +170,12 @@ def test_reset_dev_preserves_acme_msp(db_session: Session):
     other = _seed_full_graph_org(db_session)
 
     _reset_dev(db_session)
-    db_session.expire_all()
 
-    assert db_session.get(Organization, acme_id) is not None
-    assert db_session.get(Organization, other.id) is None
+    remaining_acme = db_session.scalars(
+        select(Organization).where(Organization.id == acme_id)
+    ).first()
+    assert remaining_acme is not None
+    remaining_other = db_session.scalars(
+        select(Organization).where(Organization.id == other.id)
+    ).first()
+    assert remaining_other is None
