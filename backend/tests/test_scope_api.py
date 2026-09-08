@@ -297,14 +297,14 @@ def test_dry_run_resolves_new_device_fields_from_sample_workbook(
         for c in r.json()["changes"]
         if c["entity_type"] == "device"
     }
-    assert device_changes["WS-0001"]["incoming"]["attributes"]["device_subtype"] == "laptop"
-    assert device_changes["WS-0001"]["incoming"]["attributes"]["asset_tag"] == "ASSET-0001"
-    assert device_changes["WS-0001"]["incoming"]["attributes"]["mac_addresses"] == [
-        "00:11:22:33:44:55",
-        "aa:bb:cc:dd:ee:01",
-    ]
-    assert device_changes["SRV-FILE01"]["incoming"]["attributes"]["device_subtype"] == "server"
-    fw_attrs = device_changes["FW-EDGE01"]["incoming"]["attributes"]
+    # natural_key for devices is the "Serial # or Asset Tag" cell (see
+    # importers/workbook.py:_natural_key), not the "Name" column.
+    ws0001 = device_changes["ASSET-0001"]["incoming"]["attributes"]
+    assert ws0001["device_subtype"] == "laptop"
+    assert ws0001["asset_tag"] == "ASSET-0001"
+    assert ws0001["mac_addresses"] == ["00:11:22:33:44:55", "aa:bb:cc:dd:ee:01"]
+    assert device_changes["ASSET-0002"]["incoming"]["attributes"]["device_subtype"] == "server"
+    fw_attrs = device_changes["ASSET-0003"]["incoming"]["attributes"]
     assert fw_attrs["device_subtype"] == "network_device"
 
 
