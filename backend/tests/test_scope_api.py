@@ -102,6 +102,73 @@ def test_create_device_rejects_invalid_responsible_contact_id(client, db_session
 
 
 @pytest.mark.integration
+def test_create_device_normalizes_mac_addresses(client, db_session, fake_msp_admin):
+    org = _org(db_session, fake_msp_admin)
+    r = client.post(
+        f"/orgs/{org.id}/scope",
+        json={
+            "entity_type": "device",
+            "natural_key": "LAPTOP-046",
+            "attributes": {
+                "mac_addresses": ["00-1A-2B-3C-4D-5E", "001a2b3c4d99"],
+                "device_subtype": "laptop",
+                "asset_tag": "  ASSET-046  ",
+            },
+        },
+    )
+    assert r.status_code == 201
+    attrs = r.json()["attributes"]
+    assert attrs["mac_addresses"] == ["00:1a:2b:3c:4d:5e", "00:1a:2b:3c:4d:99"]
+    assert attrs["device_subtype"] == "laptop"
+    assert attrs["asset_tag"] == "ASSET-046"
+
+
+@pytest.mark.integration
+def test_create_device_rejects_invalid_mac_address(client, db_session, fake_msp_admin):
+    org = _org(db_session, fake_msp_admin)
+    r = client.post(
+        f"/orgs/{org.id}/scope",
+        json={
+            "entity_type": "device",
+            "natural_key": "LAPTOP-047",
+            "attributes": {"mac_addresses": ["not-a-mac"]},
+        },
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.integration
+def test_create_device_rejects_unknown_subtype(client, db_session, fake_msp_admin):
+    org = _org(db_session, fake_msp_admin)
+    r = client.post(
+        f"/orgs/{org.id}/scope",
+        json={
+            "entity_type": "device",
+            "natural_key": "LAPTOP-048",
+            "attributes": {"device_subtype": "smart_fridge"},
+        },
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.integration
+def test_create_device_other_subtype_with_free_text(client, db_session, fake_msp_admin):
+    org = _org(db_session, fake_msp_admin)
+    r = client.post(
+        f"/orgs/{org.id}/scope",
+        json={
+            "entity_type": "device",
+            "natural_key": "IOT-001",
+            "attributes": {"device_subtype": "other", "device_subtype_other": "Smart Fridge"},
+        },
+    )
+    assert r.status_code == 201
+    attrs = r.json()["attributes"]
+    assert attrs["device_subtype"] == "other"
+    assert attrs["device_subtype_other"] == "Smart Fridge"
+
+
+@pytest.mark.integration
 def test_create_rejects_unknown_entity_type(client, db_session, fake_msp_admin):
     org = _org(db_session, fake_msp_admin)
     r = client.post(
@@ -202,6 +269,43 @@ def test_dry_run_returns_incoming_data_for_new_rows(client, db_session, fake_msp
     assert all(c["incoming"]["attributes"].get("make_oem") for c in device_changes)
     assert all(c["incoming"]["attributes"].get("model") for c in device_changes)
     assert all(c["incoming"]["attributes"].get("version") for c in device_changes)
+
+
+@pytest.mark.integration
+def test_dry_run_resolves_new_device_fields_from_sample_workbook(
+    client, db_session, fake_msp_admin
+):
+    """Round-trip: samples/authorized-entities.example.xlsx now carries a
+    Device Subtype column, and Mac Address values with more than one NIC --
+    confirm the dry-run response lands them under the canonical
+    device_subtype/asset_tag/mac_addresses keys."""
+    org = _org(db_session, fake_msp_admin)
+    with open(SAMPLE, "rb") as f:
+        r = client.post(
+            f"/orgs/{org.id}/imports/workbook/dry-run",
+            files={
+                "file": (
+                    "authorized-entities.example.xlsx",
+                    f.read(),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+    assert r.status_code == 200
+    device_changes = {
+        c["natural_key"]: c
+        for c in r.json()["changes"]
+        if c["entity_type"] == "device"
+    }
+    assert device_changes["WS-0001"]["incoming"]["attributes"]["device_subtype"] == "laptop"
+    assert device_changes["WS-0001"]["incoming"]["attributes"]["asset_tag"] == "ASSET-0001"
+    assert device_changes["WS-0001"]["incoming"]["attributes"]["mac_addresses"] == [
+        "00:11:22:33:44:55",
+        "aa:bb:cc:dd:ee:01",
+    ]
+    assert device_changes["SRV-FILE01"]["incoming"]["attributes"]["device_subtype"] == "server"
+    fw_attrs = device_changes["FW-EDGE01"]["incoming"]["attributes"]
+    assert fw_attrs["device_subtype"] == "network_device"
 
 
 @pytest.mark.integration

@@ -355,6 +355,27 @@ resolve) rather than adding a fourth divergent schema. Not a blocker
 anymore in the sense of "nothing works until this is fixed" — the fix
 already shipped for the paths that existed before this connector.
 
+**Canonical device attributes, extended 2026-09-07:** the vocabulary above
+now also includes `device_subtype` (controlled vocabulary — see
+`domain.py`'s `DeviceSubtype` StrEnum — with `device_subtype_other` as a
+free-text fallback so an unrecognized Liongard device class is never
+dropped), `asset_tag` (physical sticker ID; duplicate values are surfaced as
+a dry-run warning, not DB-constrained — see
+`importers/workbook.py:resolve_canonical_device_attributes()`), and
+`mac_addresses` (`list[str]`, not a single value — a device can report
+several NICs; normalize each to lowercase colon-separated form via
+`domain.py:normalize_mac_address()` before writing, and note that MAC
+randomization on modern mobile OSes means a MAC is an attribute here, never
+an identity). A Liongard connector must write all three under these same
+keys, applying the same normalization, rather than inventing its own shape.
+`asset_tag` is also worth evaluating as a fallback `natural_key` for
+Liongard rows that arrive without a hostname (today's `natural_key` for
+workbook rows is the raw "Serial # or Asset Tag" cell — see
+`importers/workbook.py:_natural_key()`) — but that's a decision for when
+the connector is actually built, not something this pass changes: altering
+natural_key semantics retroactively would re-key every existing
+`scope_entity` row keyed on the current scheme.
+
 ---
 
 ## E — Objective tips (MSP-flavored evidence examples)

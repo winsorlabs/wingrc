@@ -298,6 +298,7 @@ class ScopeEntitySnap:
     make_oem: str | None
     model: str | None
     version: str | None
+    asset_tag: str | None
     responsible_contact_name: str | None
     responsible_contact_affiliation: str | None
 
@@ -629,6 +630,7 @@ def snapshot_bundle(
                 make_oem=attrs.get("make_oem"),
                 model=attrs.get("model"),
                 version=attrs.get("version"),
+                asset_tag=attrs.get("asset_tag"),
                 responsible_contact_name=responsible_contact_name,
                 responsible_contact_affiliation=responsible_contact_affiliation,
             )
@@ -1387,6 +1389,7 @@ def _component_inventory_body(snapshot: BundleSnapshot) -> str:
         body_rows = "".join(
             "<tr>"
             f"<td>{_esc(r.natural_key)}</td>"
+            f"<td>{_esc(_na(r.asset_tag))}</td>"
             f"<td>{_esc(_na(r.make_oem))}</td>"
             f"<td>{_esc(_na(r.model))}</td>"
             f"<td>{_esc(_na(r.version))}</td>"
@@ -1404,7 +1407,8 @@ def _component_inventory_body(snapshot: BundleSnapshot) -> str:
             for r in rows
         )
         return (
-            '<table class="inv-table"><tr><th>Identifier</th><th>Make/OEM</th><th>Model</th>'
+            '<table class="inv-table"><tr><th>Identifier</th><th>Asset Tag</th>'
+            "<th>Make/OEM</th><th>Model</th>"
             "<th>Version</th><th>Category</th><th>Status</th>"
             "<th>Boundary</th><th>Responsible</th></tr>"
             f"{body_rows}</table>"

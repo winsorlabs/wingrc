@@ -6,6 +6,23 @@ import { AssetImportWizard } from "./AssetImportWizard";
 
 const TYPE_LABELS: Record<string, string> = { device: "Device", software: "Software" };
 
+const SUBTYPE_LABELS: Record<string, string> = {
+  desktop: "Desktop",
+  laptop: "Laptop",
+  server: "Server",
+  printer: "Printer",
+  scanner: "Scanner",
+  multifunction_device: "Multifunction Device",
+  desk_phone: "Desk Phone",
+  mobile_phone: "Mobile Phone",
+  tablet: "Tablet",
+  tv_display: "TV / Display",
+  presentation_device: "Presentation Device",
+  network_device: "Network Device",
+  storage_device: "Storage Device",
+  other: "Other",
+};
+
 interface Props {
   orgId: string;
   canWrite: boolean;
@@ -87,6 +104,8 @@ export function AssetsPanel({ orgId, canWrite }: Props) {
               <tr>
                 <th>Type</th>
                 <th>Name</th>
+                <th>Subtype</th>
+                <th>Asset Tag</th>
                 <th>Category</th>
                 <th>Make / OEM</th>
                 <th>Model</th>
@@ -100,6 +119,12 @@ export function AssetsPanel({ orgId, canWrite }: Props) {
                 <tr key={a.id}>
                   <td><span className="affiliation-badge">{TYPE_LABELS[a.entity_type] ?? a.entity_type}</span></td>
                   <td>{a.natural_key}</td>
+                  <td>
+                    {a.attributes.device_subtype === "other"
+                      ? (a.attributes.device_subtype_other as string | null) ?? "Other"
+                      : SUBTYPE_LABELS[a.attributes.device_subtype as string] ?? "—"}
+                  </td>
+                  <td>{(a.attributes.asset_tag as string | null) ?? "—"}</td>
                   <td>{a.scope_category ?? "—"}</td>
                   <td>{(a.attributes.make_oem as string | null) ?? "—"}</td>
                   <td>{(a.attributes.model as string | null) ?? "—"}</td>

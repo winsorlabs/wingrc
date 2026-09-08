@@ -15,6 +15,18 @@ from .domain import (
 )
 
 
+def _comparable(value: object) -> object:
+    """Normalize a value for equality comparison so list-valued attributes
+    (e.g. mac_addresses) don't report a spurious CHANGED diff purely because
+    two otherwise-identical imports returned their elements in a different
+    order -- the single most likely source of noise in the review diff once
+    an attribute is list-shaped rather than scalar.
+    """
+    if isinstance(value, list):
+        return sorted(str(v) for v in value)
+    return str(value)
+
+
 def _field_diffs(
     current: CanonicalEntity, incoming: CanonicalEntity
 ) -> dict[str, tuple]:
@@ -23,7 +35,7 @@ def _field_diffs(
     for k in keys:
         a = current.attributes.get(k)
         b = incoming.attributes.get(k)
-        if str(a) != str(b):
+        if _comparable(a) != _comparable(b):
             diffs[k] = (a, b)
     return diffs
 

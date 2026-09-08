@@ -18,6 +18,39 @@ const SCOPE_CATEGORIES = [
   "Unclassified",
 ];
 
+// Mirrors backend/app/domain.py's DeviceSubtype -- keep in sync if that
+// vocabulary changes. Controlled vocabulary (not free text) because three
+// writers populate this field: this form, workbook import, and the future
+// Liongard connector (roadmap D.2).
+const DEVICE_SUBTYPES = [
+  { value: "desktop", label: "Desktop" },
+  { value: "laptop", label: "Laptop" },
+  { value: "server", label: "Server" },
+  { value: "printer", label: "Printer" },
+  { value: "scanner", label: "Scanner" },
+  { value: "multifunction_device", label: "Multifunction Device" },
+  { value: "desk_phone", label: "Desk Phone" },
+  { value: "mobile_phone", label: "Mobile Phone" },
+  { value: "tablet", label: "Tablet" },
+  { value: "tv_display", label: "TV / Display" },
+  { value: "presentation_device", label: "Presentation Device" },
+  { value: "network_device", label: "Network Device" },
+  { value: "storage_device", label: "Storage Device" },
+  { value: "other", label: "Other" },
+];
+
+// Mirrors backend/app/domain.py's SPECIALIZED_ASSET_SUGGESTED_SUBTYPES.
+// Suggestion only -- never auto-sets scope_category (see the "candidates,
+// never auto-met" rule: scoping decisions stay with the engineer).
+const SPECIALIZED_ASSET_SUBTYPES = new Set([
+  "tv_display",
+  "presentation_device",
+  "desk_phone",
+  "printer",
+  "scanner",
+  "multifunction_device",
+]);
+
 interface Props {
   orgId: string;
   asset: ScopeEntity | null;
@@ -38,6 +71,10 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
   const [model, setModel] = useState("");
   const [version, setVersion] = useState("");
   const [responsibleContactId, setResponsibleContactId] = useState("");
+  const [deviceSubtype, setDeviceSubtype] = useState("");
+  const [deviceSubtypeOther, setDeviceSubtypeOther] = useState("");
+  const [assetTag, setAssetTag] = useState("");
+  const [macAddresses, setMacAddresses] = useState<string[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
 
   const [saving, setSaving] = useState(false);
@@ -59,6 +96,10 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
       setModel((asset.attributes.model as string | null) ?? "");
       setVersion((asset.attributes.version as string | null) ?? "");
       setResponsibleContactId((asset.attributes.responsible_contact_id as string | null) ?? "");
+      setDeviceSubtype((asset.attributes.device_subtype as string | null) ?? "");
+      setDeviceSubtypeOther((asset.attributes.device_subtype_other as string | null) ?? "");
+      setAssetTag((asset.attributes.asset_tag as string | null) ?? "");
+      setMacAddresses((asset.attributes.mac_addresses as string[] | null) ?? []);
     } else {
       setEntityType("device");
       setNaturalKey("");
@@ -68,6 +109,10 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
       setModel("");
       setVersion("");
       setResponsibleContactId("");
+      setDeviceSubtype("");
+      setDeviceSubtypeOther("");
+      setAssetTag("");
+      setMacAddresses([]);
     }
     setError(null);
     setConfirmDelete(false);
@@ -89,6 +134,12 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
       model: model.trim() || null,
       version: version.trim() || null,
       responsible_contact_id: responsibleContactId || null,
+      device_subtype: deviceSubtype || null,
+      device_subtype_other: deviceSubtype === "other" ? deviceSubtypeOther.trim() || null : null,
+      asset_tag: assetTag.trim() || null,
+      mac_addresses: macAddresses.filter((m) => m.trim()).length
+        ? macAddresses.filter((m) => m.trim())
+        : null,
     };
     try {
       let saved: ScopeEntity;
@@ -127,6 +178,19 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
       setDeleting(false);
     }
   }
+
+  function updateMac(index: number, value: string) {
+    setMacAddresses((prev) => prev.map((m, i) => (i === index ? value : m)));
+  }
+
+  function removeMac(index: number) {
+    setMacAddresses((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  const showSpecializedAssetHint =
+    entityType === "device" &&
+    SPECIALIZED_ASSET_SUBTYPES.has(deviceSubtype) &&
+    scopeCategory !== "Specialized Asset";
 
   return (
     <div className="drawer-overlay" onClick={onClose}>
@@ -181,7 +245,87 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
                   <option key={c} value={c}>{c}</option>
                 ))}
               </select>
+              {showSpecializedAssetHint && (
+                <div className="field-hint">
+                  Devices of this subtype are commonly categorized as a CMMC Specialized
+                  Asset (IoT/OT, GFE, restricted systems, test equipment) — a suggestion
+                  only, this stays whatever you set above.{" "}
+                  <button
+                    type="button"
+                    className="btn-ghost btn-sm"
+                    onClick={() => setScopeCategory("Specialized Asset")}
+                  >
+                    Use Specialized Asset
+                  </button>
+                </div>
+              )}
             </div>
+
+            {entityType === "device" && (
+              <>
+                <div className="form-grid">
+                  <div className="form-field">
+                    <label>Device Subtype</label>
+                    <select value={deviceSubtype} onChange={(e) => setDeviceSubtype(e.target.value)}>
+                      <option value="">— Unset —</option>
+                      {DEVICE_SUBTYPES.map((s) => (
+                        <option key={s.value} value={s.value}>{s.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-field">
+                    <label>Asset Tag</label>
+                    <input
+                      type="text"
+                      value={assetTag}
+                      onChange={(e) => setAssetTag(e.target.value)}
+                      placeholder="Physical sticker ID"
+                    />
+                  </div>
+                </div>
+                {deviceSubtype === "other" && (
+                  <div className="form-field">
+                    <label>Subtype (describe)</label>
+                    <input
+                      type="text"
+                      value={deviceSubtypeOther}
+                      onChange={(e) => setDeviceSubtypeOther(e.target.value)}
+                    />
+                  </div>
+                )}
+                <div className="form-field">
+                  <label>MAC Addresses</label>
+                  {macAddresses.map((mac, i) => (
+                    <div key={i} className="form-grid" style={{ marginBottom: "0.25rem" }}>
+                      <input
+                        type="text"
+                        value={mac}
+                        onChange={(e) => updateMac(i, e.target.value)}
+                        placeholder="aa:bb:cc:dd:ee:ff"
+                      />
+                      <button
+                        type="button"
+                        className="btn-ghost btn-sm btn-destructive"
+                        onClick={() => removeMac(i)}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    className="btn-ghost btn-sm"
+                    onClick={() => setMacAddresses((prev) => [...prev, ""])}
+                  >
+                    + Add MAC
+                  </button>
+                  <div className="field-hint">
+                    One per NIC (wifi, ethernet, dock/USB adapter). Accepts
+                    colon-, hyphen-, or unseparated hex — normalized on save.
+                  </div>
+                </div>
+              </>
+            )}
 
             <div className="form-section-heading">Component Details</div>
             <div className="field-hint" style={{ marginBottom: "0.5rem" }}>

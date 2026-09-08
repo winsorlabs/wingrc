@@ -65,6 +65,69 @@ class Source(StrEnum):
     ENTRA = "entra"
 
 
+class DeviceSubtype(StrEnum):
+    """Controlled vocabulary for the canonical `device_subtype` attribute.
+
+    A StrEnum (not free text) because three writers populate this field --
+    manual entry, workbook import, and the future Liongard connector
+    (roadmap D.2) -- and free text drifts ("Laptop" / "laptop" / "Notebook")
+    exactly the way raw attribute keys used to before canonicalization.
+    `OTHER` plus the companion `device_subtype_other` free-text field (see
+    routers/scope.py's DeviceSoftwareAttributes) exists so a Liongard device
+    class this vocabulary doesn't yet cover is never silently dropped or
+    forced into a wrong bucket.
+    """
+
+    DESKTOP = "desktop"
+    LAPTOP = "laptop"
+    SERVER = "server"
+    PRINTER = "printer"
+    SCANNER = "scanner"
+    MULTIFUNCTION_DEVICE = "multifunction_device"
+    DESK_PHONE = "desk_phone"
+    MOBILE_PHONE = "mobile_phone"
+    TABLET = "tablet"
+    TV_DISPLAY = "tv_display"
+    PRESENTATION_DEVICE = "presentation_device"
+    NETWORK_DEVICE = "network_device"
+    STORAGE_DEVICE = "storage_device"
+    OTHER = "other"
+
+
+# Subtypes that commonly land in CMMC's "Specialized Asset" category (IoT/OT,
+# GFE, restricted systems, test equipment) -- surfaced in the UI as a
+# *suggestion* only. Mirrors the "candidates, never auto-met" rule: scoping
+# decisions stay with the engineer, so nothing here writes scope_category.
+SPECIALIZED_ASSET_SUGGESTED_SUBTYPES: frozenset[DeviceSubtype] = frozenset(
+    {
+        DeviceSubtype.TV_DISPLAY,
+        DeviceSubtype.PRESENTATION_DEVICE,
+        DeviceSubtype.DESK_PHONE,
+        DeviceSubtype.PRINTER,
+        DeviceSubtype.SCANNER,
+        DeviceSubtype.MULTIFUNCTION_DEVICE,
+    }
+)
+
+
+_MAC_HEX_CHARS = "0123456789abcdef"
+
+
+def normalize_mac_address(raw: str) -> str:
+    """Canonicalize a MAC address to lowercase, colon-separated form.
+
+    Accepts colon-separated (00:1a:2b:...), hyphen-separated (00-1a-2b-...)
+    and bare hex (001a2b...) input -- the formats a mix of manual entry,
+    workbook cells and RMM APIs actually produce -- so the same physical NIC
+    always normalizes to one value regardless of source. Raises ValueError
+    for anything that isn't 12 hex digits once separators are stripped.
+    """
+    stripped = raw.strip().lower().replace(":", "").replace("-", "")
+    if len(stripped) != 12 or any(c not in _MAC_HEX_CHARS for c in stripped):
+        raise ValueError(f"Not a valid MAC address: {raw!r}")
+    return ":".join(stripped[i : i + 2] for i in range(0, 12, 2))
+
+
 @dataclass
 class CanonicalEntity:
     """One authorized entity in the scope graph.

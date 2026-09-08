@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from app.catalog import VIEWS_BY_ID
-from app.domain import ChangeType, EntityType
+from app.domain import CanonicalEntity, ChangeType, EntityType
 from app.importers.workbook import parse_workbook
 from app.reconcile import reconcile
 from app.render import render_view
@@ -36,6 +36,57 @@ def test_reconcile_detects_new_and_missing():
     result = reconcile(base, incoming)
     assert result.summary()["missing"] == 1
     assert all(c.change_type != ChangeType.NEW for c in result.changes)
+
+
+def test_reconcile_ignores_mac_address_reordering():
+    """The single most likely source of noise in the review diff once an
+    attribute is list-shaped: two imports of the same underlying device,
+    where the source (or Liongard) happens to return per-NIC data in a
+    different order, must reconcile as UNCHANGED -- not report a spurious
+    CHANGED purely from element order.
+    """
+    current = [
+        CanonicalEntity(
+            entity_type=EntityType.DEVICE,
+            natural_key="ASSET-0001",
+            attributes={"mac_addresses": ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"]},
+        )
+    ]
+    incoming = [
+        CanonicalEntity(
+            entity_type=EntityType.DEVICE,
+            natural_key="ASSET-0001",
+            attributes={"mac_addresses": ["aa:bb:cc:dd:ee:02", "aa:bb:cc:dd:ee:01"]},
+        )
+    ]
+
+    result = reconcile(current, incoming)
+
+    assert len(result.changes) == 1
+    assert result.changes[0].change_type == ChangeType.UNCHANGED
+    assert result.changes[0].field_diffs == {}
+
+
+def test_reconcile_still_detects_real_mac_address_changes():
+    current = [
+        CanonicalEntity(
+            entity_type=EntityType.DEVICE,
+            natural_key="ASSET-0001",
+            attributes={"mac_addresses": ["aa:bb:cc:dd:ee:01"]},
+        )
+    ]
+    incoming = [
+        CanonicalEntity(
+            entity_type=EntityType.DEVICE,
+            natural_key="ASSET-0001",
+            attributes={"mac_addresses": ["aa:bb:cc:dd:ee:99"]},
+        )
+    ]
+
+    result = reconcile(current, incoming)
+
+    assert result.changes[0].change_type == ChangeType.CHANGED
+    assert "mac_addresses" in result.changes[0].field_diffs
 
 
 def test_render_view_writes_rows(tmp_path):

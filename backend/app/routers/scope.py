@@ -45,7 +45,15 @@ from ..audit import log_event
 from ..auth import require_org_access, require_write
 from ..catalog import VIEWS_BY_ID
 from ..db import get_session
-from ..domain import CanonicalEntity, EntityStatus, EntityType, ScopeCategory, Source
+from ..domain import (
+    CanonicalEntity,
+    DeviceSubtype,
+    EntityStatus,
+    EntityType,
+    ScopeCategory,
+    Source,
+    normalize_mac_address,
+)
 from ..importers.workbook import parse_workbook, resolve_canonical_device_attributes
 from ..models import ScopeEntity
 from ..reconcile import reconcile
@@ -67,29 +75,73 @@ _ENTITY_STATUSES = frozenset(s.value for s in EntityStatus)
 
 
 class DeviceSoftwareAttributes(BaseModel):
-    """Known attribute keys for DEVICE/SOFTWARE entities -- the exact field
-    list from docs/pdf_ssp_template_spec.md's "Component/asset inventory"
-    gap section (NIST CUI SSP template section 2.1/2.2): make/OEM, model,
-    version, and the person/role responsible. Validated here only --
-    `attributes` stays a free-form JSONB column, no schema migration.
-    Unknown keys in an entity's `attributes` dict pass through untouched;
-    only these four are type-checked.
+    """Known attribute keys for DEVICE/SOFTWARE entities -- the field list
+    from docs/pdf_ssp_template_spec.md's "Component/asset inventory" gap
+    section (NIST CUI SSP template section 2.1/2.2) plus the device_subtype/
+    asset_tag/mac_addresses fields added for the future Liongard connector
+    (roadmap D.2), which will write into this same canonical vocabulary.
+    Validated here only -- `attributes` stays a free-form JSONB column, no
+    schema migration. Unknown keys in an entity's `attributes` dict pass
+    through untouched; only fields listed here are type-checked.
     """
 
     make_oem: str | None = None
     model: str | None = None
     version: str | None = None
     responsible_contact_id: uuid.UUID | None = None
+    device_subtype: DeviceSubtype | None = None
+    # Free-text fallback so an unrecognized subtype (manual entry, or a
+    # Liongard device class this vocabulary doesn't cover yet) is captured
+    # rather than silently dropped when device_subtype == OTHER.
+    device_subtype_other: str | None = None
+    asset_tag: str | None = None
+    # A NIC list, not a single value -- a laptop has wifi + ethernet + a
+    # dock/USB adapter, and Liongard reports per-NIC data. MAC randomization
+    # on modern mobile OSes also means a MAC is not a stable *identity* for
+    # phones/tablets -- it's an attribute here, never used as a natural_key.
+    mac_addresses: list[str] | None = None
+
+    @field_validator("asset_tag")
+    @classmethod
+    def _strip_asset_tag(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        return v or None
+
+    @field_validator("mac_addresses")
+    @classmethod
+    def _normalize_macs(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        try:
+            return [normalize_mac_address(m) for m in v if m and m.strip()] or None
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
 
 
 def _validate_device_software_attributes(entity_type: str, attributes: dict[str, Any]) -> None:
+    """Validate the known DEVICE/SOFTWARE keys in `attributes` and write
+    back any normalized form (MAC canonicalization, enum -> str) so the
+    persisted dict matches what was validated, not the raw caller input.
+    """
     if entity_type not in (EntityType.DEVICE.value, EntityType.SOFTWARE.value):
         return
     known = {k: v for k, v in attributes.items() if k in DeviceSoftwareAttributes.model_fields}
     try:
-        DeviceSoftwareAttributes.model_validate(known)
+        validated = DeviceSoftwareAttributes.model_validate(known)
     except ValidationError as exc:
         raise ValueError(f"Invalid device/software attributes: {exc}") from exc
+    for k in known:
+        value = getattr(validated, k)
+        if value is None:
+            attributes[k] = None
+        elif isinstance(value, uuid.UUID):
+            attributes[k] = str(value)
+        elif isinstance(value, DeviceSubtype):
+            attributes[k] = value.value
+        else:
+            attributes[k] = value
 
 
 class ScopeEntityIn(BaseModel):

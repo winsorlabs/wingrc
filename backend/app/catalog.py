@@ -74,6 +74,7 @@ AUTHORIZED_DEVICES = ListView(
         ("Owner / Primary User", "Owner / Primary User"),
         ("Make", "Make"),
         ("Model", "Model"),
+        ("Device Subtype", "Device Subtype"),
         ("Serial # or Asset Tag", "Serial # or Asset Tag"),
         ("Mac Address", "Mac Address"),
         ("OS", "OS"),
