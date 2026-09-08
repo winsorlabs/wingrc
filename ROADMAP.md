@@ -378,6 +378,118 @@ natural_key semantics retroactively would re-key every existing
 
 ---
 
+### D.3 — Asset & user onboarding approval workflow
+
+**Added 2026-09-08 (Jarrod). Not started.** Depends on D.1 (credentials/
+connection UI) and D.2 (connector writing `scope_entity`), plus two pieces
+of infrastructure this codebase does not have yet — see Prerequisites.
+
+**What:** Daily Liongard sync of devices and users. Anything new lands in a
+pending state rather than silently joining the boundary; the org's Security
+Officer and IT/MSP contact are notified; they open an approval page showing
+a baseline checklist evaluated against observable Liongard metrics (DUO/Evo
+installed, FenixPyre installed, RoboShadow installed, RocketCyber installed,
+etc.) as met / not met; they formally accept or reject the asset into the
+environment.
+
+**Why it's worth building:** this produces a *formal acceptance record* —
+who accepted which asset into the CUI environment, when, and what the
+security posture looked like at that moment. That's the artifact an assessor
+actually wants for CM-family change/configuration control and for inventory
+accuracy, and it's stronger evidence than a spreadsheet asserting the
+inventory is complete. It also gives an MSP a defensible answer to "how did
+this laptop get in scope."
+
+**Prerequisites that don't exist yet — scope these honestly:**
+- **Email delivery: none exists.** Verified 2026-09-08 — no `smtplib`, no
+  SMTP settings, no mailer module anywhere in `backend/`. This feature needs
+  outbound email from scratch: SMTP/provider config per deployment
+  (self-hosted MSPs won't share one), templating, delivery-failure handling
+  (a silently-bounced approval request is worse than none), and per-org
+  routing. Treat this as its own sub-slice; it is bigger than it sounds and
+  it is on the critical path.
+- **Scheduling: none exists.** "Daily sync" needs a scheduler/worker. D.1
+  already notes manual-only sync is a legitimate v1 — the same reasoning
+  applies here: a manual "Sync now" that queues approvals is shippable
+  before any scheduler exists, and proves the workflow first.
+- **`EntityStatus` has only `active` / `decommissioned`** (`domain.py`). A
+  `pending_approval` state is needed, plus a decision on what pending means
+  for `in_boundary` and for the SSP component inventory — see Open questions.
+
+**Routing targets already exist:** `ContactDocumentationRole`'s CHECK
+constraint (migration 0013) already includes `security_officer` and
+`it_admin`. Route notifications to the org's contacts holding those roles —
+no new role vocabulary needed. Handle the "no contact holds that role" case
+explicitly rather than silently dropping the notification.
+
+**Hard security constraint — no one-click approval links in email.** Email
+is a notification that something needs review; approval itself must require
+an authenticated session in the app. A magic-link "Approve" button is
+forwardable, phishable, and survives the recipient leaving the company —
+and an attestation anyone-with-the-link can produce is worthless as
+evidence. Email links to the approval page; the app authenticates and
+records the approver.
+
+**Baseline checklist — three possible sources, ship them in this order:**
+1. **Derived from activated Tools.** Deterministic, needs no AI, and the
+   tool-activation concept already exists. If an org has activated
+   FenixPyre and RocketCyber, those become checklist rows automatically.
+   This is the v1.
+2. **Manually curated checklist**, editable per org — the fallback for
+   anything the tool list doesn't capture. Needed regardless, because tool
+   activation won't cover everything a baseline requires.
+3. **AI-derived from a baseline document in the Library.** Depends on the
+   document library (item F / `docs/roadmap.md` N) and on the deferred
+   BYO-AI provider abstraction. **The AI proposes a checklist; a human
+   confirms it before it governs anything.** An LLM silently deciding what
+   "compliant" means for asset acceptance in a compliance product is not an
+   acceptable failure mode — the confirmed checklist is the artifact, the
+   AI is just a drafting aid.
+
+**Checklist results are candidates, never auto-met.** A green check means
+"Liongard observed this agent installed," not "the control is satisfied."
+Approval decisions and control_state stay separate, consistent with the
+"candidates, never auto-met" rule in CLAUDE.md that already governs tool
+activation and connector output.
+
+**Snapshot the approval, don't recompute it.** The acceptance record must
+store what the checklist said *at approval time* — checklist version, each
+item's result, and the underlying metric values — the same point-in-time
+discipline `BundleSnapshot` already uses. If the approval page re-renders
+live metrics later, the record silently becomes "what's true now" instead of
+"what was accepted then," which is exactly the property that makes it
+useless as evidence. Changing a checklist afterwards must not retroactively
+alter prior approvals.
+
+**Open questions to settle before building:**
+- **Do pending (unapproved) assets appear in the SSP component inventory?**
+  A discovered-but-unapproved device is still physically on the network.
+  Omitting it makes the inventory inaccurate — arguably worse than showing
+  it with a pending marker. Leaning toward include-and-flag, but this is a
+  scoping/compliance judgment, not a UI preference; decide deliberately.
+- **Notification volume at MSP scale.** Many orgs × daily syncs × onboarding
+  bursts (a 40-person client migration) = an email storm that trains people
+  to ignore approvals. Needs digest batching and per-org routing from the
+  start, not as a later fix.
+- **Rejection semantics.** What does rejecting an asset mean — decommission
+  it, mark it out of boundary, flag for removal? It exists on the network
+  either way; the app can't make it disappear. Define what a rejection
+  asserts.
+- **Re-approval triggers.** If an approved device later loses an agent
+  (RocketCyber uninstalled), does it re-enter the approval queue, raise a
+  finding, or neither? This is arguably the more valuable half of the
+  feature — continuous conformance vs. one-time gate — and it overlaps
+  item G (Ongoing Compliance Tasks). Decide whether D.3 is onboarding-only
+  or the entry point to continuous baseline monitoring before designing the
+  data model.
+
+**Audit trail:** approvals are exactly the kind of event
+`audit_log` exists for, and actor attribution now resolves to the real user
+(fixed 2026-09-07) — so "who approved this asset" is answerable without
+additional plumbing.
+
+---
+
 ## E — Objective tips (MSP-flavored evidence examples)
 
 **What:** A per-objective advisory field giving concrete, MSP-scaled examples
