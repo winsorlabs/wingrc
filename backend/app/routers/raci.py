@@ -127,9 +127,14 @@ def _get_control_state(
 
 
 def _out(assignment: RaciAssignment, contact_name: str) -> RaciAssignmentOut:
-    out = RaciAssignmentOut.model_validate(assignment)
-    out.contact_name = contact_name
-    return out
+    return RaciAssignmentOut(
+        id=assignment.id,
+        control_state_id=assignment.control_state_id,
+        contact_id=assignment.contact_id,
+        contact_name=contact_name,
+        raci_letter=assignment.raci_letter,
+        created_at=assignment.created_at,
+    )
 
 
 # ---------------------------------------------------------------------------
