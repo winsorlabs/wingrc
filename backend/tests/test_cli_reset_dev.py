@@ -8,6 +8,15 @@ around) them, so it raised a foreign-key violation the moment a realistic
 org -- one with audit history, a network diagram, or a finding with a
 POA&M item -- got swept up in a reset.
 
+Also covers the `reset-dev` command's production guard (_reset_dev_guard_error
+and its use in reset_dev()): it must fail CLOSED -- refuse on an unset
+WINGRC_ENVIRONMENT, not just an explicit "production" -- since an unset
+variable is the actual shape of a fresh production deploy nobody configured
+yet. The guard-only tests below (TestGuardError / TestResetDevCommandGuard)
+don't touch a database at all, unlike the rest of this file; they still
+carry the module's @pytest.mark.integration for consistency with "this is
+the reset-dev test file," not because they need WINGRC_TEST_DATABASE_URL.
+
 Run in-container:
     docker compose exec backend pytest tests/test_cli_reset_dev.py -m integration -v
 """
@@ -19,8 +28,10 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from typer.testing import CliRunner
 
-from app.cli import _reset_dev
+from app.cli import _reset_dev, _reset_dev_guard_error
+from app.cli import app as cli_app
 from app.engine import start_assessment
 from app.models import (
     AssessmentObjective,
@@ -179,3 +190,101 @@ def test_reset_dev_preserves_acme_msp(db_session: Session):
         select(Organization).where(Organization.id == other.id)
     ).first()
     assert remaining_other is None
+
+
+# ---------------------------------------------------------------------------
+# reset-dev's production guard: fails CLOSED (unset/unrecognized both
+# refuse), matches this repo's established "development"/"production"
+# WINGRC_ENVIRONMENT convention, and --yes never bypasses it.
+# ---------------------------------------------------------------------------
+
+
+class TestGuardError:
+    """Pure-function coverage for _reset_dev_guard_error -- no DB, no CLI
+    invocation, just the allowlist/normalization logic itself."""
+
+    def test_unset_refuses(self):
+        msg = _reset_dev_guard_error(None)
+        assert msg is not None
+        assert "unset" in msg
+        assert "WINGRC_ENVIRONMENT" in msg
+
+    def test_production_refuses(self):
+        msg = _reset_dev_guard_error("production")
+        assert msg is not None
+        assert "'production'" in msg
+
+    @pytest.mark.parametrize(
+        "bad_value", ["prod", "PRODUCTION", "staging", "dev", "test", "local", "typo"]
+    )
+    def test_unrecognized_value_refuses(self, bad_value):
+        assert _reset_dev_guard_error(bad_value) is not None
+
+    @pytest.mark.parametrize(
+        "good_value", ["development", "Development", "DEVELOPMENT", "  development  "]
+    )
+    def test_development_case_and_whitespace_insensitive_allows(self, good_value):
+        assert _reset_dev_guard_error(good_value) is None
+
+
+class TestResetDevCommandGuard:
+    """Invocation-level coverage: the guard actually runs inside reset_dev()
+    before anything DB-touching, and --yes cannot skip it. SessionLocal is
+    monkeypatched so these never open a real connection -- a refused
+    invocation should never call it at all (proving guard-before-session
+    ordering), and an allowed one is stopped by a sentinel exception right
+    after SessionLocal() so it can't reach out to a real database either.
+    """
+
+    runner = CliRunner()
+
+    def test_refuses_on_unset_env_even_with_yes(self, monkeypatch):
+        monkeypatch.delenv("WINGRC_ENVIRONMENT", raising=False)
+        called = []
+        monkeypatch.setattr("app.cli.SessionLocal", lambda: called.append(True))
+
+        result = self.runner.invoke(cli_app, ["reset-dev", "--yes"])
+
+        assert result.exit_code == 1
+        assert "Refusing to run" in result.output
+        assert called == []
+
+    def test_refuses_on_production_even_with_yes(self, monkeypatch):
+        monkeypatch.setenv("WINGRC_ENVIRONMENT", "production")
+        called = []
+        monkeypatch.setattr("app.cli.SessionLocal", lambda: called.append(True))
+
+        result = self.runner.invoke(cli_app, ["reset-dev", "--yes"])
+
+        assert result.exit_code == 1
+        assert "Refusing to run" in result.output
+        assert called == []
+
+    def test_refuses_on_unrecognized_value(self, monkeypatch):
+        monkeypatch.setenv("WINGRC_ENVIRONMENT", "staging")
+        called = []
+        monkeypatch.setattr("app.cli.SessionLocal", lambda: called.append(True))
+
+        result = self.runner.invoke(cli_app, ["reset-dev", "--yes"])
+
+        assert result.exit_code == 1
+        assert "Refusing to run" in result.output
+        assert called == []
+
+    def test_proceeds_past_guard_for_development(self, monkeypatch):
+        """Proves execution gets past the guard for the one allowed value --
+        does not exercise the real reset (that's _reset_dev's own coverage
+        above). SessionLocal raises a sentinel the instant it's called, so
+        nothing here ever reaches a real database."""
+        monkeypatch.setenv("WINGRC_ENVIRONMENT", "development")
+
+        def _sentinel():
+            raise RuntimeError("sentinel: passed guard")
+
+        monkeypatch.setattr("app.cli.SessionLocal", _sentinel)
+
+        result = self.runner.invoke(cli_app, ["reset-dev", "--yes"])
+
+        assert "Refusing to run" not in result.output
+        assert result.exception is not None
+        assert "sentinel: passed guard" in str(result.exception)

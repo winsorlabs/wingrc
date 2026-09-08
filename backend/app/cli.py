@@ -27,6 +27,43 @@ from .seeds.catalog import seed_catalog
 
 app = typer.Typer(help="WinGRC — open CMMC scope and documentation tooling.")
 
+# reset-dev's production guard (see _reset_dev_guard_error below) allowlists
+# exactly this codebase's established two-value WINGRC_ENVIRONMENT
+# convention (config.py's Settings.environment default, .env.example,
+# auth.py's cookie-Secure check) -- "development" or "production", nothing
+# else. No "dev"/"test"/"local"/"staging" has ever been used anywhere in
+# this repo, so the allowlist doesn't invent one either.
+_RESET_DEV_ALLOWED_ENVIRONMENTS = frozenset({"development"})
+
+
+def _reset_dev_guard_error(raw_env: str | None) -> str | None:
+    """Return an actionable refusal message if `raw_env` -- the raw
+    WINGRC_ENVIRONMENT value read straight from the environment, or None if
+    the variable is unset -- doesn't clear reset-dev's safety allowlist.
+    Returns None if it's safe to proceed.
+
+    Fails CLOSED: unset, "production", and any unrecognized or misspelled
+    value all refuse -- only an exact (case/whitespace-insensitive) match
+    against _RESET_DEV_ALLOWED_ENVIRONMENTS proceeds. This deliberately
+    reads raw os.environ rather than config.get_settings().environment:
+    Settings.environment defaults to "development" whenever the variable
+    is entirely unset, which would silently treat "nobody configured this
+    on a fresh production deploy" -- the most likely real-world way to hit
+    this -- as if it were a real dev box.
+    """
+    normalized = (raw_env or "").strip().lower()
+    if normalized in _RESET_DEV_ALLOWED_ENVIRONMENTS:
+        return None
+    shown = repr(raw_env) if raw_env is not None else "unset"
+    allowed = sorted(_RESET_DEV_ALLOWED_ENVIRONMENTS)
+    return (
+        f"Refusing to run: WINGRC_ENVIRONMENT is {shown}, but reset-dev "
+        f"only runs when it's set to one of {allowed!r}. reset-dev "
+        "irreversibly deletes assessment data and audit history -- an "
+        "unset or unrecognized environment must refuse, not proceed. Set "
+        "WINGRC_ENVIRONMENT=development for a normal dev/test setup."
+    )
+
 
 @app.command()
 def seed(
@@ -138,18 +175,16 @@ def reset_dev(
 
     NEVER run this against a production database. Enforced below, not just
     documented — `--yes` skips the confirmation prompt but never bypasses
-    the WINGRC_ENVIRONMENT=production check.
+    the environment allowlist check (fails closed: unset, "production", or
+    any unrecognized value all refuse — see _reset_dev_guard_error).
     """
+    import os
+
     from sqlalchemy import select
 
-    from .config import get_settings
-
-    if get_settings().environment == "production":
-        typer.echo(
-            "Refusing to run: WINGRC_ENVIRONMENT=production. reset-dev deletes "
-            "assessment data and audit history — this must never run against "
-            "a production database."
-        )
+    guard_error = _reset_dev_guard_error(os.environ.get("WINGRC_ENVIRONMENT"))
+    if guard_error is not None:
+        typer.echo(guard_error)
         raise typer.Exit(code=1)
 
     session = SessionLocal()
