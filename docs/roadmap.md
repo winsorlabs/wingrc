@@ -249,6 +249,57 @@ Items without a status are planned but not yet started.
   latency than concurrency-1 (expected — 50 requests genuinely contending
   for a 15-connection Postgres pool), but the graceful-degradation shape,
   not the event-loop-starvation-and-restart shape.
+  **Follow-up, measured and fixed 2026-09-08:** the concurrency-50 numbers
+  above still named two throughput constraints that outlived the
+  threadpool fix, both fixed this session. (1) `_resolve_api_token`'s
+  `last_used_at` `UPDATE` fired on every Bearer-token request, including
+  plain GETs — write amplification on every page view. Throttled the
+  same way `_resolve_session`'s `last_activity_at` heartbeat already was
+  (60s window, including the initial `NULL` case); no idle-timeout logic
+  reads this column so there's no accuracy tradeoff, only fewer writes.
+  (2) `db.py`'s SQLAlchemy pool was still at SQLAlchemy's own defaults
+  (`pool_size=5, max_overflow=10` = 15 total) — a default nobody had
+  chosen, sized well under what one uvicorn worker can actually drive.
+  Set deliberately to `pool_size=20, max_overflow=20` = 40, matching
+  anyio's default 40-thread threadpool cap (nearly every dependency/
+  endpoint is dispatched onto it) against Postgres 18's default
+  `max_connections=100` and this deployment's single uvicorn worker —
+  reasoning recorded on `Settings.db_pool_size`.
+  Benchmarked on a throwaway isolated stack (`docker compose -p
+  wingrc_bench`, fresh clone, own network/volumes, torn down afterward)
+  rather than the shared wl-util-1 instance — the prior round's
+  concurrency-50 run had locked that shared backend up and needed a
+  manual restart while real traffic was hitting it, and this stack's
+  bind-mounted `--reload` made switching between commits mid-session
+  cheap. Same methodology as the benchmark above (stdlib
+  `ThreadPoolExecutor` client, real uvicorn, real Bearer token, `GET
+  /orgs`, concurrency 1/10/50, with a concurrent `/health` watcher —
+  zero health-check failures in every run below), isolated per change so
+  the improvement can be attributed correctly:
+  | concurrency | before (`7708c91`) | heartbeat throttle only | both fixes |
+  |---|---|---|---|
+  | 1 | p50 4.9–5.2ms / p95 6.7–7.9ms | p50 4.3ms / p95 5.9ms | p50 4.2–4.4ms / p95 5.0–5.3ms |
+  | 10 | p50 45.5–49.2ms / p95 63.4–70.2ms | p50 43.7ms / p95 55.3ms | p50 43.6–47.3ms / p95 54.3–89.7ms |
+  | 50 | p50 215.0–224.0ms / p95 411.2–464.4ms / p99 600.4–691.2ms | p50 210.2ms / p95 405.8ms / p99 632.8ms | p50 223.2–225.5ms / p95 278.5–356.4ms / p99 310.2–391.5ms |
+  (Before/both ranges are 2–3 repeated runs; heartbeat-only is a single
+  run — noise band is real, not a transcription gap.) At concurrency 50,
+  pool sizing is the dominant contributor: p95 drops roughly 411–464ms →
+  279–356ms (~25–35%) and p99 roughly 600–691ms → 310–392ms (~40–50%)
+  once the pool widens from 15 to 40, consistent with the pool being the
+  bottleneck the original benchmark flagged but didn't yet fix. The
+  heartbeat throttle alone moves concurrency-50 p95/p99 only modestly in
+  this synthetic benchmark, because a tight loop against one hot token
+  hits the 60s throttle-skip after its first request and never re-pays
+  the write for the rest of the run — its real payoff is write
+  amplification under realistic multi-minute traffic, not raw latency in
+  a several-second burst test. p50 stays flat (~210–225ms) across every
+  variant at concurrency 50 in every run — expected, since the median
+  request isn't queuing on the pool; it's the tail this fixes.
+  Regression-verified on the isolated stack: full integration suite
+  (`pytest -m integration`, 499 passed, including
+  `test_last_used_at_throttled_within_60s` — new this session, mirrors
+  `test_session_idle.py`'s throttle coverage — and the existing
+  `test_session_idle.py` suite unchanged) and `ruff check .` clean.
 - **Consolidated SSP PDF export** (`bundle_service.py:_render_ssp_pdf`,
   merged `e4e307eb`, 2026-09-03) — WeasyPrint rendering over the same
   shared `_sys_desc_body`/`_implementation_body`/`_personnel_body` helpers
