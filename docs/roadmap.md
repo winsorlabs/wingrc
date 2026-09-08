@@ -242,7 +242,13 @@ Items without a status are planned but not yet started.
   function, and it already stamped the ContextVar directly in its own
   `async def` body. Regression-verified: the full audit-actor test suite
   (`test_audit_actor.py`, including the real-Bearer-token-over-TestClient
-  case) still passes unchanged.
+  case) still passes unchanged. **Confirmed the fix actually closes the
+  gap, not just green tests:** re-ran the identical concurrency-50
+  benchmark against the fixed build — p50 239.6ms / p95 572.1ms / p99
+  636.2ms, zero failures, container stayed healthy throughout. Worse
+  latency than concurrency-1 (expected — 50 requests genuinely contending
+  for a 15-connection Postgres pool), but the graceful-degradation shape,
+  not the event-loop-starvation-and-restart shape.
 - **Consolidated SSP PDF export** (`bundle_service.py:_render_ssp_pdf`,
   merged `e4e307eb`, 2026-09-03) — WeasyPrint rendering over the same
   shared `_sys_desc_body`/`_implementation_body`/`_personnel_body` helpers
