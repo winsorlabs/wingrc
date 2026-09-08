@@ -35,6 +35,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import Depends, HTTPException, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
@@ -482,6 +483,25 @@ def clear_state_cookie(response: Response, name: str) -> None:
 # FastAPI auth dependencies
 # ---------------------------------------------------------------------------
 
+def _get_current_user_sync(request: Request, db: Session) -> CurrentUser:
+    """The actual blocking work: session/API-token resolution against
+    Postgres (auth.resolve_session/auth.resolve_api_token, an activity-
+    heartbeat UPDATE + commit, a User lookup, an org_membership role
+    lookup — several real round trips). Split out so get_current_user can
+    run it in the threadpool via run_in_threadpool while still stamping
+    the audit-actor ContextVar directly in the request's own asyncio task
+    — see get_current_user's docstring for why both properties are needed
+    at once and why they don't conflict.
+    """
+    raw_session = request.cookies.get("wingrc_session")
+    if raw_session:
+        return _resolve_session(db, raw_session)
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return _resolve_api_token(db, auth_header[7:])
+    raise HTTPException(status_code=401, detail="Not authenticated")
+
+
 async def get_current_user(
     request: Request,
     db: Session = Depends(get_session),
@@ -513,21 +533,27 @@ async def get_current_user(
     puts it in the same position: FastAPI awaits it directly in the
     request's task instead of thread-dispatching it, so set_current_actor()
     here mutates the same ambient context every later sync dispatch copies
-    from. _resolve_session/_resolve_api_token remain plain sync helpers,
-    called directly (not awaited) — their DB work is small and this
-    mirrors how the rest of this codebase already does synchronous DB
-    access without issue; only the outer function needed to change shape.
-    """
-    raw_session = request.cookies.get("wingrc_session")
-    if raw_session:
-        user = _resolve_session(db, raw_session)
-    else:
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            user = _resolve_api_token(db, auth_header[7:])
-        else:
-            raise HTTPException(status_code=401, detail="Not authenticated")
+    from.
 
+    The actual credential resolution (_get_current_user_sync) still runs
+    in the threadpool via run_in_threadpool, not inline here — measured
+    2026-09-09 against the running stack (real uvicorn + Postgres,
+    concurrent load via a stdlib ThreadPoolExecutor client, see
+    docs/roadmap.md's Done entry for the full numbers): with that blocking
+    work running directly on the event loop (the shape this function had
+    right after the audit-actor fix), 50 concurrent authenticated requests
+    didn't just get slow, they starved the event loop entirely — even the
+    unauthenticated /health check stopped responding, and the container's
+    own Docker healthcheck failed, requiring a manual restart to recover.
+    The same 50-concurrent load against a plain sync `def` version (which
+    FastAPI threadpool-dispatches) degraded gracefully instead: worse
+    latency (p95 ~455ms vs. single-digit ms), but zero failures and no
+    server-wide impact. `run_in_threadpool` gets that same graceful
+    degradation back while keeping set_current_actor() in this function's
+    own body, which — per the paragraph above — is what actually needs to
+    run directly in the request's task, not the DB calls themselves.
+    """
+    user = await run_in_threadpool(_get_current_user_sync, request, db)
     set_current_actor(str(user.id), actor_type_for(user))
     return user
 

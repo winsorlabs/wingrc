@@ -201,6 +201,48 @@ Items without a status are planned but not yet started.
   real user's UUID and `actor_type="api"`. Append-only discipline
   preserved — this is forward-only; no existing `"system"` rows were
   touched or backfilled.
+  **Follow-up, measured and fixed 2026-09-09:** making `get_current_user()`
+  `async def` was correct for the ContextVar propagation reason above, but
+  it had a real side effect worth quantifying, not assuming — every other
+  dependency/endpoint in this codebase is sync `def`, threadpool-dispatched
+  specifically so blocking I/O doesn't stall the event loop, and
+  `get_current_user()` does real blocking Postgres work per request
+  (session/API-token resolution, an activity-heartbeat `UPDATE` + `commit`,
+  a `User` lookup, an `org_membership` role lookup — 7 round trips on the
+  session-cookie path, confirmed by reading `_resolve_session`/
+  `_resolve_api_token`, more than the "session resolution, API-token
+  resolution, `_role_for_membership`, plus the heartbeat commit" the concern
+  was originally framed as). As `async def` with that work inline, all of
+  it ran on the event loop instead. Benchmarked against the real running
+  stack on wl-util-1 (uvicorn, single worker, real Postgres — not
+  TestClient, which can't produce concurrent-request contention; load
+  driven by a stdlib `ThreadPoolExecutor` client hitting `GET /orgs` with a
+  real Bearer token, since socket I/O releases the GIL, at concurrency
+  1/10/50, 100-300 requests per level):
+  | concurrency | `async def` (inline) | plain sync `def` (threadpooled) |
+  |---|---|---|
+  | 1 | p50 5.0ms / p95 5.6ms | p50 5.0ms / p95 5.5ms |
+  | 10 | p50 52.0ms / p95 110.0ms | p50 48.2ms / p95 70.8ms |
+  | 50 | **event loop starved — even the unauthenticated `/health` check stopped responding; the container's own Docker healthcheck failed; required a manual `docker compose restart` to recover** | p50 210.7ms / p95 455.2ms / p99 537.4ms, zero failures, container stayed healthy |
+  At concurrency 10 the two are close — the tiny default SQLAlchemy
+  connection pool (`pool_size=5, max_overflow=10` in `db.py`, unmodified by
+  this fix) is likely the dominant cost there, not the event-loop-blocking
+  itself. At concurrency 50 the difference stopped being a latency question
+  and became an availability one: a burst of ~50 concurrent authenticated
+  requests — plausible for even a modest number of MSP engineers with a
+  dashboard firing several parallel API calls — could take the whole
+  WinGRC instance down for every user until someone restarted it. That's
+  material, not negligible, so the fix landed: `get_current_user()` now
+  splits the blocking resolution into `_get_current_user_sync()` and runs
+  it via `run_in_threadpool`, while `set_current_actor()` stays directly in
+  the `async def` wrapper's own body (still executed in the request's own
+  task, not thread-dispatched) — keeping both properties instead of
+  trading one for the other. `_authed()` in `tests/conftest.py` needed no
+  change: it's a full dependency override, not a call-through to the real
+  function, and it already stamped the ContextVar directly in its own
+  `async def` body. Regression-verified: the full audit-actor test suite
+  (`test_audit_actor.py`, including the real-Bearer-token-over-TestClient
+  case) still passes unchanged.
 - **Consolidated SSP PDF export** (`bundle_service.py:_render_ssp_pdf`,
   merged `e4e307eb`, 2026-09-03) — WeasyPrint rendering over the same
   shared `_sys_desc_body`/`_implementation_body`/`_personnel_body` helpers
