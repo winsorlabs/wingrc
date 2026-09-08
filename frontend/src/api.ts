@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, InvitedUser, MfaEnrollData, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, ProductRow, ScopeChange, ScopeEntity, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, InvitedUser, MfaEnrollData, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, ProductRow, RaciAssignmentRow, ScopeChange, ScopeEntity, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -433,6 +433,37 @@ export const api = {
     const r = await fetch(`/api/orgs/${orgId}/contacts/${contactId}/roles/${role}`, { method: "DELETE" });
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   },
+
+  // ── RACI (G.7) ────────────────────────────────────────────────────────────
+  getRaciAssignments: (orgId: string, assessmentId: string) =>
+    req<RaciAssignmentRow[]>(`/orgs/${orgId}/assessments/${assessmentId}/raci`),
+
+  createRaciAssignment: (
+    orgId: string,
+    assessmentId: string,
+    data: { control_state_id: string; contact_id: string; raci_letter: string }
+  ) =>
+    req<RaciAssignmentRow>(`/orgs/${orgId}/assessments/${assessmentId}/raci`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  deleteRaciAssignment: async (orgId: string, assessmentId: string, raciId: string): Promise<void> => {
+    const r = await fetch(`/api/orgs/${orgId}/assessments/${assessmentId}/raci/${raciId}`, {
+      method: "DELETE",
+    });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  },
+
+  bulkAssignRaci: (
+    orgId: string,
+    assessmentId: string,
+    data: { family: string; contact_id: string; raci_letter: string }
+  ) =>
+    req<{ assigned: number; skipped: number }>(`/orgs/${orgId}/assessments/${assessmentId}/raci/bulk`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 
   // ── Users ─────────────────────────────────────────────────────────────────
   listUsers: (orgId: string) =>

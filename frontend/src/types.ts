@@ -187,6 +187,15 @@ export interface Contact {
   created_at: string;
 }
 
+export interface RaciAssignmentRow {
+  id: string;
+  control_state_id: string;
+  contact_id: string;
+  contact_name: string;
+  raci_letter: string;
+  created_at: string;
+}
+
 export interface OnboardingStatus {
   profile: { complete: boolean; missing_fields: string[] };
   system_description: { complete: boolean };

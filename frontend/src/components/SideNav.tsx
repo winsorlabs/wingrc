@@ -2,14 +2,20 @@ import { canSeeApiTokens, canSeeAuditLog, canSeeSecurity, canSeeUsers } from "..
 import type { OnboardingStatus } from "../types";
 
 export type NavCategory = "dashboard" | "scope" | "assessments" | "tools" | "library" | "security";
-export type ScopeTab = "profile" | "system" | "contacts" | "assets";
+export type ScopeTab = "profile" | "system" | "contacts" | "assets" | "roles";
 export type SecurityTab = "users" | "api-tokens" | "audit-log";
+export type SystemDescriptionSection = "network_diagram" | "data_flow_diagram";
 
 interface Props {
   category: NavCategory;
   onSelectCategory: (c: NavCategory) => void;
   scopeTab: ScopeTab;
   onSelectScopeTab: (t: ScopeTab) => void;
+  // Network Diagram / Data Flow Diagram don't have their own ScopeTab — per
+  // G.6 they live inside the System Description editor, not separate pages
+  // (see docs/PLAN-gui-restructure.md G.6). Clicking either nav entry routes
+  // to the "system" tab and asks it to scroll to/highlight this section.
+  onFocusSystemSection: (s: SystemDescriptionSection) => void;
   securityTab: SecurityTab;
   onSelectSecurityTab: (t: SecurityTab) => void;
   currentUserRole: string;
@@ -21,6 +27,7 @@ export function SideNav({
   onSelectCategory,
   scopeTab,
   onSelectScopeTab,
+  onFocusSystemSection,
   securityTab,
   onSelectSecurityTab,
   currentUserRole,
@@ -76,16 +83,18 @@ export function SideNav({
             <button className={scopeSubClass("assets")} onClick={() => onSelectScopeTab("assets")}>
               Assets
             </button>
-            {/* Network Diagram, Data Flow Diagram, Roles — not built yet
-                (docs/PLAN-gui-restructure.md G.6/G.7). Listed so the
-                intended structure is visible, not wired to any content. */}
-            <button className="side-nav-subitem side-nav-subitem--placeholder" disabled>
+            {/* G.6: no separate pages — the diagrams live inside the System
+                Description editor. These entries route there and ask it to
+                scroll to/highlight the relevant section, so they light up
+                together with "System Description" rather than tracking
+                their own active state. */}
+            <button className={scopeSubClass("system")} onClick={() => onFocusSystemSection("network_diagram")}>
               Network Diagram
             </button>
-            <button className="side-nav-subitem side-nav-subitem--placeholder" disabled>
+            <button className={scopeSubClass("system")} onClick={() => onFocusSystemSection("data_flow_diagram")}>
               Data Flow Diagram
             </button>
-            <button className="side-nav-subitem side-nav-subitem--placeholder" disabled>
+            <button className={scopeSubClass("roles")} onClick={() => onSelectScopeTab("roles")}>
               Roles
             </button>
           </div>

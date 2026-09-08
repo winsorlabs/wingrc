@@ -1,23 +1,7 @@
 import { useState } from "react";
+import { FAMILY_NAMES } from "../lib/families";
 import type { ControlStateRow } from "../types";
 import { ControlSection } from "./ControlSection";
-
-const FAMILY_NAMES: Record<string, string> = {
-  AC: "Access Control",
-  AT: "Awareness and Training",
-  AU: "Audit and Accountability",
-  CM: "Configuration Management",
-  IA: "Identification and Authentication",
-  IR: "Incident Response",
-  MA: "Maintenance",
-  MP: "Media Protection",
-  PS: "Personnel Security",
-  PE: "Physical Protection",
-  RA: "Risk Assessment",
-  CA: "Security Assessment",
-  SC: "System and Communications Protection",
-  SI: "System and Information Integrity",
-};
 
 interface Props {
   family: string;

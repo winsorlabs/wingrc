@@ -1,11 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import type { SystemDescriptionSection } from "./SideNav";
 import type { ExternalConnection, StorageLocation, SystemDescriptionData } from "../types";
 
 interface Props {
   orgId: string;
   canWrite: boolean;
   onSaved?: () => void;
+  // Set by SideNav's Network Diagram / Data Flow Diagram entries (G.6 —
+  // those don't have their own page, they scroll to a section here).
+  // `nonce` changes on every click, including repeat clicks on the same
+  // section, so the scroll effect below re-fires each time.
+  focusSection?: { section: SystemDescriptionSection; nonce: number } | null;
 }
 
 const SYSTEM_TYPES = [
@@ -23,7 +29,7 @@ const OP_STATUSES = [
 function emptyStorageLoc(): StorageLocation { return { type: "", description: "" }; }
 function emptyExtConn(): ExternalConnection { return { name: "", direction: "bidirectional", purpose: "" }; }
 
-export function SystemDescriptionForm({ orgId, canWrite, onSaved }: Props) {
+export function SystemDescriptionForm({ orgId, canWrite, onSaved, focusSection }: Props) {
   const [data, setData] = useState<SystemDescriptionData | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -45,6 +51,9 @@ export function SystemDescriptionForm({ orgId, canWrite, onSaved }: Props) {
   const [dataFlowDiagramUploading, setDataFlowDiagramUploading] = useState(false);
   const networkDiagramRef = useRef<HTMLInputElement>(null);
   const dataFlowDiagramRef = useRef<HTMLInputElement>(null);
+  const networkDiagramSectionRef = useRef<HTMLDivElement>(null);
+  const dataFlowDiagramSectionRef = useRef<HTMLDivElement>(null);
+  const [flashSection, setFlashSection] = useState<SystemDescriptionSection | null>(null);
 
   useEffect(() => {
     api.getSystemDescription(orgId).then((sd) => {
@@ -66,6 +75,21 @@ export function SystemDescriptionForm({ orgId, canWrite, onSaved }: Props) {
       setLoaded(true);
     });
   }, [orgId]);
+
+  // Scroll to + briefly highlight the diagram section named by SideNav's
+  // Network Diagram / Data Flow Diagram entries. Keyed on nonce (not just
+  // section) so a repeat click on the same entry re-scrolls/re-flashes even
+  // though the section value didn't change. Waits for `loaded` since the
+  // section refs don't exist until the form itself has rendered.
+  useEffect(() => {
+    if (!loaded || !focusSection) return;
+    const ref = focusSection.section === "network_diagram" ? networkDiagramSectionRef : dataFlowDiagramSectionRef;
+    ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setFlashSection(focusSection.section);
+    const t = setTimeout(() => setFlashSection(null), 2000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, focusSection?.nonce]);
 
   function addCuiCategory() {
     const val = cuiCategoryInput.trim();
@@ -287,7 +311,12 @@ export function SystemDescriptionForm({ orgId, canWrite, onSaved }: Props) {
         <textarea rows={3} value={cuiFlow} onChange={(e) => { setCuiFlow(e.target.value); setSaved(false); }} placeholder="Describe how CUI flows through the system…" />
       </div>
 
-      <div className="form-section-heading">Network Diagram</div>
+      <div
+        ref={networkDiagramSectionRef}
+        className={`form-section-heading${flashSection === "network_diagram" ? " section-focus-flash" : ""}`}
+      >
+        Network Diagram
+      </div>
       {!data ? (
         <div className="field-hint">Save the system description above before uploading a diagram.</div>
       ) : (
@@ -315,7 +344,12 @@ export function SystemDescriptionForm({ orgId, canWrite, onSaved }: Props) {
         </div>
       )}
 
-      <div className="form-section-heading">Data Flow Diagram</div>
+      <div
+        ref={dataFlowDiagramSectionRef}
+        className={`form-section-heading${flashSection === "data_flow_diagram" ? " section-focus-flash" : ""}`}
+      >
+        Data Flow Diagram
+      </div>
       {!data ? (
         <div className="field-hint">Save the system description above before uploading a diagram.</div>
       ) : (

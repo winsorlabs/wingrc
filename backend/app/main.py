@@ -25,6 +25,7 @@ from .routers import (
     evidence,
     frameworks,
     orgs,
+    raci,
     scope,
 )
 from .routers import auth as auth_router
@@ -63,6 +64,7 @@ app.include_router(bundle.router)
 app.include_router(users_router.router)
 app.include_router(audit_log.router)
 app.include_router(dashboard.router)
+app.include_router(raci.router)
 
 
 @app.get("/health")

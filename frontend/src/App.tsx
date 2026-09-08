@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { AccountSettings } from "./components/AccountSettings";
 import { ApiTokensPanel } from "./components/ApiTokensPanel";
@@ -13,7 +13,8 @@ import { OrgDashboard } from "./components/OrgDashboard";
 import { OrgPicker } from "./components/OrgPicker";
 import { OrgProfileForm } from "./components/OrgProfileForm";
 import { ProductsPanel } from "./components/ProductsPanel";
-import type { NavCategory, ScopeTab, SecurityTab } from "./components/SideNav";
+import { RolesPanel } from "./components/RolesPanel";
+import type { NavCategory, ScopeTab, SecurityTab, SystemDescriptionSection } from "./components/SideNav";
 import { SideNav } from "./components/SideNav";
 import { SystemDescriptionForm } from "./components/SystemDescriptionForm";
 import { UsersPanel } from "./components/UsersPanel";
@@ -41,6 +42,13 @@ export function App() {
   // one level higher, now persistent instead of open-close.
   const [navCategory, setNavCategory] = useState<NavCategory>("assessments");
   const [scopeTab, setScopeTab] = useState<ScopeTab>("profile");
+  // Set alongside scopeTab whenever a diagram nav entry is clicked (G.6 —
+  // Network/Data Flow Diagram route into the "system" tab, not their own
+  // page). `nonce` bumps on every click, including repeat clicks on the same
+  // section, so SystemDescriptionForm's scroll-into-view effect re-fires
+  // even when `section` itself hasn't changed.
+  const [systemFocus, setSystemFocus] = useState<{ section: SystemDescriptionSection; nonce: number } | null>(null);
+  const focusNonceRef = useRef(0);
   const [securityTab, setSecurityTab] = useState<SecurityTab>("users");
   const [onboardingStatus, setOnboardingStatus] = useState<OnboardingStatus | null>(null);
   const [preAuthScreen, setPreAuthScreen] = useState<PreAuthScreen>("login");
@@ -67,6 +75,12 @@ export function App() {
   function enterOnboarding(o: Org) {
     setOrg(o);
     setScreen("onboarding");
+  }
+
+  function focusSystemSection(section: SystemDescriptionSection) {
+    focusNonceRef.current += 1;
+    setScopeTab("system");
+    setSystemFocus({ section, nonce: focusNonceRef.current });
   }
 
   function openAccount() {
@@ -189,6 +203,7 @@ export function App() {
             onSelectCategory={setNavCategory}
             scopeTab={scopeTab}
             onSelectScopeTab={setScopeTab}
+            onFocusSystemSection={focusSystemSection}
             securityTab={securityTab}
             onSelectSecurityTab={setSecurityTab}
             currentUserRole={user.role}
@@ -214,6 +229,7 @@ export function App() {
                   orgId={org.id}
                   canWrite={canWrite}
                   onSaved={() => loadOnboardingStatus(org.id)}
+                  focusSection={systemFocus}
                 />
               )}
               {scopeTab === "contacts" && (
@@ -221,6 +237,15 @@ export function App() {
               )}
               {scopeTab === "assets" && (
                 <AssetsPanel orgId={org.id} canWrite={canWrite} />
+              )}
+              {scopeTab === "roles" && (
+                assessment ? (
+                  <RolesPanel orgId={org.id} assessmentId={assessment.id} canWrite={canWrite} />
+                ) : (
+                  <div className="empty">
+                    No assessment selected — go back to the org picker to choose one.
+                  </div>
+                )
               )}
             </div>
           )}
