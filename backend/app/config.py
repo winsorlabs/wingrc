@@ -15,6 +15,25 @@ class Settings(BaseSettings):
     app_name: str = "WinGRC"
     environment: str = "development"
 
+    # SQLAlchemy connection pool, sized deliberately rather than left at
+    # SQLAlchemy's own defaults (pool_size=5, max_overflow=10 -> 15 total,
+    # unmodified since this app's first commit). Every sync endpoint/
+    # dependency FastAPI runs (which is nearly all of them — see
+    # get_current_user's docstring for the one deliberate exception) is
+    # dispatched onto anyio's worker threadpool, whose own default capacity
+    # is 40 concurrent threads per process. A DB pool smaller than that cap
+    # doesn't remove the queue, it just relocates it from the threadpool to
+    # pool checkout — so size the pool to match the threadpool instead of
+    # guessing: 20 + 20 = 40. Postgres 18's own default max_connections is
+    # 100, and docker-compose.yml runs exactly one uvicorn worker (no
+    # --workers flag), so 40 leaves headroom for `alembic upgrade head` at
+    # startup, admin psql sessions, and a future increase in worker count.
+    # A deployment that runs multiple workers must lower these (or raise
+    # Postgres's max_connections) so worker_count * db_pool_size stays under
+    # it — that math is not automatic.
+    db_pool_size: int = 20
+    db_max_overflow: int = 20
+
     # AI provider abstraction — pluggable so CUI-sensitive tenants can keep
     # generation local. Not exercised by the scope module yet.
     ai_provider: str = "none"  # one of: none | anthropic | azure_openai | local

@@ -25,6 +25,7 @@ Run in-container:
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -84,3 +85,58 @@ def test_api_token_last_used_at_set_after_authenticated_request(
 
     db_session.refresh(token_row)
     assert token_row.last_used_at is not None
+
+
+@pytest.mark.integration
+def test_last_used_at_throttled_within_60s(client, db_session, fake_msp_admin):
+    """A hot token doesn't take a write on every request — mirrors
+    test_session_idle.py's throttle coverage for the cookie-session path.
+    Nothing here reads last_used_at to gate access (no idle timeout keyed
+    off this column, unlike user_session.last_activity_at), so the only
+    thing to prove is that the throttle window is honored in both
+    directions: no write inside it, a write once past it.
+    """
+    _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
+
+    created = client.post(
+        f"/orgs/{fake_msp_admin.org_id}/users/api",
+        json={"display_name": "CI Bot", "role": "customer_poc"},
+    )
+    assert created.status_code == 201
+    token = created.json()["token"]
+    user_id = uuid.UUID(created.json()["id"])
+
+    token_row = db_session.scalars(
+        select(ApiToken).where(ApiToken.user_id == user_id)
+    ).one()
+    now = datetime.now(UTC)
+    recent = now - timedelta(seconds=10)
+    token_row.last_used_at = recent
+    db_session.flush()
+
+    del app.dependency_overrides[get_current_user]
+
+    r1 = client.get(
+        f"/orgs/{fake_msp_admin.org_id}/users",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r1.status_code == 200
+    db_session.refresh(token_row)
+    assert token_row.last_used_at == recent, (
+        "a request within the 60s throttle window should not write last_used_at"
+    )
+
+    # Push it stale, past the window, and confirm the next request does bump it.
+    token_row.last_used_at = now - timedelta(seconds=90)
+    db_session.flush()
+
+    r2 = client.get(
+        f"/orgs/{fake_msp_admin.org_id}/users",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r2.status_code == 200
+    db_session.refresh(token_row)
+    assert token_row.last_used_at > now - timedelta(seconds=10), (
+        "a request past the 60s throttle window should bump last_used_at to ~now"
+    )

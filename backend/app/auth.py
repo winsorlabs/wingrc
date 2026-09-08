@@ -684,10 +684,20 @@ def _resolve_api_token(db: Session, raw: str) -> CurrentUser:
     if row.expires_at is not None and row.expires_at.replace(tzinfo=UTC) < now:
         raise HTTPException(status_code=401, detail="API token expired")
 
-    # Set current_org then update last_used_at (RLS now satisfied)
+    # Set current_org then update last_used_at (RLS now satisfied).
+    # Throttled the same way as _resolve_session's activity heartbeat: only
+    # write when the stored value is more than 60s stale (or still NULL, its
+    # pre-first-use state), so a hot token doesn't take a write on every
+    # single request. Nothing here reads last_used_at to gate access — unlike
+    # user_session.last_activity_at there is no idle timeout keyed off this
+    # column — so a coarser value carries none of that risk, only less write
+    # amplification.
     db.execute(text(f"SET LOCAL app.current_org = '{row.org_id}'"))
     db.execute(
-        text("UPDATE api_token SET last_used_at = :now WHERE id = :id"),
+        text(
+            "UPDATE api_token SET last_used_at = :now WHERE id = :id"
+            " AND (last_used_at IS NULL OR last_used_at < :now - interval '60 seconds')"
+        ),
         {"now": now, "id": row.id},
     )
 
