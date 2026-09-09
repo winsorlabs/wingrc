@@ -22,3 +22,14 @@ Run order:
    failure; the whole script commits atomically or not at all).
 2. `cleanup_test_orgs_minio_list.py` — review its output.
 3. `cleanup_test_orgs_minio_delete.py` — only after step 1 has committed.
+
+## cleanup_empty_assessments_20260910.sql
+
+2026-09-10, wl-util-1: deletes two hardcoded, confirmed-empty Acme MSP
+assessments (Jarrod was about to start a fresh one and asked for the old
+two removed). Unlike `cleanup_test_orgs.sql`, this does **not** touch the
+organization itself or delete any `audit_log` rows — see the header
+comment for why neither is needed here (no FK forces it, and a live
+preview confirmed zero rows in every table that would matter). Only
+`control_state` (632 rows, the bare per-objective seed every assessment
+gets) and `sprs_snapshot` (2 rows) had anything to delete.
