@@ -70,6 +70,11 @@ services:
       PYTHONPATH: /app
     volumes:
       - ./backend:/app
+      # reset-dev's pre-flight pg_dump (cli.py) writes here — a named
+      # volume, not a path under the bind-mounted ./backend above, so
+      # backups survive a container recreate/rebuild instead of living
+      # inside a git-tracked source directory.
+      - backend_backups:/backups
     # --reload picks up host edits without a rebuild (volume mount keeps /app in sync).
     command: >
       sh -c "alembic upgrade head &&
@@ -99,6 +104,7 @@ services:
 volumes:
   db_data:
   minio_data:
+  backend_backups:
   certs:
     external: true
     name: wingrc_certs

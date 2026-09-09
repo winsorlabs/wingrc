@@ -163,106 +163,80 @@ def seed_catalog_cmd(
         session.close()
 
 
-@app.command(name="reset-dev")
-def reset_dev(
-    yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompt"),
-) -> None:
-    """Restore the dev DB to a clean state: CMMC L2 catalog + 'Acme MSP' org only.
-
-    Deletes all test-framework rows and test-org rows that integration tests
-    leave behind when they commit against the dev database.  Safe to run
-    repeatedly; the catalog seed step is idempotent.
-
-    NEVER run this against a production database. Enforced below, not just
-    documented — `--yes` skips the confirmation prompt but never bypasses
-    the environment allowlist check (fails closed: unset, "production", or
-    any unrecognized value all refuse — see _reset_dev_guard_error).
-    """
-    import os
-
-    from sqlalchemy import select
-
-    guard_error = _reset_dev_guard_error(os.environ.get("WINGRC_ENVIRONMENT"))
-    if guard_error is not None:
-        typer.echo(guard_error)
-        raise typer.Exit(code=1)
-
-    session = SessionLocal()
-    try:
-        if not yes:
-            db_url = session.get_bind().url  # type: ignore[attr-defined]
-            typer.echo(f"Target database: {db_url}")
-            typer.echo(
-                "This will DELETE all test data, keeping only:\n"
-                "  • framework 'nist-800-171-r2' (CMMC L2)\n"
-                "  • org 'Acme MSP'"
-            )
-            typer.confirm("Proceed?", abort=True)
-
-        deleted = _reset_dev(session)
-
-        # Ensure the canonical org exists
-        acme = session.scalars(
-            select(Organization).where(Organization.name == "Acme MSP")
-        ).first()
-        if acme is None:
-            session.add(Organization(name="Acme MSP"))
-            session.flush()
-            typer.echo("Created 'Acme MSP' org.")
-
-        # Re-seed catalog (idempotent — updates discussion/guidance text)
-        result = seed_catalog(session)
-        session.commit()
-
-        typer.echo(
-            f"\nDev DB reset complete.\n"
-            f"  Catalog: {result['controls']} controls, {result['objectives']} objectives\n"
-            f"  Rows deleted: {deleted}"
-        )
-
-        # Verification queries
-        ctrl_count = session.execute(text("SELECT count(*) FROM control")).scalar()
-        fw_count = session.execute(text("SELECT count(*) FROM framework")).scalar()
-        org_count = session.execute(text("SELECT count(*) FROM organization")).scalar()
-        typer.echo(
-            f"\nVerification:\n"
-            f"  frameworks : {fw_count}  (expected 1)\n"
-            f"  controls   : {ctrl_count}  (expected 110)\n"
-            f"  orgs       : {org_count}  (expected 1)"
-        )
-        if fw_count != 1 or ctrl_count != 110:
-            typer.echo("WARNING: counts unexpected — check catalog YAML.")
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
+_TEST_ORGS = "SELECT id FROM organization WHERE name != 'Acme MSP'"
 
 
-def _reset_dev(session) -> dict[str, int]:
-    """Delete all test-generated rows in FK-safe order.
+def _add_where(sql: str, extra: str) -> str:
+    """Append an additional WHERE condition to a DELETE/UPDATE statement
+    that may or may not already have one. `extra` is a bare boolean
+    expression (e.g. "org_id IN (...)"), not a full clause."""
+    if not extra:
+        return sql
+    return f"{sql} AND {extra}" if " WHERE " in sql else f"{sql} WHERE {extra}"
+
+
+def _org_scope(orgs_only: bool, column: str = "org_id") -> str:
+    """Boolean expression restricting a directly org_id-owning row to test
+    orgs, or "" (no restriction — every org) when orgs_only is False.
+    Passed to _add_where. `column` lets a table whose org_id column is
+    reached via a join (rather than being its own column) substitute the
+    joined expression, e.g. "control_state_id IN (SELECT id FROM
+    control_state WHERE org_id IN (...))"."""
+    if not orgs_only:
+        return ""
+    if column == "org_id":
+        return f"org_id IN ({_TEST_ORGS})"
+    return f"{column} IN (SELECT id FROM control_state WHERE org_id IN ({_TEST_ORGS}))"
+
+
+def _as_count_sql(sql: str) -> str:
+    """Turn one _reset_dev_plan() DELETE/UPDATE statement into the
+    equivalent SELECT COUNT(*) over the same rows it would affect — string
+    surgery over the same SQL, not an independently maintained list, so a
+    preview count can never drift from what _reset_dev() actually deletes.
+    Every current plan entry is a plain `DELETE FROM <table> [WHERE ...]`
+    or `UPDATE <table> SET ... [WHERE ...]` — no joins, no RETURNING — so
+    splitting on the first " WHERE "/" SET " is unambiguous even though
+    some WHERE clauses embed their own nested subquery WHEREs (the first
+    occurrence in the string is always the outer one, since it's written
+    first)."""
+    if sql.startswith("DELETE FROM "):
+        rest = sql[len("DELETE FROM ") :]
+        table, _, where = rest.partition(" WHERE ")
+        return f"SELECT COUNT(*) FROM {table.strip()}" + (f" WHERE {where}" if where else "")
+    if sql.startswith("UPDATE "):
+        rest = sql[len("UPDATE ") :]
+        table = rest.split(" SET ", 1)[0].strip()
+        _, _, where = rest.partition(" WHERE ")
+        return f"SELECT COUNT(*) FROM {table}" + (f" WHERE {where}" if where else "")
+    raise ValueError(f"Don't know how to count for: {sql!r}")
+
+
+def _reset_dev_plan(orgs_only: bool = False) -> list[tuple[str, str, str]]:
+    """The single source of truth for what reset-dev does: a list of
+    (label, kind, sql) tuples in FK-safe order, where kind is "DELETE" or
+    "UPDATE". Both _reset_dev() (executes them) and _preview_counts()
+    (counts what they would affect, via _as_count_sql) build from this one
+    plan, so the numbers a user confirms against are mechanically
+    guaranteed to match what actually runs — not a hand-maintained
+    parallel description that can go stale (see this command's own
+    misleading-confirmation incident).
 
     Keeps: framework key='nist-800-171-r2' and org name='Acme MSP'.
-    Everything else is considered test pollution and removed — including
-    the assessment-layer data (control_state, evidence, findings, ...) of
-    the *kept* org too: tiers 1-3 below are unconditional, not scoped to
-    "test orgs", so Acme MSP gets a fresh assessment-layer state alongside
-    everyone else. Only Tier 6 (contact/scope_entity/organization/
-    audit_log) is scoped to non-Acme-MSP orgs, since those are the rows
-    that represent the org's identity/profile rather than in-progress
-    assessment work.
-
-    Returns a dict of {table: rows_affected} for reporting (a couple of
-    entries are UPDATEs that clear a dangling FK pointer rather than
-    DELETEs — see Tier 0 — but the reporting shape is the same).
+    Tiers 0-3 (the assessment-layer tables) are unconditional by default —
+    Acme MSP's assessment data is wiped alongside every test org's, which
+    is exactly the behavior that surprised the person running this. Pass
+    orgs_only=True to scope Tiers 0-3 to test orgs only instead (see
+    --orgs-only on the reset-dev command), leaving every org's assessment
+    layer — including the kept org's — untouched. Tiers 4-5 (test
+    framework/product/baseline catalog rows) and Tier 6 (test org
+    identity: contact/scope_entity/organization/audit_log) are unaffected
+    by orgs_only — they were already scoped to "not Acme MSP" (Tier 6) or
+    org-independent (Tiers 4-5) before this option existed.
     """
-    # Helper that executes a DELETE/UPDATE and returns the rowcount.
-    def _del(sql: str, params: dict | None = None) -> int:
-        r = session.execute(text(sql), params or {})
-        session.flush()
-        return r.rowcount
-
-    deleted: dict[str, int] = {}
+    scope_org = _org_scope(orgs_only)  # system_description has org_id directly
+    scope_cs = _org_scope(orgs_only, "control_state_id")  # via control_state join
+    plan: list[tuple[str, str, str]] = []
 
     # ------------------------------------------------------------------ #
     # Tier 0 — clear FK pointers that would block Tier 3's evidence wipe. #
@@ -270,93 +244,105 @@ def _reset_dev(session) -> dict[str, int]:
     # evidence.id with no ON DELETE action, and system_description itself #
     # is never deleted here (it only cascades away when its owning org is #
     # deleted — which never happens for Acme MSP, and Tier 3 wipes        #
-    # `evidence` unconditionally, for every org). Null the pointers first #
-    # so the evidence delete below doesn't hit a foreign-key violation.   #
+    # `evidence` for every affected org). Null the pointers first so the  #
+    # evidence delete below doesn't hit a foreign-key violation.          #
     # ------------------------------------------------------------------ #
-    deleted["system_description (diagram slots cleared)"] = _del(
-        "UPDATE system_description SET network_diagram_evidence_id = NULL, "
-        "data_flow_diagram_evidence_id = NULL "
-        "WHERE network_diagram_evidence_id IS NOT NULL "
-        "OR data_flow_diagram_evidence_id IS NOT NULL"
-    )
+    plan.append((
+        "system_description (diagram slots cleared)", "UPDATE",
+        _add_where(
+            "UPDATE system_description SET network_diagram_evidence_id = NULL, "
+            "data_flow_diagram_evidence_id = NULL "
+            "WHERE network_diagram_evidence_id IS NOT NULL "
+            "OR data_flow_diagram_evidence_id IS NOT NULL",
+            scope_org,
+        ),
+    ))
 
     # ------------------------------------------------------------------ #
     # Tier 1 — junction/leaf tables: no other table FKs point at them     #
     # ------------------------------------------------------------------ #
-    deleted["raci_assignment"] = _del("DELETE FROM raci_assignment")
-    deleted["evidence_state_link"] = _del("DELETE FROM evidence_state_link")
+    plan.append(("raci_assignment", "DELETE",
+        _add_where("DELETE FROM raci_assignment", scope_cs)))
+    plan.append(("evidence_state_link", "DELETE",
+        _add_where("DELETE FROM evidence_state_link", scope_cs)))
     # References evidence_task.id AND control_state.id, neither ON DELETE
     # CASCADE — must go before both (Tier 2's evidence_task, Tier 3's
     # control_state) or their deletes below raise a foreign-key violation.
-    deleted["evidence_task_state_link"] = _del("DELETE FROM evidence_task_state_link")
+    plan.append(("evidence_task_state_link", "DELETE",
+        _add_where("DELETE FROM evidence_task_state_link", scope_cs)))
 
     # ------------------------------------------------------------------ #
     # Tier 2 — tables that reference control_state                        #
     # ------------------------------------------------------------------ #
-    deleted["control_state_history"] = _del("DELETE FROM control_state_history")
-    deleted["evidence_task"] = _del("DELETE FROM evidence_task")
+    plan.append(("control_state_history", "DELETE",
+        _add_where("DELETE FROM control_state_history", scope_cs)))
+    plan.append(("evidence_task", "DELETE",
+        _add_where("DELETE FROM evidence_task", scope_org)))
     # poa_m_item.finding_id -> finding.id has no ON DELETE action, so
     # poa_m_item must be deleted before finding, not after (the reverse of
     # the order these two used to run in — deleting finding first raised a
     # foreign-key violation the moment a poa_m_item referenced it).
-    deleted["poa_m_item"] = _del("DELETE FROM poa_m_item")
-    deleted["finding"] = _del("DELETE FROM finding")
-    deleted["implementation_statement"] = _del("DELETE FROM implementation_statement")
-    deleted["sprs_snapshot"] = _del("DELETE FROM sprs_snapshot")
+    plan.append(("poa_m_item", "DELETE",
+        _add_where("DELETE FROM poa_m_item", scope_org)))
+    plan.append(("finding", "DELETE",
+        _add_where("DELETE FROM finding", scope_org)))
+    plan.append(("implementation_statement", "DELETE",
+        _add_where("DELETE FROM implementation_statement", scope_org)))
+    plan.append(("sprs_snapshot", "DELETE",
+        _add_where("DELETE FROM sprs_snapshot", scope_org)))
 
     # ------------------------------------------------------------------ #
     # Tier 3 — core assessment tables                                     #
     # ------------------------------------------------------------------ #
-    deleted["control_state"] = _del("DELETE FROM control_state")
-    deleted["assessment"] = _del("DELETE FROM assessment")
-    deleted["org_product"] = _del("DELETE FROM org_product")
-    deleted["evidence"] = _del("DELETE FROM evidence")
+    plan.append(("control_state", "DELETE",
+        _add_where("DELETE FROM control_state", scope_org)))
+    plan.append(("assessment", "DELETE",
+        _add_where("DELETE FROM assessment", scope_org)))
+    plan.append(("org_product", "DELETE",
+        _add_where("DELETE FROM org_product", scope_org)))
+    plan.append(("evidence", "DELETE",
+        _add_where("DELETE FROM evidence", scope_org)))
 
     # ------------------------------------------------------------------ #
     # Tier 4 — FK safety: remove baseline rows and test products before   #
-    # deleting test framework catalog rows in Tier 5.                     #
-    # "Test products" = any product whose framework_id points at a non-   #
-    # production framework (created by integration tests).                #
+    # deleting test framework catalog rows in Tier 5. Org-independent —   #
+    # unaffected by orgs_only. "Test products" = any product whose        #
+    # framework_id points at a non-production framework (created by       #
+    # integration tests).                                                 #
     # ------------------------------------------------------------------ #
     _KEEP_FW = "SELECT id FROM framework WHERE key = 'nist-800-171-r2'"
     _TEST_FW = "SELECT id FROM framework WHERE key != 'nist-800-171-r2'"
     _TEST_CTRL = f"SELECT id FROM control WHERE framework_id NOT IN ({_KEEP_FW})"
     _TEST_PRODS = f"SELECT id FROM product WHERE framework_id IN ({_TEST_FW})"
 
-    deleted["baseline_evidence_spec (test)"] = _del(
+    plan.append(("baseline_evidence_spec (test)", "DELETE",
         f"DELETE FROM baseline_evidence_spec WHERE baseline_control_id IN ("
         f"  SELECT id FROM baseline_control"
         f"  WHERE control_id IN ({_TEST_CTRL}) OR product_id IN ({_TEST_PRODS})"
-        f")"
-    )
-    deleted["baseline_control (test)"] = _del(
+        f")"))
+    plan.append(("baseline_control (test)", "DELETE",
         f"DELETE FROM baseline_control"
-        f" WHERE control_id IN ({_TEST_CTRL}) OR product_id IN ({_TEST_PRODS})"
-    )
+        f" WHERE control_id IN ({_TEST_CTRL}) OR product_id IN ({_TEST_PRODS})"))
     # Products that reference test frameworks must go before the framework rows.
-    deleted["product (test fw)"] = _del(
-        f"DELETE FROM product WHERE framework_id IN ({_TEST_FW})"
-    )
+    plan.append(("product (test fw)", "DELETE",
+        f"DELETE FROM product WHERE framework_id IN ({_TEST_FW})"))
 
     # ------------------------------------------------------------------ #
-    # Tier 5 — test framework catalog rows                                #
+    # Tier 5 — test framework catalog rows. Org-independent.               #
     # ------------------------------------------------------------------ #
-
-    deleted["assessment_objective (test fw)"] = _del(
+    plan.append(("assessment_objective (test fw)", "DELETE",
         f"DELETE FROM assessment_objective WHERE control_id IN ("
         f"  SELECT id FROM control WHERE framework_id IN ({_TEST_FW})"
-        f")"
-    )
-    deleted["control (test fw)"] = _del(
-        f"DELETE FROM control WHERE framework_id IN ({_TEST_FW})"
-    )
-    deleted["framework (test)"] = _del(
-        "DELETE FROM framework WHERE key != 'nist-800-171-r2'"
-    )
+        f")"))
+    plan.append(("control (test fw)", "DELETE",
+        f"DELETE FROM control WHERE framework_id IN ({_TEST_FW})"))
+    plan.append(("framework (test)", "DELETE",
+        "DELETE FROM framework WHERE key != 'nist-800-171-r2'"))
 
     # ------------------------------------------------------------------ #
-    # Tier 6 — test org data, scoped to non-Acme-MSP orgs only (unlike     #
-    # Tiers 0-5 above, which are unconditional).                          #
+    # Tier 6 — test org data, scoped to non-Acme-MSP orgs only regardless #
+    # of orgs_only (that's already exactly what orgs_only asks for: test  #
+    # orgs go away entirely; the kept org's identity never has).          #
     #                                                                      #
     # contact: has ON DELETE CASCADE on org_id, so this delete is          #
     #   belt-and-suspenders for clarity, not load-bearing.                 #
@@ -393,22 +379,248 @@ def _reset_dev(session) -> dict[str, int]:
     #   rather than this function silently reassigning deployment          #
     #   identity to paper over it.                                         #
     # ------------------------------------------------------------------ #
-    _TEST_ORGS = "SELECT id FROM organization WHERE name != 'Acme MSP'"
+    plan.append(("audit_log (test orgs)", "DELETE",
+        f"DELETE FROM audit_log WHERE org_id IN ({_TEST_ORGS})"))
+    plan.append(("contact (test orgs)", "DELETE",
+        f"DELETE FROM contact WHERE org_id IN ({_TEST_ORGS})"))
+    plan.append(("scope_entity (test orgs)", "DELETE",
+        f"DELETE FROM scope_entity WHERE org_id IN ({_TEST_ORGS})"))
+    plan.append(("organization (test)", "DELETE",
+        "DELETE FROM organization WHERE name != 'Acme MSP'"))
 
-    deleted["audit_log (test orgs)"] = _del(
-        f"DELETE FROM audit_log WHERE org_id IN ({_TEST_ORGS})"
-    )
-    deleted["contact (test orgs)"] = _del(
-        f"DELETE FROM contact WHERE org_id IN ({_TEST_ORGS})"
-    )
-    deleted["scope_entity (test orgs)"] = _del(
-        f"DELETE FROM scope_entity WHERE org_id IN ({_TEST_ORGS})"
-    )
-    deleted["organization (test)"] = _del(
-        "DELETE FROM organization WHERE name != 'Acme MSP'"
-    )
+    return plan
 
+
+def _reset_dev(session, orgs_only: bool = False) -> dict[str, int]:
+    """Execute _reset_dev_plan() in order, returning {label: rows_affected}."""
+    deleted: dict[str, int] = {}
+    for label, _kind, sql in _reset_dev_plan(orgs_only):
+        r = session.execute(text(sql))
+        session.flush()
+        deleted[label] = r.rowcount
     return deleted
+
+
+def _preview_counts(session, orgs_only: bool = False) -> dict[str, int]:
+    """SELECT COUNT(*) for every _reset_dev_plan() entry, without executing
+    it — what the operator sees before confirming. See _as_count_sql for
+    why this can't drift from what _reset_dev() actually deletes."""
+    return {
+        label: session.execute(text(_as_count_sql(sql))).scalar()
+        for label, _kind, sql in _reset_dev_plan(orgs_only)
+    }
+
+
+def _keep_summary(session) -> dict[str, int]:
+    """Counts backing the 'Will KEEP' line — Acme MSP's own identity data,
+    which no tier ever touches. Computed fresh each run, same reasoning as
+    _preview_counts: a hand-written description of "what's safe" is
+    exactly the kind of thing that goes stale (see this command's own
+    misleading confirmation-wording incident)."""
+    acme_id = session.execute(
+        text("SELECT id FROM organization WHERE name = 'Acme MSP'")
+    ).scalar()
+    if acme_id is None:
+        return {"contacts": 0, "scope_entities": 0}
+    return {
+        "contacts": session.execute(
+            text("SELECT count(*) FROM contact WHERE org_id = :id"), {"id": acme_id}
+        ).scalar(),
+        "scope_entities": session.execute(
+            text("SELECT count(*) FROM scope_entity WHERE org_id = :id"), {"id": acme_id}
+        ).scalar(),
+    }
+
+
+def _format_preview(counts: dict[str, int], keep: dict[str, int], orgs_only: bool) -> str:
+    """The dry-run-style preview shown before the confirm prompt (or, under
+    --yes, this is skipped — but _format_result below still prints
+    unconditionally). Real counts from the actual database, not a static
+    description — see this command's own incident for why that matters:
+    a static "keeping org X" line reads as "X is safe," which was false."""
+    width = max((len(label) for label, _ in counts.items()), default=0)
+    lines = ["Will DELETE:"]
+    lines += [f"  {label:<{width}}  {n}" for label, n in counts.items()]
+    lines.append("")
+    if orgs_only:
+        lines.append(
+            "--orgs-only: this deletes test orgs entirely (identity + their own "
+            "assessment layer) but does NOT touch any other org's assessments, "
+            "control states, evidence, or findings — including the kept org's."
+        )
+    else:
+        lines.append(
+            "This deletes assessments, control states, evidence, findings, and "
+            "RACI/diagram data for EVERY org, including 'Acme MSP' — not just "
+            "test orgs. Acme MSP's identity is kept; its assessment-layer work "
+            "is not. Use --orgs-only to keep every org's assessment layer and "
+            "remove only test orgs."
+        )
+    lines.append("")
+    lines.append("Will KEEP:")
+    lines.append("  framework 'nist-800-171-r2' (CMMC L2 catalog, re-seeded after wipe)")
+    lines.append(
+        f"  org 'Acme MSP' (profile, {keep['contacts']} contacts, "
+        f"{keep['scope_entities']} scope entities)"
+    )
+    return "\n".join(lines)
+
+
+def _format_result(deleted: dict[str, int]) -> str:
+    width = max((len(label) for label in deleted), default=0)
+    lines = ["Rows affected:"]
+    lines += [f"  {label:<{width}}  {n}" for label, n in deleted.items()]
+    return "\n".join(lines)
+
+
+def _backup_dir() -> Path:
+    import os
+
+    return Path(os.environ.get("WINGRC_RESET_DEV_BACKUP_DIR", "/backups"))
+
+
+def _preflight_backup(db_url) -> Path:
+    """pg_dump the target database to a timestamped file before
+    _reset_dev() touches anything. Raises RuntimeError on any failure
+    (including pg_dump not being on PATH) — the caller must treat that as
+    fatal and skip the wipe entirely: no backup, no wipe.
+
+    Custom format (pg_restore-loadable), not plain SQL: the documented
+    recovery path for a bad reset-dev run is "load it into a scratch
+    database, then selectively copy the kept org's rows across" — never a
+    wholesale restore over the live dev DB, which would roll back
+    unrelated work and clobber the append-only audit log — and
+    pg_restore's -t/-n filtering makes that far more tractable than
+    grepping a plain-text dump.
+    """
+    import subprocess
+    from datetime import UTC, datetime
+
+    backup_dir = _backup_dir()
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    dest = backup_dir / f"reset-dev-{timestamp}.dump"
+    pg_url = db_url.set(drivername="postgresql").render_as_string(hide_password=False)
+
+    try:
+        result = subprocess.run(
+            ["pg_dump", "--format=custom", "--file", str(dest), pg_url],
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as e:
+        raise RuntimeError(f"pg_dump not found on PATH: {e}") from e
+
+    if result.returncode != 0 or not dest.exists():
+        raise RuntimeError(
+            f"pg_dump failed (exit {result.returncode}): {result.stderr.strip()}"
+        )
+    return dest
+
+
+@app.command(name="reset-dev")
+def reset_dev(
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompt"),
+    orgs_only: bool = typer.Option(
+        False,
+        "--orgs-only",
+        help=(
+            "Delete test orgs (identity + their own assessment layer) only — "
+            "every other org's assessments/control states/evidence/findings, "
+            "including the kept org's, are left untouched. Use this for the "
+            "common case (cleaning up a stray verification org) instead of "
+            "the full reset."
+        ),
+    ),
+) -> None:
+    """Restore the dev DB to a clean state: CMMC L2 catalog + 'Acme MSP' org,
+    with Acme MSP's own assessment layer wiped alongside every test org's
+    unless --orgs-only is given.
+
+    Deletes all test-framework rows and test-org rows that integration tests
+    leave behind when they commit against the dev database.  Safe to run
+    repeatedly; the catalog seed step is idempotent.
+
+    A pre-flight `pg_dump` of the whole target database is taken before
+    anything is deleted, every time, regardless of --yes or --orgs-only —
+    see _preflight_backup. If the dump fails, this command aborts without
+    deleting anything.
+
+    NEVER run this against a production database. Enforced below, not just
+    documented — `--yes` skips the confirmation prompt but never bypasses
+    the environment allowlist check (fails closed: unset, "production", or
+    any unrecognized value all refuse — see _reset_dev_guard_error).
+    """
+    import os
+
+    from sqlalchemy import select
+
+    guard_error = _reset_dev_guard_error(os.environ.get("WINGRC_ENVIRONMENT"))
+    if guard_error is not None:
+        typer.echo(guard_error)
+        raise typer.Exit(code=1)
+
+    session = SessionLocal()
+    try:
+        db_url = session.get_bind().url  # type: ignore[attr-defined]
+        counts = _preview_counts(session, orgs_only)
+        keep = _keep_summary(session)
+
+        if not yes:
+            typer.echo(f"Target database: {db_url}")
+            typer.echo(_format_preview(counts, keep, orgs_only))
+            typer.confirm("Proceed?", abort=True)
+
+        try:
+            backup_path = _preflight_backup(db_url)
+        except RuntimeError as e:
+            typer.echo(f"Pre-flight backup failed — aborting WITHOUT deleting anything: {e}")
+            raise typer.Exit(code=1) from e
+        typer.echo(
+            f"Pre-flight backup written to {backup_path}\n"
+            f"  (restore into a scratch db with: pg_restore -d <scratch-db> {backup_path})"
+        )
+
+        deleted = _reset_dev(session, orgs_only)
+
+        # Ensure the canonical org exists
+        acme = session.scalars(
+            select(Organization).where(Organization.name == "Acme MSP")
+        ).first()
+        if acme is None:
+            session.add(Organization(name="Acme MSP"))
+            session.flush()
+            typer.echo("Created 'Acme MSP' org.")
+
+        # Re-seed catalog (idempotent — updates discussion/guidance text)
+        result = seed_catalog(session)
+        session.commit()
+
+        # Printed unconditionally — --yes skips the confirmation prompt,
+        # not the record of what this run actually destroyed.
+        typer.echo(
+            f"\nDev DB reset complete.\n"
+            f"  Catalog: {result['controls']} controls, {result['objectives']} objectives\n"
+            + _format_result(deleted)
+        )
+
+        # Verification queries
+        ctrl_count = session.execute(text("SELECT count(*) FROM control")).scalar()
+        fw_count = session.execute(text("SELECT count(*) FROM framework")).scalar()
+        org_count = session.execute(text("SELECT count(*) FROM organization")).scalar()
+        typer.echo(
+            f"\nVerification:\n"
+            f"  frameworks : {fw_count}  (expected 1)\n"
+            f"  controls   : {ctrl_count}  (expected 110)\n"
+            f"  orgs       : {org_count}  (expected 1)"
+        )
+        if fw_count != 1 or ctrl_count != 110:
+            typer.echo("WARNING: counts unexpected — check catalog YAML.")
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 @app.command(name="seed-baselines")

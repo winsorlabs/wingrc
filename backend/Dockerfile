@@ -8,14 +8,28 @@ WORKDIR /app
 # not its apt state.
 RUN apt-get update && apt-get install --no-install-recommends -y \
     libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 \
-    libffi8 shared-mime-info \
+    libffi8 shared-mime-info libpq5 \
     && rm -rf /var/lib/apt/lists/*
+
+# Source of a `pg_dump` binary that actually matches docker-compose.yml's
+# pinned `postgres:18` — Debian trixie's own apt repos only carry
+# postgresql-client 17 (confirmed via apt-cache madison), and pg_dump
+# refuses to run against a server newer than itself. Adding the PGDG apt
+# repo would fix the version but needs network access to postgresql.org at
+# build time, which air-gapped deployments (a hard requirement — see
+# CLAUDE.md) can't do. postgres:18 is already a required image for this
+# stack (the `db` service), so copying its pg_dump out introduces no new
+# external dependency. libpq5 above (Debian's own, still version 17) is
+# still ABI-compatible — libpq's soname has been stable across major PG
+# versions for a long time; verified by running the copied binary.
+FROM postgres:18 AS pgtools
 
 FROM base AS deps
 COPY backend/pyproject.toml ./
 RUN pip install --upgrade pip && pip install ".[dev]"
 
 FROM base AS runtime
+COPY --from=pgtools /usr/lib/postgresql/18/bin/pg_dump /usr/local/bin/pg_dump
 # Non-root user
 RUN useradd --create-home --uid 10001 wingrc
 COPY --from=deps /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
@@ -24,6 +38,10 @@ COPY backend/ .
 # Fixture data referenced by tests via parents[2] from /app/tests/
 COPY samples/ /samples/
 COPY baselines/ /baselines/
+# reset-dev's pre-flight pg_dump lands here (WINGRC_RESET_DEV_BACKUP_DIR
+# overrides for tests) — a dedicated, non-source directory so backup files
+# never land inside the bind-mounted, git-tracked ./backend on a dev box.
+RUN mkdir -p /backups && chown wingrc:wingrc /backups
 # Let the non-root user write cache files inside /app
 RUN chown -R wingrc:wingrc /app
 USER wingrc
