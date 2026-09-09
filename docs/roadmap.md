@@ -623,13 +623,16 @@ Items without a status are planned but not yet started.
     real objectives' text together with a stray "and [b]" fragment
     embedded mid-string, rather than a genuine second row ever existing.
     Also caught (and fixed, generalizing the existing kerning-fix
-    mechanism) one more PDF-extraction artifact this session's own new
-    objectives-text parsing exposed: "se curity" as a second, independent
-    kerning split of "security" distinct from the already-known
-    "secu rity" — same root cause (font kerning is position-dependent), a
-    different split point. Confirmed nothing beyond this — the fix is "4
-    rows plus one text correction," not a catalog needing re-derivation
-    from scratch.
+    mechanism) 9 more PDF-extraction artifacts the new objectives-text
+    parsing exposed: "se curity" — a second, independent kerning split of
+    "security" distinct from the already-known "secu rity" (font kerning
+    is position-dependent, not a typo) — plus 8 more found only after
+    noticing and removing the sweep's own `len(word) < 2` exclusion, which
+    had been silently skipping every split whose second half is a single
+    letter ("securit y", "acces s", "w ith", etc.). A "reasonable-looking"
+    filter hiding real misses until something forced a second look, not
+    a one-off. Confirmed nothing beyond this — the fix is "4 rows plus one
+    text correction," not a catalog needing re-derivation from scratch.
   - **Fix**: added the 4 missing objectives to `cmmc_l2.yaml` (satisfaction
     types chosen by matching each to the closest existing sibling pattern
     in its own control — e.g. "X are identified" → `document_list`,

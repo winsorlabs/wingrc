@@ -121,7 +121,7 @@ AC.L2-3.1.2:
 
 
     Potential assessment methods for this practice as a whole (the guide does not further subdivide these
-    by determination statement) -- Examine: Access control policy; procedures addressing acces s enforcement;
+    by determination statement) -- Examine: Access control policy; procedures addressing access enforcement;
     system security plan; system design documentation; list of approved authorizations including remote
     access authorizations; system audit logs and records; system configuration settings and associated
     documentation; other relevant documents or records. Interview: Personnel with access enforcement responsibilities;
@@ -132,7 +132,7 @@ AC.L2-3.1.2:
 
 
     Potential assessment methods for this practice as a whole (the guide does not further subdivide these
-    by determination statement) -- Examine: Access control policy; procedures addressing acces s enforcement;
+    by determination statement) -- Examine: Access control policy; procedures addressing access enforcement;
     system security plan; system design documentation; list of approved authorizations including remote
     access authorizations; system audit logs and records; system configuration settings and associated
     documentation; other relevant documents or records. Interview: Personnel with access enforcement responsibilities;
@@ -848,7 +848,7 @@ AC.L2-3.1.22:
     of response to nonpublic information on public websites; system audit logs and records; security awareness
     training records; other relevant documents or records. Interview: Personnel with responsibilities
     for managing publicly accessible information posted on organizational systems; personnel with information
-    securit y responsibilities. Test: Mechanisms implementing management of publicly accessible content.'
+    security responsibilities. Test: Mechanisms implementing management of publicly accessible content.'
   b: 'The Assessment Guide does not provide an objective-specific consideration for [b]; it is covered
     only by the practice-wide assessment methods below.
 
@@ -860,7 +860,7 @@ AC.L2-3.1.22:
     of response to nonpublic information on public websites; system audit logs and records; security awareness
     training records; other relevant documents or records. Interview: Personnel with responsibilities
     for managing publicly accessible information posted on organizational systems; personnel with information
-    securit y responsibilities. Test: Mechanisms implementing management of publicly accessible content.'
+    security responsibilities. Test: Mechanisms implementing management of publicly accessible content.'
   c: 'Does information on externally facing systems (i.e., publicly accessible) have a documented approval
     chain for public release?
 
@@ -872,7 +872,7 @@ AC.L2-3.1.22:
     of response to nonpublic information on public websites; system audit logs and records; security awareness
     training records; other relevant documents or records. Interview: Personnel with responsibilities
     for managing publicly accessible information posted on organizational systems; personnel with information
-    securit y responsibilities. Test: Mechanisms implementing management of publicly accessible content.'
+    security responsibilities. Test: Mechanisms implementing management of publicly accessible content.'
   d: 'The Assessment Guide does not provide an objective-specific consideration for [d]; it is covered
     only by the practice-wide assessment methods below.
 
@@ -884,7 +884,7 @@ AC.L2-3.1.22:
     of response to nonpublic information on public websites; system audit logs and records; security awareness
     training records; other relevant documents or records. Interview: Personnel with responsibilities
     for managing publicly accessible information posted on organizational systems; personnel with information
-    securit y responsibilities. Test: Mechanisms implementing management of publicly accessible content.'
+    security responsibilities. Test: Mechanisms implementing management of publicly accessible content.'
   e: 'The Assessment Guide does not provide an objective-specific consideration for [e]; it is covered
     only by the practice-wide assessment methods below.
 
@@ -896,7 +896,7 @@ AC.L2-3.1.22:
     of response to nonpublic information on public websites; system audit logs and records; security awareness
     training records; other relevant documents or records. Interview: Personnel with responsibilities
     for managing publicly accessible information posted on organizational systems; personnel with information
-    securit y responsibilities. Test: Mechanisms implementing management of publicly accessible content.'
+    security responsibilities. Test: Mechanisms implementing management of publicly accessible content.'
 AT.L2-3.2.1:
   a: 'The Assessment Guide does not provide an objective-specific consideration for [a]; it is covered
     only by the practice-wide assessment methods below.
@@ -1962,7 +1962,7 @@ CM.L2-3.4.8:
   a: 'Is the information system configured to only allow authorized software to run? Is the system configured
     to disallow running unauthorized software? Is the authorization policy a deny-all, permit by exception
     for software allowed to execute on the system? Are automated mechanisms used to prevent program execution
-    in accordance w ith defined lists (e.g., whitelisting)?
+    in accordance with defined lists (e.g., whitelisting)?
 
 
     Potential assessment methods for this practice as a whole (the guide does not further subdivide these
@@ -1981,7 +1981,7 @@ CM.L2-3.4.8:
     to disallow running unauthorized software? Is there a defined list of software programs authorized
     to execute on the system? Is the authorization policy a deny-all, permit by exception for software
     allowed to execute on the system? Are automated mechanisms used to prevent program execution in accordance
-    w ith defined lists (e.g., whitelisting)?
+    with defined lists (e.g., whitelisting)?
 
 
     Potential assessment methods for this practice as a whole (the guide does not further subdivide these
@@ -1999,7 +1999,7 @@ CM.L2-3.4.8:
   c: 'Is the information system configured to only allow authorized software to run? Is the system configured
     to disallow running unauthorized software? Is the authorization policy a deny-all, permit by exception
     for software allowed to execute on the system? Are automated mechanisms used to prevent program execution
-    in accordance w ith defined lists (e.g., whitelisting)?
+    in accordance with defined lists (e.g., whitelisting)?
 
 
     Potential assessment methods for this practice as a whole (the guide does not further subdivide these
@@ -2249,7 +2249,7 @@ IA.L2-3.5.7:
     and associated documentation; system design documentation; password configurations and associated
     documentation; other relevant documents or records. Interview: Personnel with authenticator management
     responsibilities; personnel with information security responsibilities; system or network administrators.
-    Test: Mechanisms s upporting or implementing authenticator management capability.'
+    Test: Mechanisms supporting or implementing authenticator management capability.'
   b: 'Is a degree of complexity specified for passwords, (e.g., are account passwords a minimum of 12
     characters and a mix of upper/lower case, numbers, and special characters), including minimum requirements
     for each type?
@@ -2261,7 +2261,7 @@ IA.L2-3.5.7:
     and associated documentation; system design documentation; password configurations and associated
     documentation; other relevant documents or records. Interview: Personnel with authenticator management
     responsibilities; personnel with information security responsibilities; system or network administrators.
-    Test: Mechanisms s upporting or implementing authenticator management capability.'
+    Test: Mechanisms supporting or implementing authenticator management capability.'
   c: 'Is a degree of complexity specified for passwords, (e.g., are account passwords a minimum of 12
     characters and a mix of upper/lower case, numbers, and special characters), including minimum requirements
     for each type?
@@ -2273,7 +2273,7 @@ IA.L2-3.5.7:
     and associated documentation; system design documentation; password configurations and associated
     documentation; other relevant documents or records. Interview: Personnel with authenticator management
     responsibilities; personnel with information security responsibilities; system or network administrators.
-    Test: Mechanisms s upporting or implementing authenticator management capability.'
+    Test: Mechanisms supporting or implementing authenticator management capability.'
   d: 'Is a change of characters required when new passwords are created?
 
 
@@ -2283,7 +2283,7 @@ IA.L2-3.5.7:
     and associated documentation; system design documentation; password configurations and associated
     documentation; other relevant documents or records. Interview: Personnel with authenticator management
     responsibilities; personnel with information security responsibilities; system or network administrators.
-    Test: Mechanisms s upporting or implementing authenticator management capability.'
+    Test: Mechanisms supporting or implementing authenticator management capability.'
 IA.L2-3.5.8:
   a: 'How many generations of password changes need to take place before a password can be reused?
 
@@ -2478,7 +2478,7 @@ IR.L2-3.6.2:
 
     Potential assessment methods for this practice as a whole (the guide does not further subdivide these
     by determination statement) -- Examine: Incident response policy; procedures addressing incident monitoring;
-    incident response records and documentation; procedures addressing incident reportin g; incident reporting
+    incident response records and documentation; procedures addressing incident reporting; incident reporting
     records and documentation; incident response plan; system security plan; other relevant documents
     or records. Interview: Personnel with incident monitoring responsibilities; personnel with incident
     reporting responsibilities; personnel who have or should have reported incidents; personnel (authorities)
@@ -2492,7 +2492,7 @@ IR.L2-3.6.2:
 
     Potential assessment methods for this practice as a whole (the guide does not further subdivide these
     by determination statement) -- Examine: Incident response policy; procedures addressing incident monitoring;
-    incident response records and documentation; procedures addressing incident reportin g; incident reporting
+    incident response records and documentation; procedures addressing incident reporting; incident reporting
     records and documentation; incident response plan; system security plan; other relevant documents
     or records. Interview: Personnel with incident monitoring responsibilities; personnel with incident
     reporting responsibilities; personnel who have or should have reported incidents; personnel (authorities)
@@ -2506,7 +2506,7 @@ IR.L2-3.6.2:
 
     Potential assessment methods for this practice as a whole (the guide does not further subdivide these
     by determination statement) -- Examine: Incident response policy; procedures addressing incident monitoring;
-    incident response records and documentation; procedures addressing incident reportin g; incident reporting
+    incident response records and documentation; procedures addressing incident reporting; incident reporting
     records and documentation; incident response plan; system security plan; other relevant documents
     or records. Interview: Personnel with incident monitoring responsibilities; personnel with incident
     reporting responsibilities; personnel who have or should have reported incidents; personnel (authorities)
@@ -2520,7 +2520,7 @@ IR.L2-3.6.2:
 
     Potential assessment methods for this practice as a whole (the guide does not further subdivide these
     by determination statement) -- Examine: Incident response policy; procedures addressing incident monitoring;
-    incident response records and documentation; procedures addressing incident reportin g; incident reporting
+    incident response records and documentation; procedures addressing incident reporting; incident reporting
     records and documentation; incident response plan; system security plan; other relevant documents
     or records. Interview: Personnel with incident monitoring responsibilities; personnel with incident
     reporting responsibilities; personnel who have or should have reported incidents; personnel (authorities)
@@ -2532,7 +2532,7 @@ IR.L2-3.6.2:
     \ Reporting CMMC Assessment Guide \u2013 Level 2 | Version 2.13 141\n\nPotential assessment methods\
     \ for this practice as a whole (the guide does not further subdivide these by determination statement)\
     \ -- Examine: Incident response policy; procedures addressing incident monitoring; incident response\
-    \ records and documentation; procedures addressing incident reportin g; incident reporting records\
+    \ records and documentation; procedures addressing incident reporting; incident reporting records\
     \ and documentation; incident response plan; system security plan; other relevant documents or records.\
     \ Interview: Personnel with incident monitoring responsibilities; personnel with incident reporting\
     \ responsibilities; personnel who have or should have reported incidents; personnel (authorities)\
@@ -2544,7 +2544,7 @@ IR.L2-3.6.2:
     \ Reporting CMMC Assessment Guide \u2013 Level 2 | Version 2.13 141\n\nPotential assessment methods\
     \ for this practice as a whole (the guide does not further subdivide these by determination statement)\
     \ -- Examine: Incident response policy; procedures addressing incident monitoring; incident response\
-    \ records and documentation; procedures addressing incident reportin g; incident reporting records\
+    \ records and documentation; procedures addressing incident reporting; incident reporting records\
     \ and documentation; incident response plan; system security plan; other relevant documents or records.\
     \ Interview: Personnel with incident monitoring responsibilities; personnel with incident reporting\
     \ responsibilities; personnel who have or should have reported incidents; personnel (authorities)\
@@ -3359,7 +3359,7 @@ CA.L2-3.12.4:
     system security plan implementation responsibilities; personnel with information security responsibilities.
     Test: Organizational processes for system security plan development, review, update, and approval;
     mechanisms supporting the system security plan.'
-  d: 'Are s ecurity requirements identified and approved by the designated authority as non-applicable
+  d: 'Are security requirements identified and approved by the designated authority as non-applicable
     documented?
 
 
@@ -3748,7 +3748,7 @@ SC.L2-3.13.7:
     system architecture; system configuration settings and associated documentation; system audit logs
     and records; other relevant documents or records. Interview: System or network administrators; personnel
     with information security responsibilities; system developer; personnel with boundary protection responsibilities.
-    Test: Mechanisms implementing boundary protection capability; m echanisms supporting or restricting
+    Test: Mechanisms implementing boundary protection capability; mechanisms supporting or restricting
     non-remote connections.'
 SC.L2-3.13.8:
   a: 'The Assessment Guide does not provide an objective-specific consideration for [a]; it is covered
@@ -4112,7 +4112,7 @@ SI.L2-3.14.2:
     implementing malicious code scanning and subsequent actions.'
 SI.L2-3.14.3:
   a: 'Are the responses to system security alerts and advisories identified in relation to the assessed
-    severit y of potential flaws (e.g., communicating with responsible personnel, initiating vulnerability
+    severity of potential flaws (e.g., communicating with responsible personnel, initiating vulnerability
     scans, initiating system flaw remediation activities)? Are system security alerts and advisories addressed
     (e.g., assessing potential severity or likelihood, communicating with responsible personnel, initiating
     vulnerability scans, initiating system flaw remediation activities)?

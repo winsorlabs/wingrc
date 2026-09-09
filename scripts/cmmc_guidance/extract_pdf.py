@@ -82,6 +82,20 @@ KERNING_FIXES = {
     "un successful": "unsuccessful",
     "us ers": "users",
     "wo rk": "work",
+    # Found 2026-09-10: the original dictionary sweep excluded any
+    # candidate second-word shorter than 2 characters, which missed every
+    # split whose second half is a single letter -- these 8 only surfaced
+    # once that exclusion was removed and the sweep re-run over the
+    # ASSESSMENT OBJECTIVES text too. Same root cause, same verification
+    # (spot-checked against page context, zero false positives).
+    "acces s": "access",
+    "m echanisms": "mechanisms",
+    "reportin g": "reporting",
+    "s ecurity": "security",
+    "s upporting": "supporting",
+    "securit y": "security",
+    "severit y": "severity",
+    "w ith": "with",
 }
 
 

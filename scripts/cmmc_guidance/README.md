@@ -92,15 +92,22 @@ objectives ends up with non-empty official guidance.
 pypdf's extraction of this particular PDF has a small number of
 font-kerning artifacts (a stray space splitting a word, e.g. "L ayer" for
 "Layer" — and the same word can split at a different point elsewhere,
-e.g. "secu rity" vs. "se curity", since kerning is position-dependent, not
-a typo in one of them). Found two ways: manual spot-check, and a
-dictionary sweep (`pyspellchecker`) over every adjacent word pair in the
-corpus this pipeline actually uses, flagging a pair only where both halves
-are unknown words AND the concatenation is a real word. That found 19
-genuine splits across two sweeps — 18 over Methods + Considerations
-(2026-09-09), one more ("se curity") once the objectives-text parsing was
-added and the sweep re-run over it (2026-09-10) — spot-checked against
-page context, zero false positives either time. See `extract_pdf.py`'s
+e.g. "secu rity" vs. "se curity" vs. "securit y", since kerning is
+position-dependent, not a typo in one of them). Found two ways: manual
+spot-check, and a dictionary sweep (`pyspellchecker`) over every adjacent
+word pair in the corpus this pipeline actually uses, flagging a pair only
+where both halves are unknown words AND the concatenation is a real word.
+That found 27 genuine splits across three sweeps — 18 over Methods +
+Considerations (2026-09-09); one more ("se curity") once the
+objectives-text parsing was added and the sweep re-run over it
+(2026-09-10); and 8 more, that same day, once the sweep's own
+`len(word) < 2` exclusion (meant to skip noise, but which also silently
+skipped every split whose second half is a single letter, e.g. "securit
+y") was noticed and removed. Spot-checked against page context every
+time, zero false positives. Re-run the sweep without length exclusions if
+extending this pipeline further — the single-letter-fragment miss is
+exactly the kind of thing a "reasonable-looking" filter hides until
+something forces a second look. See `extract_pdf.py`'s
 `KERNING_FIXES` dict for the literal, disclosed list. Re-run the same
 dictionary sweep over any newly-extracted section before trusting it,
 rather than assuming the list is exhaustive forever.
