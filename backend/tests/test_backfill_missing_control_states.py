@@ -39,11 +39,17 @@ pytestmark = pytest.mark.integration
 @pytest.fixture
 def ref(db_session):
     """Org + framework + one 5-pt control with objectives [a, b] + a
-    started assessment. Simulates the pre-fix state by deleting [b]'s
-    control_state after start_assessment seeds it -- exactly what "an
-    objective existed in the catalog all along but a specific assessment
-    is missing its control_state row" looks like, regardless of how that
-    gap actually occurred historically."""
+    started assessment. Simulates the pre-fix state by marking [a] met
+    (so the control rolls up as fully satisfied looking only at the
+    objectives that exist) and then deleting [b]'s control_state --
+    exactly the bug scenario the task describes: a control that
+    previously reported fully met, because one of its determination
+    statements was never even created to evaluate, not because [b]
+    itself was already failing. Committed (not just flushed) so a
+    dry_run=True caller's later session.rollback() -- which, under
+    conftest's join_transaction_mode="create_savepoint", rolls back to
+    the last commit/rollback point, not just to whatever the caller
+    itself changed -- can't accidentally undo this setup too."""
     org = Organization(name=f"BackfillOrg-{uuid.uuid4().hex[:6]}")
     fw = Framework(key=f"fw-backfill-{uuid.uuid4().hex[:6]}", name="Test FW", version="r2")
     db_session.add_all([org, fw])
@@ -67,7 +73,17 @@ def ref(db_session):
     db_session.flush()
 
     assessment = start_assessment(db_session, org.id, fw.id, "Test Assessment")
-    db_session.commit()
+
+    # Mark [a] met so the control would roll up as fully satisfied once
+    # [b]'s row is removed below -- otherwise [a] alone being not_met
+    # already fails the control regardless of [b], and the backfill
+    # test below would have nothing to prove.
+    a_state = db_session.scalars(
+        select(ControlState).where(
+            ControlState.assessment_id == assessment.id, ControlState.objective_id == obj_a.id
+        )
+    ).one()
+    a_state.status = "met"
 
     # Simulate the historical gap: [b]'s control_state never existed for
     # this assessment (as if the catalog had been missing [b] entirely
@@ -79,6 +95,11 @@ def ref(db_session):
     ).one()
     db_session.delete(b_state)
     db_session.flush()
+
+    from app.engine import recompute_sprs
+
+    recompute_sprs(db_session, assessment.id)
+    db_session.commit()
 
     return {
         "org": org,
