@@ -268,6 +268,21 @@ export interface PoamSummary {
   cancelled: number;
 }
 
+export interface RaciLoadByContact {
+  contact_id: string;
+  contact_name: string;
+  count: number;
+}
+
+// G.7 Part 4: R (Responsible) assignments only -- see RaciLoadWidget's own
+// docstring in routers/dashboard.py for why not a raw letter count.
+export interface RaciLoadWidgetData {
+  msp_count: number;
+  customer_count: number;
+  other_count: number;
+  by_contact: RaciLoadByContact[];
+}
+
 export interface DashboardData {
   family_heatmap: FamilyHeatmapEntry[];
   sprs: SprsWidgetData;
@@ -279,6 +294,7 @@ export interface DashboardData {
   blocked_objectives_count: number;
   raci_open_tasks: RaciBucket[];
   poam_summary: PoamSummary;
+  raci_load: RaciLoadWidgetData;
 }
 
 export interface AuthUser {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { canSeeAuditLog } from "../lib/roles";
 import { familyRadarPoints } from "../lib/radarChart";
+import { donutSlices } from "../lib/raciLoad";
 import type {
   Assessment,
   AuditLogRow,
@@ -11,6 +12,7 @@ import type {
   FamilyHeatmapEntry,
   PoamSummary,
   RaciBucket,
+  RaciLoadWidgetData,
   ReviewQueueItem,
   SprsWidgetData,
   StatementProgress,
@@ -142,6 +144,8 @@ export function OrgDashboard({ orgId, assessmentId, currentUserRole, onSwitchAss
         <NeedsReviewCard items={data.needs_review} count={data.needs_review_count} />
         <BlockedObjectivesCard items={data.blocked_objectives} count={data.blocked_objectives_count} />
         <RaciOpenTasksCard buckets={data.raci_open_tasks} />
+        <RaciLoadSplitCard load={data.raci_load} />
+        <RaciLoadByContactCard load={data.raci_load} />
         <PoamSummaryCard summary={data.poam_summary} />
         {canSeeAuditLog(currentUserRole) && <RecentActivityCard orgId={orgId} />}
       </div>
@@ -382,6 +386,111 @@ function RaciOpenTasksCard({ buckets }: { buckets: RaciBucket[] }) {
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+// Donut geometry (G.7 Part 4 — "MSP vs customer, one number people care
+// about" is the headline; see RaciLoadWidgetData's own comment for why
+// this counts only Responsible assignments, not every RACI letter).
+const DONUT_RADIUS = 40;
+const DONUT_STROKE = 14;
+const DONUT_SIZE = (DONUT_RADIUS + DONUT_STROKE) * 2;
+const DONUT_CIRCUMFERENCE = 2 * Math.PI * DONUT_RADIUS;
+
+function RaciLoadSplitCard({ load }: { load: RaciLoadWidgetData }) {
+  const total = load.msp_count + load.customer_count + load.other_count;
+  const counts = [
+    { key: "msp", label: "MSP", count: load.msp_count },
+    { key: "customer", label: "Customer", count: load.customer_count },
+    { key: "other", label: "Other", count: load.other_count },
+  ].filter((c) => c.count > 0);
+  const slices = donutSlices(counts, DONUT_CIRCUMFERENCE);
+  const center = DONUT_SIZE / 2;
+
+  return (
+    <div className="card">
+      <h2>MSP vs Customer Load</h2>
+      <p className="field-hint">Responsible (R) assignments only — an Informed or Consulted role isn't the same effort as doing the work.</p>
+      {total === 0 ? (
+        <div className="empty">No Responsible assignments yet.</div>
+      ) : (
+        <>
+          <svg
+            viewBox={`0 0 ${DONUT_SIZE} ${DONUT_SIZE}`}
+            className="donut-chart"
+            role="img"
+            aria-label={
+              `Responsible-assignment split: ${load.msp_count} MSP, ` +
+              `${load.customer_count} customer, ${load.other_count} other`
+            }
+          >
+            <circle
+              cx={center} cy={center} r={DONUT_RADIUS}
+              className="donut-ring-bg" strokeWidth={DONUT_STROKE} fill="none"
+            />
+            {slices.map((s) => (
+              <circle
+                key={s.key}
+                cx={center}
+                cy={center}
+                r={DONUT_RADIUS}
+                fill="none"
+                strokeWidth={DONUT_STROKE}
+                strokeDasharray={s.dashArray}
+                strokeDashoffset={s.dashOffset}
+                transform={`rotate(-90 ${center} ${center})`}
+                className={`donut-slice donut-slice--${s.key}`}
+              />
+            ))}
+            <text
+              x={center} y={center} textAnchor="middle" dominantBaseline="middle"
+              className="donut-center-label"
+            >
+              {total}
+            </text>
+          </svg>
+          <ul className="donut-legend">
+            {counts.map((c) => (
+              <li className="donut-legend-item" key={c.key}>
+                <span className={`donut-legend-swatch donut-legend-swatch--${c.key}`} />
+                {c.label}: {c.count}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
+function RaciLoadByContactCard({ load }: { load: RaciLoadWidgetData }) {
+  // by_contact is already sorted desc by the backend (routers/dashboard.py's
+  // own "server does the rollup" convention) -- the first entry is the max.
+  const maxCount = load.by_contact[0]?.count ?? 0;
+  return (
+    <div className="card">
+      <h2>Responsible Load by Contact</h2>
+      <p className="field-hint">
+        Horizontal bars, not a pie — a dozen contacts in a pie can't be ranked by eye.
+      </p>
+      {load.by_contact.length === 0 && <div className="empty">No Responsible assignments yet.</div>}
+      <div className="heatmap-rows">
+        {load.by_contact.map((c) => {
+          const pct = maxCount > 0 ? (c.count / maxCount) * 100 : 0;
+          return (
+            <div className="tier-bar" key={c.contact_id}>
+              <span className="tier-bar-label tier-bar-label--wide" title={c.contact_name}>
+                {c.contact_name}
+              </span>
+              <span className="tier-bar-counts">{c.count}</span>
+              <div className="tier-bar-track">
+                <div className="tier-bar-fill" style={{ width: `${pct}%` }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

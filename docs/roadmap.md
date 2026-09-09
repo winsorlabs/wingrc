@@ -428,6 +428,36 @@ Items without a status are planned but not yet started.
   instead of a new component. Covered by `test_bundle.py`'s CRM section
   (contains-assignment, unassigned-shows-dash, empty-assessment message,
   artifact-log entry, second-order-hash-survives, PDF TOC size bump).
+- **Assignment-load visualization** (2026-09-09, G.7 Part 4) — two new org
+  dashboard widgets answering "how much is the MSP taking on." Two design
+  decisions made and recorded rather than shipped silently:
+  - **What counts as "load": R (Responsible) assignments only**, not a
+    raw RACI-letter count and not R+A. An `I` (Informed) or `C`
+    (Consulted) assignee isn't doing the work an `R` is, so counting them
+    equally would misrepresent effort; `A` (Accountable) is sign-off, a
+    different kind of load again, with no basis yet to weight it against
+    `R`. New `RaciLoadWidget` (`routers/dashboard.py`) — `msp_count`/
+    `customer_count`/`other_count` plus `by_contact` (pre-sorted desc,
+    same "server does the rollup" convention every other dashboard widget
+    already follows) — filters to `raci_letter == 'R'` throughout.
+  - **Where it lives: the org dashboard**, not `RolesPanel.tsx`/CRM.
+    Chosen over "both": the dashboard already has the "roll-up
+    visualization" widget pattern (G.3) these charts fit naturally into,
+    while `RolesPanel` is a working/editing surface where a chart would
+    compete with the bulk-assign UI rather than add to it.
+  - Two widgets, per the task's own form guidance: **MSP vs Customer
+    Load** is a donut (2-3 slices, one headline number) via hand-rolled
+    SVG (`lib/raciLoad.ts:donutSlices`, unit-tested — same
+    no-charting-library precedent `lib/radarChart.ts` set, C.2). **Per-
+    contact load** is horizontal bars — asked and confirmed before
+    building (a pie with a dozen contacts can't be ranked by eye) —
+    reusing `FamilyHeatmapCard`'s existing `.tier-bar` markup/CSS rather
+    than inventing a second bar-chart implementation, with only the label
+    column widened for a contact's full name instead of a 2-letter family
+    code.
+  - `docs/PLAN-gui-restructure.md`'s G.7 section carries the short
+    pointer to this entry rather than duplicating it.
+
 ---
 
 ## Planned

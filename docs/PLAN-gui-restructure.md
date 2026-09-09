@@ -786,6 +786,11 @@ gap (affiliation wasn't visible in the read-only chip, only in the
 picker) closed by adding `contact_affiliation` to
 `RaciAssignmentOut`/`RaciAssignmentRow` instead.
 
+### Part 4, 2026-09-09 — Assignment-load visualization
+
+See `docs/roadmap.md`'s corresponding Done entry for the "what counts as
+load" and "where it lives" decisions and the full writeup.
+
 ---
 
 ## G.8 — Assessment templates

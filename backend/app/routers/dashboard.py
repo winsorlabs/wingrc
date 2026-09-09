@@ -128,6 +128,30 @@ class PoamSummary(BaseModel):
     cancelled: int
 
 
+class RaciLoadByContact(BaseModel):
+    contact_id: uuid.UUID
+    contact_name: str
+    count: int
+
+
+class RaciLoadWidget(BaseModel):
+    """G.7 Part 4: assignment-load counts, R (Responsible) only — counting
+    every RACI letter equally would treat an Informed assignee the same as
+    the person actually doing the work, which misrepresents effort. Not
+    R+A either: Accountable is sign-off, a different kind of load than the
+    work R represents, and this codebase doesn't have a basis yet for
+    weighting the two together. `by_contact` is pre-sorted by count desc
+    (ties broken by name) so the frontend's horizontal-bar widget doesn't
+    need its own sort — same "server does the rollup" convention as every
+    other widget in this file.
+    """
+
+    msp_count: int
+    customer_count: int
+    other_count: int  # mssp/government/other affiliations
+    by_contact: list[RaciLoadByContact]
+
+
 class DashboardOut(BaseModel):
     family_heatmap: list[FamilyHeatmapEntry]
     sprs: SprsWidget
@@ -139,6 +163,7 @@ class DashboardOut(BaseModel):
     blocked_objectives_count: int
     raci_open_tasks: list[RaciBucket]
     poam_summary: PoamSummary
+    raci_load: RaciLoadWidget
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +402,45 @@ def _raci_open_tasks(session: Session, assessment_id: uuid.UUID) -> list[RaciBuc
     return buckets
 
 
+def _raci_load(session: Session, assessment_id: uuid.UUID) -> RaciLoadWidget:
+    """G.7 Part 4: MSP-vs-customer split and per-contact load, both R-only —
+    see RaciLoadWidget's own docstring for why R and not a raw letter count.
+    Joins through ControlState the same way _raci_open_tasks does, since
+    RaciAssignment carries no assessment_id of its own (see raci.py's
+    module docstring)."""
+    rows = session.execute(
+        select(RaciAssignment.contact_id, Contact.name, Contact.affiliation)
+        .join(ControlState, ControlState.id == RaciAssignment.control_state_id)
+        .join(Contact, Contact.id == RaciAssignment.contact_id)
+        .where(ControlState.assessment_id == assessment_id, RaciAssignment.raci_letter == "R")
+    ).all()
+
+    msp = customer = other = 0
+    by_contact: dict[uuid.UUID, dict] = {}
+    for contact_id, contact_name, affiliation in rows:
+        if affiliation == "msp":
+            msp += 1
+        elif affiliation == "customer":
+            customer += 1
+        else:
+            other += 1
+        entry = by_contact.setdefault(contact_id, {"contact_name": contact_name, "count": 0})
+        entry["count"] += 1
+
+    ranked = sorted(
+        by_contact.items(), key=lambda kv: (-kv[1]["count"], kv[1]["contact_name"].lower())
+    )
+    return RaciLoadWidget(
+        msp_count=msp,
+        customer_count=customer,
+        other_count=other,
+        by_contact=[
+            RaciLoadByContact(contact_id=cid, contact_name=v["contact_name"], count=v["count"])
+            for cid, v in ranked
+        ],
+    )
+
+
 def _poam_summary(session: Session, assessment_id: uuid.UUID) -> PoamSummary:
     """Scoped via PoamItem.finding_id -> Finding.assessment_id. POA&M items
     with only a control_id (pre-assessment, not tied to any specific
@@ -428,4 +492,5 @@ def get_dashboard(
         blocked_objectives_count=blocked_count,
         raci_open_tasks=_raci_open_tasks(session, assessment_id),
         poam_summary=_poam_summary(session, assessment_id),
+        raci_load=_raci_load(session, assessment_id),
     )

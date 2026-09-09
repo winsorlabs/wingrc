@@ -37,6 +37,7 @@ aren't arbitrary:
 Run in-container:
     docker compose exec backend pytest tests/test_dashboard.py -m integration -v
 """
+
 from __future__ import annotations
 
 import uuid
@@ -169,16 +170,24 @@ def ref(db_session: Session) -> dict:
     db_session.flush()
 
     # Implementation statements: AC.1.1[a]=approved, AC.1.1[b]=draft.
-    db_session.add_all([
-        ImplementationStatement(
-            org_id=org.id, objective_id=ac1_objs["a"].id, assessment_id=assessment.id,
-            body="Approved statement.", status="approved",
-        ),
-        ImplementationStatement(
-            org_id=org.id, objective_id=ac1_objs["b"].id, assessment_id=assessment.id,
-            body="Draft statement.", status="draft",
-        ),
-    ])
+    db_session.add_all(
+        [
+            ImplementationStatement(
+                org_id=org.id,
+                objective_id=ac1_objs["a"].id,
+                assessment_id=assessment.id,
+                body="Approved statement.",
+                status="approved",
+            ),
+            ImplementationStatement(
+                org_id=org.id,
+                objective_id=ac1_objs["b"].id,
+                assessment_id=assessment.id,
+                body="Draft statement.",
+                status="draft",
+            ),
+        ]
+    )
     db_session.flush()
 
     # Contact + RACI: Jane is 'R' on ia1a.
@@ -192,59 +201,100 @@ def ref(db_session: Session) -> dict:
 
     now = datetime.now(UTC)
     task_expiring = EvidenceTask(
-        org_id=org.id, assessment_id=assessment.id, title="IdP export (expiring)",
-        artifact_type="export", status="open", expires_at=now + timedelta(days=10),
+        org_id=org.id,
+        assessment_id=assessment.id,
+        title="IdP export (expiring)",
+        artifact_type="export",
+        status="open",
+        expires_at=now + timedelta(days=10),
     )
     task_far = EvidenceTask(
-        org_id=org.id, assessment_id=assessment.id, title="Firewall export (not expiring soon)",
-        artifact_type="export", status="open", expires_at=now + timedelta(days=60),
+        org_id=org.id,
+        assessment_id=assessment.id,
+        title="Firewall export (not expiring soon)",
+        artifact_type="export",
+        status="open",
+        expires_at=now + timedelta(days=60),
     )
     task_no_expiry = EvidenceTask(
-        org_id=org.id, assessment_id=assessment.id, title="No expiry set",
-        artifact_type="export", status="open", expires_at=None,
+        org_id=org.id,
+        assessment_id=assessment.id,
+        title="No expiry set",
+        artifact_type="export",
+        status="open",
+        expires_at=None,
     )
     task_archived = EvidenceTask(
-        org_id=org.id, assessment_id=assessment.id, title="Archived, ignore",
-        artifact_type="export", status="open", expires_at=now + timedelta(days=5),
+        org_id=org.id,
+        assessment_id=assessment.id,
+        title="Archived, ignore",
+        artifact_type="export",
+        status="open",
+        expires_at=now + timedelta(days=5),
         is_archived=True,
     )
     db_session.add_all([task_expiring, task_far, task_no_expiry, task_archived])
     db_session.flush()
 
-    db_session.add_all([
-        EvidenceTaskStateLink(task_id=task_expiring.id, control_state_id=ia1a.id),
-        EvidenceTaskStateLink(task_id=task_far.id, control_state_id=sc1a.id),
-    ])
+    db_session.add_all(
+        [
+            EvidenceTaskStateLink(task_id=task_expiring.id, control_state_id=ia1a.id),
+            EvidenceTaskStateLink(task_id=task_far.id, control_state_id=sc1a.id),
+        ]
+    )
     db_session.flush()
 
     finding = Finding(
-        assessment_id=assessment.id, org_id=org.id, control_state_id=sc1a.id,
-        title="FIPS crypto gap", description="Not configured.",
-        severity="high", finding_type="gap", status="open",
+        assessment_id=assessment.id,
+        org_id=org.id,
+        control_state_id=sc1a.id,
+        title="FIPS crypto gap",
+        description="Not configured.",
+        severity="high",
+        finding_type="gap",
+        status="open",
     )
     db_session.add(finding)
     db_session.flush()
-    db_session.add_all([
-        PoamItem(
-            org_id=org.id, finding_id=finding.id, title="Remediate FIPS gap",
-            description="Enable FIPS mode.", status="open",
-        ),
-        PoamItem(
-            org_id=org.id, finding_id=finding.id, title="Vendor patch pending",
-            description="Waiting on vendor.", status="delayed",
-        ),
-    ])
+    db_session.add_all(
+        [
+            PoamItem(
+                org_id=org.id,
+                finding_id=finding.id,
+                title="Remediate FIPS gap",
+                description="Enable FIPS mode.",
+                status="open",
+            ),
+            PoamItem(
+                org_id=org.id,
+                finding_id=finding.id,
+                title="Vendor patch pending",
+                description="Waiting on vendor.",
+                status="delayed",
+            ),
+        ]
+    )
     db_session.flush()
 
     recompute_sprs(db_session, assessment.id)
     db_session.flush()
 
     return {
-        "org": org, "fw": fw, "assessment": assessment,
-        "ac1": ac1, "ac2": ac2, "ia1": ia1, "sc1": sc1,
-        "ac1a": ac1a, "ac1b": ac1b, "ac2a": ac2a, "ia1a": ia1a, "sc1a": sc1a,
+        "org": org,
+        "fw": fw,
+        "assessment": assessment,
+        "ac1": ac1,
+        "ac2": ac2,
+        "ia1": ia1,
+        "sc1": sc1,
+        "ac1a": ac1a,
+        "ac1b": ac1b,
+        "ac2a": ac2a,
+        "ia1a": ia1a,
+        "sc1a": sc1a,
         "jane": jane,
-        "task_expiring": task_expiring, "task_far": task_far,
+        "task_expiring": task_expiring,
+        "task_far": task_far,
     }
 
 
@@ -321,9 +371,83 @@ def test_raci_open_tasks_assigned_and_unassigned_buckets(dashboard_json: dict, r
     assert buckets[(None, None)] == 1
 
 
+def test_raci_load_widget_from_shared_seed(dashboard_json: dict, ref: dict):
+    """The shared seed's only RaciAssignment is Jane (customer), 'R', on
+    ia1a -- confirms the widget reads it correctly before the richer,
+    independently-seeded test below exercises the letter-filter and
+    MSP/customer split with more than one contact."""
+    load = dashboard_json["raci_load"]
+    assert load["msp_count"] == 0
+    assert load["customer_count"] == 1
+    assert load["other_count"] == 0
+    assert load["by_contact"] == [
+        {"contact_id": str(ref["jane"].id), "contact_name": "Jane Smith", "count": 1}
+    ]
+
+
+def test_raci_load_counts_r_only_and_ranks_by_contact(client, db_session, fake_msp_admin):
+    """G.7 Part 4: R-only (an 'A' assignment must not count toward load),
+    MSP-vs-customer split, and by_contact ranked by count desc -- a second,
+    independent seed rather than piling more contacts/letters onto the
+    shared `ref` fixture other widgets' tests already depend on."""
+    org = Organization(name=f"RaciLoadOrg-{uuid.uuid4().hex[:6]}")
+    fw = Framework(key=f"fw-raciload-{uuid.uuid4().hex[:6]}", name="Test FW", version="r2")
+    db_session.add_all([org, fw])
+    db_session.flush()
+    _grant(db_session, fake_msp_admin, org_id=org.id)
+
+    ctrl, objs = _make_control(
+        db_session,
+        fw,
+        control_id="AC.L2-3.1.1",
+        family="AC",
+        weight=5,
+        objective_keys=["a", "b", "c"],
+    )
+    assessment = start_assessment(db_session, org.id, fw.id, "RACI Load Test")
+    db_session.flush()
+    cs_a = _cs(db_session, assessment.id, objs["a"].id)
+    cs_b = _cs(db_session, assessment.id, objs["b"].id)
+    cs_c = _cs(db_session, assessment.id, objs["c"].id)
+
+    bob = Contact(org_id=org.id, name="Bob MSP", email="bob@example.com", affiliation="msp")
+    jane = Contact(
+        org_id=org.id, name="Jane Customer", email="jane2@example.com", affiliation="customer"
+    )
+    db_session.add_all([bob, jane])
+    db_session.flush()
+
+    db_session.add_all(
+        [
+            RaciAssignment(control_state_id=cs_a.id, contact_id=bob.id, raci_letter="R"),
+            RaciAssignment(control_state_id=cs_b.id, contact_id=bob.id, raci_letter="R"),
+            RaciAssignment(control_state_id=cs_c.id, contact_id=jane.id, raci_letter="R"),
+            # Accountable, not Responsible -- must not add to anyone's load.
+            RaciAssignment(control_state_id=cs_a.id, contact_id=jane.id, raci_letter="A"),
+        ]
+    )
+    db_session.flush()
+
+    resp = client.get(f"/orgs/{org.id}/assessments/{assessment.id}/dashboard")
+    assert resp.status_code == 200
+    load = resp.json()["raci_load"]
+
+    assert load["msp_count"] == 2
+    assert load["customer_count"] == 1
+    assert load["other_count"] == 0
+    assert load["by_contact"] == [
+        {"contact_id": str(bob.id), "contact_name": "Bob MSP", "count": 2},
+        {"contact_id": str(jane.id), "contact_name": "Jane Customer", "count": 1},
+    ]
+
+
 def test_poam_summary(dashboard_json: dict):
     assert dashboard_json["poam_summary"] == {
-        "open": 1, "on_track": 0, "delayed": 1, "completed": 0, "cancelled": 0,
+        "open": 1,
+        "on_track": 0,
+        "delayed": 1,
+        "completed": 0,
+        "cancelled": 0,
     }
 
 

@@ -1395,6 +1395,34 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .radar-data-point { fill: var(--primary); }
 .radar-label { font-size: 7px; font-weight: 600; fill: var(--muted); }
 
+/* RACI assignment-load donut (G.7 Part 4) — same hand-rolled-SVG,
+   no-charting-library precedent as the radar chart above. Stacked
+   <circle> elements sharing center/radius, each with its own
+   stroke-dasharray/offset (lib/raciLoad.ts:donutSlices), rotated -90deg
+   so 0% starts at 12 o'clock like the radar chart's own axis convention. */
+.donut-chart { width: 100%; max-width: 200px; display: block; margin: 0.5rem auto 0; }
+.donut-ring-bg { stroke: var(--border); }
+.donut-slice { stroke-linecap: butt; transition: stroke-dasharray 0.3s ease; }
+.donut-slice--msp { stroke: var(--primary); }
+.donut-slice--customer { stroke: #d97706; }
+.donut-slice--other { stroke: #6b7280; }
+.donut-center-label { font-size: 20px; font-weight: 700; fill: var(--text); }
+.donut-legend { list-style: none; padding: 0; margin: 0.6rem 0 0; display: flex; justify-content: center; gap: 0.9rem; flex-wrap: wrap; font-size: 0.78rem; color: var(--text); }
+.donut-legend-item { display: flex; align-items: center; gap: 0.3rem; }
+.donut-legend-swatch { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 2px; }
+.donut-legend-swatch--msp { background: var(--primary); }
+.donut-legend-swatch--customer { background: #d97706; }
+.donut-legend-swatch--other { background: #6b7280; }
+
+/* Per-contact load bars reuse .tier-bar/-counts/-track/-fill (Family
+   Completion's own widget) -- only the label needs a wider, non-uppercase
+   variant here since it holds a contact's full name, not a 2-letter
+   family code. */
+.tier-bar-label--wide {
+  width: 7rem; text-transform: none; letter-spacing: normal; font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 /* Assessment switcher (G.4) — sits above .dashboard-grid, not inside a
    .form-field (that class stacks label-over-input for form layouts; this
    is a compact inline toolbar control instead). */
