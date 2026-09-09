@@ -1,7 +1,14 @@
-import { canSeeApiTokens, canSeeAuditLog, canSeeSecurity, canSeeUsers } from "../lib/roles";
+import { canSeeApiTokens, canSeeAuditLog, canSeeIntegrations, canSeeSecurity, canSeeUsers } from "../lib/roles";
 import type { OnboardingStatus } from "../types";
 
-export type NavCategory = "dashboard" | "scope" | "assessments" | "tools" | "library" | "security";
+export type NavCategory =
+  | "dashboard"
+  | "scope"
+  | "assessments"
+  | "tools"
+  | "library"
+  | "integrations"
+  | "security";
 export type ScopeTab = "profile" | "system" | "contacts" | "assets";
 // RACI is assessment-scoped data (docs/PLAN-gui-restructure.md G.7's
 // 2026-09-09 move note) — "board" is the existing per-control assessment
@@ -45,6 +52,7 @@ export function SideNav({
   const showUsers = canSeeUsers(currentUserRole);
   const showAuditLog = canSeeAuditLog(currentUserRole);
   const showSecurity = canSeeSecurity(currentUserRole);
+  const showIntegrations = canSeeIntegrations(currentUserRole);
 
   function indicator(complete: boolean) {
     return <span className={`completion-dot${complete ? " complete" : ""}`}>{complete ? "✓" : "○"}</span>;
@@ -148,6 +156,14 @@ export function SideNav({
           </div>
         )}
       </div>
+
+      {showIntegrations && (
+        <div className="side-nav-category">
+          <button className={categoryClass("integrations")} onClick={() => onSelectCategory("integrations")}>
+            Integrations
+          </button>
+        </div>
+      )}
 
       {showSecurity && (
         <div className="side-nav-category">

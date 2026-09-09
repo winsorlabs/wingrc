@@ -81,6 +81,13 @@ export function canSeeAuditLog(role: string | null | undefined): boolean {
   return role === "msp_admin";
 }
 
+// Matches routers/integrations.py's router-wide require_role("msp_admin")
+// (D.1) — unlike Security's three sub-items, there's only one gate here
+// since every route on that router, including GET, is admin-only.
+export function canSeeIntegrations(role: string | null | undefined): boolean {
+  return role === "msp_admin";
+}
+
 // Whether the Security nav *category* itself should render at all — hiding
 // an empty category is a nav-shell-specific concern the old per-tab-only
 // gating never had to answer (OrgSettings always showed something, since

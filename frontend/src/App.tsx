@@ -6,6 +6,7 @@ import { AssessmentBoard } from "./components/AssessmentBoard";
 import { AssetsPanel } from "./components/AssetsPanel";
 import { AuditLogPanel } from "./components/AuditLogPanel";
 import { ContactsPanel } from "./components/ContactsPanel";
+import { IntegrationsPanel } from "./components/IntegrationsPanel";
 import { InviteAcceptPage } from "./components/InviteAcceptPage";
 import { LoginPage } from "./components/LoginPage";
 import { OnboardingWizard } from "./components/OnboardingWizard";
@@ -284,6 +285,16 @@ export function App() {
           {navCategory === "library" && (
             <div className="workspace-content">
               <div className="empty">Library isn't built yet (docs/PLAN-gui-restructure.md G.10).</div>
+            </div>
+          )}
+
+          {navCategory === "integrations" && (
+            <div className="workspace-content">
+              {/* Reachable only when canSeeIntegrations(user.role) is true
+                  (SideNav) -- that's msp_admin already, so canWrite alone
+                  is enough here, same as canWrite always being true for
+                  msp_admin elsewhere. */}
+              <IntegrationsPanel canWrite={canWrite} />
             </div>
           )}
 

@@ -252,12 +252,25 @@ reference. The connector fills the existing `evidence_task` / `evidence` models
 - Connector output writes into the existing `evidence` + `evidence_state_link`
   tables and marks the task `collected`. No new schema required for the first
   connectors.
-- Credentials are stored in the tenant's own vault (or passed via config); the
-  platform never holds third-party API keys.
+- **Reworded 2026-09-09 (D.1), see that section for the full rationale:**
+  credentials are encrypted at rest in the app's own Postgres (deploy-time
+  key, never persisted — `backend/app/crypto.py`), which satisfies the
+  constraint below because WinGRC is self-hosted: the MSP runs its own
+  Postgres, so this is the MSP holding its own credential, not
+  WinGRC-the-vendor holding a customer's. The original wording here
+  ("platform never holds third-party API keys," "stored in the tenant's
+  own vault") was written imagining a hosted multi-tenant WinGRC where the
+  vendor differs from the customer — see **D.4** for why that scenario
+  needs a different answer, not this one, before a hosted WinGRC ships.
 
 **Constraints:**
-- BYO-credentials: MSP supplies their own API keys via tenant config. The
-  platform operator has no access to customer tool credentials.
+- BYO-credentials: MSP supplies their own API keys. **WinGRC-the-vendor
+  never sees customer credentials** — self-hosting satisfies this by
+  construction, since "the platform" is the MSP's own infrastructure. (See
+  the Architecture note above — reworded 2026-09-09 from the older, more
+  literal "the platform operator has no access" phrasing, which read as a
+  constraint on the *code* rather than on WinGRC-the-vendor specifically,
+  and didn't survive contact with an actual credential-entry screen.)
 - CUI data-handling: connectors must support a local-execution mode for
   CUI-sensitive tenants (air-gapped or GCC High deployments). Data must not
   transit a commercial cloud on its way from the tool to the evidence store.
@@ -271,6 +284,12 @@ A connector populates evidence; an engineer still confirms the state. This
 preserves the "candidates, never auto-met" rule from CLAUDE.md.
 
 ### D.1 — Integrations screen (connection management UI)
+
+**Shipped 2026-09-09 — credential entry + test-connection only.** Full
+writeup in `docs/roadmap.md`'s Done section. The device/user pull and the
+approval workflow below (D.2, D.3) are still not built — this section's
+scope was deliberately just the screen, credential storage, and
+test-connection.
 
 **Added 2026-09-06 (Jarrod).** Item D above specifies the connector *backend*
 (the `collect()` interface, BYO-credential handling, evidence writes) but no
@@ -296,19 +315,25 @@ priority order.
   legitimate v1 and avoids building a scheduler before the connector itself
   is proven).
 
-**Open questions to settle before building:**
-- Credential storage. D says "stored in the tenant's own vault (or passed via
-  config); the platform never holds third-party API keys" — that constraint
-  was written before there was any UI to type a key into. If an admin enters a
-  Liongard key in a WinGRC screen, WinGRC *is* holding it. Either reconcile
-  this (encrypted-at-rest per-org secret store, documented as such) or keep
-  credentials strictly in tenant config/env and make this screen read-only
-  status. This is a real architectural decision, not a detail — settle it
-  before writing the screen.
-- Where org-scoped vs. MSP-wide connections live: is a Liongard connection
-  configured once per MSP and mapped to many client orgs, or separately per
-  org? Liongard's own tenancy model should drive this — check it rather than
-  assuming.
+**Open questions — resolved 2026-09-09:**
+- Credential storage. **Encrypted at rest in the app's own Postgres**
+  (`backend/app/crypto.py`, Fernet, deploy-time key via
+  `WINGRC_CREDENTIAL_ENCRYPTION_KEYS`, never persisted, fail-closed,
+  key-version-labeled for rotation). See item D's Architecture section
+  above for why this satisfies the "never holds third-party API keys"
+  constraint once that constraint is understood correctly (self-hosted =
+  the platform IS the MSP's infrastructure) — and see **D.4** for why a
+  future *hosted* WinGRC can't reuse this answer unchanged.
+- Where org-scoped vs. MSP-wide connections live. **MSP-wide, one row per
+  connector per deployment** — settled by reading Liongard's own docs
+  before designing anything, not by assuming: Access Key ID/Secret are
+  generated per Liongard *user account*, scoped to the whole MSP instance
+  (`https://{instance}.app.liongard.com/api/v1/`), not per client.
+  Environments (per-client tenants) live underneath that one account.
+  `integration_connection` (`models.py`) is deployment-wide, matching
+  `product`/`framework`'s existing non-org-scoped tier. Mapping a WinGRC
+  org to a Liongard Environment id is **D.2**'s concern — a separate,
+  org-scoped table, not a column here.
 
 ### D.2 — Scope / Inventory as a connector target
 
@@ -487,6 +512,58 @@ alter prior approvals.
 `audit_log` exists for, and actor attribution now resolves to the real user
 (fixed 2026-09-07) — so "who approved this asset" is answerable without
 additional plumbing.
+
+---
+
+### D.4 — Multi-tenant credential safety for a hosted WinGRC
+
+**Added 2026-09-09 (Jarrod). Not started.** Tracked now, deliberately,
+because hosted WinGRC is under active consideration — this needs an answer
+before that decision is made, not scrambled together after.
+
+**Why this is a separate item from D.1, not a footnote on it:** D.1's
+encrypted-at-rest credential store (`backend/app/crypto.py`) is correct
+*for self-hosted WinGRC specifically* — the MSP runs its own Postgres, so
+"the platform" holding an encrypted Liongard key is the MSP holding its
+own credential, in the same box that already holds its clients' CUI
+scoping data. That reasoning breaks the moment WinGRC-the-vendor operates
+the infrastructure instead of the MSP: at that point, one deployment-wide
+encryption key protecting every tenant's `integration_connection` row
+means WinGRC-the-vendor (or anyone who compromises its infrastructure)
+can decrypt every customer's third-party API keys. That is exactly the
+outcome item D's original "the platform never holds third-party API keys"
+constraint existed to prevent — a hosted WinGRC would be reintroducing the
+problem D was written against, not satisfying it.
+
+**What a real answer needs to cover:**
+- **Per-tenant key derivation or per-tenant KMS**, not one
+  deployment-wide `WINGRC_CREDENTIAL_ENCRYPTION_KEYS`. A single shared key
+  is the crux of the problem above — whatever replaces it must make one
+  tenant's credential unreadable without that tenant's own key material,
+  not just logically partitioned by `org_id`.
+- **Unreadable across tenants even given DB access.** The threat model
+  isn't "a stranger reads the database" — it's "WinGRC-the-vendor's own
+  infrastructure, or an attacker who compromises it, has DB access by
+  definition." Encryption-at-rest under one key doesn't defend against
+  that; per-tenant keys held outside the app's own reach (a KMS with
+  per-tenant grants, envelope encryption with tenant-held wrapping keys,
+  or similar) are the kind of thing that would.
+- **Key custody and rotation when the vendor operates the
+  infrastructure.** Who holds the root key(s), how rotation happens
+  without vendor staff ever handling a tenant's plaintext credential in
+  the process, and what a tenant's exit/offboarding does to their key
+  material.
+- **The compliance implication.** A hosted WinGRC operator holding
+  customers' third-party credentials (Liongard, RMM, SIEM keys) is a
+  managed-service-provider-of-a-managed-service-provider posture with its
+  own CMMC/compliance footprint — this needs to be named explicitly in
+  whatever hosted-WinGRC compliance story gets written, not discovered
+  after the fact.
+
+**Explicitly not answered by D.1:** the self-hosted design shipped there
+is a deliberate, scoped-to-self-hosted choice — not a claim that it's the
+permanent or only answer. Don't reuse `crypto.py`'s single-key model for a
+hosted deployment without redesigning it against the constraints above.
 
 ---
 

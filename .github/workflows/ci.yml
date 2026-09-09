@@ -48,6 +48,11 @@ jobs:
       # reporting green while testing nothing. Points at a separate wingrc_test
       # database, matching docker-compose.yml's own backend service env block.
       WINGRC_TEST_DATABASE_URL: postgresql+psycopg://wingrc:wingrc@localhost:5432/wingrc_test
+      # D.1: crypto.py fails closed with this unset (see its module
+      # docstring) — test_integrations.py's credential round-trip tests
+      # need a real key here, same as docker-compose.yml's own dev default.
+      # CI-only key, not used anywhere real.
+      WINGRC_CREDENTIAL_ENCRYPTION_KEYS: "ci:b_Lz6E-GOuMYIlFxMZW61m6ro3fgGGeRhwptwa8POz8="
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

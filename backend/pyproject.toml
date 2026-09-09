@@ -22,6 +22,7 @@ dependencies = [
     "segno>=1.6",
     "weasyprint>=63.0",
     "defusedxml>=0.7",
+    "cryptography>=44.0",
 ]
 
 [project.optional-dependencies]
@@ -74,6 +75,7 @@ known-first-party = ["app"]
 "app/routers/audit_log.py" = ["B008"]
 "app/routers/dashboard.py" = ["B008"]
 "app/routers/raci.py" = ["B008"]
+"app/routers/integrations.py" = ["B008"]
 "app/manage.py" = ["B008"]
 "tests/test_auth.py" = ["I001"]
 "tests/test_auth_cookies.py" = ["I001"]

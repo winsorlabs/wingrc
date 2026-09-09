@@ -457,6 +457,59 @@ Items without a status are planned but not yet started.
     code.
   - `docs/PLAN-gui-restructure.md`'s G.7 section carries the short
     pointer to this entry rather than duplicating it.
+- **Integrations screen — credential entry + test-connection** (2026-09-09,
+  root `ROADMAP.md` **D.1**). New top-level Integrations nav category
+  (msp_admin only), Liongard first. Scope was deliberately narrow: the
+  screen, credential storage, and test-connection — the actual device/user
+  pull is **D.2**, the approval workflow is **D.3**, neither built here.
+  - **Resolved D.1's open architectural question** (see that section's own
+    "reconcile before building" note): item D's "the platform never holds
+    third-party API keys" was written imagining a hosted multi-tenant
+    WinGRC where the vendor differs from the customer. WinGRC is
+    self-hosted — the MSP runs its own Postgres/MinIO/containers — so "the
+    platform" is the MSP's own infrastructure, and an encrypted Liongard
+    key there is the MSP holding its own credential, not WinGRC-the-vendor
+    holding a customer's. Root `ROADMAP.md`'s item D and D.1 sections are
+    reworded to the actual constraint this satisfies:
+    **WinGRC-the-vendor never sees customer credentials.** See **D.4**
+    (new, not started) for why this answer doesn't carry over unchanged to
+    a future hosted WinGRC.
+  - **Resolved D.1's other open question** (org-scoped vs. MSP-wide
+    connections) by reading Liongard's own docs first, before designing
+    anything: Access Key ID/Secret are generated per Liongard *user
+    account*, scoped to the whole MSP instance
+    (`https://{instance}.app.liongard.com`) — not per client. Environments
+    (per-client tenants) live underneath that one account. So
+    `integration_connection` (`models.py`) is deployment-wide, one row per
+    connector *type*, matching `product`/`framework`'s existing
+    non-org-scoped tier — not one row per org. Mapping a WinGRC org to a
+    Liongard Environment id is D.2's concern, a separate org-scoped table,
+    not a column here.
+  - **Credential storage** (`backend/app/crypto.py`): Fernet
+    (`cryptography`, already a transitive dependency via `msal` — now also
+    a direct one), key from `WINGRC_CREDENTIAL_ENCRYPTION_KEYS`
+    (deploy-time config, never persisted in the DB), fail-closed — a
+    missing/malformed key refuses to store or read a credential rather
+    than falling back to plaintext, same posture as the reset-dev
+    production guard. Key-version-labeled ciphertext
+    (`credential_key_version`) so rotation (prepend a new primary label,
+    keep old ones for decrypt via `MultiFernet`) is a config change, not a
+    data migration. The credential is write-only over the API — `PUT
+    /integrations/{key}/credential` accepts it, nothing ever returns it;
+    `IntegrationOut` carries at most a 4-char `credential_hint`.
+  - **RBAC**: `routers/integrations.py` is `require_role("msp_admin")`
+    router-wide — even viewing connector status, since there's no org_id
+    to scope by and this is deployment-level config, not tenant data.
+  - Test-connection calls Liongard's own documented key-validation
+    endpoint (`GET /api/v1/environments/count/`), surfaces the real error
+    (401/403 distinguished from a network failure) rather than a generic
+    failure message, and never echoes the credential in the response or
+    the audit log (`integration_connection.credential_set/.credential_delete/.test`
+    log connector_key + masked hint + ok/fail only).
+  - Connector abstraction (`backend/app/connectors/`) is a small registry
+    keyed by `connector_key`, so a second connector (Datto RMM next, per
+    item D's priority order) is a new module + one registry entry — not a
+    rework of the router or the screen.
 
 ---
 
@@ -518,7 +571,6 @@ Document library (N)
 - **Personnel connector** — Liongard / M365 → auto-populate contacts; depends on M. **Note (2026-09-07):** "M" here isn't fully traceable — root `ROADMAP.md` has no item M; the only "M" in this repo is the Multi-org access work (`M.1`–`M.8`) tracked in this file's own Done section, whose core (`M.1`–`M.6`) is done and whose remainder (`M.7`/`M.8`, a deployment-wide user directory + admin grant/revoke UI) doesn't obviously relate to auto-populating contacts. Left as originally written rather than guessed at; re-derive the actual dependency before resuming this item.
 - **AI implementation statements** — generation worker behind BYO-AI provider abstraction; scaffolding exists. **Verified 2026-09-07, more specifically than before:** `config.py`'s `ai_provider` setting and `backend/app/ai/` are real and already load-bearing — `importers/document.py` (the vendor-CRM/baseline extractor) is a working consumer of that same abstraction today. What's still missing is the per-objective draft-statement path itself: no `draft-statement` endpoint exists on `assessments.py`, and `ImplementationStatement` rows are still authored by hand. The provider plumbing this item needs already exists; the feature-specific generation logic does not.
 - **Scope connector** — Liongard / Datto RMM → `scope_entity`; supplements manual CSV import. Specified in root `ROADMAP.md` **D.2** (route through the existing dry-run/apply review flow, not a direct connector→DB write). **Updated 2026-09-07:** the canonical-attribute-key blocker this item used to cite is resolved — see the "Canonical `scope_entity.attributes` normalization" Done entry above. No connector code exists yet (verified: no Liongard/Datto files under `backend/app`, `Source.LIONGARD`/`Source.DATTO_RMM` exist only as unused enum values in `domain.py`); D.2 needs to follow the pattern `importers/workbook.py` already established, not invent a fourth attribute schema.
-- **Integrations screen** — new side-nav section for setting up connectors (Liongard first), specified in root `ROADMAP.md` **D.1**. Added 2026-09-06 (Jarrod). Carries an unsettled architectural question: item D says the platform never holds third-party API keys, which conflicts with an in-app credential-entry screen — reconcile before building. Still fully unstarted as of 2026-09-07 (no frontend Integrations route, no per-connector credential model).
 - **Asset & user onboarding approval workflow** — daily Liongard sync; new devices/users land pending, notify the org's `security_officer` and `it_admin` contacts, approval page shows a baseline checklist (DUO/Evo, FenixPyre, RoboShadow, RocketCyber…) evaluated from Liongard metrics, Security Officer + IT formally accept the asset into the environment. Specified in root `ROADMAP.md` **D.3**. Added 2026-09-08 (Jarrod). Depends on D.1 + D.2 and on **two things that don't exist in this codebase yet**: outbound email (verified 2026-09-08 — no `smtplib`, SMTP config, or mailer module anywhere under `backend/`) and any job scheduler for the daily run. Also needs a `pending_approval` state on `domain.py:EntityStatus` (today only `active`/`decommissioned`). Hard constraint recorded in D.3: email notifies, but approval requires an authenticated session — no one-click approve links in email.
 - **Evidence download hardening** — replace presigned direct-to-MinIO download URLs with the backend streaming evidence bytes itself. Presigned URLs are bearer-token style: anyone with the link can download until it expires, with no per-request re-check of session/auth state. Worth revisiting given the investment already made in session/MFA/lockout hardening (item I, now shipped — see Done) — that hardening doesn't currently extend to the download path. Surfaced while proxying MinIO behind nginx for item O. **Verified 2026-09-07: still open** — `storage.py` still defines `presigned_url()` on every storage backend, and `routers/evidence.py` still calls it at 4 call sites (`download_url=storage.presigned_url(...)` for both single-evidence and task-collection responses). Nothing streams bytes through the backend yet.
 - **Frontend build determinism** — generate and commit `frontend/package-lock.json` (none is committed — one has been observed untracked on wl-util-1 from a local `npm install`, but that's not what this item is about), then switch `deploy/nginx/Dockerfile` from `npm install` to `npm ci` for reproducible builds. Low priority, not blocking anything currently in flight. **Verified 2026-09-07: still open** — `git ls-files frontend/package-lock.json` returns nothing (not committed), `deploy/nginx/Dockerfile` still runs `npm install`, not `npm ci`.

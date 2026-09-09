@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, InvitedUser, MfaEnrollData, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, ProductRow, RaciAssignmentRow, ScopeChange, ScopeEntity, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, IntegrationConnector, InvitedUser, MfaEnrollData, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, ProductRow, RaciAssignmentRow, ScopeChange, ScopeEntity, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -634,6 +634,27 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ changes }),
     }),
+
+  // ── Integrations (D.1) — deployment-wide, not org-scoped; msp_admin only
+  // (backend/app/routers/integrations.py). ──────────────────────────────
+  listIntegrations: () => req<IntegrationConnector[]>("/integrations"),
+
+  setIntegrationCredential: (
+    connectorKey: string,
+    data: { config: Record<string, string>; credential: Record<string, string> }
+  ) =>
+    req<IntegrationConnector>(`/integrations/${connectorKey}/credential`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+
+  deleteIntegrationCredential: async (connectorKey: string): Promise<void> => {
+    const r = await fetch(`/api/integrations/${connectorKey}/credential`, { method: "DELETE" });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  },
+
+  testIntegrationConnection: (connectorKey: string) =>
+    req<IntegrationConnector>(`/integrations/${connectorKey}/test`, { method: "POST" }),
 
   downloadBundle: async (orgId: string, assessmentId: string): Promise<void> => {
     const r = await fetch(`/api/orgs/${orgId}/assessments/${assessmentId}/bundle`);

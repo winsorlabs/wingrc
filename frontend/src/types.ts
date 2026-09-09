@@ -464,3 +464,23 @@ export interface DryRunResult {
   summary: Record<string, number>;
   changes: ScopeChange[];
 }
+
+// ── Integrations (D.1) — mirrors backend/app/routers/integrations.py's
+// IntegrationOut field-for-field. Deployment-wide, not org-scoped -- see
+// that router's own module docstring for why (Liongard's API key is scoped
+// to the whole MSP instance, not per client).
+export interface IntegrationConnector {
+  connector_key: string;
+  name: string;
+  configured: boolean;
+  config: Record<string, string>;
+  // Last 4 characters of the credential secret only -- never returned in
+  // full. null until a credential has been set.
+  credential_hint: string | null;
+  last_tested_at: string | null;
+  last_test_ok: boolean | null;
+  last_test_error: string | null;
+  help_text: string;
+  config_fields: string[];
+  credential_fields: string[];
+}

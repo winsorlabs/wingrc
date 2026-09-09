@@ -1421,3 +1421,54 @@ class DeploymentSettings(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class IntegrationConnection(Base):
+    """Deployment-wide connector credential (D.1 — Liongard first).
+
+    Deliberately NOT org-scoped, same tier as DeploymentSettings above (and
+    like Product/Framework, shared reference-ish data rather than per-tenant
+    data): Liongard's own tenancy model is one API credential per MSP
+    instance (a Liongard user account, not a per-client one), with many
+    per-client "Environments" underneath — confirmed against Liongard's own
+    docs before this table was designed, see ROADMAP.md's D.1 section. So
+    there is one row per connector *type* per WinGRC deployment. Mapping a
+    WinGRC org to a Liongard Environment id is D.2's concern — org-scoped,
+    not built here — and will be a separate table, not a column on this one.
+
+    config holds non-secret, connector-specific settings (e.g. Liongard's
+    instance_url) as plain JSONB — safe to return over the API as-is.
+    encrypted_credential holds everything secret (e.g. Liongard's access
+    key id + secret, bundled together as one encrypted JSON blob) via
+    crypto.py's Fernet-based encrypt_credential/decrypt_credential — never
+    plaintext at rest, and never returned over the API at all (write-only:
+    see routers/integrations.py's response schema, which carries only
+    credential_hint). credential_key_version records which configured key
+    label encrypted this row, for crypto.py's rotation story.
+
+    last_test_ok/last_test_error/last_tested_at are the connection-test
+    result surfaced to the D.1 screen ("connected / never connected / last
+    attempt failed", with the real error). No sync history here — that's
+    D.2/D.3's concern once there's an actual sync to have history of.
+    """
+
+    __tablename__ = "integration_connection"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    connector_key: Mapped[str] = mapped_column(String(60), unique=True)
+    config: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    encrypted_credential: Mapped[str | None] = mapped_column(Text, nullable=True)
+    credential_key_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # Last 4 chars of the credential secret, for display only — e.g. "…a91c".
+    credential_hint: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_test_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    last_test_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now()
+    )

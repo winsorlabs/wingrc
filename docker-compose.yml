@@ -67,6 +67,14 @@ services:
       WINGRC_STORAGE_PUBLIC_ENDPOINT: ${WINGRC_STORAGE_PUBLIC_ENDPOINT:-}
       WINGRC_STORAGE_ACCESS_KEY: wingrc
       WINGRC_STORAGE_SECRET_KEY: wingrc-dev-secret
+      # D.1: encrypts third-party integration credentials (Liongard, etc.)
+      # at rest — see crypto.py. This dev key is fine for local/bench use
+      # only; a real deployment MUST set its own via a host .env override
+      # (WINGRC_CREDENTIAL_ENCRYPTION_KEYS in the shell/`.env`, not this
+      # file) and keep it out of git. crypto.py fails closed — with this
+      # unset, storing/reading any integration credential is refused
+      # outright rather than falling back to plaintext.
+      WINGRC_CREDENTIAL_ENCRYPTION_KEYS: ${WINGRC_CREDENTIAL_ENCRYPTION_KEYS:-dev:DFKuK2mEIJpixerxDMGU5xyQQwpWQBZxCFjOaZKjNSs=}
       PYTHONPATH: /app
     volumes:
       - ./backend:/app

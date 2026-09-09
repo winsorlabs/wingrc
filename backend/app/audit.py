@@ -25,6 +25,14 @@ Scoped to meaningful compliance mutations (signal, not firehose):
   api_token.create            — token minted (name/role/expiry only — never
                                  the raw token or its hash)
   api_token.revoke            — token revoked
+  integration_connection.credential_set    — connector credential added/
+                                 replaced (config + masked hint + key
+                                 version only — never the plaintext, see
+                                 routers/integrations.py)
+  integration_connection.credential_delete — connector credential cleared
+  integration_connection.test              — test-connection attempted
+                                 (ok/fail only — never the credential or
+                                 the full response body)
 
 NOT logged (noise):
   _seed_control_states() bulk insert on assessment creation

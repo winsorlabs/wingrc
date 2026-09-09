@@ -73,6 +73,15 @@ class Settings(BaseSettings):
     # set/reset. Enforced only on that path — see auth.check_password_reuse.
     password_history_generations: int = 5
 
+    # Third-party integration credentials (D.1 — Liongard first): symmetric
+    # encryption key(s) for crypto.py's encrypt_credential/decrypt_credential.
+    # Never persisted in the database — deploy-time config only, and
+    # deliberately has no default: crypto.py fails closed (refuses to
+    # store/read a credential) when this is unset rather than falling back
+    # to plaintext. Format: "label1:fernetkey1,label2:fernetkey2,..." — see
+    # crypto.py's module docstring for the rotation story.
+    credential_encryption_keys: str | None = None
+
     # Allowed CORS origins.  In production set WINGRC_CORS_ORIGINS to a JSON
     # array of the exact origins that should be permitted, e.g.:
     #   WINGRC_CORS_ORIGINS='["https://app.example.com"]'

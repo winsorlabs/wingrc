@@ -435,8 +435,21 @@ media sanitization SOP).
 ### 8. Connectors (Liongard / RMM scope ingestion)
 API/MCP-based scope ingestion to replace manual spreadsheet upload. Liongard
 inspector data → `scope_entity` records (dry-run + apply same as workbook
-importer). Connector credentials stored per-org. This feeds Layer 2 (tenant
-setup) without manual data entry.
+importer). This feeds Layer 2 (tenant setup) without manual data entry.
+
+**D.1 ✅ DONE (2026-09-09)** — Integrations screen: credential entry +
+test-connection, Liongard first (`routers/integrations.py`,
+`connectors/liongard.py`, `crypto.py`). **Credentials are MSP-wide, not
+per-org** — Liongard's API key is scoped to the whole MSP instance (one
+Liongard user account), with per-client Environments underneath it, so
+`integration_connection` is a deployment-wide table (one row per
+connector), not one row per org. Encrypted at rest (Fernet, deploy-time
+key, fail-closed, never persisted) — this is the MSP holding its own
+credential (self-hosted deployment), not WinGRC-the-vendor holding a
+customer's; see root `ROADMAP.md` item D / D.1 / **D.4** for the full
+reasoning and the open question D.4 tracks for a future *hosted* WinGRC.
+D.2 (the actual `scope_entity` pull) and D.3 (approval workflow) are not
+built yet.
 
 ### 9. Evidence task enhancements
 
