@@ -65,8 +65,13 @@ _GUIDE_DATE = "September 2024"
 # Practitioner-notes generation provenance, recorded on every freshly
 # written row (see AssessmentObjective.practitioner_notes_generated_at/
 # _model). Authored 2026-09-09 in this one batch; update both if a future
-# batch regenerates or extends the notes.
-_PRACTITIONER_NOTES_GENERATED_AT = datetime(2026, 9, 9, tzinfo=UTC)
+# batch regenerates or extends the notes. Noon UTC, not midnight: the
+# frontend displays this with toLocaleDateString() in the viewer's local
+# timezone, and a midnight-UTC timestamp renders as "the day before" for
+# every timezone west of UTC (verified during this feature's own browser
+# check) -- noon UTC is the same calendar day in every real-world
+# timezone (UTC-12 through UTC+14).
+_PRACTITIONER_NOTES_GENERATED_AT = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
 _PRACTITIONER_NOTES_MODEL = "claude-sonnet-5"
 
 
