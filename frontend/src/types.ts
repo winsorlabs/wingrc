@@ -88,7 +88,17 @@ export interface StatementRow {
   control_state_id: string | null;
   objective_key: string;
   objective_text: string;
-  objective_guidance: string | null;
+  // Two separately-sourced fields, never blended -- mirrors backend
+  // StatementOut/AssessmentObjective field-for-field. official_guidance is
+  // government-sourced (CMMC Assessment Guide); practitioner_notes is
+  // AI-drafted and advisory, carrying its own draft/review + generation
+  // provenance so staleness and review status are never invisible.
+  official_guidance: string | null;
+  official_guidance_source: string | null;
+  practitioner_notes: string | null;
+  practitioner_notes_is_draft: boolean;
+  practitioner_notes_generated_at: string | null;
+  practitioner_notes_model: string | null;
   body: string;
   status: string | null;
   control_discussion: string | null;

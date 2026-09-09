@@ -415,6 +415,72 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
   margin-bottom: 0.25rem;
 }
 
+/* ── Objective guidance panel: two separately-sourced, never-blended
+   sections. Official text is neutral/authoritative styling; practitioner
+   notes carry a warning-styled AI caveat that renders every time the
+   section renders (not a dismissible banner) -- see ControlDrawer.tsx. ── */
+.drawer-guidance-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+.drawer-guidance-section {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.55rem 0.7rem;
+}
+.drawer-guidance-official { border-left: 3px solid var(--primary); }
+.drawer-guidance-practitioner { border-left: 3px solid #b98900; }
+.drawer-guidance-section-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+.drawer-guidance-source {
+  font-size: 0.72rem;
+  font-style: italic;
+  color: var(--muted);
+}
+.drawer-guidance-empty {
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-style: italic;
+}
+.drawer-ai-caveat {
+  padding: 0.5rem 0.65rem;
+  background: #fff8e1;
+  border: 1px solid #ffe08a;
+  border-radius: 5px;
+  font-size: 0.75rem;
+  color: #7a5c00;
+  margin-bottom: 0.45rem;
+  line-height: 1.4;
+}
+.drawer-guidance-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.drawer-guidance-meta-item {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+/* The section itself already carries the left-accent border and
+   background framing -- the shared .drawer-guidance-text treatment
+   underneath would otherwise double up on both. */
+.drawer-guidance-section .drawer-guidance-text {
+  border-left: none;
+  background: transparent;
+  padding: 0;
+  margin-bottom: 0.35rem;
+  white-space: pre-wrap;
+}
+
 .drawer-guidance-text {
   font-size: 0.78rem;
   color: var(--muted);

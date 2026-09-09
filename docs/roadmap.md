@@ -510,6 +510,82 @@ Items without a status are planned but not yet started.
     keyed by `connector_key`, so a second connector (Datto RMM next, per
     item D's priority order) is a new module + one registry entry — not a
     rework of the router or the screen.
+- **Objective guidance: official + practitioner notes, split** (2026-09-09,
+  substantially delivers root `ROADMAP.md` **item E**, "Objective tips").
+  Fixes the sparsity bug where `AssessmentObjective.guidance` was populated
+  for only 111/316 objectives (so "Show guidance" appeared on some
+  objectives and not others) by replacing it with two properly-sourced,
+  never-blended fields — CLAUDE.md's compliance-content discipline applied
+  to guidance text itself, not just control state.
+  - **`official_guidance` / `official_guidance_source`** — government-
+    sourced, mechanically extracted from the real CMMC Assessment Guide
+    Level 2 PDF (Version 2.13, September 2024), not paraphrased or
+    recalled from memory (same standard as item B's POA&M rule). Pipeline:
+    `scripts/cmmc_guidance/extract_pdf.py` (pypdf text extraction +
+    structural parsing, asserts exactly 110 practice headers found) →
+    `compose_guidance_yaml.py` (mechanical composition into
+    `backend/app/seeds/cmmc_official_guidance.yaml`). Checked the guide's
+    actual grain rather than assuming one: "Potential Assessment Methods
+    and Objects" (Examine/Interview/Test) is practice-level (110/110
+    practices), while "Potential Assessment Considerations" bullets ARE
+    tagged per objective letter in the source (109/110 practices, 232
+    bullets, 240/316 objectives with genuinely objective-specific text) —
+    the composed text uses the objective-specific bullet when one exists
+    and falls back to the practice-wide methods, explicitly labeled as
+    such, when it doesn't. Every one of the 316 objectives ends up with
+    non-empty official guidance, closing the original sparsity bug
+    completely. A dictionary-based sweep (pyspellchecker) caught and fixed
+    18 PDF-kerning text artifacts (e.g. "L ayer" → "Layer") with zero false
+    positives — see `scripts/cmmc_guidance/README.md` for the full
+    verification writeup, including PDF SHA-256 and spot-checks against
+    the source document.
+  - **Found and flagged, not fixed here:** cross-checking objective-key
+    sets between `cmmc_l2.yaml` and the real PDF surfaced 4 practices
+    (`AC.L2-3.1.22`, `IA.L2-3.5.8`, `RA.L2-3.11.1`, `SC.L2-3.13.8`) each
+    missing one real NIST SP 800-171A objective letter from our catalog
+    (316 objectives seeded vs. 320 that actually exist). Not fixed in this
+    pass — adding a new objective to a control that already has live
+    assessments needs a `control_state` backfill across every existing
+    assessment, a separate and careful change. Flagged directly to Jarrod;
+    tracked for a future pass.
+  - **`practitioner_notes` / `practitioner_notes_is_draft` /
+    `_generated_at` / `_model`** — AI-drafted (Claude Sonnet 5, authored
+    2026-09-09), advisory only, all 316/316 objectives covered
+    (`backend/app/seeds/cmmc_practitioner_notes.yaml`). Framing rules
+    enforced while writing and self-audited afterward (grepped for
+    verdict/vendor language before committing): never a verdict ("if you
+    have X you meet this" is never written — matches "candidates, never
+    auto-met"), no vendor product names (capability categories only),
+    common pitfalls rather than how-to instructions. Mirrors
+    `AssessmentObjective.is_draft`'s existing draft-until-reviewed
+    pattern: every seeded row starts `practitioner_notes_is_draft=true`,
+    and `seeds/catalog.py`'s `_should_write_practitioner_notes()` means a
+    reseed **never overwrites a row a human has since reviewed** — chosen
+    upsert semantics, checked against the pre-existing (and, it turned
+    out, always-clobbering) behavior of the old `guidance` field before
+    deciding: official_guidance always tracks the source YAML (verbatim
+    government text, no legitimate "human improved on this" case), while
+    practitioner_notes protects a review the same way an editor's sign-off
+    on any other draft content would need to be protected.
+  - **UI** (`ControlDrawer.tsx`): "Show guidance" is now unconditional
+    (matches the task screenshot's ask — AC.L2-3.1.1[a], [b], and [c] all
+    show guidance now, not just [a]). The panel renders two visually
+    distinct, separately-labeled sections — "Official CMMC Assessment
+    Guide Text" (cited by `official_guidance_source`) and "MSP
+    Practitioner Notes" — never blended. The practitioner-notes section
+    carries a non-dismissible AI-authorship warning callout that renders
+    every time the section renders (not a one-time banner — someone
+    landing on an arbitrary objective months later has no memory of
+    having dismissed anything), plus a draft/reviewed status badge and
+    generation date + model. **Not currently exported anywhere** —
+    `bundle_service.py` has no reference to guidance at all today; the
+    export path (SSP bundle, PDF) doesn't exist yet for this content, so
+    the caveat obligation is a documented constraint on whoever adds it,
+    not something built here.
+  - **Coverage** (verified against the live catalog, not assumed):
+    316/316 seeded objectives have `official_guidance`; 316/316 have
+    `practitioner_notes`. The gap to 320 is the pre-existing 4-objective
+    catalog shortfall noted above, not a guidance-pipeline miss.
 
 ---
 

@@ -569,6 +569,26 @@ hosted deployment without redesigning it against the constraints above.
 
 ## E — Objective tips (MSP-flavored evidence examples)
 
+**Substantially delivered 2026-09-09** by the objective guidance split
+(`AssessmentObjective.official_guidance` + `.practitioner_notes`, see
+`docs/roadmap.md`'s Done section for the full writeup). That work covers
+this item's core goal — MSP-scaled advisory content per objective,
+distinct from compliance text — and goes further than originally scoped
+here in two ways: (1) it also ships a properly government-sourced official
+guidance layer this item never specified, extracted from the real CMMC
+Assessment Guide PDF rather than NIST 800-171A's Discussion text; (2) the
+advisory content is AI-drafted from day one (this item's "hand-authored
+first, AI-generated later" sequencing didn't happen — the practitioner
+notes shipped AI-drafted immediately, with a review/draft flag per
+objective instead of a human-authored-first phase). Left below for
+historical context; do not use this section's data-model sketch
+(`assessment_objective.tips`) — the shipped schema is
+`official_guidance`/`official_guidance_source`/`practitioner_notes`/
+`practitioner_notes_is_draft`/`practitioner_notes_generated_at`/
+`practitioner_notes_model`, described in `models.py`.
+
+**Original spec below (superseded):**
+
 **What:** A per-objective advisory field giving concrete, MSP-scaled examples
 of what satisfies the objective: e.g., "Excel sheet mapping user accounts to
 job role" for AC.L2-3.1.1[a], or "Screenshot of Entra ID conditional access

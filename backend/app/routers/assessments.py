@@ -126,7 +126,19 @@ class StatementOut(BaseModel):
     control_state_id: uuid.UUID | None = None
     objective_key: str
     objective_text: str
-    objective_guidance: str | None = None
+    # Two separately-sourced fields, never blended -- see models.py's
+    # AssessmentObjective docstring. official_guidance_source is the
+    # citation string; None whenever official_guidance is (an objective
+    # the guide genuinely has nothing objective-specific for isn't
+    # expected here, since seeds/catalog.py's fallback text always
+    # populates official_guidance, but the frontend should not assume
+    # source is non-null just because guidance is).
+    official_guidance: str | None = None
+    official_guidance_source: str | None = None
+    practitioner_notes: str | None = None
+    practitioner_notes_is_draft: bool = True
+    practitioner_notes_generated_at: datetime | None = None
+    practitioner_notes_model: str | None = None
     body: str
     status: str | None = None
     control_discussion: str | None = None
@@ -773,7 +785,12 @@ def get_statements(
             control_state_id=states_by_obj[o.id].id if o.id in states_by_obj else None,
             objective_key=o.objective_key,
             objective_text=o.text,
-            objective_guidance=o.guidance,
+            official_guidance=o.official_guidance,
+            official_guidance_source=o.official_guidance_source,
+            practitioner_notes=o.practitioner_notes,
+            practitioner_notes_is_draft=o.practitioner_notes_is_draft,
+            practitioner_notes_generated_at=o.practitioner_notes_generated_at,
+            practitioner_notes_model=o.practitioner_notes_model,
             body=existing[o.id].body if o.id in existing else "",
             status=existing[o.id].status if o.id in existing else None,
             control_discussion=ctrl.discussion,
@@ -872,7 +889,14 @@ def upsert_statements(
             else None,
             objective_key=objectives[stmt.objective_id].objective_key,
             objective_text=objectives[stmt.objective_id].text,
-            objective_guidance=objectives[stmt.objective_id].guidance,
+            official_guidance=objectives[stmt.objective_id].official_guidance,
+            official_guidance_source=objectives[stmt.objective_id].official_guidance_source,
+            practitioner_notes=objectives[stmt.objective_id].practitioner_notes,
+            practitioner_notes_is_draft=objectives[stmt.objective_id].practitioner_notes_is_draft,
+            practitioner_notes_generated_at=objectives[
+                stmt.objective_id
+            ].practitioner_notes_generated_at,
+            practitioner_notes_model=objectives[stmt.objective_id].practitioner_notes_model,
             body=stmt.body,
             status=stmt.status,
         )

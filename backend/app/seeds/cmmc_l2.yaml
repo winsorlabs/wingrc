@@ -1,3 +1,20 @@
+# CMMC Level 2 catalog: framework, controls (practices), and assessment
+# objectives (determination statements). Structural/definitional data only
+# -- official per-objective assessment guidance lives in
+# cmmc_official_guidance.yaml (mechanically generated from the real CMMC
+# Assessment Guide PDF, see scripts/cmmc_guidance/README.md) and
+# AI-drafted practitioner notes live in cmmc_practitioner_notes.yaml. This
+# file used to carry an ad hoc, sparsely-populated `guidance:` key per
+# objective -- removed 2026-09-09: it was unsourced free text (not
+# attributed to or verified against the real Assessment Guide), exactly
+# the anti-pattern CLAUDE.md warns against for compliance content. See
+# cmmc_official_guidance.yaml for its properly-sourced replacement.
+#
+# Source documents (all REVIEWABLE DRAFT -- requires C3PAO sign-off):
+#   NIST SP 800-171 Rev 2  https://doi.org/10.6028/NIST.SP.800-171r2
+#   NIST SP 800-171A Rev 2 https://doi.org/10.6028/NIST.SP.800-171Ar2
+#   CMMC Assessment Guide Level 2 v2
+#       https://dodcio.defense.gov/Portals/0/Documents/CMMC/AssessmentGuideL2v2.pdf
 framework:
   key: nist-800-171-r2
   name: NIST SP 800-171 Rev 2
@@ -16,8 +33,6 @@ controls:
   - key: a
     text: Authorized users are identified.
     type: document_list
-    guidance: 'Examine: access control policy; list of authorized users and devices; system security plan.
-      Interview: personnel responsible for access control.'
   - key: b
     text: Processes acting on behalf of authorized users are identified.
     type: narrative
@@ -27,8 +42,6 @@ controls:
   - key: d
     text: System access is limited to authorized users.
     type: product
-    guidance: 'Examine: access control configurations; system security settings. Test: attempt access
-      with unauthorized credentials to verify enforcement.'
   - key: e
     text: System access is limited to processes acting on behalf of authorized users.
     type: product
@@ -54,8 +67,6 @@ controls:
   - key: a
     text: The types of transactions and functions that authorized users are permitted to execute are defined.
     type: narrative
-    guidance: 'Examine: access control policy; documentation of permitted transaction types and functions
-      per user role.'
   - key: b
     text: System access is limited to the defined types of transactions and functions for authorized users.
     type: product
@@ -76,8 +87,6 @@ controls:
   - key: a
     text: Information flow control policies are defined.
     type: narrative
-    guidance: 'Examine: information flow control policy; system security plan; network diagrams showing
-      CUI flow paths.'
   - key: b
     text: Methods and enforcement mechanisms for controlling the flow of CUI are defined.
     type: narrative
@@ -109,8 +118,6 @@ controls:
   - key: a
     text: The duties of individuals requiring separation are defined.
     type: narrative
-    guidance: 'Examine: access control policy; separation of duties documentation; assignment of duties
-      to separate individuals.'
   - key: b
     text: Responsibilities for duties that require separation are assigned to separate individuals.
     type: document_list
@@ -136,7 +143,6 @@ controls:
   - key: a
     text: Privileged accounts are identified.
     type: document_list
-    guidance: 'Examine: access control policy; list of privileged accounts; account management records.'
   - key: b
     text: Access to privileged accounts is authorized in accordance with the principle of least privilege.
     type: product
@@ -162,8 +168,6 @@ controls:
   - key: a
     text: Nonsecurity functions are identified.
     type: narrative
-    guidance: 'Examine: access control policy; documentation of nonsecurity functions; system configuration
-      settings.'
   - key: b
     text: Users are required to use non-privileged accounts or roles when accessing nonsecurity functions.
     type: product
@@ -185,8 +189,6 @@ controls:
   - key: a
     text: Privileged functions are defined.
     type: narrative
-    guidance: 'Examine: access control policy; definition of privileged functions; audit logs showing
-      privileged function execution.'
   - key: b
     text: Non-privileged users are defined.
     type: product
@@ -212,8 +214,6 @@ controls:
   - key: a
     text: The means of limiting unsuccessful logon attempts is defined.
     type: narrative
-    guidance: 'Examine: access control policy; system configuration settings for logon attempts; account
-      lockout configuration.'
   - key: b
     text: The defined means of limiting unsuccessful logon attempts is implemented.
     type: product
@@ -235,8 +235,6 @@ controls:
     text: Privacy and security notices required by CUI-specified rules are identified, consistent, and
       associated with the specific CUI category.
     type: narrative
-    guidance: 'Examine: privacy and security notices displayed at logon; documentation of CUI-specified
-      notice requirements.'
   - key: b
     text: Privacy and security notices are displayed.
     type: product
@@ -256,8 +254,6 @@ controls:
   - key: a
     text: The period of inactivity after which the system initiates a session lock is defined.
     type: narrative
-    guidance: 'Examine: configuration settings for session lock period; system security plan documenting
-      inactivity timeout.'
   - key: b
     text: Access to the system and viewing of data is prevented by initiating a session lock after the
       defined period of inactivity.
@@ -282,8 +278,6 @@ controls:
   - key: a
     text: Conditions requiring a user session to terminate are defined.
     type: narrative
-    guidance: 'Examine: configuration settings for session termination; documentation of conditions for
-      session termination.'
   - key: b
     text: A user session is automatically terminated after any of the defined conditions occur.
     type: product
@@ -303,8 +297,6 @@ controls:
   - key: a
     text: Remote access sessions are permitted.
     type: narrative
-    guidance: 'Examine: remote access policy; documentation of permitted remote access types; network
-      diagrams.'
   - key: b
     text: The types of permitted remote access are identified.
     type: product
@@ -331,8 +323,6 @@ controls:
   - key: a
     text: Cryptographic mechanisms to protect the confidentiality of remote access sessions are identified.
     type: product
-    guidance: 'Examine: remote access policy; configuration of cryptographic mechanisms for remote sessions;
-      VPN or TLS configuration.'
   - key: b
     text: Cryptographic mechanisms to protect the confidentiality of remote access sessions are implemented.
     type: narrative
@@ -352,8 +342,6 @@ controls:
   - key: a
     text: Managed access control points are identified and implemented.
     type: product
-    guidance: 'Examine: network architecture documentation; configuration of managed access control points;
-      firewall rules.'
   - key: b
     text: Remote access is routed through managed network access control points.
     type: narrative
@@ -374,8 +362,6 @@ controls:
   - key: a
     text: Privileged commands authorized for remote execution are identified.
     type: narrative
-    guidance: 'Examine: access control policy; documentation of privileged commands authorized for remote
-      execution.'
   - key: b
     text: Security-relevant information authorized to be accessed remotely is identified.
     type: narrative
@@ -401,8 +387,6 @@ controls:
   - key: a
     text: Wireless access points are identified.
     type: document_list
-    guidance: 'Examine: wireless access policy; list of authorized wireless access points; documentation
-      of wireless authorization.'
   - key: b
     text: Wireless access is authorized prior to allowing such connections.
     type: narrative
@@ -422,8 +406,6 @@ controls:
   - key: a
     text: Wireless access to the system is protected using authentication.
     type: product
-    guidance: 'Examine: wireless access configuration; authentication protocol settings; encryption configuration
-      for wireless access.'
   - key: b
     text: Wireless access to the system is protected using encryption.
     type: product
@@ -443,8 +425,6 @@ controls:
   - key: a
     text: Mobile devices that process, store, or transmit CUI are identified.
     type: document_list
-    guidance: 'Examine: mobile device policy; inventory of mobile devices processing CUI; mobile device
-      management configuration.'
   - key: b
     text: Mobile device connections are authorized.
     type: product
@@ -467,8 +447,6 @@ controls:
   - key: a
     text: Mobile devices and mobile computing platforms that process, store, or transmit CUI are identified.
     type: product
-    guidance: 'Examine: mobile device policy; encryption configuration on mobile devices; verification
-      of FIPS-validated encryption.'
   - key: b
     text: Encryption is employed to protect CUI on identified mobile devices and mobile computing platforms.
     type: narrative
@@ -489,8 +467,6 @@ controls:
   - key: a
     text: Connections to external systems are identified.
     type: document_list
-    guidance: 'Examine: external system connection agreements; list of identified external system connections;
-      system security plan.'
   - key: b
     text: The use of external systems is identified.
     type: narrative
@@ -522,8 +498,6 @@ controls:
   - key: a
     text: The use of portable storage devices containing CUI on external systems is identified and documented.
     type: product
-    guidance: 'Examine: portable storage device policy; records of portable storage device use on external
-      systems.'
   - key: b
     text: Limits on the use of portable storage devices containing CUI on external systems are defined.
     type: narrative
@@ -549,8 +523,6 @@ controls:
     type: scheduled_operation
     cadence: quarterly
     cadence_resp: shared
-    guidance: 'Examine: procedures for reviewing publicly accessible content; training records for individuals
-      authorized to post content.'
   - key: c
     text: A review process is in place prior to posting of any content to publicly accessible systems.
     type: narrative
@@ -578,8 +550,6 @@ controls:
   - key: a
     text: Security risks associated with organizational activities involving CUI are identified.
     type: narrative
-    guidance: 'Examine: security awareness training materials; documentation of security risks associated
-      with CUI handling.'
   - key: b
     text: Policies, standards, and procedures related to the security of the system are identified.
     type: scheduled_operation
@@ -611,8 +581,6 @@ controls:
   - key: a
     text: Information security-related duties, roles, and responsibilities are defined.
     type: document_list
-    guidance: 'Examine: role-based training documentation; security responsibility assignments; training
-      completion records.'
   - key: b
     text: Information security-related duties, roles, and responsibilities are assigned to designated
       personnel.
@@ -641,8 +609,6 @@ controls:
   - key: a
     text: Potential indicators associated with insider threats are identified.
     type: narrative
-    guidance: 'Examine: insider threat awareness training materials; documentation of potential insider
-      threat indicators.'
   - key: b
     text: Security awareness training on recognizing and reporting potential indicators of insider threat
       is provided to managers and employees.
@@ -667,8 +633,6 @@ controls:
     text: Audit logs needed (i.e., event types to be logged) to enable the monitoring, analysis, investigation,
       and reporting of unlawful or unauthorized system activity are specified.
     type: narrative
-    guidance: 'Examine: audit policy; list of event types to be logged; system configuration for audit
-      logging.'
   - key: b
     text: The content of audit records needed to support monitoring, analysis, investigation, and reporting
       of unlawful or unauthorized system activity is defined.
@@ -704,7 +668,6 @@ controls:
     text: The content of the audit records needed to support the ability to uniquely trace users to their
       actions is defined.
     type: narrative
-    guidance: 'Examine: audit policy; audit record content requirements; sample audit records for completeness.'
   - key: b
     text: Audit records, once created, contain the defined content.
     type: product
@@ -726,7 +689,6 @@ controls:
     type: scheduled_operation
     cadence: quarterly
     cadence_resp: msp
-    guidance: 'Examine: audit review process documentation; records of logged event type reviews and updates.'
   - key: b
     text: Event types being logged are reviewed in accordance with the defined review process.
     type: narrative
@@ -748,8 +710,6 @@ controls:
   - key: a
     text: Personnel or roles to be alerted in the event of an audit logging process failure are identified.
     type: narrative
-    guidance: 'Examine: audit logging configuration; alert configuration for audit logging failures; incident
-      records.'
   - key: b
     text: Types of audit logging process failures for which alert will be generated are defined.
     type: product
@@ -774,8 +734,6 @@ controls:
     text: Audit record review, analysis, and reporting processes for investigation and response to indications
       of unlawful, unauthorized, suspicious, or unusual activity are defined.
     type: product
-    guidance: 'Examine: audit review and analysis process documentation; SIEM configuration; audit correlation
-      procedures.'
   - key: b
     text: Defined audit record review, analysis, and reporting processes are correlated.
     type: narrative
@@ -795,8 +753,6 @@ controls:
   - key: a
     text: An audit record reduction capability that supports on-demand analysis is provided.
     type: product
-    guidance: 'Examine: audit reduction tool configuration; report generation capability; sample audit
-      reports.'
   - key: b
     text: A report generation capability that supports on-demand reporting is provided.
     type: product
@@ -817,8 +773,6 @@ controls:
   - key: a
     text: Internal system clocks are used to generate time stamps for audit records.
     type: product
-    guidance: 'Examine: NTP configuration; documentation of authoritative time source; audit record time
-      stamps.'
   - key: b
     text: An authoritative source with which to compare and synchronize internal system clocks is specified.
     type: product
@@ -842,8 +796,6 @@ controls:
   - key: a
     text: Audit information is protected from unauthorized access.
     type: product
-    guidance: 'Examine: audit log access controls; permissions on audit logs and audit tools; audit of
-      audit log access.'
   - key: b
     text: Audit information is protected from unauthorized modification.
     type: product
@@ -875,8 +827,6 @@ controls:
   - key: a
     text: A subset of privileged users granted access to manage audit logging functionality is defined.
     type: document_list
-    guidance: 'Examine: access control list for audit management functions; list of privileged users with
-      audit management access.'
   - key: b
     text: Management of audit logging functionality is limited to the defined subset of privileged users.
     type: product
@@ -898,8 +848,6 @@ controls:
   - key: a
     text: A baseline configuration is established.
     type: narrative
-    guidance: 'Examine: baseline configuration documentation; system inventory; records of baseline review
-      and update.'
   - key: b
     text: The baseline configuration includes hardware, software, firmware, and documentation.
     type: document_list
@@ -936,8 +884,6 @@ controls:
     text: Security configuration settings for information technology products employed in the system are
       established and included in the baseline configuration.
     type: narrative
-    guidance: 'Examine: security configuration baselines; system configuration settings; configuration
-      management tool outputs.'
   - key: b
     text: Security configuration settings for information technology products employed in the system are
       enforced.
@@ -959,8 +905,6 @@ controls:
   - key: a
     text: Changes to the system are tracked.
     type: product
-    guidance: 'Examine: change control process documentation; change log; records of change tracking and
-      approval.'
   - key: b
     text: Changes to the system are reviewed.
     type: narrative
@@ -986,8 +930,6 @@ controls:
   - key: a
     text: The security impact of changes to the system is analyzed prior to implementation.
     type: narrative
-    guidance: 'Examine: security impact analysis procedure; records of security impact analysis for recent
-      changes.'
   discussion: A significant change is a change that is likely to affect the security posture of the system.
     Significant changes include installing a new operating system, installing a new software application,
     installing a new hardware component, changes in the system environment, and the expiration of a security
@@ -1005,8 +947,6 @@ controls:
   - key: a
     text: Physical access restrictions associated with changes to the system are defined.
     type: narrative
-    guidance: 'Examine: change control policy; access control list for change management systems; records
-      of access approval.'
   - key: b
     text: Physical access restrictions associated with changes to the system are documented.
     type: narrative
@@ -1045,8 +985,6 @@ controls:
   - key: a
     text: Essential system capabilities are defined based on the principle of least functionality.
     type: narrative
-    guidance: 'Examine: system configuration documentation; list of essential capabilities; port and service
-      scan results.'
   - key: b
     text: The system is configured to provide only the defined essential capabilities.
     type: product
@@ -1067,8 +1005,6 @@ controls:
   - key: a
     text: Essential programs are defined.
     type: narrative
-    guidance: 'Examine: authorized software list; policy prohibiting unauthorized software; software inventory
-      records.'
   - key: b
     text: The use of nonessential programs is defined.
     type: product
@@ -1128,8 +1064,6 @@ controls:
   - key: a
     text: A policy specifying whether whitelisting or blacklisting is to be implemented is specified.
     type: narrative
-    guidance: 'Examine: application execution policy; whitelisting or blacklisting configuration; enforcement
-      records.'
   - key: b
     text: The software allowed to execute under whitelisting or denied use under blacklisting is specified.
     type: product
@@ -1153,8 +1087,6 @@ controls:
   - key: a
     text: A policy for controlling the installation of software by users is established.
     type: narrative
-    guidance: 'Examine: user software installation policy; configuration management records; software
-      installation logs.'
   - key: b
     text: Installation of software by users is controlled based on the established policy.
     type: product
@@ -1178,7 +1110,6 @@ controls:
   - key: a
     text: System users are identified.
     type: document_list
-    guidance: 'Examine: user account list; device inventory; documentation of system user identification.'
   - key: b
     text: Processes acting on behalf of users are identified.
     type: narrative
@@ -1202,8 +1133,6 @@ controls:
   - key: a
     text: The identity of each user is authenticated or verified as a prerequisite to system access.
     type: product
-    guidance: 'Examine: authentication policy; authentication mechanism configuration; account management
-      records.'
   - key: b
     text: The identity of each process acting on behalf of a user is authenticated or verified as a prerequisite
       to system access.
@@ -1229,8 +1158,6 @@ controls:
   - key: a
     text: Privileged accounts are identified.
     type: product
-    guidance: 'Examine: MFA policy; list of privileged accounts; MFA configuration for local and network
-      access.'
   - key: b
     text: Multifactor authentication is implemented for local access to privileged accounts.
     type: product
@@ -1259,8 +1186,6 @@ controls:
     text: Replay-resistant authentication mechanisms are implemented for network account access to privileged
       and non-privileged accounts.
     type: product
-    guidance: 'Examine: authentication mechanism configuration; documentation of replay-resistant authentication
-      methods.'
   discussion: Authentication feedback such as showing asterisks when a password is typed provides information
     that may be exploited by adversaries to compromise authentication mechanisms. The feedback from authentication
     systems does not provide information that would allow unauthorized individuals to compromise authentication.
@@ -1277,8 +1202,6 @@ controls:
   - key: a
     text: A period within which identifiers cannot be reused is defined.
     type: narrative
-    guidance: 'Examine: identifier management policy; documentation of reuse prohibition period; account
-      management records.'
   - key: b
     text: Reuse of identifiers is prevented within the defined period.
     type: product
@@ -1297,8 +1220,6 @@ controls:
   - key: a
     text: A period of inactivity after which an identifier is disabled is defined.
     type: narrative
-    guidance: 'Examine: identifier management policy; documentation of inactivity period; records of disabled
-      accounts.'
   - key: b
     text: Identifiers are disabled after the defined period of inactivity.
     type: scheduled_operation
@@ -1319,8 +1240,6 @@ controls:
   - key: a
     text: Password complexity requirements are defined.
     type: narrative
-    guidance: 'Examine: password policy; documentation of complexity requirements; system configuration
-      for password enforcement.'
   - key: b
     text: Password change of character requirements are defined.
     type: product
@@ -1347,8 +1266,6 @@ controls:
     text: The number of generations during which a password cannot be reused is specified and [b] reuse
       of passwords is prohibited during the specified number of generations.
     type: narrative
-    guidance: 'Examine: password policy; documentation of reuse prohibition generations; password history
-      configuration.'
   discussion: Password reuse prevention helps protect against replay attacks and ensures that users do
     not cycle through a set of passwords to return to a previously used one. Organization-defined parameters
     for this requirement include the number of generations to restrict and any historical time period
@@ -1366,8 +1283,6 @@ controls:
     text: An immediate change to a permanent password is required when a temporary password is used for
       system logon.
     type: product
-    guidance: 'Examine: account management policy; system configuration requiring password change at first
-      logon.'
   discussion: Temporary passwords are often issued when accounts are first created or when users need
     to reset their credentials. Requiring an immediate change to a permanent password when a temporary
     password is used prevents the temporary credential from being exploited. Temporary passwords must
@@ -1383,8 +1298,6 @@ controls:
   - key: a
     text: Passwords are cryptographically protected in storage.
     type: product
-    guidance: 'Examine: password storage configuration; transmission protection configuration; use of
-      FIPS-validated cryptography.'
   - key: b
     text: Passwords are cryptographically protected in transit.
     type: product
@@ -1404,8 +1317,6 @@ controls:
   - key: a
     text: Authentication information is obscured during the authentication process.
     type: product
-    guidance: 'Examine: authentication interface configuration; system settings for obscuring authentication
-      feedback.'
   discussion: Obscuring authentication feedback such as password fields protects potentially sensitive
     information from being observed by unauthorized individuals who may be in the vicinity. This applies
     not only to direct observation but also to automated or shoulder-surfing attacks. Authentication systems
@@ -1423,8 +1334,6 @@ controls:
   - key: a
     text: An operational incident-handling capability is established.
     type: narrative
-    guidance: 'Examine: incident response plan; incident handling capability documentation; incident response
-      procedures.'
   - key: b
     text: The operational incident-handling capability includes preparation.
     type: narrative
@@ -1460,7 +1369,6 @@ controls:
   - key: a
     text: Incidents are tracked.
     type: narrative
-    guidance: 'Examine: incident tracking records; incident documentation; reporting procedures and records.'
   - key: b
     text: Incidents are documented.
     type: narrative
@@ -1494,8 +1402,6 @@ controls:
     type: scheduled_operation
     cadence: annual
     cadence_resp: shared
-    guidance: 'Examine: incident response test plan; records of incident response capability testing;
-      after-action reports.'
   discussion: Incidents that are in progress or have occurred are examined to determine the cause and
     identify vulnerabilities that were exploited. An important aspect of organizational computer security
     incident response is the development of remediation actions for identified vulnerabilities. Lessons
@@ -1514,8 +1420,6 @@ controls:
     type: scheduled_operation
     cadence: annual
     cadence_resp: msp
-    guidance: 'Examine: maintenance policy; maintenance records; schedules and completion records for
-      system maintenance.'
   discussion: This requirement addresses the management of maintenance for organizational systems including
     hardware and software. Maintenance also includes those repairs that are necessitated by failures or
     malfunctions and improvements that address security vulnerabilities. Organizations perform maintenance
@@ -1531,8 +1435,6 @@ controls:
   - key: a
     text: Tools used to conduct system maintenance are controlled.
     type: narrative
-    guidance: 'Examine: maintenance policy; maintenance tool inventory; controls on maintenance tools
-      and techniques.'
   - key: b
     text: Techniques used to conduct system maintenance are controlled.
     type: document_list
@@ -1559,7 +1461,6 @@ controls:
     text: Equipment to be removed from organizational spaces for off-site maintenance is sanitized of
       any CUI.
     type: narrative
-    guidance: 'Examine: maintenance policy; records of equipment sanitization prior to off-site maintenance.'
   discussion: This requirement addresses the security risk associated with maintenance activities undertaken
     from remote locations. Malicious code can be introduced into a system as a result of unauthorized
     or poorly controlled remote maintenance activities. The use of cryptographic mechanisms to protect
@@ -1578,8 +1479,6 @@ controls:
     text: Media containing diagnostic and test programs are checked for malicious code before being used
       in organizational systems that process, store, or transmit CUI.
     type: product
-    guidance: 'Examine: maintenance policy; records of media scanning prior to use in systems; anti-malware
-      scan results.'
   discussion: Maintenance tools can be a potential source of vulnerabilities for the organization. A maintenance
     tool could be used to introduce malicious code, or could itself be vulnerable, thereby providing a
     mechanism for exploitation. Organizations check media used for diagnostic and test programs before
@@ -1598,8 +1497,6 @@ controls:
     text: Multifactor authentication is used to establish nonlocal maintenance sessions via external network
       connections.
     type: product
-    guidance: 'Examine: remote maintenance policy; MFA configuration for nonlocal maintenance; session
-      termination records.'
   - key: b
     text: Nonlocal maintenance sessions established via external network connections are terminated when
       nonlocal maintenance is complete.
@@ -1621,8 +1518,6 @@ controls:
     text: Maintenance personnel without required access authorization are supervised during maintenance
       activities.
     type: document_list
-    guidance: 'Examine: maintenance personnel authorization records; escort logs; supervision records
-      for maintenance activities.'
   discussion: Maintenance personnel are important to the security of systems. Some maintenance activities
     require access to system functions or information that maintenance personnel are not otherwise authorized
     to access. Supervising maintenance activities of personnel without required access authorization ensures
@@ -1640,8 +1535,6 @@ controls:
   - key: a
     text: Paper media containing CUI is physically controlled.
     type: narrative
-    guidance: 'Examine: media protection policy; physical security controls for paper media; storage location
-      security.'
   - key: b
     text: Digital media containing CUI is physically controlled.
     type: narrative
@@ -1667,8 +1560,6 @@ controls:
   - key: a
     text: Access to CUI on system media is limited to authorized users.
     type: document_list
-    guidance: 'Examine: media access policy; access control list for media containing CUI; media checkout
-      records.'
   discussion: Digital and non-digital media require physical protection to prevent unauthorized access
     to CUI. Access controls on media limit who can access information stored on that media. Organizations
     establish policies and procedures that define who is authorized to access system media containing
@@ -1686,8 +1577,6 @@ controls:
   - key: a
     text: System media containing CUI is sanitized or destroyed before disposal.
     type: narrative
-    guidance: 'Examine: media sanitization policy; media sanitization records; evidence of sanitization
-      methods used.'
   - key: b
     text: System media containing CUI is sanitized before it is released for reuse.
     type: narrative
@@ -1707,7 +1596,6 @@ controls:
   - key: a
     text: Media containing CUI is marked with applicable CUI markings.
     type: narrative
-    guidance: 'Examine: media marking policy; sample marked media; consistency of markings with CUI requirements.'
   - key: b
     text: Media containing CUI is marked with distribution limitations.
     type: narrative
@@ -1728,7 +1616,6 @@ controls:
   - key: a
     text: Access to media containing CUI is controlled.
     type: product
-    guidance: 'Examine: media transport policy; media accountability records; chain of custody documentation.'
   - key: b
     text: Accountability for media containing CUI is maintained during transport outside of controlled
       areas.
@@ -1750,8 +1637,6 @@ controls:
     text: The confidentiality of CUI stored on digital media is protected during transport using cryptographic
       mechanisms or alternative physical safeguards.
     type: product
-    guidance: 'Examine: media encryption configuration; transport encryption policy; evidence of FIPS-validated
-      cryptography.'
   discussion: Cryptographic mechanisms provide strong protection for CUI on portable digital media to
     protect against unauthorized disclosure if the media is lost or stolen during transport. FIPS-validated
     cryptographic mechanisms should be used when implementing this requirement. Alternative physical safeguards
@@ -1768,8 +1653,6 @@ controls:
   - key: a
     text: The use of removable media on system components is controlled.
     type: product
-    guidance: 'Examine: removable media policy; endpoint management configuration; records of removable
-      media use.'
   discussion: Removable media can be used to transfer CUI from one place to another and can introduce
     malicious code into systems. Organizations control the use of removable media to reduce the risk of
     loss, theft, and the introduction of malicious code. Controls on removable media include restrictions
@@ -1785,8 +1668,6 @@ controls:
   - key: a
     text: The use of portable storage devices is prohibited when such devices have no identifiable owner.
     type: product
-    guidance: 'Examine: portable storage device policy; endpoint management configuration blocking unidentified
-      devices.'
   discussion: Portable storage devices without identifiable owners pose a security risk because they may
     contain malicious code or be used to exfiltrate information. The prohibition on use of portable storage
     devices without identifiable owners reduces the risk of introducing malicious code through unknown
@@ -1803,8 +1684,6 @@ controls:
   - key: a
     text: The confidentiality of backup CUI is protected at storage locations.
     type: document_list
-    guidance: 'Examine: backup policy; backup storage location security controls; encryption of backup
-      CUI.'
   discussion: Backup copies of CUI are vulnerable to unauthorized disclosure if not properly protected.
     Organizations protect backup CUI to the same extent as the original CUI. Protecting the confidentiality
     of backup CUI at storage locations includes using encryption, access controls, and physical security
@@ -1821,8 +1700,6 @@ controls:
   - key: a
     text: Individuals are screened prior to authorizing access to organizational systems containing CUI.
     type: narrative
-    guidance: 'Examine: personnel screening policy; personnel screening records; access authorization
-      process.'
   discussion: Personnel security involves establishing requirements for the screening and vetting of personnel
     who occupy positions with access to sensitive organizational information. Personnel security requirements
     may apply to all personnel who need access to systems and information, or only to those individuals
@@ -1840,8 +1717,6 @@ controls:
     text: A policy and/or process for terminating system access and any credentials coincident with personnel
       actions is established.
     type: narrative
-    guidance: 'Examine: personnel termination/transfer policy; records of access termination; credential
-      revocation records.'
   - key: b
     text: System access and credentials are terminated consistent with personnel actions such as termination
       or transfer.
@@ -1866,8 +1741,6 @@ controls:
   - key: a
     text: Authorized individuals allowed physical access are identified.
     type: document_list
-    guidance: 'Examine: physical access control policy; list of authorized individuals; physical access
-      control mechanism.'
   - key: b
     text: Physical access to organizational systems is limited to authorized individuals.
     type: narrative
@@ -1895,8 +1768,6 @@ controls:
   - key: a
     text: The physical facility where organizational systems reside is protected.
     type: narrative
-    guidance: 'Examine: facility protection documentation; physical security controls; monitoring system
-      configuration.'
   - key: b
     text: The support infrastructure for organizational systems is protected.
     type: product
@@ -1925,7 +1796,6 @@ controls:
   - key: a
     text: Visitors are escorted.
     type: document_list
-    guidance: 'Examine: visitor access policy; visitor log; evidence of visitor escort procedures.'
   - key: b
     text: Visitor activity is monitored.
     type: narrative
@@ -1945,8 +1815,6 @@ controls:
   - key: a
     text: Audit logs of physical access are maintained.
     type: product
-    guidance: 'Examine: physical access audit log; log retention policy; review records for physical access
-      logs.'
   discussion: Audit logging and monitoring of physical access is important because physical security events
     such as unauthorized access and theft can have significant impacts on organizational operations and
     CUI. Audit logs of physical access include records of who entered and exited controlled areas, what
@@ -1964,7 +1832,6 @@ controls:
   - key: a
     text: Physical access devices are identified.
     type: document_list
-    guidance: 'Examine: physical access device inventory; access device issuance and revocation records.'
   - key: b
     text: Physical access devices are controlled.
     type: product
@@ -1987,8 +1854,6 @@ controls:
   - key: a
     text: Safeguarding measures for CUI are defined for alternate work sites.
     type: document_list
-    guidance: 'Examine: alternate work site policy; documentation of safeguarding measures for CUI at
-      alternate work sites.'
   - key: b
     text: Safeguarding measures for CUI are enforced for alternate work sites.
     type: narrative
@@ -2014,8 +1879,6 @@ controls:
     type: scheduled_operation
     cadence: annual
     cadence_resp: shared
-    guidance: 'Examine: risk assessment policy; risk assessment reports; documentation of risk assessment
-      frequency.'
   discussion: Risk assessments consider threats, vulnerabilities, likelihood, and impact to organizational
     operations and assets, individuals, and other organizations. Risk assessments also consider risk from
     external parties such as service providers, contractors, and others who access organizational systems
@@ -2033,8 +1896,6 @@ controls:
   - key: a
     text: The frequency to scan for vulnerabilities in organizational systems and applications is defined.
     type: narrative
-    guidance: 'Examine: vulnerability scanning policy; documentation of scan frequency; vulnerability
-      scan reports.'
   - key: b
     text: Vulnerability scans are performed on organizational systems with the defined frequency.
     type: scheduled_operation
@@ -2069,8 +1930,6 @@ controls:
     type: scheduled_operation
     cadence: monthly
     cadence_resp: msp
-    guidance: 'Examine: vulnerability management policy; vulnerability scan results; remediation records
-      and timelines.'
   - key: b
     text: Vulnerabilities are remediated in accordance with risk assessments.
     type: narrative
@@ -2092,8 +1951,6 @@ controls:
     type: scheduled_operation
     cadence: annual
     cadence_resp: shared
-    guidance: 'Examine: security assessment policy; documentation of assessment frequency; security assessment
-      reports.'
   - key: b
     text: Security controls are assessed with the defined frequency to determine if the controls are effective
       in their application.
@@ -2116,8 +1973,6 @@ controls:
   - key: a
     text: Deficiencies and vulnerabilities to be addressed by the plan of action are identified.
     type: narrative
-    guidance: 'Examine: plan of action and milestones documentation; identified deficiencies; remediation
-      schedules.'
   - key: b
     text: A plan of action is developed to correct identified deficiencies and reduce or eliminate identified
       vulnerabilities.
@@ -2147,8 +2002,6 @@ controls:
     type: scheduled_operation
     cadence: quarterly
     cadence_resp: msp
-    guidance: 'Examine: continuous monitoring strategy; monitoring results; records of security control
-      monitoring.'
   discussion: This requirement addresses ongoing monitoring of security controls in organizational systems.
     Security control monitoring involves monitoring the controls employed within and inherited by the
     system to determine if the controls continue to be effective over time given the inevitable changes
@@ -2167,8 +2020,6 @@ controls:
   - key: a
     text: A system security plan is developed.
     type: narrative
-    guidance: 'Examine: system security plan; system boundary documentation; environment of operation
-      description.'
   - key: b
     text: The system boundary is described and documented in the system security plan.
     type: narrative
@@ -2212,8 +2063,6 @@ controls:
   - key: a
     text: The external system boundary is defined.
     type: document_list
-    guidance: 'Examine: network diagram showing system boundary; boundary protection device configuration;
-      firewall rule sets.'
   - key: b
     text: Key internal system boundaries are defined.
     type: product
@@ -2252,8 +2101,6 @@ controls:
   - key: a
     text: Architectural designs that promote effective information security are identified.
     type: narrative
-    guidance: 'Examine: security architecture documentation; system design documents; software development
-      procedures.'
   - key: b
     text: Software development techniques that promote effective information security are identified.
     type: narrative
@@ -2285,8 +2132,6 @@ controls:
   - key: a
     text: User functionality is identified.
     type: product
-    guidance: 'Examine: system design documentation; separation of user and management functionality;
-      access control configuration.'
   - key: b
     text: System management functionality is identified.
     type: narrative
@@ -2309,8 +2154,6 @@ controls:
   - key: a
     text: Unauthorized and unintended information transfer via shared system resources is prevented.
     type: product
-    guidance: 'Examine: shared resource management configuration; evidence of resource purging between
-      users.'
   discussion: Preventing unauthorized and unintended information transfer via shared system resources
     addresses the concept of residual information protection. This requirement limits the ability of adversaries
     to exploit information that was left in system resources after processing. Systems should purge or
@@ -2329,7 +2172,6 @@ controls:
   - key: a
     text: Publicly accessible system components are identified.
     type: document_list
-    guidance: 'Examine: network diagram; list of publicly accessible system components; DMZ configuration.'
   - key: b
     text: Subnetworks for publicly accessible system components are physically or logically separated
       from internal networks.
@@ -2351,8 +2193,6 @@ controls:
   - key: a
     text: Network communications traffic is denied by default.
     type: product
-    guidance: 'Examine: firewall configuration; network device rule sets; evidence of deny-by-default
-      posture.'
   - key: b
     text: Network communications traffic is allowed by exception.
     type: narrative
@@ -2375,7 +2215,6 @@ controls:
       system and communicating via some other connection to resources in external networks (i.e., split
       tunneling).
     type: product
-    guidance: 'Examine: VPN configuration; remote access policy; evidence that split tunneling is disabled.'
   discussion: Split tunneling refers to the practice of routing some network traffic through a VPN tunnel
     while simultaneously allowing other traffic to route directly to the Internet. This can allow an adversary
     to access the organizational network through the remote device while also allowing the remote device
@@ -2393,8 +2232,6 @@ controls:
   - key: b
     text: Alternative physical safeguards intended to prevent unauthorized disclosure of CUI are identified.
     type: narrative
-    guidance: 'Examine: data in transit protection policy; cryptographic configuration for CUI transmission;
-      TLS/IPsec settings.'
   - key: c
     text: Either cryptographic mechanisms or alternative physical safeguards are implemented to prevent
       unauthorized disclosure of CUI during transmission.
@@ -2416,7 +2253,6 @@ controls:
     text: A period of inactivity to terminate network connections associated with communications sessions
       is defined.
     type: narrative
-    guidance: 'Examine: network connection termination policy; documentation of inactivity timeout period.'
   - key: b
     text: Network connections associated with communications sessions are terminated at the end of the
       sessions.
@@ -2441,8 +2277,6 @@ controls:
   - key: a
     text: Cryptographic keys are established whenever cryptography is employed.
     type: document_list
-    guidance: 'Examine: cryptographic key management policy; key inventory; key generation and distribution
-      procedures.'
   - key: b
     text: Cryptographic keys are managed whenever cryptography is employed.
     type: narrative
@@ -2462,8 +2296,6 @@ controls:
   - key: a
     text: FIPS-validated cryptography is employed to protect the confidentiality of CUI.
     type: product
-    guidance: 'Examine: cryptographic configuration; FIPS validation certificates; evidence of FIPS-validated
-      module use.'
   discussion: Cryptography can be employed to support many security solutions including the protection
     of CUI, the provision of digital signatures, and the enforcement of information separation. The strength
     of a cryptographic mechanism is characterized by the associated key length, algorithm, and implementation.
@@ -2481,7 +2313,6 @@ controls:
   - key: a
     text: Collaborative computing devices are identified.
     type: product
-    guidance: 'Examine: collaborative computing device inventory; configuration preventing remote activation.'
   - key: b
     text: Collaborative computing devices provide indication to users of devices in use.
     type: product
@@ -2504,8 +2335,6 @@ controls:
   - key: a
     text: Use of mobile code is controlled.
     type: product
-    guidance: 'Examine: mobile code policy; configuration of mobile code controls; monitoring records
-      for mobile code.'
   - key: b
     text: Use of mobile code is monitored.
     type: product
@@ -2525,7 +2354,6 @@ controls:
   - key: a
     text: Use of Voice over Internet Protocol (VoIP) technologies is controlled.
     type: product
-    guidance: 'Examine: VoIP policy; VoIP system configuration; VoIP monitoring configuration and records.'
   - key: b
     text: Use of Voice over Internet Protocol (VoIP) technologies is monitored.
     type: product
@@ -2545,8 +2373,6 @@ controls:
   - key: a
     text: The authenticity of communications sessions is protected.
     type: product
-    guidance: 'Examine: communications session protection configuration; TLS or SSH configuration; session
-      management settings.'
   discussion: Protecting the authenticity of communications sessions involves ensuring that session identifiers
     are unique, that session tokens cannot be predicted or reused, and that the source and integrity of
     communications are verifiable. Mechanisms for protecting session authenticity include cryptographic
@@ -2563,8 +2389,6 @@ controls:
   - key: a
     text: The confidentiality of CUI at rest is protected.
     type: product
-    guidance: 'Examine: data-at-rest encryption configuration; FIPS validation for storage encryption;
-      encrypted storage inventory.'
   discussion: Protecting the confidentiality of CUI at rest involves using encryption, access controls,
     and physical security to prevent unauthorized access to stored CUI. FIPS-validated encryption should
     be used when implementing this requirement. CUI at rest includes CUI stored on servers, workstations,
@@ -2582,7 +2406,6 @@ controls:
   - key: a
     text: The time within which to identify system flaws is specified.
     type: product
-    guidance: 'Examine: flaw remediation policy; vulnerability scan results; patch management records.'
   - key: b
     text: System flaws are identified within the specified time frame.
     type: narrative
@@ -2618,8 +2441,6 @@ controls:
   - key: a
     text: Designated locations for malicious code protection are identified.
     type: product
-    guidance: 'Examine: malicious code protection policy; anti-malware deployment locations; configuration
-      of protection mechanisms.'
   - key: b
     text: Protection from malicious code at designated locations is provided.
     type: product
@@ -2639,8 +2460,6 @@ controls:
   - key: a
     text: Response actions to system security alerts and advisories are identified.
     type: product
-    guidance: 'Examine: security alert monitoring process; subscription to CISA/US-CERT alerts; records
-      of alert review.'
   - key: b
     text: System security alerts and advisories are monitored.
     type: narrative
@@ -2666,8 +2485,6 @@ controls:
     type: scheduled_operation
     cadence: monthly
     cadence_resp: msp
-    guidance: 'Examine: malicious code protection update policy; records of definition and engine updates;
-      update logs.'
   discussion: Software patches and updates address a wide range of vulnerabilities. Organizations identify,
     assess, and implement patches and updates as a matter of normal system operations. Patch management
     processes address the timeliness of patch application and the mechanisms used for determining patch
@@ -2688,8 +2505,6 @@ controls:
     type: scheduled_operation
     cadence: monthly
     cadence_resp: msp
-    guidance: 'Examine: scan policy; documentation of scan frequency; evidence of real-time scanning for
-      external files.'
   - key: b
     text: Malicious code scans are performed with the defined frequency.
     type: product
@@ -2714,8 +2529,6 @@ controls:
   - key: a
     text: The system is monitored to detect attacks and indicators of potential attacks.
     type: product
-    guidance: 'Examine: network monitoring configuration; IDS/IPS deployment; monitoring scope and coverage
-      documentation.'
   - key: b
     text: Inbound communications traffic is monitored to detect attacks and indicators of potential attacks.
     type: product
@@ -2740,8 +2553,6 @@ controls:
   - key: a
     text: Authorized use of the system is defined.
     type: product
-    guidance: 'Examine: authorized use documentation; monitoring configuration; records of unauthorized
-      use detection.'
   - key: b
     text: Unauthorized use of the system is identified.
     type: narrative

@@ -154,7 +154,9 @@ def seed_catalog_cmd(
         session.commit()
         typer.echo(
             f"Catalog seeded: framework {result['framework_id']}, "
-            f"{result['controls']} controls, {result['objectives']} objectives."
+            f"{result['controls']} controls, {result['objectives']} objectives "
+            f"({result['official_guidance']} with official guidance, "
+            f"{result['practitioner_notes']} with practitioner notes)."
         )
     except Exception:
         session.rollback()
@@ -616,7 +618,9 @@ def reset_dev(
             session.flush()
             typer.echo("Created 'Acme MSP' org.")
 
-        # Re-seed catalog (idempotent — updates discussion/guidance text)
+        # Re-seed catalog (idempotent — updates discussion/official-guidance
+        # text; never overwrites a reviewed practitioner note, see
+        # seeds/catalog.py's _should_write_practitioner_notes)
         result = seed_catalog(session)
         session.commit()
 

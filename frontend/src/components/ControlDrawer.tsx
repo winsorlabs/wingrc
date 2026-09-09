@@ -4,6 +4,10 @@ import type { Contact, RaciAssignmentRow, StatementRow } from "../types";
 import { EvidenceSection } from "./EvidenceSection";
 import { RaciSection } from "./RaciSection";
 
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString();
+}
+
 const STMT_STATUSES = [
   { value: "draft", label: "Draft" },
   { value: "reviewed", label: "Reviewed" },
@@ -15,7 +19,12 @@ interface StatementItem {
   control_state_id: string | null;
   objective_key: string;
   objective_text: string;
-  objective_guidance: string | null;
+  official_guidance: string | null;
+  official_guidance_source: string | null;
+  practitioner_notes: string | null;
+  practitioner_notes_is_draft: boolean;
+  practitioner_notes_generated_at: string | null;
+  practitioner_notes_model: string | null;
   body: string;
   status: string;
   id: string | null;
@@ -41,7 +50,12 @@ function fromRow(row: StatementRow): StatementItem {
     control_state_id: row.control_state_id,
     objective_key: row.objective_key,
     objective_text: row.objective_text,
-    objective_guidance: row.objective_guidance,
+    official_guidance: row.official_guidance,
+    official_guidance_source: row.official_guidance_source,
+    practitioner_notes: row.practitioner_notes,
+    practitioner_notes_is_draft: row.practitioner_notes_is_draft,
+    practitioner_notes_generated_at: row.practitioner_notes_generated_at,
+    practitioner_notes_model: row.practitioner_notes_model,
     body: row.body,
     status: row.status ?? "draft",
     id: row.id,
@@ -196,22 +210,81 @@ export function ControlDrawer({
                 <div className="drawer-obj-header">
                   <span className="drawer-obj-key">[{item.objective_key}]</span>
                   <span className="drawer-obj-text">{item.objective_text}</span>
-                  {item.objective_guidance && (
-                    <button
-                      className="drawer-guidance-toggle"
-                      onClick={() =>
-                        setOpenGuidance((prev) => ({
-                          ...prev,
-                          [item.objective_id]: !prev[item.objective_id],
-                        }))
-                      }
-                    >
-                      {openGuidance[item.objective_id] ? "Hide guidance" : "Show guidance"}
-                    </button>
-                  )}
+                  {/* Always available, not conditioned on content existing --
+                      every objective should offer this affordance; the panel
+                      itself says so when official text isn't available for
+                      this specific objective rather than hiding the button. */}
+                  <button
+                    className="drawer-guidance-toggle"
+                    onClick={() =>
+                      setOpenGuidance((prev) => ({
+                        ...prev,
+                        [item.objective_id]: !prev[item.objective_id],
+                      }))
+                    }
+                  >
+                    {openGuidance[item.objective_id] ? "Hide guidance" : "Show guidance"}
+                  </button>
                 </div>
-                {item.objective_guidance && openGuidance[item.objective_id] && (
-                  <div className="drawer-guidance-text">{item.objective_guidance}</div>
+                {openGuidance[item.objective_id] && (
+                  <div className="drawer-guidance-panel">
+                    <div className="drawer-guidance-section drawer-guidance-official">
+                      <div className="drawer-guidance-section-label">
+                        Official CMMC Assessment Guide Text
+                      </div>
+                      {item.official_guidance ? (
+                        <>
+                          <div className="drawer-guidance-text">{item.official_guidance}</div>
+                          {item.official_guidance_source && (
+                            <div className="drawer-guidance-source">
+                              Source: {item.official_guidance_source}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div className="drawer-guidance-empty">
+                          The Assessment Guide does not provide official text specific to this
+                          objective.
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="drawer-guidance-section drawer-guidance-practitioner">
+                      <div className="drawer-guidance-section-label">MSP Practitioner Notes</div>
+                      <div className="drawer-ai-caveat">
+                        <strong>AI-generated guidance — not official CMMC content.</strong>{" "}
+                        Written by an AI model to summarize what assessors typically look for.
+                        It may contain errors, omissions, or outdated interpretations. Verify
+                        against the CMMC Assessment Guide and your C3PAO before relying on it.
+                      </div>
+                      {item.practitioner_notes ? (
+                        <>
+                          <div className="drawer-guidance-text">{item.practitioner_notes}</div>
+                          <div className="drawer-guidance-meta">
+                            {item.practitioner_notes_is_draft ? (
+                              <span className="status-badge status-warning">
+                                Unreviewed draft
+                              </span>
+                            ) : (
+                              <span className="status-badge status-active">Reviewed</span>
+                            )}
+                            {item.practitioner_notes_generated_at && (
+                              <span className="drawer-guidance-meta-item">
+                                Generated {formatDate(item.practitioner_notes_generated_at)}
+                                {item.practitioner_notes_model
+                                  ? ` by ${item.practitioner_notes_model}`
+                                  : ""}
+                              </span>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="drawer-guidance-empty">
+                          No practitioner notes yet for this objective.
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 )}
                 <fieldset className="fieldset-reset" disabled={!canWrite}>
                 <div className="drawer-obj-controls">

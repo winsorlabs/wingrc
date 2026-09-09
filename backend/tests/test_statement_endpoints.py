@@ -67,13 +67,21 @@ def _seed(db_session, *, org_id: uuid.UUID | None = None, fake_msp_admin=None) -
         control_id=ctrl.id,
         objective_key="a",
         text="Authorized users are identified.",
-        guidance="Examine: access control policy; list of users.",
+        official_guidance="Examine: access control policy; list of users.",
+        official_guidance_source=(
+            "CMMC Assessment Guide - Level 2, Version 2.13 (September 2024) - AC.L2-TEST[a]"
+        ),
+        practitioner_notes="Assessors typically check for a maintained user list.",
+        practitioner_notes_is_draft=True,
     )
     obj_b = AssessmentObjective(
         control_id=ctrl.id,
         objective_key="b",
         text="Authorized devices are identified.",
-        guidance="Examine: device inventory; network diagrams.",
+        official_guidance="Examine: device inventory; network diagrams.",
+        official_guidance_source=(
+            "CMMC Assessment Guide - Level 2, Version 2.13 (September 2024) - AC.L2-TEST[b]"
+        ),
     )
     obj_c = AssessmentObjective(
         control_id=ctrl.id,
@@ -129,13 +137,38 @@ def test_get_statements_empty(client, db_session, fake_msp_admin):
 
 
 @pytest.mark.integration
-def test_get_statements_returns_guidance(client, db_session, fake_msp_admin):
+def test_get_statements_returns_official_guidance(client, db_session, fake_msp_admin):
     d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     items = client.get(_base_url(d)).json()
     obj_a_item = next(i for i in items if i["objective_key"] == "a")
     obj_c_item = next(i for i in items if i["objective_key"] == "c")
-    assert obj_a_item["objective_guidance"] == "Examine: access control policy; list of users."
-    assert obj_c_item["objective_guidance"] is None
+    assert obj_a_item["official_guidance"] == "Examine: access control policy; list of users."
+    assert obj_a_item["official_guidance_source"] == (
+        "CMMC Assessment Guide - Level 2, Version 2.13 (September 2024) - AC.L2-TEST[a]"
+    )
+    assert obj_c_item["official_guidance"] is None
+    assert obj_c_item["official_guidance_source"] is None
+
+
+@pytest.mark.integration
+def test_get_statements_returns_practitioner_notes_with_draft_flag(
+    client, db_session, fake_msp_admin
+):
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    items = client.get(_base_url(d)).json()
+    obj_a_item = next(i for i in items if i["objective_key"] == "a")
+    obj_b_item = next(i for i in items if i["objective_key"] == "b")
+    assert (
+        obj_a_item["practitioner_notes"]
+        == "Assessors typically check for a maintained user list."
+    )
+    assert obj_a_item["practitioner_notes_is_draft"] is True
+    assert obj_b_item["practitioner_notes"] is None
+    # Never returned as False by default -- the schema default matches the
+    # DB default (both "draft until reviewed"), so an objective with no
+    # note at all still reads as draft=True rather than something falsy
+    # that could be misread as "reviewed."
+    assert obj_b_item["practitioner_notes_is_draft"] is True
 
 
 @pytest.mark.integration

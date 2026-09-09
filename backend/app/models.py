@@ -289,7 +289,43 @@ class AssessmentObjective(Base):
     cadence_responsibility: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # True until C3PAO has reviewed the type/cadence/responsibility assignment
     is_draft: Mapped[bool] = mapped_column(Boolean, server_default="true")
-    guidance: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Two separate guidance fields (migration 0031) -- never blended into
+    # one, per CLAUDE.md's compliance-content discipline. An MSP reading
+    # this in front of a C3PAO must always know which sentences are
+    # authoritative and which are advisory.
+    #
+    # official_guidance: verbatim-derived from the real CMMC Assessment
+    # Guide Level 2 PDF (scripts/cmmc_guidance/, backend/app/seeds/
+    # cmmc_official_guidance.yaml) -- never AI-paraphrased, never
+    # hand-typed from memory. official_guidance_source is the citation
+    # (practice id + guide version), derived at seed time rather than
+    # stored 316 times over -- see seeds/catalog.py.
+    official_guidance: Mapped[str | None] = mapped_column(Text, nullable=True)
+    official_guidance_source: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    # practitioner_notes: AI-drafted (backend/app/seeds/
+    # cmmc_practitioner_notes.yaml), advisory only -- what assessors
+    # typically examine and what evidence typically demonstrates the
+    # objective, never a verdict ("candidates, never auto-met" applies to
+    # guidance text the same as it does to control state). Mirrors
+    # is_draft's pattern above: stays True until a qualified human
+    # reviews it, and seed_catalog.py's upsert never overwrites a
+    # reviewed (is_draft=False) note -- see that module's docstring for
+    # the exact rule.
+    #
+    # NOT currently included in any export (SSP bundle, PDF, etc.) -- the
+    # bundle_service.py pipeline has no reference to guidance at all
+    # today. Whoever adds that must carry the AI-authorship caveat (see
+    # frontend PractitionerNoteCaveat) into the export alongside the text;
+    # a warning that only exists in the web UI is worthless once the
+    # content is exported and handed to someone else.
+    practitioner_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    practitioner_notes_is_draft: Mapped[bool] = mapped_column(Boolean, server_default="true")
+    practitioner_notes_generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    practitioner_notes_model: Mapped[str | None] = mapped_column(String(60), nullable=True)
 
 
 # ---------------------------------------------------------------------------

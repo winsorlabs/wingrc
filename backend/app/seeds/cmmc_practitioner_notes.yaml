@@ -1,0 +1,1598 @@
+# MSP practitioner notes, per objective. AI-drafted (Claude Sonnet 5,
+# 2026-09-09) -- advisory only, NOT official CMMC content. See
+# AssessmentObjective.practitioner_notes / models.py for the draft/review
+# discipline this feeds (practitioner_notes_is_draft defaults true on
+# every seeded row; a reseed never overwrites a row a human has reviewed
+# -- see seeds/catalog.py's _should_write_practitioner_notes).
+#
+# Framing rules followed while writing these (do not relax on a future
+# edit without re-reading CLAUDE.md's "candidates, never auto-met" rule):
+#   - Never a verdict. No "if you have X you meet this requirement." These
+#     describe what assessors typically examine/interview/test and what
+#     evidence typically demonstrates the objective in a small-MSP
+#     environment -- never a statement that a control IS satisfied.
+#   - No vendor product names. Capability categories only (e.g. "an EDR
+#     agent" not a specific product) -- naming products turns guidance
+#     into a marketing surface that ages badly as the vendor landscape
+#     shifts.
+#   - Common pitfalls, not instructions. Point out where MSPs typically
+#     get this wrong, not a step-by-step "how to implement."
+#
+# Structure: {practice_id: {objective_key: text}}. Coverage is reported by
+# seed_catalog()'s return dict (`practitioner_notes` count) -- see
+# docs/roadmap.md's writeup for this feature for the exact number and any
+# gaps, rather than assuming full coverage here.
+
+AC.L2-3.1.1:
+  a: >-
+    Assessors look for one authoritative, current list of who is allowed
+    system access -- not a mental model held by IT. A common gap: the list
+    exists but isn't kept current against HR offboarding, so terminated
+    staff still appear "authorized" weeks later. A user directory export or
+    an access-control policy referencing a maintained roster both work as
+    evidence; a spreadsheet nobody has opened in months does not hold up
+    well under interview.
+  b: >-
+    This is about automated/service accounts and scheduled jobs, not human
+    users -- assessors ask who "owns" each non-interactive account and
+    whether it's traceable to an authorizing process rather than a
+    forgotten integration. MSPs often under-document this because it feels
+    like plumbing, not access control; a short inventory of service
+    accounts and what they're for is usually enough.
+  c: >-
+    Distinct from user identification: this is about which devices and
+    other systems (not people) are allowed on the network. Network access
+    control or device-registration records, and a defined process for
+    approving a new device, are the typical evidence. A frequent finding is
+    a guest/BYOD segment that was never formally reasoned about even though
+    it technically doesn't touch the CUI environment.
+  d: >-
+    Assessors typically test this directly -- attempting access with
+    unauthorized or disabled credentials to confirm enforcement, not just
+    reading a policy. Evidence is the enforcement configuration itself
+    (directory/identity provider access rules) plus a sample of recent
+    account-provisioning tickets. A stale account that still authenticates
+    successfully is the most common finding here.
+  e: >-
+    Same enforcement expectation as [d] but for processes/services acting
+    on a user's behalf -- e.g. a scheduled task or API integration that
+    inherits access. The evidence is usually the same access-control
+    configuration; the gap MSPs miss is a service account with broader
+    access than the process actually needs, left that way "because it
+    worked."
+  f: >-
+    Enforcement for devices specifically -- network access control,
+    802.1X, or an equivalent mechanism that actually blocks an
+    unauthorized device rather than merely inventorying it. A common
+    finding: the device list from [c] exists, but nothing technically
+    prevents an unlisted device from connecting.
+
+AC.L2-3.1.2:
+  a: >-
+    Assessors want a defined mapping of roles to the transactions/functions
+    they're permitted to execute -- role definitions in an identity
+    system, or a documented RBAC matrix. A common shortfall is defining
+    roles at the "admin vs. everyone else" level when the requirement
+    expects more granularity for the functions that actually touch CUI.
+  b: >-
+    Tested by attempting an action outside a role's defined permissions and
+    confirming it's blocked, not just examining the role definitions from
+    [a]. Evidence is usually the same access-control system's enforcement
+    logs or a walkthrough of the permission model. Roles that look
+    well-defined on paper but aren't actually enforced in the application
+    layer are the typical gap.
+
+AC.L2-3.1.3:
+  a: >-
+    A written policy describing how CUI is allowed to move through and out
+    of the environment -- not a technical control by itself. Assessors
+    check that the policy actually addresses CUI specifically rather than
+    being a generic data-handling policy that never mentions it.
+  b: >-
+    The mechanisms (not just the policy) for enforcing flow control --
+    network segmentation, DLP-style controls, or similar. A frequent
+    finding is a policy describing intended flow control with no
+    corresponding technical mechanism actually deployed to enforce it.
+  c: >-
+    Assessors expect network diagrams or system documentation that name
+    the specific sources/destinations CUI is allowed to flow between --
+    generic "the network" language doesn't satisfy this. Small
+    environments often have this only informally in someone's head; a
+    diagram is the most common artifact that closes the gap.
+  d: >-
+    The authorization criteria for CUI flow -- who approves a new flow
+    path and on what basis -- documented as policy or procedure, separate
+    from the technical enforcement in [e].
+  e: >-
+    Tested against the actual environment: does the deployed configuration
+    (firewall rules, segmentation, DLP policy) match the authorizations
+    defined in [d]? A common finding is configuration drift, where the
+    documented authorization no longer matches what's actually enforced.
+
+AC.L2-3.1.4:
+  a: >-
+    A documented list of duties that must be split between people (e.g.
+    who requests access vs. who grants it) so no one person can both
+    initiate and approve a sensitive action alone. Small MSPs and small
+    customer environments sometimes struggle here for legitimate staffing
+    reasons -- assessors want to see the conflict at least identified even
+    if the mitigation is a compensating control like enhanced logging.
+  b: >-
+    Evidence that the separated duties from [a] are actually assigned to
+    different named individuals, not just described in the abstract. An
+    org chart or a RACI-style assignment record is typical evidence.
+  c: >-
+    Access privileges (not just job assignments) that actually enforce the
+    separation -- e.g. the person who can request an account cannot also
+    grant it in the identity system. Tested by checking whether the
+    technical permissions match the documented separation of duties.
+
+AC.L2-3.1.5:
+  a: >-
+    An inventory specifically of privileged (elevated-permission) accounts,
+    distinct from the general user list in AC.L2-3.1.1[a]. Assessors often
+    ask how "privileged" is defined for this environment, since it varies
+    by system.
+  b: >-
+    Evidence that privileged access grants go through a least-privilege
+    justification, not just standard onboarding. A common finding: every
+    admin gets domain-admin-equivalent rights by default rather than the
+    specific elevated access their role needs.
+  c: >-
+    A defined list of what counts as a "security function" in this
+    environment (e.g. firewall management, log configuration, account
+    administration) -- this is the definitional groundwork [d] tests
+    enforcement against.
+  d: >-
+    Tested against [c]'s definition: is access to those specific security
+    functions actually restricted to the people who need it for their
+    role? Configuration of the relevant admin consoles/tools is the usual
+    evidence.
+
+AC.L2-3.1.6:
+  a: >-
+    A defined list of "nonsecurity" functions (ordinary business tasks,
+    as opposed to the security functions in AC.L2-3.1.5) that should never
+    require privileged access to perform.
+  b: >-
+    Tested by checking whether day-to-day users and even administrators
+    are required to use a standard, non-privileged account for routine
+    work and only elevate when performing an actual privileged function. A
+    frequent finding: IT staff doing routine email and browsing while
+    logged in as domain admin.
+
+AC.L2-3.1.7:
+  a: >-
+    A defined list of what counts as a privileged function in this
+    environment (installing software, changing security settings, managing
+    accounts, etc.) -- the definitional basis for [b]-[d].
+  b: >-
+    A defined list of who counts as a non-privileged user, mirroring [a]
+    from the other direction.
+  c: >-
+    Tested directly: can a non-privileged account actually execute a
+    privileged function? Assessors may attempt this. Evidence is the
+    access-control configuration blocking it, plus any exception-handling
+    process for legitimate elevation requests.
+  d: >-
+    Audit logging specifically covering privileged-function execution --
+    who elevated, when, and what they did. A common gap: general activity
+    logging exists, but privileged actions aren't distinguished from
+    routine ones in a way that's actually reviewable.
+
+AC.L2-3.1.8:
+  a: >-
+    A documented policy defining the lockout threshold/method (attempt
+    count, lockout duration, or similar) -- the definitional groundwork for
+    [b].
+  b: >-
+    Tested against the actual authentication system's configuration: does
+    it enforce the threshold defined in [a]? A frequent finding is a
+    policy stating a specific number of attempts that doesn't match what's
+    actually configured in the identity provider or local system.
+
+AC.L2-3.1.9:
+  a: >-
+    The exact notice text (privacy act statement, security banner
+    language) that applies to this environment's CUI category, documented
+    and consistent across systems -- generic boilerplate that doesn't
+    match the actual CUI category in scope is a common finding.
+  b: >-
+    Evidence that the notice from [a] actually displays at logon across
+    the relevant systems -- a screenshot or configuration export, not just
+    the policy text. A frequent gap: the notice is configured on the
+    primary domain login but missing from a secondary system or remote
+    access portal.
+
+AC.L2-3.1.10:
+  a: >-
+    A documented inactivity threshold (e.g. 15 minutes) that triggers a
+    session lock -- the policy basis for [b] and [c].
+  b: >-
+    Tested against the actual OS/application session-lock configuration:
+    does it match the defined threshold and actually prevent further
+    access without re-authentication? Group policy or MDM configuration
+    exports are typical evidence.
+  c: >-
+    Specifically that the lock conceals previously visible content (a
+    blanked or pattern screen), not just that the session becomes
+    inaccessible. A frequent finding: the workstation locks but a
+    notification preview still displays sensitive content on the lock
+    screen.
+
+AC.L2-3.1.11:
+  a: >-
+    A documented list of conditions that should force a session to end
+    (e.g. a defined idle period, end of business hours, VPN disconnect) --
+    the policy basis for [b].
+  b: >-
+    Tested against the actual system: does a session actually terminate
+    automatically when one of the defined conditions in [a] occurs, rather
+    than just locking? Session-timeout configuration on the relevant
+    systems (VPN, remote access, application) is typical evidence.
+
+AC.L2-3.1.12:
+  a: >-
+    A policy statement on whether remote access is permitted at all for
+    this environment, and under what general circumstances -- the
+    foundational scoping question the rest of this practice builds on.
+  b: >-
+    A defined list of the specific types of remote access allowed (VPN,
+    RDP through a gateway, a remote-management tool, etc.) rather than an
+    open-ended "remote access is fine" statement.
+  c: >-
+    Tested against the actual remote-access infrastructure: are sessions
+    routed through a controlled point rather than allowed to connect
+    directly to internal systems? Firewall/VPN configuration is typical
+    evidence.
+  d: >-
+    Evidence of active monitoring of remote sessions -- connection logs
+    reviewed on some cadence, not just logs that exist but nobody looks
+    at. A common finding: logging is enabled but there's no process or
+    person actually reviewing it.
+
+AC.L2-3.1.13:
+  a: >-
+    A defined list of the specific cryptographic mechanisms (e.g. a
+    particular VPN protocol, TLS configuration) used to protect remote
+    session confidentiality, including confirmation the underlying module
+    is FIPS-validated -- using an approved algorithm isn't sufficient on
+    its own if the implementing module itself isn't validated.
+  b: >-
+    Tested against the live configuration: is the mechanism from [a]
+    actually enabled and enforced on remote-access endpoints, not just
+    available as an option? A frequent finding is a VPN that supports
+    strong encryption but is also configured to accept weaker fallback
+    protocols.
+
+AC.L2-3.1.14:
+  a: >-
+    A defined and implemented set of managed access control points (e.g.
+    specific VPN concentrators or gateways) that all remote access must
+    pass through -- named and documented, not just "the firewall."
+  b: >-
+    Tested against actual network paths: does remote access genuinely
+    route through the control points from [a], with no side channel (a
+    forgotten direct-RDP port forward is the classic finding) that
+    bypasses them?
+
+AC.L2-3.1.15:
+  a: >-
+    A defined list of which privileged commands are allowed to be executed
+    remotely at all -- some environments reasonably restrict certain
+    high-impact commands to console/local access only.
+  b: >-
+    A defined list of what counts as security-relevant information that
+    may be accessed remotely, distinct from privileged commands in [a].
+  c: >-
+    Evidence of an authorization step (approval, ticket, or role
+    restriction) specifically gating remote execution of the privileged
+    commands identified in [a] -- not just that the account happens to
+    have permission.
+  d: >-
+    Same authorization expectation as [c], applied to remote access of the
+    security-relevant information from [b].
+
+AC.L2-3.1.16:
+  a: >-
+    An inventory of wireless access points in the environment -- assessors
+    sometimes find undocumented APs (a guest network, a forgotten test AP)
+    that never made it into the official list.
+  b: >-
+    Evidence of an authorization step before a device or user is granted
+    wireless access, rather than an open network anyone in range can join.
+
+AC.L2-3.1.17:
+  a: >-
+    Authentication configuration on the wireless network (WPA2/WPA3
+    enterprise with real credentials, not a shared passphrase everyone
+    knows) -- a shared PSK that's been unchanged for years is a common
+    finding.
+  b: >-
+    Encryption configuration protecting wireless traffic itself, verified
+    against the actual AP/controller settings rather than assumed from the
+    hardware's capability.
+
+AC.L2-3.1.18:
+  a: >-
+    An inventory specifically of mobile devices that touch CUI (phones,
+    tablets) -- distinct from the general device list in AC.L2-3.1.1[c].
+    BYOD phones used for email are the most commonly missed entries.
+  b: >-
+    Evidence of an authorization step (MDM enrollment, conditional access
+    policy) before a mobile device connects, not an implicit "anyone with
+    the app can connect."
+  c: >-
+    Monitoring/logging of mobile device connections -- MDM or conditional
+    access logs are typical evidence. A frequent gap: devices are enrolled
+    but connection activity isn't actually reviewed.
+
+AC.L2-3.1.19:
+  a: >-
+    An inventory of mobile devices/platforms that process, store, or
+    transmit CUI specifically -- overlaps with AC.L2-3.1.18[a] but framed
+    around CUI handling rather than general connectivity.
+  b: >-
+    Evidence that encryption (device-level or container/app-level) is
+    actually enabled on the devices from [a], not just available as a
+    platform feature. MDM policy configuration is typical evidence; an
+    unencrypted personal phone with corporate email is a common finding.
+
+AC.L2-3.1.20:
+  a: >-
+    A documented list of connections to external systems (a client's
+    network, a cloud vendor, a partner) -- assessors want named
+    connections, not a general statement that integrations exist.
+  b: >-
+    Distinct from [a]: documentation of the use of external systems more
+    broadly (e.g. an employee using a personal external system to access
+    organizational resources), not just inbound connections.
+  c: >-
+    Evidence of a verification step (a security review, an agreement) for
+    each connection identified in [a] before it's trusted, not just that
+    the connection technically works.
+  d: >-
+    Verification specifically of external system use from [b] -- e.g.
+    confirming a personally-owned device meets baseline requirements
+    before it's allowed to connect.
+  e: >-
+    Technical controls actually limiting what an external connection from
+    [a]/[c] can reach -- network segmentation or access restrictions, not
+    just a policy saying it should be limited.
+  f: >-
+    Same limiting expectation as [e], applied to the use of external
+    systems from [b]/[d].
+
+AC.L2-3.1.21:
+  a: >-
+    An inventory of portable storage devices (USB drives, external disks)
+    that have been used with CUI on external systems -- most small
+    environments have never formally tracked this and default to "we
+    don't allow it," which itself needs to be a documented decision, not
+    an assumption.
+  b: >-
+    A documented policy defining limits on portable storage use with
+    external systems (allowed, prohibited, or conditionally allowed with
+    encryption).
+  c: >-
+    Evidence the limits from [b] are actually enforced -- device control
+    policy (USB restriction via endpoint management) or a process
+    confirming compliance, not just the written policy.
+
+AC.L2-3.1.22:
+  b: >-
+    A documented procedure describing how CUI is kept off publicly
+    accessible systems (a public website, a public-facing portal) --
+    scoped specifically to public-facing systems, distinct from general
+    data-handling policy.
+  c: >-
+    Evidence of an actual review step before content is posted publicly --
+    who reviews, and against what checklist -- rather than posting
+    directly with no gate.
+  d: >-
+    Ongoing review of already-published content to catch CUI that slipped
+    through, not just a one-time pre-publish check. A periodic audit of
+    the public site/portal is typical evidence.
+  e: >-
+    A defined process for what happens when CUI is found improperly
+    posted -- who removes it, how fast, and whether there's a
+    notification step -- tested against whether it's ever actually been
+    exercised or just theoretical.
+
+AT.L2-3.2.1:
+  a: >-
+    Evidence that risks specific to this organization's actual CUI
+    handling were identified, not a generic "phishing is bad" slide deck
+    that never mentions CUI. Interviews with staff are common here --
+    assessors ask what CUI-related risks they're aware of, not just
+    whether training was delivered.
+  b: >-
+    The organization's own policies/standards/procedures identified as
+    the basis for awareness training -- i.e. training content should trace
+    back to real, existing documents, not a generic off-the-shelf module
+    unrelated to this environment's actual policies.
+  c: >-
+    Records that awareness training was actually delivered on a defined
+    cadence (attendance logs, completion records, dates) -- a policy
+    saying training happens annually with no record it occurred is a
+    common finding.
+  d: >-
+    Similar to [c] but specifically that the training covered the
+    organization's own policies/standards/procedures from [b], not just
+    general security awareness content.
+
+AT.L2-3.2.2:
+  a: >-
+    A defined list of security-related duties/roles beyond general
+    awareness -- e.g. who administers accounts, who manages the firewall.
+    Small MSPs often have these duties concentrated in one or two people
+    without ever writing them down as a role.
+  b: >-
+    Evidence the roles from [a] are actually assigned to named individuals
+    -- an org chart, job description, or RACI-style record.
+  c: >-
+    Training records specific to the role-based duties from [a]/[b] --
+    distinct from AT.L2-3.2.1's general awareness training. A firewall
+    administrator should have evidence of firewall-specific training, not
+    just the annual all-staff module.
+
+AT.L2-3.2.3:
+  a: >-
+    A documented list of insider-threat indicators relevant to this
+    environment (unusual access patterns, disgruntled-employee behavior,
+    unauthorized data movement) -- generic industry lists are a reasonable
+    starting point but assessors look for evidence it was actually
+    adopted, not just referenced.
+  b: >-
+    Training records specifically covering insider-threat recognition and
+    reporting, delivered to managers and employees -- distinct from
+    general security awareness in AT.L2-3.2.1. A common gap: general
+    security training exists but never specifically addresses insider
+    threat indicators or how to report a concern.
+
+AU.L2-3.3.1:
+  a: >-
+    A documented list of which event types get logged (logon attempts,
+    privilege escalation, configuration changes, etc.) and the reasoning
+    tied to detecting unlawful/unauthorized activity -- not just "logging
+    is turned on."
+  b: >-
+    The specific fields/content each audit record must contain (timestamp,
+    user, event outcome, source) -- defined separately from which events
+    get logged in [a].
+  c: >-
+    Evidence records are actually being generated -- a live sample of
+    audit logs from the relevant systems, not just the logging
+    configuration screen.
+  d: >-
+    Spot-check that generated records actually contain the fields defined
+    in [b] -- a frequent gap is a logging system enabled with default
+    settings that omit a field the org's own policy says is required.
+  e: >-
+    A documented retention period for audit records, tied to any
+    applicable requirement, not an arbitrary "however long the disk
+    allows."
+  f: >-
+    Evidence records are actually retained for the period defined in [e]
+    -- storage configuration or an archival process, checked against
+    whether logs from that far back genuinely still exist.
+
+AU.L2-3.3.2:
+  a: >-
+    Specifically that audit record content is defined to support tracing
+    an action back to one individual user (not just "system did X") --
+    e.g. requiring a unique username field rather than a shared
+    service-account identity for interactive logons.
+  b: >-
+    Spot-check that records actually carry the individually-identifying
+    content from [a]. A common finding is shared/generic accounts (a
+    single "admin" login used by multiple staff) that make this
+    traceability impossible regardless of what the logging config
+    captures.
+
+AU.L2-3.3.3:
+  a: >-
+    A documented cadence/process for when logs get reviewed (daily,
+    weekly, alert-driven) -- assessors want a defined process, not "we
+    look at it when something seems wrong."
+  b: >-
+    Evidence the review from [a] actually happens on schedule -- review
+    notes, tickets, or a log-management tool's review history. Logging
+    infrastructure that exists but nobody demonstrably reviews is one of
+    the more common AU findings.
+  c: >-
+    Evidence that what gets logged has actually been adjusted based on a
+    prior review's findings -- e.g. adding a new event type after a gap
+    was noticed. A static logging configuration that's never been revised
+    suggests the review in [b] isn't feeding back into anything.
+
+AU.L2-3.3.4:
+  a: >-
+    A defined list of who gets alerted if the logging pipeline itself
+    fails -- named roles, not just "IT will notice eventually."
+  b: >-
+    The specific failure conditions that trigger an alert (storage full,
+    forwarding agent down, service stopped) -- defined distinctly from who
+    gets alerted in [a].
+  c: >-
+    Evidence the alerting from [a]/[b] actually fires -- a test event, a
+    real historical incident, or a walkthrough of the alerting
+    configuration. A logging failure that would go silently unnoticed is
+    a significant finding here.
+
+AU.L2-3.3.5:
+  a: >-
+    A defined process for reviewing, analyzing, and reporting on audit
+    data to investigate suspicious activity -- distinct from the routine
+    review in AU.L2-3.3.3, this is about actual investigation/response
+    workflow.
+  b: >-
+    Evidence that logs from different sources are actually correlated
+    (a SIEM-style capability or a documented manual correlation process)
+    rather than reviewed as isolated, disconnected feeds per system.
+
+AU.L2-3.3.6:
+  a: >-
+    A capability to narrow down a large log volume to what's relevant for
+    a specific investigation (filtering, querying) -- demonstrated with an
+    example query or tool walkthrough, not just asserted.
+  b: >-
+    A capability to generate a report from audit data on demand, separate
+    from the reduction capability in [a] -- e.g. producing a summary for a
+    specific time window or event type when asked.
+
+AU.L2-3.3.7:
+  a: >-
+    Confirmation that system clocks are actually the source of audit
+    timestamps -- typically observed directly rather than needing separate
+    documentation.
+  b: >-
+    A named, specific time source (an NTP server, a domain controller
+    acting as time authority) that clocks are meant to synchronize
+    against.
+  c: >-
+    Evidence clocks are actually synchronized to the source from [b] --
+    configuration showing NTP is enabled and pointed at the right source,
+    plus a spot-check that clocks across systems actually agree. Drifted
+    clocks undermine the reliability of every other audit-log objective in
+    this family.
+
+AU.L2-3.3.8:
+  a: >-
+    Access controls specifically restricting who can read audit logs, not
+    just who can access the system generally -- a common gap is audit
+    logs sitting in a location every admin can browse freely with no
+    additional restriction.
+  b: >-
+    Controls preventing unauthorized modification of audit records --
+    write-protection, append-only storage, or equivalent, distinct from
+    read access in [a].
+  c: >-
+    Controls preventing unauthorized deletion, including protection
+    against an admin account casually clearing logs -- retention/immutability
+    settings are typical evidence.
+  d: >-
+    Access restrictions on the logging tools/infrastructure themselves
+    (the SIEM or log-forwarding agent configuration), not just the log
+    data.
+  e: >-
+    Protection of the logging tools from unauthorized modification --
+    configuration-change controls on the logging pipeline itself.
+  f: >-
+    Protection of the logging tools from unauthorized deletion or
+    disabling -- e.g. can a compromised admin account silently turn off
+    logging with no trace.
+
+AU.L2-3.3.9:
+  a: >-
+    A defined, named subset of privileged users who can manage logging
+    functionality -- distinct from general privileged users in
+    AC.L2-3.1.5. Assessors ask whether this is genuinely a smaller subset
+    or effectively "everyone who's an admin."
+  b: >-
+    Access control configuration confirming that logging management is
+    actually restricted to the subset from [a] -- tested by checking
+    whether a broader group of admins can still change logging settings.
+
+CM.L2-3.4.1:
+  a: >-
+    A documented "known good" configuration standard for systems in this
+    environment (OS hardening settings, standard software set) -- not
+    every individual machine's config, but the template new/rebuilt
+    systems are measured against.
+  b: >-
+    Confirmation the baseline from [a] actually names hardware, software,
+    firmware, and documentation as components, not just an OS image
+    description that omits firmware/documentation.
+  c: >-
+    Evidence the baseline is reviewed and updated on some cadence, not
+    written once and forgotten -- a change log or review date on the
+    baseline document is typical evidence.
+  d: >-
+    An actual system inventory (asset list) -- often the same underlying
+    data WinGRC's own scope module tracks, but assessors want to see it as
+    a maintained artifact, not implied by "we know what we have."
+  e: >-
+    Confirmation the inventory covers hardware, software, firmware, and
+    documentation as categories -- a hardware-only asset list is a common
+    partial-coverage finding.
+  f: >-
+    Evidence the inventory is kept current -- a recent update timestamp or
+    a defined refresh process, checked against whether a recently
+    added/removed device is actually reflected. In this platform, the
+    scope module's own exported inventory is often the most direct
+    evidence for [d]/[e]/[f].
+
+CM.L2-3.4.2:
+  a: >-
+    Documented hardening/security settings for the technology products in
+    use (OS, key applications), tied into the baseline from CM.L2-3.4.1 --
+    a generic industry hardening guide referenced but never adapted to
+    this environment is a common partial finding.
+  b: >-
+    Evidence the settings from [a] are actually enforced on live systems
+    -- configuration export or a compliance-scanning tool's report, not
+    just the written standard. Drift between documented and actual
+    settings is the typical gap.
+
+CM.L2-3.4.3:
+  a: >-
+    A mechanism actually tracking changes to the system (a change ticket
+    system, version control, or change log) -- "we remember what we
+    changed" doesn't hold up under interview.
+  b: >-
+    Evidence changes go through a review step before or after
+    implementation, not just get made ad hoc by whoever has access.
+  c: >-
+    An explicit approval/disapproval decision recorded for changes --
+    distinct from review in [b]; assessors look for a clear "this was
+    approved" record, not just that someone looked at it.
+  d: >-
+    A log of changes that were made -- the historical record, separate
+    from the tracking mechanism in [a] which may be more about the
+    in-flight process.
+
+CM.L2-3.4.4:
+  a: >-
+    Evidence that a change's security impact is actually considered before
+    it goes live -- a checklist item on the change ticket, a
+    security-review step, or similar. In small MSP environments this is
+    often the weakest CM objective because change management itself is
+    informal; even a brief "does this affect security posture?" note on
+    each change ticket is meaningfully better than nothing.
+
+CM.L2-3.4.5:
+  a: >-
+    Defined physical restrictions (locked server room, badge access) tied
+    specifically to who can make changes to systems, not general facility
+    security.
+  b: >-
+    The restrictions from [a] written down, not just practiced informally.
+  c: >-
+    An approval record for the physical access restrictions themselves --
+    who signed off on the access list.
+  d: >-
+    Evidence the restrictions from [a]-[c] are actually enforced -- badge
+    logs, lock configuration, or a walkthrough.
+  e: >-
+    Defined logical (system/network-level) restrictions on who can make
+    changes -- mirrors [a] for the technical side rather than physical.
+  f: >-
+    The logical restrictions from [e] documented.
+  g: >-
+    An approval record for the logical access restrictions.
+  h: >-
+    Evidence the logical restrictions are actually enforced -- access
+    control configuration on change-management tools, source control, or
+    production systems, checked against who can actually push a change.
+
+CM.L2-3.4.6:
+  a: >-
+    A defined list of the capabilities a system actually needs for its
+    business purpose, framed around least functionality (the opposite of
+    "install everything by default").
+  b: >-
+    Evidence the system is actually configured to match [a] -- a
+    configuration baseline or hardening scan showing unnecessary
+    components disabled, not just a policy statement of intent.
+
+CM.L2-3.4.7:
+  a: >-
+    A defined list of essential programs for a given system role -- the
+    definitional basis for the restriction in [c]. Framed around what a
+    system needs to do its job, not an exhaustive inventory of everything
+    installed.
+  b: >-
+    A defined statement of how nonessential programs are treated (removed,
+    blocked, flagged) -- the policy decision, separate from actual
+    enforcement in [c].
+  c: >-
+    Evidence nonessential programs are actually restricted/disabled/
+    prevented, not just defined as unwanted -- application allowlisting or
+    a similar enforcement mechanism, or a removal/audit process.
+  d: >-
+    Same as [a] but for system functions rather than installed programs
+    (e.g. file sharing, remote desktop as a built-in OS capability).
+  e: >-
+    Same as [b] but for functions.
+  f: >-
+    Same as [c] but for functions -- evidence unnecessary built-in
+    functions are actually turned off, not merely identified as
+    unnecessary.
+  g: >-
+    Same as [a] but for network ports.
+  h: >-
+    Same as [b] but for ports.
+  i: >-
+    Same as [c] but for ports -- firewall/host configuration showing
+    unneeded ports actually closed, checked with something like a port
+    scan rather than taken on faith.
+  j: >-
+    Same as [a] but for network protocols.
+  k: >-
+    Same as [b] but for protocols.
+  l: >-
+    Same as [c] but for protocols -- e.g. legacy/insecure protocols
+    actually disabled, not just discouraged in policy.
+  m: >-
+    Same as [a] but for running services.
+  n: >-
+    Same as [b] but for services.
+  o: >-
+    Same as [c] but for services -- unneeded services actually stopped and
+    disabled from auto-starting, verified rather than assumed. This whole
+    practice is commonly under-evidenced in small environments because the
+    5-part define/restrict pattern (programs, functions, ports, protocols,
+    services) is rarely tracked as five distinct decisions -- a single
+    hardening baseline document that explicitly walks through all five
+    categories tends to satisfy an assessor far better than scattered,
+    implicit choices.
+
+CM.L2-3.4.8:
+  a: >-
+    A clear policy decision on whether this environment uses allowlisting
+    (whitelisting) or denylisting (blacklisting) for application execution
+    -- assessors want an explicit choice, not an implied default.
+  b: >-
+    The specific software named as allowed (under allowlisting) or denied
+    (under denylisting) -- a real, current list, not a stale one from
+    initial setup.
+  c: >-
+    Evidence the approach from [a]/[b] is actually enforced technically
+    (application control policy, endpoint management) -- a written policy
+    with no corresponding technical enforcement is a common finding here.
+
+CM.L2-3.4.9:
+  a: >-
+    A written policy on whether and how users can install software
+    themselves -- silence on this (no policy either way) is itself a
+    finding.
+  b: >-
+    Evidence the policy from [a] is technically enforced -- standard
+    (non-admin) user accounts unable to install software, or an approved
+    self-service catalog if that's the chosen model.
+  c: >-
+    Evidence that software installation activity is actually monitored --
+    endpoint management logs or similar, checked against whether anyone
+    reviews them.
+
+IA.L2-3.5.1:
+  a: >-
+    A maintained list of system user identities -- overlaps in evidence
+    with AC.L2-3.1.1[a] but framed here around identification/
+    authentication rather than access authorization specifically.
+  b: >-
+    Identification of service/process identities acting on a user's
+    behalf -- e.g. named service accounts rather than generic shared
+    identities that make individual processes indistinguishable.
+  c: >-
+    A maintained list of devices that connect to the system, tied to the
+    device identification requirement rather than user identification.
+
+IA.L2-3.5.2:
+  a: >-
+    Evidence that every user must actually authenticate before gaining
+    access -- tested directly by attempting access without credentials.
+    Shared or generic login accounts that bypass individual authentication
+    are the common finding here.
+  b: >-
+    Authentication specifically for processes/services acting on a user's
+    behalf -- e.g. an API integration using a real credential/token rather
+    than an open, unauthenticated connection.
+  c: >-
+    Device-level authentication (certificate-based network access,
+    802.1X, or similar) before a device can connect -- distinct from user
+    authentication in [a].
+
+IA.L2-3.5.3:
+  a: >-
+    A specific, named list of privileged accounts -- the same underlying
+    inventory as AC.L2-3.1.5[a], often evidenced together.
+  b: >-
+    Evidence MFA is actually required for privileged accounts logging in
+    locally (at the console), not just remotely -- local-only privileged
+    access without MFA is a common gap since it's easy to focus MFA
+    rollout on remote/VPN access alone.
+  c: >-
+    Evidence MFA is required for privileged accounts over the network --
+    typically the first place MFA gets deployed, so usually the
+    best-evidenced of the four MFA objectives.
+  d: >-
+    Evidence MFA is required for non-privileged accounts over the network
+    as well -- often the weakest-covered of the four, since orgs
+    frequently roll out MFA to admins first and never circle back to
+    ordinary users.
+
+IA.L2-3.5.4:
+  a: >-
+    Evidence the authentication mechanism resists replay attacks (e.g.
+    time-based one-time codes, challenge-response) rather than a static
+    credential that could be captured and reused. Most modern MFA
+    implementations satisfy this inherently; the gap tends to be legacy
+    remote-access methods that predate the MFA rollout.
+
+IA.L2-3.5.5:
+  a: >-
+    A defined minimum period before a username/identifier can be reused
+    (e.g. after an employee departs) -- often undocumented even when
+    practiced informally.
+  b: >-
+    Evidence the identity system actually enforces the period from [a] --
+    e.g. it rejects or flags reissuing a recently-retired username, tested
+    against whether that control is technical or just a manual habit.
+
+IA.L2-3.5.6:
+  a: >-
+    A defined inactivity period after which an account gets disabled
+    (distinct from a session lock, which is about an active session going
+    idle) -- e.g. 90 days with no login.
+  b: >-
+    Evidence stale accounts are actually disabled after the period from
+    [a] -- an access review or automated deprovisioning process, checked
+    against real accounts rather than a policy that's never been
+    exercised.
+
+IA.L2-3.5.7:
+  a: >-
+    A defined password complexity standard (length, character variety) --
+    documented, and ideally aligned with current NIST guidance rather than
+    an outdated arbitrary rule set.
+  b: >-
+    A defined requirement for how many characters must change between a
+    new password and the old one, distinct from complexity in [a].
+  c: >-
+    Evidence the complexity requirement from [a] is technically enforced
+    at password creation, not just described in a policy employees may or
+    may not follow.
+  d: >-
+    Evidence the character-change requirement from [b] is technically
+    enforced, tested against whether the system actually rejects a
+    password that's too similar to the previous one.
+
+IA.L2-3.5.8:
+  a: >-
+    A defined password history depth (how many prior passwords can't be
+    reused) and evidence it's technically enforced at password change --
+    a policy stating a number with no corresponding system enforcement is
+    the common finding.
+
+IA.L2-3.5.9:
+  a: >-
+    Evidence that a temporary/initial password (set during onboarding or
+    a reset) forces an immediate change on first use, rather than
+    remaining valid indefinitely. Tested by walking through the actual
+    provisioning/reset flow.
+
+IA.L2-3.5.10:
+  a: >-
+    Evidence passwords are stored in hashed/cryptographically protected
+    form, never plaintext or reversibly encrypted -- typically a property
+    of the identity system in use, confirmed by configuration review
+    rather than direct inspection of a credential store.
+  b: >-
+    Evidence passwords are protected in transit (TLS on the login path,
+    encrypted authentication protocol) -- an unencrypted legacy login
+    endpoint left enabled alongside a secure one is a common finding.
+
+IA.L2-3.5.11:
+  a: >-
+    Evidence that password entry is masked (dots/asterisks, no
+    plaintext echo) across the systems in scope -- usually a default
+    behavior, but worth checking any legacy or custom application that
+    might echo input in the clear.
+
+IR.L2-3.6.1:
+  a: >-
+    A documented incident-handling capability -- a written incident
+    response plan is the typical evidence, checked for whether it's been
+    adapted to this organization or is a generic downloaded template never
+    customized.
+  b: >-
+    Evidence of preparation activities specifically -- roles/contact
+    lists, tooling, or runbooks ready before an incident happens, not
+    assembled reactively during one.
+  c: >-
+    A detection capability -- monitoring, alerting, or a similar mechanism
+    that would actually surface an incident, distinct from the general
+    audit logging in the AU family.
+  d: >-
+    Evidence of an analysis step in the plan/practice -- how the
+    organization determines scope and severity once something is
+    detected.
+  e: >-
+    Evidence of containment steps -- isolating affected systems, revoking
+    access, etc., documented as part of the response process.
+  f: >-
+    Evidence of recovery steps -- restoring systems to normal operation,
+    documented as part of the process, distinct from containment in [e].
+  g: >-
+    Guidance for what end users should do when they suspect an incident
+    (who to call, what not to do) -- a plan that only addresses IT's
+    actions and never tells regular staff how to respond is a common
+    partial finding.
+
+IR.L2-3.6.2:
+  a: >-
+    Evidence incidents are actually tracked over time (a ticket system,
+    incident log) -- even a small MSP handling few incidents should be
+    able to show a consistent tracking mechanism exists, not "we'd
+    remember."
+  b: >-
+    Documentation of each incident as it occurs/occurred -- what happened,
+    when, and the response -- distinct from just tracking that one
+    occurred.
+  c: >-
+    A defined list of external authorities (e.g. law enforcement, a
+    contractual reporting body) incidents may need to be reported to,
+    identified in advance rather than figured out during a real incident.
+  d: >-
+    A defined list of internal organizational officials who need to be
+    notified -- distinct from external authorities in [c].
+  e: >-
+    Evidence that external notification actually happened when required
+    -- for organizations without a reportable incident history, a
+    walkthrough of the notification process/contact information can serve
+    as evidence the capability exists even without a real notification to
+    point to.
+  f: >-
+    Same as [e] but for internal notification -- evidence the internal
+    escalation path has been exercised or is at least concretely ready.
+
+IR.L2-3.6.3:
+  a: >-
+    Evidence the incident response capability has actually been tested --
+    a tabletop exercise, a simulated incident walkthrough, or similar,
+    with a date and outcome recorded. A written plan that has never been
+    tested is a frequent and significant finding, since an untested plan's
+    real-world effectiveness is unknown.
+
+MA.L2-3.7.1:
+  a: >-
+    Evidence that system maintenance actually happens on a defined
+    schedule (patch records, maintenance logs) -- not just that a policy
+    says it should.
+
+MA.L2-3.7.2:
+  a: >-
+    Control over the tools used for maintenance (e.g. only
+    organization-approved diagnostic/remote tools) -- an unmanaged
+    personal USB toolkit brought in by a contractor is a classic gap.
+  b: >-
+    Documented techniques/procedures for how maintenance is performed --
+    distinct from the tools themselves.
+  c: >-
+    Control over the mechanisms (e.g. the remote access method used to
+    perform maintenance) -- overlaps conceptually with the AC family's
+    remote access controls when maintenance is done remotely.
+  d: >-
+    Control over who is allowed to perform maintenance -- an approved
+    personnel list, whether internal staff or a vetted third party.
+
+MA.L2-3.7.3:
+  a: >-
+    Evidence that equipment leaving the premises for off-site repair is
+    actually sanitized of CUI first (disk removal/wipe, or a documented
+    sanitization step) -- a device sent out for warranty repair with an
+    intact drive is a common real-world finding.
+
+MA.L2-3.7.4:
+  a: >-
+    Evidence that any external media used for diagnostics (a bootable USB
+    tool, a vendor diagnostic disk) is scanned for malware before use on
+    systems in the CUI environment -- a technician's own unscanned
+    toolkit is the typical gap.
+
+MA.L2-3.7.5:
+  a: >-
+    Evidence MFA is required specifically for nonlocal (remote) maintenance
+    sessions coming from outside the network -- distinct from, but often
+    implemented alongside, the general remote-access MFA in IA.L2-3.5.3.
+  b: >-
+    Evidence remote maintenance sessions are actually terminated when the
+    work is done, not left open indefinitely -- a session-timeout
+    configuration or a manual close-out step in the maintenance process.
+
+MA.L2-3.7.6:
+  a: >-
+    Evidence that maintenance personnel who don't already hold access
+    authorization (an outside vendor technician, for example) are
+    supervised while working -- an escort log or a documented supervision
+    process. This is frequently informal ("someone was probably in the
+    room") rather than a demonstrable practice.
+
+MP.L2-3.8.1:
+  a: >-
+    Physical control over paper CUI -- e.g. locked cabinets/rooms rather
+    than documents left on desks. Small offices often handle this
+    reasonably well informally but have never written down the practice.
+  b: >-
+    Physical control over the physical media itself carrying digital CUI
+    (a server, an external drive) -- distinct from the logical/network
+    controls covered elsewhere; this is about physical custody.
+  c: >-
+    Secure storage for paper media specifically -- a locked location, not
+    just "in the office" during business hours.
+  d: >-
+    Secure storage for digital media specifically -- a locked server room
+    or cabinet for physical drives/backup media.
+
+MP.L2-3.8.2:
+  a: >-
+    Access restrictions on CUI media limited to authorized users, tested
+    against whether someone outside the authorized list (e.g. cleaning
+    staff, a shared drive with weak permissions) could actually reach it.
+
+MP.L2-3.8.3:
+  a: >-
+    Evidence of an actual sanitization/destruction process before media is
+    disposed of -- a certificate of destruction, a wipe log, or a
+    documented shredding process for paper. Media thrown out or recycled
+    without this step is a serious, common finding.
+  b: >-
+    Sanitization before reuse (e.g. a drive being repurposed for another
+    system) -- distinct from disposal in [a]; a "quick reformat" is
+    generally not equivalent to a defensible sanitization method.
+
+MP.L2-3.8.4:
+  a: >-
+    Evidence that CUI-containing media is actually marked with the
+    applicable CUI designation -- physical labels on paper/drives, or a
+    naming convention for digital exports. Frequently skipped entirely in
+    small environments that handle CUI informally.
+  b: >-
+    Marking that also conveys distribution limitations (who it can be
+    shared with), not just that it's CUI -- a further, often-missed
+    refinement of [a].
+
+MP.L2-3.8.5:
+  a: >-
+    Access control specifically on CUI media (not just the systems that
+    process it) -- e.g. who can check out a backup tape or physical drive.
+  b: >-
+    A chain-of-custody or accountability record when CUI media physically
+    leaves a controlled area (courier records, sign-out logs) -- easy to
+    overlook since it's about the media's location, not the system.
+
+MP.L2-3.8.6:
+  a: >-
+    Evidence CUI on digital media is protected during transport --
+    encryption of the media itself, or an equivalent physical safeguard
+    (a locked, tracked courier transport) if encryption isn't used. An
+    unencrypted backup drive shipped by standard mail is a common finding.
+
+MP.L2-3.8.7:
+  a: >-
+    Evidence removable media use (USB drives, external disks) is
+    technically controlled -- device control policy via endpoint
+    management, not just a written "please don't use USB drives" policy
+    with no enforcement.
+
+MP.L2-3.8.8:
+  a: >-
+    Evidence that portable storage devices without a clear, identifiable
+    owner are prohibited -- e.g. a found/unknown USB drive should never be
+    plugged in. Often addressed by the same device-control policy as
+    [MP.L2-3.8.7], but assessors look for this specific "no anonymous
+    media" angle.
+
+MP.L2-3.8.9:
+  a: >-
+    Evidence backup data containing CUI is protected at its storage
+    location (encryption at rest, access controls on the backup
+    repository) -- a backup system is sometimes treated as "just backups"
+    and held to a lower security standard than production, which is the
+    typical finding here.
+
+PS.L2-3.9.1:
+  a: >-
+    Evidence of a screening step (background check, reference check, or
+    equivalent appropriate to the role) before someone is granted access
+    to CUI-touching systems -- a documented HR/onboarding process is
+    typical evidence; small orgs sometimes do this informally without a
+    record, which doesn't hold up as evidence.
+
+PS.L2-3.9.2:
+  a: >-
+    A documented process for terminating access as part of an offboarding
+    or transfer action -- an HR-to-IT handoff procedure is typical
+    evidence.
+  b: >-
+    Evidence the process from [a] is actually followed in practice --
+    checked against a sample of recent departures/transfers and how
+    quickly their access was actually revoked. Access that lingers for
+    days or weeks after departure is a common and significant finding.
+  c: >-
+    Evidence the system remains protected specifically during and
+    immediately after a transfer (not just full termination) -- e.g. a
+    role change that should narrow access but the old, broader access
+    was never actually revoked.
+
+PE.L2-3.10.1:
+  a: >-
+    A maintained list of who's authorized for physical access to spaces
+    housing CUI systems -- distinct from a general employee roster.
+  b: >-
+    Evidence physical access is actually restricted to the list in [a] --
+    badge access logs or lock configuration, tested against whether
+    someone off the list could realistically get in.
+  c: >-
+    Physical access limited specifically to equipment (server racks,
+    network closets) as opposed to general facility space in [b] -- a
+    locked server room within an otherwise open office is the typical
+    pattern.
+  d: >-
+    Physical access limited to the operating environment more broadly
+    (the space where the system is used, not just where equipment sits).
+
+PE.L2-3.10.2:
+  a: >-
+    Evidence of physical protection for the facility itself -- locks,
+    perimeter controls, or equivalent for the building/space housing
+    organizational systems.
+  b: >-
+    Protection of supporting infrastructure specifically (power, cooling,
+    network demarcation points) -- distinct from the general facility
+    protection in [a]; a locked server room that shares power/cooling
+    infrastructure with unrestricted space is a common partial gap.
+  c: >-
+    Evidence the facility is actively monitored (cameras, alarm system,
+    or a staffed reception) with an ongoing operational cadence, not just
+    locked and unwatched.
+  d: >-
+    Monitoring of the supporting infrastructure from [b] -- e.g. alerting
+    on a network closet door opening, distinct from general facility
+    monitoring.
+
+PE.L2-3.10.3:
+  a: >-
+    Evidence visitors are actually escorted while in areas with CUI
+    systems -- a visitor log alone doesn't demonstrate escort; assessors
+    may ask about the actual practice.
+  b: >-
+    Evidence visitor activity is monitored while on-site, beyond just
+    being escorted -- e.g. sign-in/sign-out times, badge tracking for
+    visitor credentials.
+
+PE.L2-3.10.4:
+  a: >-
+    Physical access logs (badge system records, a sign-in sheet) actually
+    maintained and retrievable -- a badge system that logs events but
+    whose logs are never exported/retained is a common partial finding.
+
+PE.L2-3.10.5:
+  a: >-
+    An inventory of physical access devices (badges, keys, fobs) --
+    tracked as assets, not just handed out informally.
+  b: >-
+    Evidence access devices are controlled -- issuance/return process, a
+    record of who holds which badge/key.
+  c: >-
+    Ongoing management of access devices -- deactivating a lost badge,
+    reclaiming keys on departure -- distinct from initial control in [b];
+    the recurring lifecycle management is the common gap (a badge
+    deactivated on paper but never actually revoked in the system).
+
+PE.L2-3.10.6:
+  a: >-
+    Defined safeguarding measures for CUI specifically for remote/
+    alternate work sites (home offices) -- e.g. screen privacy, locked
+    storage, VPN requirements -- distinct from office-based physical
+    security.
+  b: >-
+    Evidence the measures from [a] are actually followed by remote
+    workers, not just described in policy -- attestations, spot checks,
+    or equivalent. This is one of the harder PE objectives to evidence
+    for a distributed workforce and is frequently the weakest link in an
+    otherwise solid physical security posture.
+
+RA.L2-3.11.1:
+  b: >-
+    Evidence a risk assessment is actually performed on the defined
+    cadence (annually is common) and covers the system(s) that process
+    CUI specifically -- a generic organization-wide risk assessment that
+    never actually addresses the CUI environment is a frequent partial
+    finding. A dated risk assessment report/record is typical evidence.
+
+RA.L2-3.11.2:
+  a: >-
+    A defined scanning frequency (e.g. monthly, quarterly) -- documented,
+    not just "we scan sometimes."
+  b: >-
+    Evidence vulnerability scans of systems (infrastructure, endpoints)
+    actually run on the defined cadence -- scan reports with dates are
+    typical evidence.
+  c: >-
+    Evidence vulnerability scans of applications specifically run on the
+    defined cadence -- distinct from system-level scanning in [b];
+    application-layer scanning is more often skipped in small
+    environments than infrastructure scanning.
+  d: >-
+    Evidence of ad hoc/triggered system scanning when a significant new
+    vulnerability is disclosed (e.g. a major CVE), not just waiting for
+    the next scheduled scan.
+  e: >-
+    Same triggered-scan expectation as [d], applied to applications.
+
+RA.L2-3.11.3:
+  a: >-
+    Evidence vulnerabilities are actually identified (scan results, a
+    vulnerability list) -- ties directly to the scanning practice in
+    RA.L2-3.11.2.
+  b: >-
+    Evidence identified vulnerabilities are actually remediated, and that
+    prioritization reflects risk (critical findings addressed faster than
+    low-severity ones) -- a scan report with no remediation record, or
+    findings that sit open indefinitely, is the common gap.
+
+CA.L2-3.12.1:
+  a: >-
+    A defined assessment frequency (e.g. annual) for reviewing whether
+    security controls are actually working -- distinct from the risk
+    assessment in RA.L2-3.11.1, this is about control effectiveness
+    specifically.
+  b: >-
+    Evidence a control-effectiveness assessment actually happens on that
+    cadence -- an internal or third-party assessment record, dated.
+
+CA.L2-3.12.2:
+  a: >-
+    A documented list of known deficiencies/vulnerabilities the plan of
+    action needs to address -- the POA&M's input list.
+  b: >-
+    An actual plan of action (POA&M) with remediation steps for the items
+    in [a] -- not just an awareness that gaps exist.
+  c: >-
+    Evidence the plan from [b] is actually being executed -- progress
+    against milestones, dates, status updates. A POA&M that was written
+    once and never revisited is a common finding.
+
+CA.L2-3.12.3:
+  a: >-
+    Evidence of ongoing (not one-time) monitoring that controls remain
+    effective over time -- periodic spot-checks, automated compliance
+    monitoring, or a recurring review cadence distinct from the periodic
+    formal assessment in CA.L2-3.12.1.
+
+CA.L2-3.12.4:
+  a: >-
+    A System Security Plan (SSP) document that actually exists and is
+    current -- WinGRC's own bundle export is built to produce exactly
+    this artifact from the assessment data.
+  b: >-
+    The SSP's description of the system boundary -- what's in scope and
+    what isn't -- checked for whether it matches the actual scope data
+    (assets, network diagram) rather than a boundary description written
+    once and never reconciled with reality.
+  c: >-
+    Description of the operating environment (cloud, on-prem, hybrid;
+    general architecture) in the SSP.
+  d: >-
+    Explicit documentation of any security requirements the authorizing
+    party has approved as not applicable -- a common miss is simply
+    omitting a requirement rather than documenting the non-applicability
+    decision and its justification.
+  e: >-
+    For each security requirement, a description of how it's actually
+    implemented -- this is effectively the implementation-statement
+    content this platform's assessment board captures per objective.
+  f: >-
+    Documentation of relationships/connections to other systems -- ties to
+    the external-connections tracking in AC.L2-3.1.20.
+  g: >-
+    A defined update frequency for the SSP itself (e.g. annually or on
+    significant change).
+  h: >-
+    Evidence the SSP is actually updated on the cadence from [g] --
+    version history or revision dates, checked against whether the
+    current document reflects recent environment changes.
+
+SC.L2-3.13.1:
+  a: >-
+    A defined external system boundary (what's inside the CUI environment
+    vs. the internet/other networks) -- typically a network diagram; the
+    same boundary description feeds the SSP requirement in CA.L2-3.12.4.
+  b: >-
+    Defined key internal boundaries (e.g. between a CUI enclave and the
+    rest of the corporate network) -- distinct from the external boundary
+    in [a]; a flat internal network with no segmentation is the common
+    finding this objective flags.
+  c: >-
+    Evidence traffic at the external boundary is actually monitored
+    (firewall/IDS logging) -- a firewall that blocks traffic but isn't
+    logged/reviewed leaves this only partially addressed.
+  d: >-
+    Monitoring at internal boundaries specifically -- distinct from
+    external monitoring in [c]; often the weaker-evidenced half since
+    internal traffic monitoring is less commonly deployed than perimeter
+    monitoring.
+  e: >-
+    Evidence of actual control (not just monitoring) at the external
+    boundary -- firewall rules that enforce a defined policy.
+  f: >-
+    Control enforcement at internal boundaries -- segmentation/firewall
+    rules between internal zones, not just at the internet edge.
+  g: >-
+    Protection of communications at the external boundary -- typically
+    encryption/VPN for traffic crossing it.
+  h: >-
+    Protection of communications at internal boundaries -- e.g. encrypting
+    traffic between a CUI enclave and the rest of the internal network,
+    not just at the internet-facing edge.
+
+SC.L2-3.13.2:
+  a: >-
+    Identified architectural patterns used to support security (e.g.
+    network segmentation design, defense-in-depth) -- documented as
+    conscious design choices.
+  b: >-
+    Secure software development techniques identified, if the org
+    develops software -- may be not applicable for a pure infrastructure
+    MSP context, but should be explicitly scoped rather than silently
+    skipped.
+  c: >-
+    Systems engineering principles supporting security identified (e.g.
+    least privilege by design, fail-secure defaults) at a conceptual/
+    design level.
+  d: >-
+    Evidence the architectural designs from [a] are actually implemented,
+    not just described.
+  e: >-
+    Evidence the development techniques from [b] are actually practiced,
+    where applicable.
+  f: >-
+    Evidence the engineering principles from [c] are actually reflected in
+    how systems are actually built/configured, not just an aspirational
+    document.
+
+SC.L2-3.13.3:
+  a: >-
+    Identification of what counts as ordinary user functionality in the
+    system -- the definitional basis for the separation tested in [c].
+  b: >-
+    Identification of what counts as system management functionality
+    (admin consoles, configuration interfaces) -- distinct from user
+    functionality in [a].
+  c: >-
+    Evidence user and management functionality are actually separated
+    (different interfaces, different access paths) rather than an admin
+    panel reachable from the same general user-facing application.
+
+SC.L2-3.13.4:
+  a: >-
+    Evidence shared resources (memory, storage, printer buffers) don't
+    leak information between users/processes that shouldn't share it --
+    largely a platform/OS property in modern systems; assessors typically
+    confirm no known misconfiguration undermines this (e.g. shared
+    temp/scratch directories with overly broad permissions) rather than
+    expecting bespoke controls.
+
+SC.L2-3.13.5:
+  a: >-
+    An identified list of any publicly-accessible system components (a
+    public website, a customer portal) -- distinct from the general system
+    inventory; assessors want these specifically called out since they
+    carry different risk.
+  b: >-
+    Evidence the public-facing components from [a] sit on a separated
+    subnetwork (a DMZ or equivalent) from the internal/CUI network, not
+    just protected by a single firewall rule.
+
+SC.L2-3.13.6:
+  a: >-
+    Evidence the network's default posture is deny -- firewall default-
+    deny configuration, confirmed by review rather than assumed.
+  b: >-
+    Evidence allowed traffic is explicit, defined exceptions (specific
+    allow rules) rather than broad permissive rules layered on top of a
+    nominal default-deny that don't actually restrict much in practice.
+
+SC.L2-3.13.7:
+  a: >-
+    Evidence remote devices can't simultaneously stay connected to the
+    organization's network via VPN while also routing other traffic
+    directly to the open internet (split tunneling) -- VPN client
+    configuration is the typical evidence; a VPN client configured to
+    allow split tunneling by default is a common finding.
+
+SC.L2-3.13.8:
+  b: >-
+    Where cryptography isn't used for some CUI transmission, documented
+    alternative physical safeguards (e.g. a dedicated private circuit) --
+    only relevant when [c]'s cryptographic option isn't the chosen
+    approach.
+  c: >-
+    Evidence CUI in transit is actually protected -- TLS/VPN encryption
+    for the transmission path is the typical, most common evidence; an
+    unencrypted internal transfer that happens to also carry CUI is a
+    frequent gap.
+
+SC.L2-3.13.9:
+  a: >-
+    A defined inactivity period after which a network connection (not
+    just a session lock) should terminate.
+  b: >-
+    Evidence connections actually terminate at the end of a session
+    (logout triggers real connection teardown, not just a UI state
+    change).
+  c: >-
+    Evidence connections terminate after the inactivity period from [a] --
+    tested against actual idle-timeout configuration on VPN/remote access
+    infrastructure.
+
+SC.L2-3.13.10:
+  a: >-
+    Evidence cryptographic keys are actually established through a real
+    process (not default/sample keys left over from initial setup)
+    wherever cryptography is used.
+  b: >-
+    Ongoing key management -- rotation, secure storage, revocation when
+    needed -- distinct from initial establishment in [a]. Keys established
+    once and never rotated or reviewed is a common finding.
+
+SC.L2-3.13.11:
+  a: >-
+    Confirmation that cryptography protecting CUI confidentiality is
+    FIPS-validated specifically -- not just "strong encryption," since an
+    algorithm can be cryptographically sound but implemented in a module
+    that was never FIPS-validated. This is one of the more technical
+    objectives to evidence and often needs a vendor's own FIPS validation
+    documentation (a CMVP certificate reference) rather than something an
+    MSP can self-attest.
+
+SC.L2-3.13.12:
+  a: >-
+    An inventory of collaborative computing devices (webcams, microphones,
+    conferencing equipment) -- easy to overlook since these aren't
+    typically thought of as "systems."
+  b: >-
+    Evidence such devices indicate to users when they're active (a camera
+    light, a mic-active indicator) -- generally a hardware/software
+    property, confirmed by observation.
+  c: >-
+    Evidence remote activation of these devices is prevented/disabled --
+    e.g. a webcam that can't be turned on remotely without local
+    indication or consent.
+
+SC.L2-3.13.13:
+  a: >-
+    Evidence mobile code (browser scripts, macros, downloadable
+    executables) is controlled -- application/browser policy restricting
+    what can run, not unrestricted execution of anything a user downloads.
+  b: >-
+    Evidence mobile code usage is monitored -- endpoint or web-filtering
+    logs, distinct from the control mechanism in [a].
+
+SC.L2-3.13.14:
+  a: >-
+    Evidence VoIP usage is controlled (approved systems/configuration)
+    rather than any VoIP client being freely installed and used.
+  b: >-
+    Evidence VoIP usage is monitored -- call logging or equivalent,
+    distinct from the control mechanism in [a].
+
+SC.L2-3.13.15:
+  a: >-
+    Evidence communications sessions are protected against
+    impersonation/hijacking (session tokens, mutual authentication) --
+    typically a property of the protocols in use (TLS, authenticated VPN),
+    confirmed by configuration review rather than a bespoke control.
+
+SC.L2-3.13.16:
+  a: >-
+    Evidence CUI at rest is encrypted (full-disk encryption, database
+    encryption, or equivalent) -- confirmed by configuration review; a
+    server with CUI on an unencrypted volume is a frequent and significant
+    finding, especially for laptops that could be lost or stolen.
+
+SI.L2-3.14.1:
+  a: >-
+    A defined SLA/timeframe for identifying system flaws (e.g. via
+    vulnerability scanning or patch-status monitoring) -- ties to the
+    scanning cadence in RA.L2-3.11.2 but framed here around flaw discovery
+    timing specifically.
+  b: >-
+    Evidence flaws are actually identified within the timeframe from [a]
+    -- scan/patch-status reports with dates.
+  c: >-
+    A defined timeframe for reporting identified flaws to whoever needs to
+    act on them -- distinct from identification in [a]/[b].
+  d: >-
+    Evidence flaws are actually reported within the timeframe from [c] --
+    e.g. a ticket created promptly after a scan flags an issue.
+  e: >-
+    A defined timeframe for correcting flaws once identified (often tiered
+    by severity -- critical patched faster than low-risk).
+  f: >-
+    Evidence flaws are actually corrected within the timeframe from [e] --
+    patch-management records/reports, checked against whether critical
+    findings in particular are closed promptly rather than lingering.
+
+SI.L2-3.14.2:
+  a: >-
+    Designated locations (endpoints, servers, email gateway) where
+    malicious-code protection is deployed -- documented as a deliberate
+    coverage decision, not assumed.
+  b: >-
+    Evidence protection is actually active at the locations from [a] --
+    an endpoint protection console showing coverage, checked against the
+    full asset inventory for gaps (an unmanaged device with no agent
+    installed is the classic finding).
+
+SI.L2-3.14.3:
+  a: >-
+    Defined response actions for security alerts/advisories (e.g. a
+    vendor security bulletin, a threat intel feed alert) -- a documented
+    "when we get an alert like X, we do Y" process.
+  b: >-
+    Evidence alerts/advisories are actually monitored -- subscription to
+    relevant feeds, a console that surfaces them, checked against whether
+    anyone is actually watching it.
+  c: >-
+    Evidence response actions from [a] are actually taken when an alert
+    fires -- a record of at least one real response, or a walkthrough of
+    the process if no alert has fired recently.
+
+SI.L2-3.14.4:
+  a: >-
+    Evidence malicious-code protection mechanisms (signatures, engine
+    updates) update automatically or on a defined schedule -- a
+    protection agent with auto-update disabled or badly out of date
+    signature files is a common finding.
+
+SI.L2-3.14.5:
+  a: >-
+    A defined scanning frequency for malicious-code scans -- documented,
+    distinct from real-time scanning in [c].
+  b: >-
+    Evidence scans actually run on the frequency from [a] -- scan logs
+    with dates.
+  c: >-
+    Evidence real-time scanning is active for files as they're downloaded,
+    opened, or executed -- typically a default endpoint-protection
+    behavior, confirmed by configuration rather than assumed enabled.
+
+SI.L2-3.14.6:
+  a: >-
+    Evidence of general system monitoring aimed at detecting attacks/
+    indicators of compromise -- an EDR-style capability or equivalent, not
+    just antivirus alone.
+  b: >-
+    Monitoring specifically of inbound traffic for attack indicators --
+    IDS/IPS or firewall-level threat detection, distinct from general
+    system monitoring in [a].
+  c: >-
+    Monitoring of outbound traffic specifically -- often the weaker-
+    evidenced half, since inbound/perimeter monitoring gets more attention
+    than watching for signs of data exfiltration or compromised systems
+    calling out.
+
+SI.L2-3.14.7:
+  a: >-
+    A defined description of what counts as authorized system use --
+    acceptable-use policy or equivalent, giving a baseline to compare
+    actual activity against.
+  b: >-
+    Evidence of a capability to actually identify unauthorized use against
+    the baseline from [a] -- anomaly detection, log review, or a similar
+    mechanism, not just a policy stating what's disallowed with no way to
+    detect a violation.

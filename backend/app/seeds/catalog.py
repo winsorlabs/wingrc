@@ -1,8 +1,27 @@
 """Idempotent CMMC L2 catalog seed.
 
 Loads framework, all controls, and every assessment objective from
-cmmc_l2.yaml into the database.  Safe to call repeatedly — uses
-SELECT-then-upsert so running it twice yields identical state.
+cmmc_l2.yaml into the database, plus two separately-sourced guidance
+layers -- never blended together, per CLAUDE.md's compliance-content
+discipline:
+
+  cmmc_official_guidance.yaml  -- government-sourced, mechanically
+    generated from the real CMMC Assessment Guide Level 2 PDF (see
+    scripts/cmmc_guidance/README.md). Populates
+    AssessmentObjective.official_guidance; official_guidance_source (the
+    citation) is derived here from _GUIDE_VERSION/_GUIDE_DATE below plus
+    the practice id + objective key, not stored redundantly 316 times in
+    the data file.
+
+  cmmc_practitioner_notes.yaml  -- AI-drafted, advisory. Populates
+    AssessmentObjective.practitioner_notes. Always inserted as a draft
+    (practitioner_notes_is_draft=True); see _upsert_objective's docstring
+    for the upsert rule that protects a human's review from being
+    silently overwritten by a later reseed.
+
+Safe to call repeatedly -- uses SELECT-then-upsert so running it twice
+yields identical state, EXCEPT for practitioner_notes once a human has
+reviewed it (see above).
 
 Usage (CLI):
     wingrc seed-catalog
@@ -11,9 +30,10 @@ Usage (CLI):
 Usage (Python):
     from app.seeds.catalog import seed_catalog
     result = seed_catalog(session)
-    # result = {"framework_id": ..., "controls": 110, "objectives": 320}
+    # result = {"framework_id": ..., "controls": 110, "objectives": 320,
+    #           "official_guidance": 316, "practitioner_notes": 316}
 
-Source documents (all REVIEWABLE DRAFT — requires C3PAO sign-off):
+Source documents (all REVIEWABLE DRAFT -- requires C3PAO sign-off):
     NIST SP 800-171 Rev 2  https://doi.org/10.6028/NIST.SP.800-171r2
     NIST SP 800-171A Rev 2 https://doi.org/10.6028/NIST.SP.800-171Ar2
     CMMC Assessment Guide Level 2 v2
@@ -22,6 +42,7 @@ Source documents (all REVIEWABLE DRAFT — requires C3PAO sign-off):
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -32,23 +53,54 @@ from sqlalchemy.orm import Session
 from ..models import AssessmentObjective, Control, Framework
 
 _YAML_PATH = Path(__file__).parent / "cmmc_l2.yaml"
+_OFFICIAL_GUIDANCE_PATH = Path(__file__).parent / "cmmc_official_guidance.yaml"
+_PRACTITIONER_NOTES_PATH = Path(__file__).parent / "cmmc_practitioner_notes.yaml"
+
+# Mirrors scripts/cmmc_guidance/compose_guidance_yaml.py's GUIDE_VERSION/
+# GUIDE_DATE constants -- keep in sync if the guide is re-extracted against
+# a newer revision.
+_GUIDE_VERSION = "2.13"
+_GUIDE_DATE = "September 2024"
+
+# Practitioner-notes generation provenance, recorded on every freshly
+# written row (see AssessmentObjective.practitioner_notes_generated_at/
+# _model). Authored 2026-09-09 in this one batch; update both if a future
+# batch regenerates or extends the notes.
+_PRACTITIONER_NOTES_GENERATED_AT = datetime(2026, 9, 9, tzinfo=UTC)
+_PRACTITIONER_NOTES_MODEL = "claude-sonnet-5"
 
 
 def seed_catalog(session: Session) -> dict[str, Any]:
-    """Load the CMMC L2 catalog into *session*.  Idempotent."""
+    """Load the CMMC L2 catalog into *session*.  Idempotent (see module
+    docstring for the one exception: reviewed practitioner_notes)."""
     data = _load()
+    official_guidance = _load_yaml_optional(_OFFICIAL_GUIDANCE_PATH)
+    practitioner_notes = _load_yaml_optional(_PRACTITIONER_NOTES_PATH)
+
     fw = _upsert_framework(session, data["framework"])
     session.flush()
 
     controls_written = 0
     objectives_written = 0
+    official_guidance_written = 0
+    practitioner_notes_written = 0
 
     for seq, ctrl_data in enumerate(data["controls"], start=1):
         ctrl = _upsert_control(session, fw.id, ctrl_data, seq)
         session.flush()
+        pid = ctrl_data["id"]
         for obj_data in ctrl_data.get("objectives", []):
-            _upsert_objective(session, ctrl.id, obj_data)
+            obj, wrote_official, wrote_notes = _upsert_objective(
+                session,
+                ctrl.id,
+                pid,
+                obj_data,
+                official_guidance.get(pid, {}),
+                practitioner_notes.get(pid, {}),
+            )
             objectives_written += 1
+            official_guidance_written += wrote_official
+            practitioner_notes_written += wrote_notes
         controls_written += 1
 
     session.flush()
@@ -56,6 +108,8 @@ def seed_catalog(session: Session) -> dict[str, Any]:
         "framework_id": fw.id,
         "controls": controls_written,
         "objectives": objectives_written,
+        "official_guidance": official_guidance_written,
+        "practitioner_notes": practitioner_notes_written,
     }
 
 
@@ -67,6 +121,17 @@ def seed_catalog(session: Session) -> dict[str, Any]:
 def _load() -> dict:
     with open(_YAML_PATH, encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def _load_yaml_optional(path: Path) -> dict:
+    """Returns {} if the file doesn't exist -- lets the catalog seed run
+    (structural data only) even before the guidance pipeline has produced
+    its data files, e.g. in a fresh checkout before running the
+    scripts/cmmc_guidance/ pipeline."""
+    if not path.exists():
+        return {}
+    with open(path, encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
 
 
 def _upsert_framework(session: Session, fw_data: dict) -> Framework:
@@ -125,32 +190,71 @@ def _upsert_control(
     return ctrl
 
 
+def _should_write_practitioner_notes(existing: AssessmentObjective | None) -> bool:
+    """Reseeding must never clobber a human's review of an AI-drafted
+    note. Write practitioner_notes on a fresh insert (existing is None)
+    or when the current row is still an untouched draft -- either never
+    populated (practitioner_notes is None) or populated but not yet
+    reviewed (practitioner_notes_is_draft is still True, the seed-time
+    default). Once a human reviews a note and flips is_draft to False,
+    every later reseed leaves practitioner_notes/model/generated_at alone
+    -- even if the source YAML's text for that objective has since
+    changed. That's a deliberate trade-off (documented in
+    backend/app/seeds/README-ish module docstring above and in
+    ROADMAP.md's writeup for this feature): a content improvement to an
+    already-reviewed note requires a human to re-touch that row, the same
+    way improving a workbook importer's parsing never silently rewrites
+    an org's already-confirmed scope_entity data.
+
+    official_guidance has no equivalent protection -- see _upsert_objective
+    for why that's intentional, not an oversight.
+    """
+    return (
+        existing is None
+        or existing.practitioner_notes_is_draft
+        or existing.practitioner_notes is None
+    )
+
+
 def _upsert_objective(
     session: Session,
     control_id: uuid.UUID,
+    practice_id: str,
     data: dict,
-) -> AssessmentObjective:
+    official_guidance_for_control: dict[str, str],
+    practitioner_notes_for_control: dict[str, str],
+) -> tuple[AssessmentObjective, int, int]:
+    okey = data["key"]
     obj = session.scalars(
         select(AssessmentObjective).where(
             AssessmentObjective.control_id == control_id,
-            AssessmentObjective.objective_key == data["key"],
+            AssessmentObjective.objective_key == okey,
         )
     ).first()
     sat_type = data.get("type", "narrative")
     cadence = data.get("cadence")
     cadence_resp = data.get("cadence_resp")
-    guidance = data.get("guidance")
+
+    official_text = official_guidance_for_control.get(okey)
+    official_source = (
+        f"CMMC Assessment Guide – Level 2, Version {_GUIDE_VERSION} ({_GUIDE_DATE}) "
+        f"— {practice_id}[{okey}]"
+        if official_text
+        else None
+    )
+    notes_text = practitioner_notes_for_control.get(okey)
+
+    is_new = obj is None
     if obj is None:
         obj = AssessmentObjective(
             id=uuid.uuid4(),
             control_id=control_id,
-            objective_key=data["key"],
+            objective_key=okey,
             text=data["text"],
             satisfaction_type=sat_type,
             cadence=cadence,
             cadence_responsibility=cadence_resp,
             is_draft=True,
-            guidance=guidance,
         )
         session.add(obj)
     else:
@@ -159,5 +263,24 @@ def _upsert_objective(
         obj.cadence = cadence
         obj.cadence_responsibility = cadence_resp
         obj.is_draft = True
-        obj.guidance = guidance
-    return obj
+
+    # official_guidance is verbatim-derived from the real Assessment Guide
+    # PDF, not human-editable prose -- unlike practitioner_notes, there is
+    # no legitimate "a human improved on this" case to protect against, so
+    # it always tracks the source data file (the same "always overwrite"
+    # behavior every other structural field on this row already has). A
+    # transcription fix to cmmc_official_guidance.yaml should always reach
+    # every deployment's DB on the next reseed.
+    obj.official_guidance = official_text
+    obj.official_guidance_source = official_source
+    wrote_official = 1 if official_text else 0
+
+    wrote_notes = 0
+    if notes_text is not None and _should_write_practitioner_notes(obj if not is_new else None):
+        obj.practitioner_notes = notes_text
+        obj.practitioner_notes_is_draft = True
+        obj.practitioner_notes_generated_at = _PRACTITIONER_NOTES_GENERATED_AT
+        obj.practitioner_notes_model = _PRACTITIONER_NOTES_MODEL
+        wrote_notes = 1
+
+    return obj, wrote_official, wrote_notes
