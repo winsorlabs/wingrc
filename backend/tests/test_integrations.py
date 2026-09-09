@@ -16,6 +16,8 @@ Run in-container:
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -66,7 +68,12 @@ def _stub_liongard_test_connection(monkeypatch):
     def _fake(config, credential):
         return state["result"]
 
-    monkeypatch.setattr(REGISTRY["liongard"], "test_connection", _fake)
+    # ConnectorSpec is a frozen dataclass (deliberately -- see connectors/
+    # __init__.py), so the stub replaces the whole registry entry rather
+    # than mutating a field in place.
+    monkeypatch.setitem(
+        REGISTRY, "liongard", dataclasses.replace(REGISTRY["liongard"], test_connection=_fake)
+    )
     return state
 
 
