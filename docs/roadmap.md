@@ -539,15 +539,12 @@ Items without a status are planned but not yet started.
     positives — see `scripts/cmmc_guidance/README.md` for the full
     verification writeup, including PDF SHA-256 and spot-checks against
     the source document.
-  - **Found and flagged, not fixed here:** cross-checking objective-key
+  - **Found and flagged 2026-09-09, fixed 2026-09-10** (see that date's
+    Done entry below for the full writeup): cross-checking objective-key
     sets between `cmmc_l2.yaml` and the real PDF surfaced 4 practices
     (`AC.L2-3.1.22`, `IA.L2-3.5.8`, `RA.L2-3.11.1`, `SC.L2-3.13.8`) each
     missing one real NIST SP 800-171A objective letter from our catalog
-    (316 objectives seeded vs. 320 that actually exist). Not fixed in this
-    pass — adding a new objective to a control that already has live
-    assessments needs a `control_state` backfill across every existing
-    assessment, a separate and careful change. Flagged directly to Jarrod;
-    tracked for a future pass.
+    (316 objectives seeded vs. 320 that actually exist).
   - **`practitioner_notes` / `practitioner_notes_is_draft` /
     `_generated_at` / `_model`** — AI-drafted (Claude Sonnet 5, authored
     2026-09-09), advisory only, all 316/316 objectives covered
@@ -585,7 +582,121 @@ Items without a status are planned but not yet started.
   - **Coverage** (verified against the live catalog, not assumed):
     316/316 seeded objectives have `official_guidance`; 316/316 have
     `practitioner_notes`. The gap to 320 is the pre-existing 4-objective
-    catalog shortfall noted above, not a guidance-pipeline miss.
+    catalog shortfall noted above, not a guidance-pipeline miss — closed
+    2026-09-10, see that date's Done entry.
+- **Catalog reconciliation: 4 missing objectives, full re-derivation of the
+  drift guard** (2026-09-10). Follow-up to 2026-09-09's guidance work,
+  which flagged but didn't fix a 4-objective catalog gap. This is a
+  scoring-correctness issue, not a content one: SPRS rolls a control up as
+  met only when every objective is met, so a practice silently missing a
+  determination statement can report fully-satisfied while a real
+  objective was never evaluated; an exported bundle would be missing that
+  statement outright too.
+  - **Root cause, determined with reasonable confidence but not certainty**
+    (the original script no longer exists to inspect directly): git
+    history shows an earlier session (`853039ae8`, 2026-07-04, Sonnet 4.6)
+    already replaced memory-derived objective text with a `pdftotext`
+    extraction against this same guide, explicitly flagging in its own
+    commit message that 6 *other* controls needed manual fixing because
+    "pdftotext concatenated the ASSESSMENT OBJECTIVES header with
+    requirement text on same line." Re-inspecting the raw PDF text at the
+    4 gap locations shows the same structural hazard that pass already
+    named — [a]'s text wrapping across a line break, or (for
+    `IA.L2-3.5.8` specifically) "[a] ... and \n[b] ..." phrased with "and"
+    rather than the usual "; [b]" separator the parser evidently keyed on
+    — strongly suggesting the same known extraction fragility struck 4
+    more practices that pass's manual review didn't happen to catch,
+    rather than a new or different bug.
+  - **Full reconciliation, not just the 4 known rows** — extended
+    `scripts/cmmc_guidance/extract_pdf.py` to also parse the "ASSESSMENT
+    OBJECTIVES [NIST SP 800-171A] / Determine if:" block per practice
+    (previously only Methods + Considerations were extracted), then wrote
+    `reconcile_catalog.py`: a full practice-id / objective-key / objective-
+    text diff between `cmmc_l2.yaml` and the real PDF, normalizing case,
+    trailing connector words, and whitespace before comparing text
+    (the catalog deliberately rewrites the PDF's semicolon-joined list
+    style into standalone capitalized sentences — comparing meaning, not
+    verbatim wording). Result: **110/110 practices matched, 0 extra or
+    mis-keyed objectives, exactly the 4 known missing objectives, and one
+    text defect directly caused by the same root cause** —
+    `IA.L2-3.5.8`'s existing `[a]` row had literally concatenated both
+    real objectives' text together with a stray "and [b]" fragment
+    embedded mid-string, rather than a genuine second row ever existing.
+    Also caught (and fixed, generalizing the existing kerning-fix
+    mechanism) one more PDF-extraction artifact this session's own new
+    objectives-text parsing exposed: "se curity" as a second, independent
+    kerning split of "security" distinct from the already-known
+    "secu rity" — same root cause (font kerning is position-dependent), a
+    different split point. Confirmed nothing beyond this — the fix is "4
+    rows plus one text correction," not a catalog needing re-derivation
+    from scratch.
+  - **Fix**: added the 4 missing objectives to `cmmc_l2.yaml` (satisfaction
+    types chosen by matching each to the closest existing sibling pattern
+    in its own control — e.g. "X are identified" → `document_list`,
+    matching `AC.L2-3.1.1[a]`/`[c]`; all still seeded `is_draft=True`, the
+    same as every other objective, pending real C3PAO review) and split
+    `IA.L2-3.5.8`'s malformed `[a]` into a correct `[a]`/`[b]` pair.
+    Regenerated `cmmc_official_guidance.yaml` and added
+    `cmmc_practitioner_notes.yaml` entries for all 4 new/corrected keys
+    (self-audited against the same no-verdict/no-vendor framing rules as
+    the rest of that file) so they aren't the only objectives without
+    guidance. Catalog is now 320/320 against the authoritative extraction,
+    confirmed by `reconcile_catalog.py` reporting zero issues.
+  - **No Alembic migration** — deliberately. Nothing about the schema
+    changed (migration 0031 already added every column this data needs);
+    this is a data fix following the catalog's own existing update
+    mechanism (`cmmc_l2.yaml` + `wingrc seed-catalog`), the same path
+    every prior catalog correction (including the July rewrite that
+    caused this) has always used.
+  - **Backfill for already-running assessments**
+    (`engine.py:backfill_missing_control_states`, CLI:
+    `wingrc backfill-missing-control-states`): for every existing
+    assessment, adds a `control_state` row for any objective missing one
+    — `not_met`/`customer_owns`, the exact same default
+    `_seed_control_states()` uses for a brand-new assessment, checked
+    rather than assumed. Never defaults to `met`: that would assert an
+    evaluation that never happened. Deliberately does **not** re-run the
+    magic loop for already-active products against the new rows — checked
+    every file under `baselines/` first rather than assuming: the only
+    match across all 4 objectives (RocketCyber's IA-family entry) is
+    `classification: customer_owns`, which the magic loop's own query
+    already excludes, so as of today running it would be a no-op anyway;
+    a future baseline that does cover one of these objectives picks it up
+    normally the next time that product is (re)activated, through the
+    existing path.
+  - **Dry-run by default** (`--apply` to commit), matching this codebase's
+    established safety posture for anything that mutates broadly (the
+    workbook importer's dry-run/apply, reset-dev's preview). Each affected
+    assessment gets exactly **one** `audit_log` entry
+    (`control_state.backfill`, actor `system`) recording the before/after
+    SPRS score and which objective keys were added, with an operator-
+    supplied `--reason` in context — so a score drop is explainable from
+    the audit log, not mysterious. Uses `recompute_sprs()` (the one write
+    path for `assessment.sprs_score`) rather than hand-computing the
+    score, which means it also writes a fresh `sprs_snapshot` row per
+    affected assessment — **existing historical snapshot rows are never
+    touched**, by construction (this function only ever inserts).
+  - **Drift guard** (`tests/test_catalog_seed.py::
+    test_catalog_matches_authoritative_reference`): a silent 4-row
+    omission survived from July until this unrelated guidance task
+    happened to cross-check it. Added a committed, PDF-derived reference
+    (`backend/app/seeds/cmmc_catalog_reference.yaml`, generated by
+    `scripts/cmmc_guidance/gen_catalog_reference.py`, independent of
+    `cmmc_l2.yaml` itself — checking a file against a reference derived
+    from that same file would never catch drift) and a test comparing
+    every practice's objective-key set against it. Deliberately left
+    **unmarked** (no `@pytest.mark.integration`, no DB) so it runs in CI's
+    fast `backend` job on every PR touching the catalog, not only in
+    `integration` — the next silent gap fails CI instead of waiting for
+    someone to notice by hand. Verified the guard actually catches drift
+    (not just that it passes) by injecting a fake mismatch and confirming
+    the assertion fires, before restoring the file.
+  - **Not yet run against wl-util-1's live assessments** — this task's
+    "land it" scope was commit+push to `main`, verified on the isolated
+    bench stack; deploying and running
+    `wingrc backfill-missing-control-states --apply` against real data is
+    a deliberate follow-up step for Jarrod, after reviewing the dry-run
+    report against whichever real assessments exist there.
 
 ---
 

@@ -1,0 +1,446 @@
+# Authoritative {practice_id: [objective_keys]} reference, derived directly
+# from the real CMMC Assessment Guide PDF -- NOT from cmmc_l2.yaml. Used
+# only by tests/test_catalog_seed.py's drift guard
+# (test_catalog_matches_authoritative_reference): that test fails if
+# cmmc_l2.yaml's objective keys ever diverge from this file, catching the
+# next silent catalog gap in CI instead of waiting for another unrelated
+# task to notice (see docs/roadmap.md's 2026-09 catalog-reconciliation
+# writeup for the incident this guards against: 4 objectives silently
+# missing since the catalog was first authored).
+#
+# MECHANICALLY GENERATED -- do not hand-edit. Regenerate via
+# scripts/cmmc_guidance/gen_catalog_reference.py against a fresh
+# extract_pdf.py run if the guide is revised. Reconcile cmmc_l2.yaml
+# against the new extraction (reconcile_catalog.py) BEFORE regenerating
+# this file -- otherwise the guard test just starts checking against a
+# moving target instead of the source of truth.
+AC.L2-3.1.1:
+- a
+- b
+- c
+- d
+- e
+- f
+AC.L2-3.1.10:
+- a
+- b
+- c
+AC.L2-3.1.11:
+- a
+- b
+AC.L2-3.1.12:
+- a
+- b
+- c
+- d
+AC.L2-3.1.13:
+- a
+- b
+AC.L2-3.1.14:
+- a
+- b
+AC.L2-3.1.15:
+- a
+- b
+- c
+- d
+AC.L2-3.1.16:
+- a
+- b
+AC.L2-3.1.17:
+- a
+- b
+AC.L2-3.1.18:
+- a
+- b
+- c
+AC.L2-3.1.19:
+- a
+- b
+AC.L2-3.1.2:
+- a
+- b
+AC.L2-3.1.20:
+- a
+- b
+- c
+- d
+- e
+- f
+AC.L2-3.1.21:
+- a
+- b
+- c
+AC.L2-3.1.22:
+- a
+- b
+- c
+- d
+- e
+AC.L2-3.1.3:
+- a
+- b
+- c
+- d
+- e
+AC.L2-3.1.4:
+- a
+- b
+- c
+AC.L2-3.1.5:
+- a
+- b
+- c
+- d
+AC.L2-3.1.6:
+- a
+- b
+AC.L2-3.1.7:
+- a
+- b
+- c
+- d
+AC.L2-3.1.8:
+- a
+- b
+AC.L2-3.1.9:
+- a
+- b
+AT.L2-3.2.1:
+- a
+- b
+- c
+- d
+AT.L2-3.2.2:
+- a
+- b
+- c
+AT.L2-3.2.3:
+- a
+- b
+AU.L2-3.3.1:
+- a
+- b
+- c
+- d
+- e
+- f
+AU.L2-3.3.2:
+- a
+- b
+AU.L2-3.3.3:
+- a
+- b
+- c
+AU.L2-3.3.4:
+- a
+- b
+- c
+AU.L2-3.3.5:
+- a
+- b
+AU.L2-3.3.6:
+- a
+- b
+AU.L2-3.3.7:
+- a
+- b
+- c
+AU.L2-3.3.8:
+- a
+- b
+- c
+- d
+- e
+- f
+AU.L2-3.3.9:
+- a
+- b
+CA.L2-3.12.1:
+- a
+- b
+CA.L2-3.12.2:
+- a
+- b
+- c
+CA.L2-3.12.3:
+- a
+CA.L2-3.12.4:
+- a
+- b
+- c
+- d
+- e
+- f
+- g
+- h
+CM.L2-3.4.1:
+- a
+- b
+- c
+- d
+- e
+- f
+CM.L2-3.4.2:
+- a
+- b
+CM.L2-3.4.3:
+- a
+- b
+- c
+- d
+CM.L2-3.4.4:
+- a
+CM.L2-3.4.5:
+- a
+- b
+- c
+- d
+- e
+- f
+- g
+- h
+CM.L2-3.4.6:
+- a
+- b
+CM.L2-3.4.7:
+- a
+- b
+- c
+- d
+- e
+- f
+- g
+- h
+- i
+- j
+- k
+- l
+- m
+- n
+- o
+CM.L2-3.4.8:
+- a
+- b
+- c
+CM.L2-3.4.9:
+- a
+- b
+- c
+IA.L2-3.5.1:
+- a
+- b
+- c
+IA.L2-3.5.10:
+- a
+- b
+IA.L2-3.5.11:
+- a
+IA.L2-3.5.2:
+- a
+- b
+- c
+IA.L2-3.5.3:
+- a
+- b
+- c
+- d
+IA.L2-3.5.4:
+- a
+IA.L2-3.5.5:
+- a
+- b
+IA.L2-3.5.6:
+- a
+- b
+IA.L2-3.5.7:
+- a
+- b
+- c
+- d
+IA.L2-3.5.8:
+- a
+- b
+IA.L2-3.5.9:
+- a
+IR.L2-3.6.1:
+- a
+- b
+- c
+- d
+- e
+- f
+- g
+IR.L2-3.6.2:
+- a
+- b
+- c
+- d
+- e
+- f
+IR.L2-3.6.3:
+- a
+MA.L2-3.7.1:
+- a
+MA.L2-3.7.2:
+- a
+- b
+- c
+- d
+MA.L2-3.7.3:
+- a
+MA.L2-3.7.4:
+- a
+MA.L2-3.7.5:
+- a
+- b
+MA.L2-3.7.6:
+- a
+MP.L2-3.8.1:
+- a
+- b
+- c
+- d
+MP.L2-3.8.2:
+- a
+MP.L2-3.8.3:
+- a
+- b
+MP.L2-3.8.4:
+- a
+- b
+MP.L2-3.8.5:
+- a
+- b
+MP.L2-3.8.6:
+- a
+MP.L2-3.8.7:
+- a
+MP.L2-3.8.8:
+- a
+MP.L2-3.8.9:
+- a
+PE.L2-3.10.1:
+- a
+- b
+- c
+- d
+PE.L2-3.10.2:
+- a
+- b
+- c
+- d
+PE.L2-3.10.3:
+- a
+- b
+PE.L2-3.10.4:
+- a
+PE.L2-3.10.5:
+- a
+- b
+- c
+PE.L2-3.10.6:
+- a
+- b
+PS.L2-3.9.1:
+- a
+PS.L2-3.9.2:
+- a
+- b
+- c
+RA.L2-3.11.1:
+- a
+- b
+RA.L2-3.11.2:
+- a
+- b
+- c
+- d
+- e
+RA.L2-3.11.3:
+- a
+- b
+SC.L2-3.13.1:
+- a
+- b
+- c
+- d
+- e
+- f
+- g
+- h
+SC.L2-3.13.10:
+- a
+- b
+SC.L2-3.13.11:
+- a
+SC.L2-3.13.12:
+- a
+- b
+- c
+SC.L2-3.13.13:
+- a
+- b
+SC.L2-3.13.14:
+- a
+- b
+SC.L2-3.13.15:
+- a
+SC.L2-3.13.16:
+- a
+SC.L2-3.13.2:
+- a
+- b
+- c
+- d
+- e
+- f
+SC.L2-3.13.3:
+- a
+- b
+- c
+SC.L2-3.13.4:
+- a
+SC.L2-3.13.5:
+- a
+- b
+SC.L2-3.13.6:
+- a
+- b
+SC.L2-3.13.7:
+- a
+SC.L2-3.13.8:
+- a
+- b
+- c
+SC.L2-3.13.9:
+- a
+- b
+- c
+SI.L2-3.14.1:
+- a
+- b
+- c
+- d
+- e
+- f
+SI.L2-3.14.2:
+- a
+- b
+SI.L2-3.14.3:
+- a
+- b
+- c
+SI.L2-3.14.4:
+- a
+SI.L2-3.14.5:
+- a
+- b
+- c
+SI.L2-3.14.6:
+- a
+- b
+- c
+SI.L2-3.14.7:
+- a
+- b

@@ -7,8 +7,11 @@ Usage:
     python scripts/cmmc_guidance/extract_pdf.py path/to/AssessmentGuideL2v2.pdf
 
 Writes extracted.json next to the input PDF: for each of the 110 CMMC L2
-practices, the requirement's "Potential Assessment Methods and Objects"
-(Examine/Interview/Test -- practice-level, per the guide's own structure)
+practices, its "ASSESSMENT OBJECTIVES [NIST SP 800-171A]" determination
+statements (per-objective-letter text -- the authoritative source for
+reconciling backend/app/seeds/cmmc_l2.yaml's objective count/keys/text,
+see reconcile_catalog.py), the "Potential Assessment Methods and Objects"
+(Examine/Interview/Test -- practice-level, per the guide's own structure),
 and "Potential Assessment Considerations" bullets tagged by objective
 letter (objective-level). Every word in the output is pypdf-extracted text
 from the real PDF, mechanically cleaned of PDF-kerning artifacts (a small,
@@ -40,14 +43,20 @@ HEADER_RE = re.compile(r"^([A-Z]{2}\.L2-3\.\d+\.\d+)\s+–\s+([A-Z0-9 &,'\-\[\]]
 TAG_RE = re.compile(r"\[([a-z](?:\s*,\s*[a-z])*)\]")
 
 # pypdf's text extraction occasionally splits a word across a font-kerning
-# boundary as a stray space (a PDF rendering artifact, not real text).
-# Found two ways: (1) manual spot-check while reviewing extracted text
-# against the source PDF, and (2) a dictionary sweep (pyspellchecker) over
-# every adjacent word pair in the Considerations+Methods corpus, flagging a
-# pair only where BOTH halves are unknown words AND the concatenation IS a
-# known word. That sweep found 18 genuine splits, zero false positives
-# (each spot-checked against page context), and a re-scan after applying
-# these fixes came back empty. Fixed as literal, disclosed substitutions --
+# boundary as a stray space (a PDF rendering artifact, not real text) --
+# and the same word can split at a different point in different places
+# (font kerning is position/context-dependent), so "secu rity" and
+# "se curity" are both real, independent artifacts, not a typo in one of
+# them. Found two ways: (1) manual spot-check while reviewing extracted
+# text against the source PDF, and (2) a dictionary sweep (pyspellchecker)
+# over every adjacent word pair in the corpus actually used (Considerations
+# + Methods, and later extended to cover the ASSESSMENT OBJECTIVES text
+# too -- run it again over any newly-extracted section before trusting the
+# output), flagging a pair only where BOTH halves are unknown words AND the
+# concatenation IS a known word. Zero false positives across every sweep
+# run so far (each spot-checked against page context), and a re-scan after
+# applying fixes always comes back empty. Fixed as literal, disclosed
+# substitutions --
 # never a general-purpose regex that could silently mangle a legitimate
 # two-word phrase elsewhere in the corpus.
 KERNING_FIXES = {
@@ -68,6 +77,7 @@ KERNING_FIXES = {
     "pr ocedures": "procedures",
     "procedu res": "procedures",
     "secu rity": "security",
+    "se curity": "security",
     "sy stem": "system",
     "un successful": "unsuccessful",
     "us ers": "users",
@@ -128,6 +138,38 @@ def parse_considerations(block: str | None) -> list[dict]:
     return items
 
 
+OBJ_TAG_RE = re.compile(r"\[([a-z])\]\s*")
+
+
+def parse_objectives(block: str | None) -> dict[str, str]:
+    """'ASSESSMENT OBJECTIVES [NIST SP 800-171A] / Determine if:' is a
+    semicolon-separated list, each item starting with its own '[x]' tag
+    (never multiple letters on one item, unlike Considerations bullets).
+    Returns {letter: text} with the tag and trailing connector word
+    ("and") / punctuation stripped, whitespace collapsed, kerning-fixed.
+    This is the authoritative per-objective determination-statement text
+    -- used to reconcile against backend/app/seeds/cmmc_l2.yaml's
+    hand-maintained objective text, not to replace it wholesale (the
+    catalog's own phrasing is a deliberate, independently-styled rewrite
+    in places; reconciliation compares meaning, not verbatim wording)."""
+    if not block:
+        return {}
+    text = " ".join(block.split())
+    tags = list(OBJ_TAG_RE.finditer(text))
+    out: dict[str, str] = {}
+    for i, m in enumerate(tags):
+        letter = m.group(1)
+        start = m.end()
+        end = tags[i + 1].start() if i + 1 < len(tags) else len(text)
+        item = text[start:end].strip()
+        # Trailing list connectors/punctuation before the next tag or EOL:
+        # "...are identified; and" / "...are identified; " / "...are identified."
+        item = re.sub(r"[;.]?\s*and\s*$", "", item)
+        item = item.rstrip(";. ").strip()
+        out[letter] = fix_kerning(item)
+    return out
+
+
 def parse_methods(block: str | None) -> dict:
     """'Potential Assessment Methods and Objects' -- Examine / Interview /
     Test, each a bracketed SELECT FROM list. Practice-level: the guide does
@@ -175,6 +217,9 @@ def main() -> None:
         end_i = starts[idx + 1][0] if idx + 1 < len(starts) else len(lines)
         chunk = "\n".join(l for (_, l) in lines[start_i:end_i])
 
+        objectives_block = extract_section(
+            chunk, "Determine if:", ["POTENTIAL ASSESSMENT METHODS AND OBJECTS", "DISCUSSION"]
+        )
         methods_block = extract_section(
             chunk, "POTENTIAL ASSESSMENT METHODS AND OBJECTS", ["DISCUSSION", "FURTHER DISCUSSION"]
         )
@@ -184,6 +229,7 @@ def main() -> None:
         results[pid] = {
             "title_caps": title_caps,
             "start_page": pg,
+            "objectives": parse_objectives(objectives_block),
             "methods": parse_methods(methods_block),
             "considerations": parse_considerations(considerations_block),
         }
@@ -193,7 +239,9 @@ def main() -> None:
     n_with_methods = sum(1 for r in results.values() if r["methods"])
     n_with_considerations = sum(1 for r in results.values() if r["considerations"])
     total_bullets = sum(len(r["considerations"]) for r in results.values())
+    total_objectives = sum(len(r["objectives"]) for r in results.values())
     print(f"practices: {len(results)}")
+    print(f"total objectives (determination statements): {total_objectives}")
     print(f"practices with Examine/Interview/Test methods: {n_with_methods}")
     print(f"practices with tagged Considerations bullets: {n_with_considerations}")
     print(f"total tagged Considerations bullets: {total_bullets}")

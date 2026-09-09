@@ -165,6 +165,62 @@ def seed_catalog_cmd(
         session.close()
 
 
+@app.command(name="backfill-missing-control-states")
+def backfill_missing_control_states_cmd(
+    reason: str = typer.Option(
+        ...,
+        help="Why this backfill is running -- recorded verbatim in every "
+        "audit_log entry this writes, so the score change is explainable.",
+    ),
+    apply: bool = typer.Option(
+        False, help="Apply the backfill (default: dry-run only, no writes committed)"
+    ),
+    db_url: str = typer.Option(None, "--db-url", help="Override DATABASE_URL"),
+) -> None:
+    """For every assessment, add a control_state row (not_met/customer_owns)
+    for any framework objective missing one, and recompute SPRS. Run after
+    seed-catalog adds a new objective to an already-seeded catalog -- e.g.
+    the 2026-09 4-objective gap fix (see docs/roadmap.md). Defaults to
+    dry-run; pass --apply to commit. Always review the dry-run report
+    before applying -- scores can move, downward, for assessments that
+    previously looked more complete than they were.
+    """
+    import os
+
+    if db_url:
+        os.environ["DATABASE_URL"] = db_url
+
+    from .db import SessionLocal as _SL  # re-import to pick up env override
+    from .engine import backfill_missing_control_states
+
+    session = _SL()
+    try:
+        results = backfill_missing_control_states(session, reason=reason, dry_run=not apply)
+        if not results:
+            typer.echo(
+                "No assessments need backfilling -- every objective already "
+                "has a control_state row."
+            )
+            return
+        for r in results:
+            delta = r["sprs_after"] - r["sprs_before"]
+            typer.echo(
+                f"{r['org_name']} / {r['assessment_name']} ({r['assessment_id']}): "
+                f"+{r['objectives_added']} objective(s) {r['added_objective_keys']} -- "
+                f"SPRS {r['sprs_before']} -> {r['sprs_after']} ({delta:+d})"
+            )
+        if apply:
+            tail = " Applied."
+        else:
+            tail = " DRY RUN -- nothing written. Re-run with --apply to commit."
+        typer.echo(f"\n{len(results)} assessment(s) affected.{tail}")
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 _TEST_ORGS = "SELECT id FROM organization WHERE name != 'Acme MSP'"
 
 

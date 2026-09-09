@@ -37,6 +37,7 @@ from .models import (
     EvidenceStateLink,
     EvidenceTask,
     EvidenceTaskStateLink,
+    Organization,
     OrgProduct,
     Product,
     SprsSnapshot,
@@ -751,3 +752,130 @@ def deactivate_org_product(
         "tasks_archived": tasks_archived,
         "evidence_links_archived": evidence_links_archived,
     }
+
+
+def backfill_missing_control_states(
+    session: Session, *, reason: str, dry_run: bool = True
+) -> list[dict]:
+    """For every existing assessment, create a control_state row for any
+    framework objective that doesn't already have one -- e.g. after
+    seed_catalog() adds a new objective to a control that's missing one
+    (see docs/roadmap.md's 2026-09 catalog-reconciliation writeup for the
+    incident this was built for: 4 objectives absent from cmmc_l2.yaml
+    since the catalog was first authored).
+
+    Never defaults a backfilled objective to met: not_met/customer_owns,
+    the exact same baseline _seed_control_states() uses for a brand-new
+    assessment -- defaulting to met would silently assert an evaluation
+    that never happened.
+
+    Deliberately does NOT re-run the magic loop (_run_loop) for
+    already-active org_products against the new rows. Checked, not
+    assumed: as of writing, no baseline_control row in any file under
+    baselines/ asserts real (provider_satisfies/shared/pending_evidence)
+    coverage of any objective this function has ever been used to
+    backfill -- the one match (RocketCyber's IA family entry) is
+    classification=customer_owns, which _run_loop's own query already
+    excludes. If a future baseline product ever does cover a backfilled
+    objective, the next activate_org_product call for that product picks
+    it up normally through the existing path -- nothing here needs to
+    anticipate that.
+
+    Each affected assessment gets exactly one audit_log entry
+    (action="control_state.backfill") recording the before/after SPRS
+    score and which objective ids were added, with *reason* in context --
+    so a score change is explainable from the audit log, not mysterious.
+    Uses recompute_sprs() (the single write path for assessment.sprs_score)
+    rather than computing the score by hand, which also means each call
+    writes a new SprsSnapshot row reflecting the corrected score going
+    forward -- existing historical snapshots (migration 0028) are never
+    touched, by construction: this function only ever INSERTs.
+
+    dry_run=True (the default) computes and returns the full result set,
+    then rolls back -- nothing is written. Pass dry_run=False to commit.
+    Actor is explicitly "system": this is a maintenance operation with no
+    human actor behind the specific click, the same convention audit.py's
+    own docstring describes for a deliberate system-triggered action.
+
+    Returns one dict per assessment that had objectives added:
+        {"assessment_id", "org_id", "org_name", "assessment_name",
+         "objectives_added", "added_objective_keys", "sprs_before", "sprs_after"}
+    Assessments needing no backfill are omitted entirely.
+    """
+    results: list[dict] = []
+
+    assessments = session.scalars(select(Assessment)).all()
+    for assessment in assessments:
+        objectives = session.scalars(
+            select(AssessmentObjective, Control.control_id)
+            .join(Control, AssessmentObjective.control_id == Control.id)
+            .where(Control.framework_id == assessment.framework_id)
+        ).all()
+        existing_obj_ids = set(
+            session.scalars(
+                select(ControlState.objective_id).where(
+                    ControlState.assessment_id == assessment.id
+                )
+            ).all()
+        )
+        missing = [(obj, ctrl_id) for obj, ctrl_id in objectives if obj.id not in existing_obj_ids]
+        if not missing:
+            continue
+
+        sprs_before = assessment.sprs_score
+
+        session.add_all(
+            [
+                ControlState(
+                    assessment_id=assessment.id,
+                    org_id=assessment.org_id,
+                    objective_id=obj.id,
+                    status=ControlStatus.NOT_MET,
+                    responsibility=Responsibility.CUSTOMER_OWNS,
+                )
+                for obj, _ in missing
+            ]
+        )
+        session.flush()
+
+        sprs_after = recompute_sprs(session, assessment.id)
+
+        org = session.get(Organization, assessment.org_id)
+        added_keys = [f"{ctrl_id}[{obj.objective_key}]" for obj, ctrl_id in missing]
+        log_event(
+            session,
+            org_id=assessment.org_id,
+            action="control_state.backfill",
+            entity_type="assessment",
+            entity_id=assessment.id,
+            before_value={"sprs_score": sprs_before, "objective_count": len(existing_obj_ids)},
+            after_value={
+                "sprs_score": sprs_after,
+                "objective_count": len(existing_obj_ids) + len(missing),
+                "added_objective_ids": [str(obj.id) for obj, _ in missing],
+                "added_objective_keys": added_keys,
+            },
+            context={"via": "cli", "reason": reason},
+            actor="system",
+            actor_type="system",
+        )
+
+        results.append(
+            {
+                "assessment_id": str(assessment.id),
+                "org_id": str(assessment.org_id),
+                "org_name": org.name if org else str(assessment.org_id),
+                "assessment_name": assessment.name,
+                "objectives_added": len(missing),
+                "added_objective_keys": added_keys,
+                "sprs_before": sprs_before,
+                "sprs_after": sprs_after,
+            }
+        )
+
+    if dry_run:
+        session.rollback()
+    else:
+        session.commit()
+
+    return results

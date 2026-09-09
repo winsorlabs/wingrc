@@ -380,6 +380,11 @@ AC.L2-3.1.21:
     confirming compliance, not just the written policy.
 
 AC.L2-3.1.22:
+  a: >-
+    A named, specific list of who is authorized to post or process
+    content on public-facing systems -- distinct from the general
+    authorized-user list; assessors look for this role being explicitly
+    scoped, not "whoever has a CMS login."
   b: >-
     A documented procedure describing how CUI is kept off publicly
     accessible systems (a public website, a public-facing portal) --
@@ -871,10 +876,13 @@ IA.L2-3.5.7:
 
 IA.L2-3.5.8:
   a: >-
-    A defined password history depth (how many prior passwords can't be
-    reused) and evidence it's technically enforced at password change --
-    a policy stating a number with no corresponding system enforcement is
-    the common finding.
+    A defined password history depth -- how many prior passwords can't
+    be reused -- documented as a specific number, not a vague "don't
+    reuse old passwords" statement.
+  b: >-
+    Evidence the depth from [a] is technically enforced at password
+    change, not just described in policy -- a policy stating a number
+    with no corresponding system enforcement is the common finding.
 
 IA.L2-3.5.9:
   a: >-
@@ -1206,6 +1214,10 @@ PE.L2-3.10.6:
     otherwise solid physical security posture.
 
 RA.L2-3.11.1:
+  a: >-
+    A defined cadence for risk assessments (annual is common) documented
+    as a specific interval, not "periodically" left undefined -- the
+    policy basis [b] is tested against.
   b: >-
     Evidence a risk assessment is actually performed on the defined
     cadence (annually is common) and covers the system(s) that process
@@ -1415,11 +1427,15 @@ SC.L2-3.13.7:
     allow split tunneling by default is a common finding.
 
 SC.L2-3.13.8:
+  a: >-
+    A defined list of the cryptographic mechanisms (TLS version, VPN
+    protocol) relied on to protect CUI in transit -- named specifically,
+    not a general "we use encryption" statement.
   b: >-
-    Where cryptography isn't used for some CUI transmission, documented
-    alternative physical safeguards (e.g. a dedicated private circuit) --
-    only relevant when [c]'s cryptographic option isn't the chosen
-    approach.
+    Where cryptography from [a] isn't used for some CUI transmission,
+    documented alternative physical safeguards (e.g. a dedicated private
+    circuit) -- only relevant when [a]'s cryptographic option isn't the
+    chosen approach for that transmission path.
   c: >-
     Evidence CUI in transit is actually protected -- TLS/VPN encryption
     for the transmission path is the typical, most common evidence; an

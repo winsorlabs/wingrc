@@ -518,6 +518,9 @@ controls:
   source: "NIST SP 800-171 Rev 2 \xA73.1.22; NIST SP 800-171A 3.1.22; CMMC AG L2 v2 AC.L2-3.1.22"
   req: Control CUI posted or processed on publicly accessible systems.
   objectives:
+  - key: a
+    text: Individuals authorized to post or process information on publicly accessible systems are identified.
+    type: document_list
   - key: b
     text: Procedures to ensure CUI is not posted or processed on publicly accessible systems are identified.
     type: scheduled_operation
@@ -1263,9 +1266,11 @@ controls:
   req: Prohibit password reuse for a specified number of generations.
   objectives:
   - key: a
-    text: The number of generations during which a password cannot be reused is specified and [b] reuse
-      of passwords is prohibited during the specified number of generations.
+    text: The number of generations during which a password cannot be reused is specified.
     type: narrative
+  - key: b
+    text: Reuse of passwords is prohibited during the specified number of generations.
+    type: product
   discussion: Password reuse prevention helps protect against replay attacks and ensures that users do
     not cycle through a set of passwords to return to a previously used one. Organization-defined parameters
     for this requirement include the number of generations to restrict and any historical time period
@@ -1872,6 +1877,10 @@ controls:
     or reputation), organizational assets, and individuals, resulting from the operation of organizational
     systems and the associated processing, storage, or transmission of CUI.
   objectives:
+  - key: a
+    text: The frequency to assess risk to organizational operations, organizational assets, and individuals
+      is defined.
+    type: narrative
   - key: b
     text: Risk to organizational operations, organizational assets, and individuals resulting from the
       operation of an organizational system that processes, stores, or transmits CUI is assessed with
@@ -2229,6 +2238,9 @@ controls:
   req: Implement cryptographic mechanisms to prevent unauthorized disclosure of CUI during transmission
     unless otherwise protected by alternative physical safeguards.
   objectives:
+  - key: a
+    text: Cryptographic mechanisms intended to prevent unauthorized disclosure of CUI are identified.
+    type: narrative
   - key: b
     text: Alternative physical safeguards intended to prevent unauthorized disclosure of CUI are identified.
     type: narrative

@@ -837,6 +837,18 @@ AC.L2-3.1.21:
     storage devices on external systems; system or network administrators; personnel with information
     security responsibilities. Test: Mechanisms implementing restrictions on use of portable storage devices.'
 AC.L2-3.1.22:
+  a: 'The Assessment Guide does not provide an objective-specific consideration for [a]; it is covered
+    only by the practice-wide assessment methods below.
+
+
+    Potential assessment methods for this practice as a whole (the guide does not further subdivide these
+    by determination statement) -- Examine: Access control policy; procedures addressing publicly accessible
+    content; system security plan; list of users authorized to post publicly accessible content on organizational
+    systems; training materials and/or records; records of publicly accessible information reviews; records
+    of response to nonpublic information on public websites; system audit logs and records; security awareness
+    training records; other relevant documents or records. Interview: Personnel with responsibilities
+    for managing publicly accessible information posted on organizational systems; personnel with information
+    securit y responsibilities. Test: Mechanisms implementing management of publicly accessible content.'
   b: 'The Assessment Guide does not provide an objective-specific consideration for [b]; it is covered
     only by the practice-wide assessment methods below.
 
@@ -2284,6 +2296,18 @@ IA.L2-3.5.8:
     responsibilities; personnel with information security responsibilities; system or network administrators;
     system developers. Test: Mechanisms supporting or implementing password -based authenticator management
     capability.'
+  b: 'The Assessment Guide does not provide an objective-specific consideration for [b]; it is covered
+    only by the practice-wide assessment methods below.
+
+
+    Potential assessment methods for this practice as a whole (the guide does not further subdivide these
+    by determination statement) -- Examine: Identification and authentication policy; password policy;
+    procedures addressing authenticator management; system security plan; system design documentation;
+    system configuration settings and associated documentation; password configurations and associated
+    documentation; other relevant documents or records. Interview: Personnel with authenticator management
+    responsibilities; personnel with information security responsibilities; system or network administrators;
+    system developers. Test: Mechanisms supporting or implementing password -based authenticator management
+    capability.'
 IA.L2-3.5.9:
   a: 'Are temporary passwords only valid to allow a user to perform a password reset? Does the system
     enforce an immediate password change after logon when a temporary password is issued?
@@ -3113,6 +3137,17 @@ PE.L2-3.10.6:
     work sites; safeguards employed at alternate work sites; means of communications between personnel
     at alternate work sites and security personnel.'
 RA.L2-3.11.1:
+  a: 'The Assessment Guide does not provide an objective-specific consideration for [a]; it is covered
+    only by the practice-wide assessment methods below.
+
+
+    Potential assessment methods for this practice as a whole (the guide does not further subdivide these
+    by determination statement) -- Examine: Risk assessment policy; security planning policy and procedures;
+    procedures addressing organizational risk assessments; system security plan; risk assessment; risk
+    assessment results; risk assessment reviews; risk assessment updates; other relevant documents or
+    records. Interview: Personnel with risk assessment responsibilities; personnel with information security
+    responsibilities. Test: Organizational processes for risk assessment; mechanisms supporting or for
+    conducting, documenting, reviewing, disseminating, and updating the risk assessment.'
   b: 'Have initial and periodic risk assessments been conducted? Are methods defined for assessing risk
     (e.g., reviewing security assessments, incident reports, and security advisories, identifying threat
     sources, threat events, and vulnerabilities, and determining likelihood, impact, and overall risk
@@ -3716,6 +3751,18 @@ SC.L2-3.13.7:
     Test: Mechanisms implementing boundary protection capability; m echanisms supporting or restricting
     non-remote connections.'
 SC.L2-3.13.8:
+  a: 'The Assessment Guide does not provide an objective-specific consideration for [a]; it is covered
+    only by the practice-wide assessment methods below.
+
+
+    Potential assessment methods for this practice as a whole (the guide does not further subdivide these
+    by determination statement) -- Examine: System and communications protection policy; procedures addressing
+    transmission confidentiality and integrity; system security plan; system design documentation; system
+    configuration settings and associated documentation; system audit logs and records; other relevant
+    documents or records. Interview: System or network administrators; personnel with information security
+    responsibilities; system developer. Test: Cryptographic mechanisms or mechanisms supporting or implementing
+    transmission confidentiality; organizational processes for defining and implementing alternative physical
+    safeguards.'
   b: 'The Assessment Guide does not provide an objective-specific consideration for [b]; it is covered
     only by the practice-wide assessment methods below.
 

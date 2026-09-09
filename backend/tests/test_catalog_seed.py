@@ -2,15 +2,68 @@
 
 Requires a running Postgres database; skipped otherwise.
 Run with:  pytest tests/test_catalog_seed.py -m integration -v
+
+The one exception is test_catalog_matches_authoritative_reference below --
+a pure YAML-to-YAML comparison with no DB involved, deliberately left
+unmarked (no @pytest.mark.integration, no db_session fixture) so it runs
+in CI's fast `backend` job too, not only `integration`. That's the whole
+point of it as a drift guard: a silent catalog gap should fail CI on the
+very next PR that touches cmmc_l2.yaml, not wait for the `integration`
+job's Postgres service container -- or for another unrelated task to
+notice by hand, which is how the 4-objective gap this guards against
+actually surfaced.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
+import yaml
 
 from app.models import AssessmentObjective, Control, Framework
 from app.seeds.catalog import seed_catalog
+
+_SEEDS_DIR = Path(__file__).parent.parent / "app" / "seeds"
+
+
+def test_catalog_matches_authoritative_reference():
+    """cmmc_l2.yaml's objective key set, per practice, must exactly match
+    cmmc_catalog_reference.yaml -- a committed, PDF-derived reference
+    (scripts/cmmc_guidance/gen_catalog_reference.py), independent of
+    cmmc_l2.yaml itself. Checking a file against a reference derived from
+    that same file would never catch drift; this reference is generated
+    straight from the real Assessment Guide extraction.
+
+    If this fails: either cmmc_l2.yaml has a real gap/extra/mis-keyed
+    objective (fix cmmc_l2.yaml -- see scripts/cmmc_guidance/
+    reconcile_catalog.py to find exactly what's wrong), or the guide was
+    legitimately re-extracted and cmmc_catalog_reference.yaml needs
+    regenerating to match (only after reconciling cmmc_l2.yaml against
+    the new extraction first -- see that script's own module docstring).
+    """
+    catalog = yaml.safe_load((_SEEDS_DIR / "cmmc_l2.yaml").read_text(encoding="utf-8"))
+    reference = yaml.safe_load(
+        (_SEEDS_DIR / "cmmc_catalog_reference.yaml").read_text(encoding="utf-8")
+    )
+
+    catalog_keys = {
+        c["id"]: sorted(o["key"] for o in c.get("objectives", [])) for c in catalog["controls"]
+    }
+
+    assert set(catalog_keys) == set(reference), (
+        f"Practice id mismatch.\n"
+        f"  in catalog but not reference: {sorted(set(catalog_keys) - set(reference))}\n"
+        f"  in reference but not catalog: {sorted(set(reference) - set(catalog_keys))}"
+    )
+
+    mismatches = {
+        pid: (catalog_keys[pid], reference[pid])
+        for pid in catalog_keys
+        if catalog_keys[pid] != reference[pid]
+    }
+    assert not mismatches, "Objective key drift from the authoritative reference:\n" + "\n".join(
+        f"  {pid}: catalog={cat}  reference={ref}" for pid, (cat, ref) in mismatches.items()
+    )
 
 
 @pytest.mark.integration
