@@ -806,7 +806,7 @@ def backfill_missing_control_states(
 
     assessments = session.scalars(select(Assessment)).all()
     for assessment in assessments:
-        objectives = session.scalars(
+        objectives = session.execute(
             select(AssessmentObjective, Control.control_id)
             .join(Control, AssessmentObjective.control_id == Control.id)
             .where(Control.framework_id == assessment.framework_id)
