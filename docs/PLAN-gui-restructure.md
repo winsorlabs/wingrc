@@ -730,6 +730,47 @@ round-trip for individual assignments.
 child objective shows the assignment, override one objective, confirm the
 override survives a second family-level bulk-assign of the same family.
 
+### Follow-up, 2026-09-09 — moved under Assessments; inline per-objective control added
+
+**Moved from Scope to Assessments.** RACI is assessment-scoped data
+(`RaciAssignment.control_state_id` → one specific assessment's control
+states) sitting in an org-scoped menu — the "under Scope" placement above
+was wrong from the start, not a later regression. `RolesPanel.tsx` now
+renders as an Assessments sub-tab ("Roles", alongside the existing board,
+called "Assessment Board" in the nav) instead of a Scope sub-tab; Scope's
+own "Roles" entry is removed rather than left as a second pointer to the
+same editor. `RolesPanel` already took `assessmentId` as an explicit prop
+from `App.tsx`'s `assessment` state (never an implicit "current
+assessment" lookup), so the move changes nothing about *which* assessment
+it edits — confirmed before moving, not assumed.
+
+**Inline per-objective RACI added to the assessment board's own objective
+drawer** (`ControlDrawer.tsx`), directly above the Evidence section —
+ownership before proof. Uses the exact same endpoints `RolesPanel.tsx`
+does (`GET/POST/DELETE .../raci`), fetched once per drawer open (the whole
+assessment's assignments + contacts, not once per objective) and filtered
+client-side per `control_state_id` — one API, two presentations, per this
+plan's own anti-duplication discipline. New `RaciSection.tsx`, styled to
+match `EvidenceSection.tsx`'s section-header/count-badge/footer treatment
+exactly (new `.raci-drawer-*` CSS classes, deliberately not shared with
+`.ev-*` — same visual language, independent sections free to diverge
+later). The MSP-vs-customer suggestion needed `ControlState.responsibility`
+on `StatementOut` (`get_statements`) — a one-field addition, since that
+endpoint already loads the `ControlState` row per objective for
+`control_state_id`, not a new query. `suggestedAffiliation`/
+`sortedForSuggestion` (previously private to `RolesPanel.tsx`) moved to
+`lib/raci.ts` so both presentations share one suggestion rule.
+
+**Product question raised and answered:** does RACI carry forward when a
+new assessment starts, or begin empty? Asked Jarrod rather than picking
+(nothing today addresses it, since there's only ever been one
+assessment's worth of RACI data) — **decided: copy forward from the most
+recent prior assessment, editable from there.** Not implemented in this
+pass — `start_assessment`/`engine.py` still seeds no RACI rows, so today's
+behavior is unchanged (starts empty) — this is a recorded decision for
+whoever picks up the actual copy-forward implementation, not a completed
+slice.
+
 ---
 
 ## G.8 — Assessment templates

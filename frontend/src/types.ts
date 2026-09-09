@@ -92,6 +92,9 @@ export interface StatementRow {
   body: string;
   status: string | null;
   control_discussion: string | null;
+  // G.7 Part 2: drives RaciSection's MSP-vs-customer suggestion inline in
+  // the drawer -- see StatementOut's own comment on the backend side.
+  responsibility: string | null;
 }
 
 export interface EvidenceRow {

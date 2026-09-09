@@ -388,7 +388,9 @@ self-test (`fips_check.py`; `WINGRC_REQUIRE_FIPS` env var). All documented in
 Shipped 2026-09-08 (`7efdbe6e3`, `c81bcfa56`) — see
 `docs/PLAN-gui-restructure.md`'s G.7 section for the full writeup. New
 `backend/app/routers/raci.py` (there was no RACI API surface at all
-before this) plus `frontend/src/components/RolesPanel.tsx` under Scope:
+before this) plus `frontend/src/components/RolesPanel.tsx`, under
+Assessments (moved from Scope 2026-09-09 — RACI is assessment-scoped data,
+not org-scoped, per that session's own writeup):
 family-level bulk-assign cascades to every child control state without
 clobbering objective-level overrides already in place (checked per
 `(control_state_id, raci_letter)`, not per control state), with

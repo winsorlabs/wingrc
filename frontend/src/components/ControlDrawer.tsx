@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { StatementRow } from "../types";
+import type { Contact, RaciAssignmentRow, StatementRow } from "../types";
 import { EvidenceSection } from "./EvidenceSection";
+import { RaciSection } from "./RaciSection";
 
 const STMT_STATUSES = [
   { value: "draft", label: "Draft" },
@@ -19,6 +20,7 @@ interface StatementItem {
   status: string;
   id: string | null;
   control_discussion: string | null;
+  responsibility: string | null;
 }
 
 interface Props {
@@ -44,6 +46,7 @@ function fromRow(row: StatementRow): StatementItem {
     status: row.status ?? "draft",
     id: row.id,
     control_discussion: row.control_discussion,
+    responsibility: row.responsibility,
   };
 }
 
@@ -67,6 +70,12 @@ export function ControlDrawer({
   const [showDiscussion, setShowDiscussion] = useState(false);
   const [evidenceCounts, setEvidenceCounts] = useState<Record<string, number>>({});
   const [evidenceDirty, setEvidenceDirty] = useState(false);
+  // Fetched once per drawer open (the whole assessment's worth), not once
+  // per objective -- RaciSection below only reads its own slice via
+  // control_state_id. Same endpoints RolesPanel.tsx uses (G.7 Part 2: "one
+  // API, two presentations"), so an assign/remove here shows up there too.
+  const [raciAssignments, setRaciAssignments] = useState<RaciAssignmentRow[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
 
   useEffect(() => {
     setLoading(true);
@@ -77,6 +86,8 @@ export function ControlDrawer({
       .then((rows) => setItems(rows.map(fromRow)))
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
+    api.getRaciAssignments(orgId, assessmentId).then(setRaciAssignments).catch(() => {});
+    api.getContacts(orgId).then(setContacts).catch(() => {});
   }, [orgId, assessmentId, controlDbId]);
 
   function updateItem(objectiveId: string, field: "body" | "status", value: string) {
@@ -132,6 +143,14 @@ export function ControlDrawer({
   function handleEvidenceCountChange(objectiveId: string, count: number) {
     setEvidenceCounts((prev) => ({ ...prev, [objectiveId]: count }));
     setEvidenceDirty(true);
+  }
+
+  function handleRaciAssigned(row: RaciAssignmentRow) {
+    setRaciAssignments((prev) => [...prev, row]);
+  }
+
+  function handleRaciRemoved(raciId: string) {
+    setRaciAssignments((prev) => prev.filter((a) => a.id !== raciId));
   }
 
   function handleClose() {
@@ -217,13 +236,30 @@ export function ControlDrawer({
                 </div>
                 </fieldset>
                 {item.control_state_id && (
-                  <EvidenceSection
-                    orgId={orgId}
-                    assessmentId={assessmentId}
-                    controlStateId={item.control_state_id}
-                    canWrite={canWrite}
-                    onCountChange={(count) => handleEvidenceCountChange(item.objective_id, count)}
-                  />
+                  <>
+                    {/* Ownership before proof: RACI above Evidence in this
+                        drawer, per G.7 Part 2's explicit placement call. */}
+                    <RaciSection
+                      orgId={orgId}
+                      assessmentId={assessmentId}
+                      controlStateId={item.control_state_id}
+                      canWrite={canWrite}
+                      assignments={raciAssignments.filter(
+                        (a) => a.control_state_id === item.control_state_id
+                      )}
+                      contacts={contacts}
+                      responsibility={item.responsibility}
+                      onAssigned={handleRaciAssigned}
+                      onRemoved={handleRaciRemoved}
+                    />
+                    <EvidenceSection
+                      orgId={orgId}
+                      assessmentId={assessmentId}
+                      controlStateId={item.control_state_id}
+                      canWrite={canWrite}
+                      onCountChange={(count) => handleEvidenceCountChange(item.objective_id, count)}
+                    />
+                  </>
                 )}
               </div>
             ))}

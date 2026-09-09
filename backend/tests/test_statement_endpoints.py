@@ -139,6 +139,32 @@ def test_get_statements_returns_guidance(client, db_session, fake_msp_admin):
 
 
 @pytest.mark.integration
+def test_get_statements_returns_responsibility(client, db_session, fake_msp_admin):
+    """G.7 Part 2: RaciSection's MSP-vs-customer suggestion reads this field
+    off the drawer's own statements response -- confirms get_statements
+    actually populates it from the control_state row it already loads,
+    and leaves it None (not a guess) for objectives with no control_state
+    row at all."""
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    cs = ControlState(
+        assessment_id=d["assessment"].id,
+        org_id=d["org"].id,
+        objective_id=d["obj_a"].id,
+        status="not_met",
+        responsibility="provider_satisfies",
+    )
+    db_session.add(cs)
+    db_session.flush()
+
+    items = client.get(_base_url(d)).json()
+    by_key = {i["objective_key"]: i for i in items}
+    assert by_key["a"]["responsibility"] == "provider_satisfies"
+    assert by_key["a"]["control_state_id"] == str(cs.id)
+    assert by_key["b"]["responsibility"] is None
+    assert by_key["c"]["responsibility"] is None
+
+
+@pytest.mark.integration
 def test_get_statements_returns_control_discussion(client, db_session, fake_msp_admin):
     d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     items = client.get(_base_url(d)).json()

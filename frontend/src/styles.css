@@ -750,6 +750,80 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
   margin-bottom: 0.35rem;
 }
 
+/* ── RACI section (inside control drawer, per objective, G.7 Part 2) ──
+   Mirrors .ev-section's treatment exactly (per the task's own "match the
+   existing section styling" instruction) so it reads as a native part of
+   the drawer rather than a bolted-on widget -- deliberately duplicated
+   rather than sharing class names with .ev-*, since Evidence and RACI are
+   independent sections that must be free to diverge later. */
+.raci-drawer-section {
+  margin-top: 0.5rem;
+  border-top: 1px solid #f0f0f0;
+  padding-top: 0.4rem;
+}
+
+.raci-drawer-section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.25rem;
+}
+
+.raci-drawer-section-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.raci-drawer-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.3rem;
+  border-radius: 8px;
+  background: var(--primary);
+  color: white;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.raci-drawer-status {
+  font-size: 0.75rem;
+  color: var(--muted);
+  padding: 0.15rem 0;
+}
+
+.raci-drawer-empty {
+  margin-bottom: 0.35rem;
+}
+
+.raci-drawer-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.35rem;
+}
+.raci-drawer-footer select {
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.78rem;
+}
+
+.raci-drawer-error {
+  font-size: 0.72rem;
+  color: #dc3545;
+  margin-top: 0.25rem;
+}
+
 .ev-error {
   font-size: 0.72rem;
   color: #dc3545;

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { FAMILY_NAMES, FAMILY_ORDER } from "../lib/families";
+import { RACI_LETTERS as LETTERS, RACI_LETTER_LABELS as LETTER_LABELS, sortedForSuggestion, suggestedAffiliation } from "../lib/raci";
+import type { Affiliation } from "../lib/raci";
 import type { Contact, ControlStateRow, RaciAssignmentRow } from "../types";
 
 interface Props {
@@ -9,25 +11,7 @@ interface Props {
   canWrite: boolean;
 }
 
-const LETTERS = ["R", "A", "C", "I"] as const;
-const LETTER_LABELS: Record<string, string> = {
-  R: "Responsible", A: "Accountable", C: "Consulted", I: "Informed",
-};
-
-// ControlState.responsibility -> which side of the MSP/customer line
-// usually owns it. Suggestion only, per G.7 ("candidates, never
-// auto-met" applied to RACI too) -- see Contact model's own docstring in
-// backend/app/models.py for the same mapping stated as design intent.
-// Not the same field the plan doc names (BaselineControl.responsibility) --
-// see raci.py's module docstring for why control_state.responsibility is
-// used instead: it's the already-resolved per-objective value, available
-// here for free from the control-states endpoint this panel already loads,
-// rather than a second lookup back through BaselineControl.
-function suggestedAffiliation(responsibility: string): "msp" | "customer" {
-  return responsibility === "provider_satisfies" || responsibility === "shared" ? "msp" : "customer";
-}
-
-function dominantAffiliation(rows: ControlStateRow[]): "msp" | "customer" {
+function dominantAffiliation(rows: ControlStateRow[]): Affiliation {
   let msp = 0;
   let customer = 0;
   for (const row of rows) {
@@ -35,18 +19,6 @@ function dominantAffiliation(rows: ControlStateRow[]): "msp" | "customer" {
     else customer++;
   }
   return msp >= customer ? "msp" : "customer";
-}
-
-// Contacts of the suggested affiliation first, so the picker's default
-// option is the suggestion -- still nothing is written until the user
-// explicitly submits the form.
-function sortedForSuggestion(contacts: Contact[], affiliation: "msp" | "customer"): Contact[] {
-  return [...contacts].sort((a, b) => {
-    const aMatch = a.affiliation === affiliation ? 0 : 1;
-    const bMatch = b.affiliation === affiliation ? 0 : 1;
-    if (aMatch !== bMatch) return aMatch - bMatch;
-    return a.name.localeCompare(b.name);
-  });
 }
 
 interface BulkFormState {

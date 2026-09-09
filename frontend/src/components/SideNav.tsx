@@ -2,7 +2,11 @@ import { canSeeApiTokens, canSeeAuditLog, canSeeSecurity, canSeeUsers } from "..
 import type { OnboardingStatus } from "../types";
 
 export type NavCategory = "dashboard" | "scope" | "assessments" | "tools" | "library" | "security";
-export type ScopeTab = "profile" | "system" | "contacts" | "assets" | "roles";
+export type ScopeTab = "profile" | "system" | "contacts" | "assets";
+// RACI is assessment-scoped data (docs/PLAN-gui-restructure.md G.7's
+// 2026-09-09 move note) — "board" is the existing per-control assessment
+// view, "roles" is the Roles/RACI matrix, both live under Assessments now.
+export type AssessmentsTab = "board" | "roles";
 export type SecurityTab = "users" | "api-tokens" | "audit-log";
 export type SystemDescriptionSection = "network_diagram" | "data_flow_diagram";
 
@@ -16,6 +20,8 @@ interface Props {
   // (see docs/PLAN-gui-restructure.md G.6). Clicking either nav entry routes
   // to the "system" tab and asks it to scroll to/highlight this section.
   onFocusSystemSection: (s: SystemDescriptionSection) => void;
+  assessmentsTab: AssessmentsTab;
+  onSelectAssessmentsTab: (t: AssessmentsTab) => void;
   securityTab: SecurityTab;
   onSelectSecurityTab: (t: SecurityTab) => void;
   currentUserRole: string;
@@ -28,6 +34,8 @@ export function SideNav({
   scopeTab,
   onSelectScopeTab,
   onFocusSystemSection,
+  assessmentsTab,
+  onSelectAssessmentsTab,
   securityTab,
   onSelectSecurityTab,
   currentUserRole,
@@ -48,6 +56,10 @@ export function SideNav({
 
   function scopeSubClass(t: ScopeTab) {
     return `side-nav-subitem${category === "scope" && scopeTab === t ? " active" : ""}`;
+  }
+
+  function assessmentsSubClass(t: AssessmentsTab) {
+    return `side-nav-subitem${category === "assessments" && assessmentsTab === t ? " active" : ""}`;
   }
 
   function securitySubClass(t: SecurityTab) {
@@ -94,9 +106,6 @@ export function SideNav({
             <button className={scopeSubClass("system")} onClick={() => onFocusSystemSection("data_flow_diagram")}>
               Data Flow Diagram
             </button>
-            <button className={scopeSubClass("roles")} onClick={() => onSelectScopeTab("roles")}>
-              Roles
-            </button>
           </div>
         )}
       </div>
@@ -105,6 +114,16 @@ export function SideNav({
         <button className={categoryClass("assessments")} onClick={() => onSelectCategory("assessments")}>
           Assessments
         </button>
+        {category === "assessments" && (
+          <div className="side-nav-subitems">
+            <button className={assessmentsSubClass("board")} onClick={() => onSelectAssessmentsTab("board")}>
+              Assessment Board
+            </button>
+            <button className={assessmentsSubClass("roles")} onClick={() => onSelectAssessmentsTab("roles")}>
+              Roles
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="side-nav-category">

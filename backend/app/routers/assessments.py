@@ -130,6 +130,10 @@ class StatementOut(BaseModel):
     body: str
     status: str | None = None
     control_discussion: str | None = None
+    # G.7 Part 2: lets the drawer's inline RaciSection suggest MSP-vs-customer
+    # without a second fetch of the whole control-states list just for this
+    # one field — get_statements already loads states_by_obj below.
+    responsibility: str | None = None
 
 
 class UpsertStatementIn(BaseModel):
@@ -773,6 +777,7 @@ def get_statements(
             body=existing[o.id].body if o.id in existing else "",
             status=existing[o.id].status if o.id in existing else None,
             control_discussion=ctrl.discussion,
+            responsibility=states_by_obj[o.id].responsibility if o.id in states_by_obj else None,
         )
         for o in objectives
     ]
