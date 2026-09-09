@@ -34,3 +34,25 @@ table, no new spreadsheet — it renders from the existing scope graph.
 ## Adding an importer
 Implement `source rows -> list[CanonicalEntity]` under
 `backend/app/importers/`. Reconciliation and rendering are shared downstream.
+
+## Branch hygiene
+
+Delete a working branch — local and remote — in the same step as merging
+it, not as a separate cleanup round later. This project merges most work
+directly to `main` rather than through a PR (see the root `CLAUDE.md`'s
+commit/push policy), so **GitHub's "automatically delete head branches"
+setting won't catch these** — that only fires on PR merges, and most
+branches here never go through one. Nothing else cleans them up, which is
+exactly how five merged branches (`perf/get-current-user-threadpool`,
+`fix/reset-dev-guard-fail-closed`, `fix/reset-dev-fk-order`,
+`feature/device-asset-fields`, `network-data-flow-diagrams`) sat on GitHub
+for weeks doing nothing before a dedicated cleanup pass found them.
+
+Once a branch is merged into `main` and pushed:
+```bash
+git checkout main
+git branch -d the-working-branch          # -d, not -D: refuses if not merged
+git push origin --delete the-working-branch
+```
+If `-d` refuses, the branch has commits `main` doesn't — that's unmerged
+work needing a decision, not something to force through.
