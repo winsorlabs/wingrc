@@ -17,6 +17,7 @@ Covers:
 
 All tests use InMemoryStorageClient injected via dependency_overrides.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -337,6 +338,7 @@ def test_bundle_zip_contains_required_files(client, db_session, storage, fake_ms
         "ssp/02_implementation.html",
         "ssp/03_personnel.html",
         "ssp/04_component_inventory.html",
+        "ssp/05_customer_responsibility_matrix.html",
         "ssp/system_security_plan.pdf",
         "evidence/manifest.html",
         "summary/scoring.html",
@@ -910,8 +912,9 @@ def test_bundle_archived_link_evidence_excluded_from_unlinked_section(
         names = zf.namelist()
         manifest_html = zf.read(next(n for n in names if n.endswith("manifest.html"))).decode()
         embedded_bytes = {
-            zf.read(n) for n in names if n.startswith(f"{names[0].split('/')[0]}/evidence/")
-            and not n.endswith((".html",))
+            zf.read(n)
+            for n in names
+            if n.startswith(f"{names[0].split('/')[0]}/evidence/") and not n.endswith((".html",))
         }
 
     # The retired file's bytes must not have been embedded anywhere in the ZIP.
@@ -1212,3 +1215,146 @@ def test_bundle_inventory_in_pdf_toc(client, db_session, storage, fake_msp_admin
     assert pdf_bytes_with_inventory[:5] == b"%PDF-"
     # Extra page (TOC entry + table) reliably adds bytes to the PDF stream.
     assert len(pdf_bytes_with_inventory) > len(pdf_bytes_without_inventory)
+
+
+# ---------------------------------------------------------------------------
+# Customer Responsibility Matrix (CRM, G.7 Part 3) — same test shapes as
+# Component/Asset Inventory above: contains a real row, in the artifact
+# log, survives the second-order-hash ordering constraint, in the PDF TOC.
+# _seed() already puts one RaciAssignment (Jane Smith, msp, 'R') on cs_a's
+# objective, and cs_b's objective has none — one bundle exercises both the
+# populated and the unassigned case without extra seeding.
+# ---------------------------------------------------------------------------
+
+
+def _crm_html(zf: zipfile.ZipFile) -> str:
+    name = next(n for n in zf.namelist() if n.endswith("05_customer_responsibility_matrix.html"))
+    return zf.read(name).decode()
+
+
+@pytest.mark.integration
+def test_bundle_crm_contains_assignment_and_affiliation(
+    client, db_session, storage, fake_msp_admin
+):
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        html = _crm_html(zf)
+
+    assert "AC.L2-3.1.1[a]" in html
+    assert d["contact"].name in html
+    # The whole point of this document: which side of the MSP/customer
+    # line the assignee is on, not just their name.
+    assert "msp" in html
+
+
+@pytest.mark.integration
+def test_bundle_crm_shows_dash_for_unassigned_objective(
+    client, db_session, storage, fake_msp_admin
+):
+    """obj_b has no RaciAssignment row at all -- the matrix must show that
+    plainly (an em dash placeholder) rather than guessing or omitting the
+    row entirely."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        html = _crm_html(zf)
+
+    assert "AC.L2-3.1.1[b]" in html
+    # Both rows are present; obj_b's R/A/C/I cells all fall back to the
+    # no-stmt dash class since nobody holds any letter on it.
+    assert html.count('<span class="no-stmt">—</span>') >= 4
+
+
+@pytest.mark.integration
+def test_bundle_crm_empty_assessment_shows_message(client, db_session, storage, fake_msp_admin):
+    """No control_state rows at all (a framework with zero objectives) ->
+    the friendly empty-state message, not an empty <table>."""
+    org = Organization(id=fake_msp_admin.org_id, name=f"CrmEmptyOrg-{uuid.uuid4().hex[:6]}")
+    fw = Framework(key=f"fw-crm-empty-{uuid.uuid4().hex[:6]}", name="Empty FW", version="r2")
+    db_session.add_all([org, fw])
+    db_session.flush()
+    _grant(db_session, fake_msp_admin, org_id=org.id)
+    assessment = start_assessment(db_session, org_id=org.id, framework_id=fw.id, name="Empty")
+    db_session.flush()
+
+    r = client.get(f"/orgs/{org.id}/assessments/{assessment.id}/bundle")
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        html = _crm_html(zf)
+
+    assert "No RACI assignments recorded" in html
+
+
+@pytest.mark.integration
+def test_bundle_crm_in_artifact_log(client, db_session, storage, fake_msp_admin):
+    """Same as every other generated page: must get its own hash line in
+    artifact_log.txt, matching the exact bytes shipped in the ZIP."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        crm_name = next(
+            n for n in zf.namelist() if n.endswith("05_customer_responsibility_matrix.html")
+        )
+        crm_bytes = zf.read(crm_name)
+        log_name = next(n for n in zf.namelist() if n.endswith("artifact_log.txt"))
+        log_text = zf.read(log_name).decode()
+
+    assert crm_name in log_text
+    expected_hash = hashlib.sha256(crm_bytes).hexdigest()
+    assert expected_hash in log_text
+
+
+@pytest.mark.integration
+def test_bundle_second_order_hash_survives_crm_addition(
+    client, db_session, storage, fake_msp_admin
+):
+    """Same regression guard as the PDF/inventory versions above: the CRM
+    page (and the PDF section built from the same shared body function)
+    must be hashed into log_lines before the second-order hash is
+    computed."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        log_name = next(n for n in zf.namelist() if n.endswith("artifact_log.txt"))
+        log_bytes = zf.read(log_name)
+        cover_name = next(n for n in zf.namelist() if n.endswith("cover.html"))
+        cover_html = zf.read(cover_name).decode()
+
+    actual_hash = hashlib.sha256(log_bytes).hexdigest()
+    assert actual_hash in cover_html
+
+
+@pytest.mark.integration
+def test_bundle_crm_in_pdf_toc(client, db_session, storage, fake_msp_admin):
+    """The consolidated SSP PDF's own content is assembled from _crm_body,
+    same shared-function requirement as every other SSP section -- assert
+    via a nontrivial size bump on the SAME org's bundle before/after adding
+    a second RACI assignment (cross-org bundle access 404s under RLS, so
+    this can't compare two different orgs), since PDF bytes aren't
+    text-searchable here."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+
+    r1 = client.get(_bundle_url(d))
+    assert r1.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r1.content)) as zf:
+        pdf_name = next(n for n in zf.namelist() if n.endswith("system_security_plan.pdf"))
+        pdf_bytes_before = zf.read(pdf_name)
+
+    db_session.add(
+        RaciAssignment(control_state_id=d["cs_b"].id, contact_id=d["contact"].id, raci_letter="A")
+    )
+    db_session.flush()
+    r2 = client.get(_bundle_url(d))
+    assert r2.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r2.content)) as zf:
+        pdf_name = next(n for n in zf.namelist() if n.endswith("system_security_plan.pdf"))
+        pdf_bytes_after = zf.read(pdf_name)
+
+    assert pdf_bytes_after[:5] == b"%PDF-"
+    assert len(pdf_bytes_after) > len(pdf_bytes_before)

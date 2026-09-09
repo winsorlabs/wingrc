@@ -195,6 +195,9 @@ export interface RaciAssignmentRow {
   control_state_id: string;
   contact_id: string;
   contact_name: string;
+  // G.7 Part 3: shown alongside the name in RolesPanel/RaciSection so the
+  // MSP-vs-customer split is visible without opening the picker.
+  contact_affiliation: string;
   raci_letter: string;
   created_at: string;
 }

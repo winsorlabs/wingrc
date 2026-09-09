@@ -55,6 +55,10 @@ class RaciAssignmentOut(BaseModel):
     control_state_id: uuid.UUID
     contact_id: uuid.UUID
     contact_name: str
+    # G.7 Part 3: RolesPanel.tsx displays this alongside the name so the
+    # matrix shows MSP-vs-customer at a glance, not just who -- the whole
+    # point of the CRM this doubles as (see bundle_service.py's CrmSnap).
+    contact_affiliation: str
     raci_letter: str
     created_at: datetime
 
@@ -126,12 +130,15 @@ def _get_control_state(
     return cs
 
 
-def _out(assignment: RaciAssignment, contact_name: str) -> RaciAssignmentOut:
+def _out(
+    assignment: RaciAssignment, contact_name: str, contact_affiliation: str
+) -> RaciAssignmentOut:
     return RaciAssignmentOut(
         id=assignment.id,
         control_state_id=assignment.control_state_id,
         contact_id=assignment.contact_id,
         contact_name=contact_name,
+        contact_affiliation=contact_affiliation,
         raci_letter=assignment.raci_letter,
         created_at=assignment.created_at,
     )
@@ -151,13 +158,13 @@ def list_raci_assignments(
     _get_assessment(session, org_id, assessment_id)
 
     rows = session.execute(
-        select(RaciAssignment, Contact.name)
+        select(RaciAssignment, Contact.name, Contact.affiliation)
         .join(ControlState, RaciAssignment.control_state_id == ControlState.id)
         .join(Contact, RaciAssignment.contact_id == Contact.id)
         .where(ControlState.org_id == org_id, ControlState.assessment_id == assessment_id)
         .order_by(RaciAssignment.created_at)
     ).all()
-    return [_out(a, name) for a, name in rows]
+    return [_out(a, name, affiliation) for a, name, affiliation in rows]
 
 
 @router.post("/assessments/{assessment_id}/raci", response_model=RaciAssignmentOut, status_code=201)
@@ -204,7 +211,7 @@ def create_raci_assignment(
     )
     session.commit()
     session.refresh(assignment)
-    return _out(assignment, contact.name)
+    return _out(assignment, contact.name, contact.affiliation)
 
 
 @router.delete("/assessments/{assessment_id}/raci/{raci_id}", status_code=204)

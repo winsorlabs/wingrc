@@ -771,6 +771,21 @@ behavior is unchanged (starts empty) — this is a recorded decision for
 whoever picks up the actual copy-forward implementation, not a completed
 slice.
 
+### Part 3, 2026-09-09 — CRM (Customer Responsibility Matrix)
+
+The deferred CRM roadmap item, unblocked now that RACI data exists —
+see `docs/roadmap.md`'s Done entry for the full writeup, not duplicated
+here. Summary: `bundle_service.py` gains a `CrmRowSnap` dataclass
+(reshapes the already-built `controls`/`objectives` tree, no new query),
+a `_crm_body`/`_render_crm` pair wired into all four `render_bundle()`
+touch-points plus the consolidated PDF, shipping as
+`ssp/05_customer_responsibility_matrix.html`. **In-app matrix view:
+evaluated before building** — `RolesPanel.tsx` already lists every
+objective's RACI assignments, so no second view was built; the one real
+gap (affiliation wasn't visible in the read-only chip, only in the
+picker) closed by adding `contact_affiliation` to
+`RaciAssignmentOut`/`RaciAssignmentRow` instead.
+
 ---
 
 ## G.8 — Assessment templates

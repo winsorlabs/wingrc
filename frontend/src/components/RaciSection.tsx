@@ -92,7 +92,7 @@ export function RaciSection({
         <div className="role-chip-grid">
           {assignments.map((a) => (
             <span className="role-chip" key={a.id}>
-              {a.raci_letter}: {a.contact_name}
+              {a.raci_letter}: {a.contact_name} ({a.contact_affiliation})
               {canWrite && (
                 <button className="chip-remove" aria-label="Remove" onClick={() => handleRemove(a.id)}>
                   ×

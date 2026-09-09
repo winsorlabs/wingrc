@@ -126,6 +126,19 @@ _CSS = (
     # ~0.7in PDF column ("IN BOUNDARY" at the base .s size alone exceeded
     # the Boundary column's net content width). Shrunk specifically here.
     ".inv-table .s{padding:.05rem .25rem;font-size:.65rem;letter-spacing:0}"
+    # CRM table: same fixed-layout/narrow-padding rationale as .inv-table
+    # above (7 columns here) -- Objective/Description carry most of the
+    # width, the four RACI-letter columns and Responsibility stay narrow.
+    ".crm-table{table-layout:fixed;font-size:.72rem}"
+    ".crm-table th,.crm-table td{padding:.25rem .3rem;word-break:break-word}"
+    ".crm-table th:nth-child(1),.crm-table td:nth-child(1){width:12%}"
+    ".crm-table th:nth-child(2),.crm-table td:nth-child(2){width:28%}"
+    ".crm-table th:nth-child(3),.crm-table td:nth-child(3){width:15%}"
+    ".crm-table th:nth-child(4),.crm-table td:nth-child(4),"
+    ".crm-table th:nth-child(5),.crm-table td:nth-child(5),"
+    ".crm-table th:nth-child(6),.crm-table td:nth-child(6),"
+    ".crm-table th:nth-child(7),.crm-table td:nth-child(7){width:11.25%}"
+    ".crm-table .s-tag{margin-left:0;display:inline-block;margin-top:.15rem}"
     "@media print{body{max-width:100%}a{color:inherit}}"
 )
 
@@ -304,6 +317,29 @@ class ScopeEntitySnap:
 
 
 @dataclass
+class CrmRowSnap:
+    """One row of the Customer Responsibility Matrix (CRM) — the deferred
+    CRM roadmap item (CLAUDE.md roadmap item 4's own note: "renders from
+    raci_assignment + contact"), unblocked now that RACI data exists
+    (G.7). control/objective down the side, RACI role across.
+
+    Derived from ControlSnap/ObjectiveSnap — both already fully populated
+    by the time snapshot_bundle() builds this — not requeried. There is no
+    second data path here: this is the identical control_state.responsibility
+    and ObjectiveSnap.raci that _implementation_body already renders
+    inline; this dataclass just reshapes the same rows flat for a matrix
+    table instead of the nested per-control grouping that view uses.
+    """
+
+    control_id: str
+    family: str
+    objective_key: str
+    objective_text: str
+    responsibility: str
+    assignments: list[RaciSnap] = field(default_factory=list)
+
+
+@dataclass
 class BundleSnapshot:
     generated_at: datetime
     sprs_score: int
@@ -319,6 +355,7 @@ class BundleSnapshot:
     open_tasks: list[OpenTaskSnap]
     findings: list[FindingSnap]
     scope_entities: list[ScopeEntitySnap] = field(default_factory=list)
+    crm_rows: list[CrmRowSnap] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -903,6 +940,21 @@ def snapshot_bundle(
 
     controls = list(ctrl_map.values())
 
+    # --- CRM rows: flatten controls/objectives for the matrix table, no
+    # new query -- see CrmRowSnap's own docstring for why.
+    crm_rows = [
+        CrmRowSnap(
+            control_id=ctrl.control_id,
+            family=ctrl.family,
+            objective_key=obj.objective_key,
+            objective_text=obj.objective_text,
+            responsibility=obj.responsibility,
+            assignments=obj.raci,
+        )
+        for ctrl in controls
+        for obj in ctrl.objectives
+    ]
+
     # --- open evidence tasks ---
     task_rows = session.execute(
         select(
@@ -973,6 +1025,7 @@ def snapshot_bundle(
         open_tasks=open_tasks,
         findings=findings,
         scope_entities=scope_entities,
+        crm_rows=crm_rows,
     )
 
 
@@ -1007,6 +1060,7 @@ def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
     impl_html = _render_implementation(snapshot)
     personnel_html = _render_personnel(snapshot)
     inventory_html = _render_component_inventory(snapshot)
+    crm_html = _render_crm(snapshot)
     manifest_html = _render_manifest(snapshot)
     scoring_html = _render_scoring(snapshot)
     outstanding_html = _render_outstanding(snapshot)
@@ -1033,6 +1087,7 @@ def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
         (f"{root}/ssp/02_implementation.html", impl_html),
         (f"{root}/ssp/03_personnel.html", personnel_html),
         (f"{root}/ssp/04_component_inventory.html", inventory_html),
+        (f"{root}/ssp/05_customer_responsibility_matrix.html", crm_html),
         (f"{root}/evidence/manifest.html", manifest_html),
         (f"{root}/summary/scoring.html", scoring_html),
         (f"{root}/summary/outstanding.html", outstanding_html),
@@ -1065,6 +1120,7 @@ def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
         zf.writestr(f"{root}/ssp/02_implementation.html", impl_html)
         zf.writestr(f"{root}/ssp/03_personnel.html", personnel_html)
         zf.writestr(f"{root}/ssp/04_component_inventory.html", inventory_html)
+        zf.writestr(f"{root}/ssp/05_customer_responsibility_matrix.html", crm_html)
         zf.writestr(ssp_pdf_rel_path, ssp_pdf_bytes)
         zf.writestr(f"{root}/evidence/manifest.html", manifest_html)
         zf.writestr(f"{root}/summary/scoring.html", scoring_html)
@@ -1436,20 +1492,85 @@ def _render_component_inventory(snapshot: BundleSnapshot) -> str:
     return _html_page("Component/Asset Inventory", body)
 
 
+def _crm_body(snapshot: BundleSnapshot) -> str:
+    """Content for the Customer Responsibility Matrix (CRM) — the deferred
+    CRM roadmap item, unblocked by RACI data existing (G.7 Part 3).
+    Control/objective down the side, RACI role across; each cell names who
+    holds that role AND whether they're MSP or customer — the split a
+    C3PAO and a customer both need, and the whole point of this document.
+
+    Shares snapshot.crm_rows (derived from the same controls/objectives
+    _implementation_body already walks — see CrmRowSnap's own docstring),
+    without the stamp banner or page wrapper — shared by
+    05_customer_responsibility_matrix.html and the consolidated SSP PDF
+    (_render_ssp_pdf), same pattern as every other SSP section here.
+    """
+    if not snapshot.crm_rows:
+        return (
+            '<h1 id="ssp-crm">Customer Responsibility Matrix</h1>'
+            '<p class="no-stmt">No RACI assignments recorded for this assessment.</p>'
+        )
+
+    def _cell(row: CrmRowSnap, letter: str) -> str:
+        holders = [a for a in row.assignments if a.raci_letter == letter]
+        if not holders:
+            return '<span class="no-stmt">—</span>'
+        return "<br>".join(
+            f"{_esc(a.contact_name)} "
+            f"<span class='s-tag'>{_esc(a.contact_affiliation)}</span>"
+            for a in holders
+        )
+
+    body_rows = "".join(
+        "<tr>"
+        f"<td>{_esc(row.control_id)}[{_esc(row.objective_key)}]</td>"
+        f"<td>{_esc(row.objective_text)}</td>"
+        f"<td>{_status_badge(row.responsibility)}</td>"
+        f"<td>{_cell(row, 'R')}</td>"
+        f"<td>{_cell(row, 'A')}</td>"
+        f"<td>{_cell(row, 'C')}</td>"
+        f"<td>{_cell(row, 'I')}</td>"
+        "</tr>"
+        for row in snapshot.crm_rows
+    )
+
+    return (
+        '<h1 id="ssp-crm">Customer Responsibility Matrix</h1>'
+        '<p style="font-size:.85rem;color:#6b7280">Who is Responsible, '
+        "Accountable, Consulted, or Informed for each control objective, "
+        "and whether that party is the MSP or the customer — the split "
+        "this matrix exists to make explicit. An objective with no "
+        "assignment recorded shows &#8212; in every RACI column, not a "
+        "guessed default.</p>"
+        '<table class="crm-table"><tr><th>Objective</th><th>Description</th>'
+        "<th>Responsibility</th><th>R</th><th>A</th><th>C</th><th>I</th></tr>"
+        f"{body_rows}</table>"
+    )
+
+
+def _render_crm(snapshot: BundleSnapshot) -> str:
+    body = f"{_stamp(snapshot)}{_crm_body(snapshot)}"
+    return _html_page("Customer Responsibility Matrix", body)
+
+
 # ---------------------------------------------------------------------------
 # Consolidated SSP PDF (docs/pdf_ssp_template_spec.md)
 # ---------------------------------------------------------------------------
 #
-# Scope for this pass: system description + implementation statements +
-# personnel, consolidated into one paginated PDF. Cover page, evidence
-# manifest, and scoring/summary stay separate HTML per the spec — do not
-# fold them in here without revisiting that decision.
+# Cover page, evidence manifest, and scoring/summary stay separate HTML per
+# the spec — do not fold them in here without revisiting that decision.
+# Component/Asset Inventory and the Customer Responsibility Matrix (CRM) DID
+# get folded in after this comment was first written — this note used to say
+# "system description + implementation statements + personnel" only, which
+# went stale the moment inventory was added and stayed stale through CRM.
+# Corrected 2026-09-09 rather than left for the next person to notice.
 #
 # Content is assembled ONLY from _sys_desc_body / _implementation_body /
-# _personnel_body — the same functions that back the three HTML pages in
-# the ZIP. This file must never grow a second, PDF-only way of walking
-# BundleSnapshot; if the PDF's content looks wrong, the fix almost always
-# belongs in one of those three shared functions, not here.
+# _personnel_body / _component_inventory_body / _crm_body — the same
+# functions that back the five HTML pages in the ZIP. This file must never
+# grow a second, PDF-only way of walking BundleSnapshot; if the PDF's
+# content looks wrong, the fix almost always belongs in one of those five
+# shared functions, not here.
 
 
 def _css_str(s: str) -> str:
@@ -1501,6 +1622,7 @@ def _render_ssp_pdf(snapshot: BundleSnapshot) -> bytes:
         f"{toc_family_rows}"
         '<li class="toc-entry"><a href="#ssp-personnel">Personnel &amp; Contacts</a></li>'
         '<li class="toc-entry"><a href="#ssp-inventory">Component/Asset Inventory</a></li>'
+        '<li class="toc-entry"><a href="#ssp-crm">Customer Responsibility Matrix</a></li>'
         "</ul></section>"
     )
 
@@ -1510,6 +1632,7 @@ def _render_ssp_pdf(snapshot: BundleSnapshot) -> bytes:
         f'<div class="pdf-section">{_implementation_body(snapshot)}</div>'
         f'<div class="pdf-section">{_personnel_body(snapshot)}</div>'
         f'<div class="pdf-section">{_component_inventory_body(snapshot)}</div>'
+        f'<div class="pdf-section">{_crm_body(snapshot)}</div>'
     )
 
     page_css = (
@@ -1820,6 +1943,7 @@ def _render_index(snapshot: BundleSnapshot) -> str:
         ("SSP — Implementation Statements", "ssp/02_implementation.html"),
         ("SSP — Personnel &amp; Contacts", "ssp/03_personnel.html"),
         ("SSP — Component/Asset Inventory", "ssp/04_component_inventory.html"),
+        ("SSP — Customer Responsibility Matrix", "ssp/05_customer_responsibility_matrix.html"),
         ("SSP — Consolidated PDF", "ssp/system_security_plan.pdf"),
         ("Evidence Manifest", "evidence/manifest.html"),
         ("SPRS Scoring Summary", "summary/scoring.html"),

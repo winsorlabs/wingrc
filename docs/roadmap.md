@@ -405,7 +405,29 @@ Items without a status are planned but not yet started.
   database," which is not a guard. Regression-tested against the exact
   broken case (a test org with audit_log rows, plus the three other gaps)
   and against Acme MSP surviving the reset — `tests/test_cli_reset_dev.py`.
-
+- **CRM (Customer Responsibility Matrix)** (2026-09-09, G.7 Part 3) —
+  render from `raci_assignment` + `contact`, closing out the Deferred
+  entry that used to sit below (verified 2026-09-07 as genuinely
+  unstarted; the roadmap's own "M" dependency note for it was stale —
+  RACI existing at all, not the multi-org "M" work, was the actual
+  blocker, and G.7 already removed it). New `CrmRowSnap` dataclass in
+  `bundle_service.py`, populated in `snapshot_bundle()` by reshaping the
+  already-built `controls`/`objectives` tree (no new query — the same
+  `ObjectiveSnap.raci` rows `_implementation_body` already renders
+  inline), a new `_crm_body`/`_render_crm` pair following the exact
+  established pattern (new snapshot field, HTML page, artifact_log entry,
+  ZIP write, `_render_index` entry, consolidated-PDF section via the
+  shared body-helper convention). Ships as
+  `ssp/05_customer_responsibility_matrix.html` plus a PDF section;
+  control/objective down the side, R/A/C/I across, each cell naming the
+  assignee and their MSP-vs-customer affiliation. In-app matrix view:
+  evaluated `RolesPanel.tsx` (already lists every objective's assignments)
+  rather than building a second view — the one gap (affiliation wasn't
+  shown in the read-only chip display, only in the picker) closed by
+  adding `contact_affiliation` to `RaciAssignmentOut`/`RaciAssignmentRow`
+  instead of a new component. Covered by `test_bundle.py`'s CRM section
+  (contains-assignment, unassigned-shows-dash, empty-assessment message,
+  artifact-log entry, second-order-hash-survives, PDF TOC size bump).
 ---
 
 ## Planned
@@ -465,7 +487,6 @@ Document library (N)
 - **Document-library template content** — paid add-on seed script; depends on document library (N) mechanism being live. **Verified 2026-09-07: N is still fully unstarted** — no `Document`/`document_objective_tag` model, no `routers/documents.py`. (`importers/document.py` is a different, already-shipped feature — AI extraction of a *product baseline* from a vendor CRM/PDF, not the tenant-facing template library N describes. Don't confuse the two on a future pass.)
 - **Personnel connector** — Liongard / M365 → auto-populate contacts; depends on M. **Note (2026-09-07):** "M" here isn't fully traceable — root `ROADMAP.md` has no item M; the only "M" in this repo is the Multi-org access work (`M.1`–`M.8`) tracked in this file's own Done section, whose core (`M.1`–`M.6`) is done and whose remainder (`M.7`/`M.8`, a deployment-wide user directory + admin grant/revoke UI) doesn't obviously relate to auto-populating contacts. Left as originally written rather than guessed at; re-derive the actual dependency before resuming this item.
 - **AI implementation statements** — generation worker behind BYO-AI provider abstraction; scaffolding exists. **Verified 2026-09-07, more specifically than before:** `config.py`'s `ai_provider` setting and `backend/app/ai/` are real and already load-bearing — `importers/document.py` (the vendor-CRM/baseline extractor) is a working consumer of that same abstraction today. What's still missing is the per-objective draft-statement path itself: no `draft-statement` endpoint exists on `assessments.py`, and `ImplementationStatement` rows are still authored by hand. The provider plumbing this item needs already exists; the feature-specific generation logic does not.
-- **CRM (Customer Responsibility Matrix)** — render from `raci_assignment` + `contact`; depends on M (see the same "M" ambiguity note under Personnel connector above). **Verified 2026-09-07: no CRM-rendering code exists** — "CRM" elsewhere in this codebase (`models.py`, `importers/document.py`, `routers/contacts.py`) refers to the generic *documentation-role* concept ("who appears in a CRM/SSP document"), not this specific render-from-RACI feature. Still genuinely unstarted.
 - **Scope connector** — Liongard / Datto RMM → `scope_entity`; supplements manual CSV import. Specified in root `ROADMAP.md` **D.2** (route through the existing dry-run/apply review flow, not a direct connector→DB write). **Updated 2026-09-07:** the canonical-attribute-key blocker this item used to cite is resolved — see the "Canonical `scope_entity.attributes` normalization" Done entry above. No connector code exists yet (verified: no Liongard/Datto files under `backend/app`, `Source.LIONGARD`/`Source.DATTO_RMM` exist only as unused enum values in `domain.py`); D.2 needs to follow the pattern `importers/workbook.py` already established, not invent a fourth attribute schema.
 - **Integrations screen** — new side-nav section for setting up connectors (Liongard first), specified in root `ROADMAP.md` **D.1**. Added 2026-09-06 (Jarrod). Carries an unsettled architectural question: item D says the platform never holds third-party API keys, which conflicts with an in-app credential-entry screen — reconcile before building. Still fully unstarted as of 2026-09-07 (no frontend Integrations route, no per-connector credential model).
 - **Asset & user onboarding approval workflow** — daily Liongard sync; new devices/users land pending, notify the org's `security_officer` and `it_admin` contacts, approval page shows a baseline checklist (DUO/Evo, FenixPyre, RoboShadow, RocketCyber…) evaluated from Liongard metrics, Security Officer + IT formally accept the asset into the environment. Specified in root `ROADMAP.md` **D.3**. Added 2026-09-08 (Jarrod). Depends on D.1 + D.2 and on **two things that don't exist in this codebase yet**: outbound email (verified 2026-09-08 — no `smtplib`, SMTP config, or mailer module anywhere under `backend/`) and any job scheduler for the daily run. Also needs a `pending_approval` state on `domain.py:EntityStatus` (today only `active`/`decommissioned`). Hard constraint recorded in D.3: email notifies, but approval requires an authenticated session — no one-click approve links in email.
