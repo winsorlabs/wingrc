@@ -562,7 +562,14 @@ def reset_dev(
 
     session = SessionLocal()
     try:
-        db_url = session.get_bind().url  # type: ignore[attr-defined]
+        # .engine.url, not .url directly: get_bind() returns an Engine in
+        # production (SessionLocal is Engine-bound), but a Connection when
+        # a caller binds a Session directly to one (as the test suite's
+        # db_session fixture does, for its per-test savepoint isolation) --
+        # Connection has no .url of its own, only .engine.url. Both Engine
+        # and Connection expose .engine (an Engine's .engine is itself), so
+        # this one line handles both without caring which it got.
+        db_url = session.get_bind().engine.url  # type: ignore[attr-defined]
         counts = _preview_counts(session, orgs_only)
         keep = _keep_summary(session)
 
@@ -576,9 +583,26 @@ def reset_dev(
         except RuntimeError as e:
             typer.echo(f"Pre-flight backup failed — aborting WITHOUT deleting anything: {e}")
             raise typer.Exit(code=1) from e
+        # The password is echoed here (unlike the masked "Target database"
+        # line above) because these commands are unusable without it and
+        # reset-dev only ever runs in "development" -- the guard above
+        # refuses everywhere else -- where this is docker-compose.yml's
+        # fixed, already-in-source-control default credential, not a
+        # per-user secret.
         typer.echo(
             f"Pre-flight backup written to {backup_path}\n"
-            f"  (restore into a scratch db with: pg_restore -d <scratch-db> {backup_path})"
+            f"  To inspect or selectively recover from it, load it into a NEW,\n"
+            f"  explicitly-named scratch database first -- never restore it over\n"
+            f"  this live one (that would roll back everything committed since the\n"
+            f"  dump and clobber the append-only audit log), and don't pass -C to\n"
+            f"  pg_restore for this either: -C creates/targets the dump's own\n"
+            f"  embedded database name, not whatever scratch name you ask for.\n"
+            f"  From the host (this container has pg_restore but not psql):\n"
+            f"    docker compose exec db psql -U {db_url.username} -d postgres"
+            f" -c 'CREATE DATABASE wingrc_scratch'\n"
+            f"  Then, from inside this container:\n"
+            f"    PGPASSWORD={db_url.password} pg_restore -h {db_url.host}"
+            f" -p {db_url.port} -U {db_url.username} -d wingrc_scratch {backup_path}"
         )
 
         deleted = _reset_dev(session, orgs_only)

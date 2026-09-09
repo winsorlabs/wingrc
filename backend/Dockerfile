@@ -30,6 +30,15 @@ RUN pip install --upgrade pip && pip install ".[dev]"
 
 FROM base AS runtime
 COPY --from=pgtools /usr/lib/postgresql/18/bin/pg_dump /usr/local/bin/pg_dump
+# pg_restore too, verified working the same way (real dump, real restore
+# into a scratch database) -- NOT psql: it links against newer libpq
+# symbols (PQfullProtocolVersion) that Debian trixie's own libpq5 package
+# doesn't export, and fails at startup with a symbol-lookup error. pg_dump
+# and pg_restore don't hit that gap in practice (verified), so they stay;
+# psql's absence is why reset-dev's own recovery instructions below use
+# the `db` service's own bundled psql (an exact-version match, since it's
+# the same postgres:18 image) for the one step that needs it.
+COPY --from=pgtools /usr/lib/postgresql/18/bin/pg_restore /usr/local/bin/pg_restore
 # Non-root user
 RUN useradd --create-home --uid 10001 wingrc
 COPY --from=deps /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages

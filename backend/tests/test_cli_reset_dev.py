@@ -496,6 +496,13 @@ class TestPreflightBackupGating:
         )
 
         org = _seed_full_graph_org(db_session)
+        # Commit (not just flush) so this seed data survives reset_dev()'s
+        # own error-path `session.rollback()` below -- under this fixture's
+        # create_savepoint mode, commit() only releases a SAVEPOINT (the
+        # real transaction still rolls back at test teardown), but an
+        # uncommitted flush() would be undone by that same rollback,
+        # making "nothing was deleted" untestable.
+        db_session.commit()
 
         result = self.runner.invoke(cli_app, ["reset-dev", "--yes"])
 
