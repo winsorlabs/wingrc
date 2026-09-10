@@ -3,9 +3,14 @@
 Bridges the pure functions in assessment.py with the SQLAlchemy session.
 This is the only module that performs DB writes for assessment operations.
 
-Two entry points:
+Three entry points:
   start_assessment   — create an Assessment + seed all objective states,
                        then fire the loop for every already-active product.
+  copy_forward_raci  — deliberately separate from start_assessment, not a
+                       step inside it (see its own docstring for why) —
+                       carries RACI assignments from the org's most recent
+                       prior assessment on the same framework onto the
+                       freshly seeded control_state rows.
   activate_org_product — mark a product active and fire the loop for one
                          assessment, updating states, writing history,
                          and seeding evidence tasks.
@@ -31,6 +36,7 @@ from .models import (
     AssessmentObjective,
     BaselineControl,
     BaselineEvidenceSpec,
+    Contact,
     Control,
     ControlState,
     ControlStateHistory,
@@ -40,6 +46,7 @@ from .models import (
     Organization,
     OrgProduct,
     Product,
+    RaciAssignment,
     SprsSnapshot,
 )
 
@@ -159,6 +166,13 @@ def start_assessment(
          pending_evidence and seeding evidence tasks.
 
     Products activated after this call trigger activate_org_product directly.
+
+    RACI copy-forward is deliberately NOT a step in here — see
+    copy_forward_raci()'s own docstring below for why it's a separate call
+    the router makes explicitly, not something every caller of this
+    function gets for free. Return type/signature stay untouched by this
+    (40+ existing call sites, mostly test fixtures, construct an assessment
+    via this function with no expectation of RACI side effects).
     """
     assessment = Assessment(
         org_id=org_id,
@@ -185,6 +199,201 @@ def start_assessment(
 
     recompute_sprs(session, assessment.id)
     return assessment
+
+
+def copy_forward_raci(
+    session: Session,
+    *,
+    org_id: uuid.UUID,
+    framework_id: uuid.UUID,
+    new_assessment_id: uuid.UUID,
+) -> dict:
+    """Carry RACI assignments from the org's most recent prior assessment
+    on the same framework onto new_assessment_id's freshly seeded
+    control_state rows.
+
+    Recorded decision: docs/PLAN-gui-restructure.md's G.7 section ("does
+    RACI carry forward when a new assessment starts, or begin empty? ...
+    decided: copy forward from the most recent prior assessment, editable
+    from there") -- not implemented there, built here.
+
+    Deliberately a separate call the router makes right after
+    start_assessment(), not a step inside it: start_assessment() has 40+
+    existing call sites (mostly test fixtures) that construct an
+    assessment with no expectation of RACI side effects, and changing its
+    return type to carry a summary dict alongside the Assessment would
+    touch every one of them for a behavior only the real creation endpoint
+    needs. Same reasoning `backfill_missing_control_states` already
+    established for staying its own function rather than folding into
+    start_assessment.
+
+    Must run in the same transaction as the assessment/control_state
+    creation it follows (caller commits once, after both) -- an assessment
+    that exists without its copy-forward having run, or vice versa, is
+    exactly the kind of inconsistent partial state this codebase avoids
+    elsewhere via one-transaction-per-operation.
+
+    THE JOIN: RaciAssignment is keyed to control_state_id, and every new
+    assessment gets entirely new control_state rows -- so this is not a
+    row copy. control_state.objective_id points at AssessmentObjective.id,
+    a stable, deployment-wide catalog row (seeds/catalog.py upserts by
+    existing (control_id, objective_key) rather than ever re-inserting or
+    deleting one -- verified, not assumed, before relying on this).
+    UNIQUE(assessment_id, objective_id) on control_state means objective_id
+    is control_state's natural key within one assessment. So: for each
+    source assignment, resolve its control_state's objective_id, look up
+    that same objective_id's control_state.id in the new assessment, and
+    create an equivalent assignment there. No text-based (control_id,
+    objective_key) matching is needed -- objective_id already *is* that
+    identity, more directly.
+
+    WHICH PRIOR ASSESSMENT -- decided, and why the obvious-looking
+    alternative doesn't hold here: "most recent completed" (status in
+    submitted/closed) sounds like the safer choice, since an assessment
+    still in_progress could be freshly started and RACI-empty, or
+    genuinely abandoned -- either way a worse source than one actually
+    finished. Checked before choosing: no code path anywhere in this
+    backend ever sets Assessment.status to "submitted" or "closed" --
+    every assessment this system has ever created is permanently
+    in_progress. Filtering to submitted/closed would make copy-forward
+    permanently unreachable, not safer. So: most recent by started_at,
+    status ignored, scoped to org_id + the SAME framework_id as the new
+    assessment (a different framework's objective_ids can never match
+    this assessment's control_state rows anyway -- scoping the query
+    avoids a more-recent-but-incompatible assessment silently shadowing an
+    older same-framework one that would have actually matched). If a real
+    submission workflow ships later, revisit whether it should be
+    preferred over an in-progress one.
+
+    FRAMEWORK / CATALOG DRIFT: an objective present in the source
+    assessment but absent from the new one's control_state set (framework
+    mismatch, or -- currently unreachable given the upsert-only seeding
+    behavior above, but defended anyway -- a hypothetical future
+    destructive catalog change) is skipped, not treated as an error and
+    not allowed to abort the rest. Every other matching objective still
+    carries. This is "carry only exact objective matches," chosen over
+    "skip entirely on any mismatch": a partial framework/catalog drift
+    (most objectives still line up, a handful don't) is the realistic
+    case, and refusing to carry anything just because one objective
+    doesn't line up would throw away otherwise-good data over an edge
+    case, then hand the MSP the exact all-320-unassigned outcome this
+    feature exists to avoid, for no benefit.
+
+    INACTIVE CONTACTS: Contact has no deleted_at/is_active field in this
+    codebase -- checked before implementing, not assumed. Contacts are
+    hard-deleted (routers/contacts.py's DELETE endpoint), and
+    RaciAssignment.contact_id is ON DELETE CASCADE, so a departed contact
+    whose row has actually been removed already has zero RaciAssignment
+    rows anywhere, including on the source assessment being copied from --
+    there is nothing left to skip by the time this function runs. Still
+    checks contact existence defensively per assignment (cheap, one batched
+    query) and counts anything that somehow fails it as
+    skipped_inactive_contact, both as a genuine safety net and so this
+    function needs no changes if a soft-deactivation concept is added to
+    Contact later (mirroring ADR 0006's user anonymize/hard-delete split).
+    Expect this count to read 0 on every real run today.
+
+    Returns a summary dict, audit-logged by the caller-facing router path
+    via one raci.copy_forward entry (this function itself does not call
+    log_event -- see routers/assessments.py's create_assessment, which
+    owns the single commit this shares a transaction with):
+        {
+          "source_assessment_id": str | None,   # None => nothing to carry
+          "carried": int,
+          "skipped_no_match": int,               # objective not in new assessment
+          "skipped_inactive_contact": int,       # see above; expect 0 today
+          "total_objectives": int,               # new assessment's own count
+          "unassigned_objectives": int,          # total_objectives - assigned
+          "note": str,                           # human-readable one-liner
+        }
+    """
+    total_objectives = session.scalars(
+        select(ControlState.id).where(ControlState.assessment_id == new_assessment_id)
+    ).all()
+    total_count = len(total_objectives)
+
+    source = session.scalars(
+        select(Assessment)
+        .where(
+            Assessment.org_id == org_id,
+            Assessment.framework_id == framework_id,
+            Assessment.id != new_assessment_id,
+        )
+        .order_by(Assessment.started_at.desc())
+        .limit(1)
+    ).first()
+
+    if source is None:
+        return {
+            "source_assessment_id": None,
+            "carried": 0,
+            "skipped_no_match": 0,
+            "skipped_inactive_contact": 0,
+            "total_objectives": total_count,
+            "unassigned_objectives": total_count,
+            "note": "No prior assessment on this framework to carry RACI from.",
+        }
+
+    source_rows = session.execute(
+        select(RaciAssignment, ControlState.objective_id)
+        .join(ControlState, RaciAssignment.control_state_id == ControlState.id)
+        .where(ControlState.assessment_id == source.id)
+    ).all()
+
+    new_cs_by_objective: dict[uuid.UUID, uuid.UUID] = dict(
+        session.execute(
+            select(ControlState.objective_id, ControlState.id).where(
+                ControlState.assessment_id == new_assessment_id
+            )
+        ).all()
+    )
+
+    contact_ids = {a.contact_id for a, _ in source_rows}
+    existing_contact_ids = (
+        set(session.scalars(select(Contact.id).where(Contact.id.in_(contact_ids))).all())
+        if contact_ids
+        else set()
+    )
+
+    carried = 0
+    skipped_no_match = 0
+    skipped_inactive_contact = 0
+    assigned_objective_ids: set[uuid.UUID] = set()
+
+    for assignment, objective_id in source_rows:
+        new_cs_id = new_cs_by_objective.get(objective_id)
+        if new_cs_id is None:
+            skipped_no_match += 1
+            continue
+        if assignment.contact_id not in existing_contact_ids:
+            skipped_inactive_contact += 1
+            continue
+        session.add(
+            RaciAssignment(
+                control_state_id=new_cs_id,
+                contact_id=assignment.contact_id,
+                raci_letter=assignment.raci_letter,
+            )
+        )
+        carried += 1
+        assigned_objective_ids.add(objective_id)
+
+    session.flush()
+
+    return {
+        "source_assessment_id": str(source.id),
+        "carried": carried,
+        "skipped_no_match": skipped_no_match,
+        "skipped_inactive_contact": skipped_inactive_contact,
+        "total_objectives": total_count,
+        "unassigned_objectives": total_count - len(assigned_objective_ids),
+        "note": (
+            f"Carried {carried} RACI assignment(s) from the prior assessment "
+            f"({source.name}). Review before relying on them."
+            if carried
+            else f"No matching RACI assignments to carry from the prior assessment ({source.name})."
+        ),
+    }
 
 
 def activate_org_product(

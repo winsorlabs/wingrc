@@ -12,6 +12,20 @@ export interface Framework {
   published_at: string | null;
 }
 
+// Only ever populated on the response to POST .../assessments (RACI
+// copy-forward is a one-time-to-report fact about how the assessment was
+// created, not a stored property of it) — see backend/app/engine.py's
+// copy_forward_raci for the full field-by-field meaning.
+export interface RaciCopyForwardSummary {
+  source_assessment_id: string | null;
+  carried: number;
+  skipped_no_match: number;
+  skipped_inactive_contact: number;
+  total_objectives: number;
+  unassigned_objectives: number;
+  note: string;
+}
+
 export interface Assessment {
   id: string;
   org_id: string;
@@ -25,6 +39,7 @@ export interface Assessment {
   // updated_at for this assessment) — see backend/app/routers/assessments.py's
   // _last_activity_by_assessment for why this isn't a stored column.
   last_activity_at: string;
+  raci_copy_forward?: RaciCopyForwardSummary | null;
 }
 
 export interface ControlStateRow {

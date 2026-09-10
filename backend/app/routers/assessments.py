@@ -21,9 +21,16 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ..audit import log_event
 from ..auth import require_org_access, require_write
 from ..db import get_session
-from ..engine import activate_org_product, deactivate_org_product, recompute_sprs, start_assessment
+from ..engine import (
+    activate_org_product,
+    copy_forward_raci,
+    deactivate_org_product,
+    recompute_sprs,
+    start_assessment,
+)
 from ..models import (
     Assessment,
     AssessmentObjective,
@@ -59,6 +66,25 @@ class StartAssessmentIn(BaseModel):
     assessment_type: str = "self"
 
 
+class RaciCopyForwardOut(BaseModel):
+    """engine.py:copy_forward_raci's summary, surfaced directly in the
+    assessment-creation response -- the moment the user is still looking
+    right after clicking "Start New Assessment," before anything else
+    competes for attention. Not also duplicated as a Roles-view banner:
+    the audit log (raci.copy_forward) is the durable, always-available
+    record for anyone who missed this response or opens the assessment
+    later — a second delivery mechanism for the same one-time event would
+    be more UI to maintain for no real gap in coverage."""
+
+    source_assessment_id: uuid.UUID | None
+    carried: int
+    skipped_no_match: int
+    skipped_inactive_contact: int
+    total_objectives: int
+    unassigned_objectives: int
+    note: str
+
+
 class AssessmentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -76,6 +102,11 @@ class AssessmentOut(BaseModel):
     # nothing to gain from a silent fallback that could mask a spot that
     # forgot to set it).
     last_activity_at: datetime
+    # Only ever set on create_assessment's own response — a freshly
+    # created assessment's copy-forward outcome is a one-time-to-report
+    # fact, not a property of the assessment thereafter, so list_assessments
+    # leaves this None rather than recomputing or persisting it.
+    raci_copy_forward: RaciCopyForwardOut | None = None
 
 
 class ActivateIn(BaseModel):
@@ -321,6 +352,34 @@ def create_assessment(
         name=body.name,
         assessment_type=body.assessment_type,
     )
+
+    # Same transaction as the assessment/control_state creation above —
+    # see copy_forward_raci's own docstring for why this must not be a
+    # separate commit (an assessment existing without its copy-forward
+    # having run, or vice versa, is exactly the partial state a single
+    # commit avoids).
+    raci_summary = copy_forward_raci(
+        session,
+        org_id=org_id,
+        framework_id=body.framework_id,
+        new_assessment_id=assessment.id,
+    )
+    log_event(
+        session,
+        org_id=org_id,
+        action="raci.copy_forward",
+        entity_type="assessment",
+        entity_id=assessment.id,
+        after_value={
+            "source_assessment_id": raci_summary["source_assessment_id"],
+            "carried": raci_summary["carried"],
+            "skipped_no_match": raci_summary["skipped_no_match"],
+            "skipped_inactive_contact": raci_summary["skipped_inactive_contact"],
+            "unassigned_objectives": raci_summary["unassigned_objectives"],
+        },
+        context={"via": "api"},
+    )
+
     session.commit()
     # A brand-new assessment's most recent activity is its own creation —
     # _seed_control_states has already run by the time start_assessment
@@ -340,6 +399,7 @@ def create_assessment(
         started_at=assessment.started_at,
         sprs_score=assessment.sprs_score,
         last_activity_at=assessment.started_at,
+        raci_copy_forward=RaciCopyForwardOut(**raci_summary),
     )
 
 

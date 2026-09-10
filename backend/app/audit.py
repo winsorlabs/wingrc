@@ -47,6 +47,13 @@ Scoped to meaningful compliance mutations (signal, not firehose):
   practitioner_notes.revert   — an edited note was reverted to its
                                  AI-generated original; before/after are
                                  the edited text and the restored original.
+  raci.copy_forward           — RACI assignments carried onto a freshly
+                                 created assessment from the org's most
+                                 recent prior one on the same framework
+                                 (engine.py:copy_forward_raci). One entry
+                                 per assessment creation, not one per
+                                 assignment carried — after_value carries
+                                 the source assessment id and counts only.
 
 NOT logged (noise):
   _seed_control_states() bulk insert on assessment creation

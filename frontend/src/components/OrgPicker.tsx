@@ -29,6 +29,18 @@ export function OrgPicker({ currentUser, canWrite, skipAutoResume = false, onEnt
   const [creating, setCreating] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Holds the just-created assessment + its RACI copy-forward summary when
+  // there's actually something to review (source_assessment_id set) —
+  // interrupts the normal auto-navigate-to-board flow with a one-screen
+  // confirmation so the user sees it before anything else competes for
+  // attention, per the "make it visible, not silent" requirement. Left
+  // null (falls through to the immediate-navigate path) when this is the
+  // org's first assessment on this framework — nothing to review, so no
+  // reason to add a click.
+  const [pendingCopyForward, setPendingCopyForward] = useState<{
+    org: Org;
+    assessment: Assessment;
+  } | null>(null);
 
   useEffect(() => {
     // ADR 0009 M.5/M.6: GET /orgs is membership-scoped for every role now
@@ -87,12 +99,22 @@ export function OrgPicker({ currentUser, canWrite, skipAutoResume = false, onEnt
       const name = `CMMC L2 Assessment ${new Date().toISOString().slice(0, 10)}`;
       const a = await api.createAssessment(selectedOrg.id, fw.id, name);
       setCachedAssessmentId(selectedOrg.id, a.id);
-      onEnterBoard(selectedOrg, a);
+      if (a.raci_copy_forward?.source_assessment_id) {
+        setPendingCopyForward({ org: selectedOrg, assessment: a });
+      } else {
+        onEnterBoard(selectedOrg, a);
+      }
     } catch {
       setError("Failed to start assessment");
     } finally {
       setStarting(false);
     }
+  }
+
+  function continueToBoard() {
+    if (!pendingCopyForward) return;
+    onEnterBoard(pendingCopyForward.org, pendingCopyForward.assessment);
+    setPendingCopyForward(null);
   }
 
   function openAssessment(a: Assessment) {
@@ -113,6 +135,50 @@ export function OrgPicker({ currentUser, canWrite, skipAutoResume = false, onEnt
   // 0009's own example: a c3pao_assessor across two engagements) gets the
   // picker too, just without the create-org affordance below.
   const showPicker = canCreate || orgs.length > 1;
+
+  if (pendingCopyForward) {
+    const s = pendingCopyForward.assessment.raci_copy_forward!;
+    return (
+      <div className="picker-grid picker-grid-single">
+        <div className="card">
+          <h2>RACI carried forward</h2>
+          <p>{s.note}</p>
+          <ul className="item-list">
+            <li className="item-row">
+              <span>Assignments carried</span>
+              <span>{s.carried}</span>
+            </li>
+            {s.skipped_no_match > 0 && (
+              <li className="item-row">
+                <span>Skipped — no matching objective</span>
+                <span>{s.skipped_no_match}</span>
+              </li>
+            )}
+            {s.skipped_inactive_contact > 0 && (
+              <li className="item-row">
+                <span>Skipped — contact no longer on file</span>
+                <span>{s.skipped_inactive_contact}</span>
+              </li>
+            )}
+            <li className="item-row">
+              <span>Objectives still unassigned</span>
+              <span>
+                {s.unassigned_objectives} / {s.total_objectives}
+              </span>
+            </li>
+          </ul>
+          <p className="item-meta">
+            These are last cycle's assignments, not necessarily this one's — review who's
+            actually responsible before relying on them.
+          </p>
+          <div className="divider" />
+          <button className="btn-primary" onClick={continueToBoard}>
+            Continue to assessment
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!showPicker) {
     return (
