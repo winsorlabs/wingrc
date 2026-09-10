@@ -995,12 +995,42 @@ Items without a status are planned but not yet started.
     real write — order tracked explicitly, not inferred; dry-run never
     touches `pg_dump`; nothing-to-rotate skips the backup; fail-closed
     reports and exits non-zero without attempting a backup at all).
-  - **Live rotation on wl-util-1**: see this entry's own follow-up note
-    or the commit history for the actual key labels involved and
-    whether the retired key has been removed from the environment yet —
-    intentionally not detailed inline here (see this task's own
-    instruction: report key labels only, never material, and the label
-    is deployment state that can change independently of this doc).
+  - **Live rotation on wl-util-1** (2026-09-11): before rotating,
+    checked `integration_connection` directly rather than trusting the
+    task's own premise — found **zero rows**, not the one test credential
+    expected. The Liongard credential configured during D.1's live
+    verification was never left in the production database (that
+    verification ran against a bench stack, since torn down per this
+    session's own established cleanup convention). Flagged this
+    discrepancy rather than fabricating a throwaway live credential to
+    force a real data-migration exercise — the full 6-step sequence
+    (including step 6: decrypt-with-only-the-new-key) was already proven
+    end-to-end against a real throwaway credential on an isolated bench
+    stack first, which is what "verify on the bench stack before
+    touching wl-util-1" was for.
+    - The concrete goal — retiring `prod-wl-util-1-2026-09-09` (generated
+      during the D.1 deploy and reported through a chat transcript, the
+      thing this task exists to fix) — doesn't depend on live credential
+      rows existing, so proceeded: added the new key
+      (`prod-wl-util-1-2026-09-11`) alongside the old one as primary,
+      restarted, confirmed healthy; ran `rotate-credential-keys` (dry-run
+      then `--apply`) against the live database, correctly reporting
+      "Nothing to rotate" both times (zero rows, zero audit entries,
+      `_preflight_backup` correctly never invoked — matches the
+      nothing-to-rotate-skips-backup behavior proven in tests); removed
+      `prod-wl-util-1-2026-09-09` from `.env`, restarted, confirmed
+      healthy and the crypto config still resolves correctly with the
+      new key alone.
+    - `prod-wl-util-1-2026-09-09` is now removed from wl-util-1's
+      environment. The only place its key material existed on disk
+      outside `.env` itself was a transient `.env.bak-pre-rotation`
+      taken as a safety net during the key swap — deleted once the swap
+      was confirmed working, so nothing on wl-util-1 still holds it.
+      `prod-wl-util-1-2026-09-11` is now the sole configured key — see
+      this session's own chat transcript for the explicit reminder to
+      store it durably (password manager / wherever the Postgres/MinIO
+      secrets live) precisely so this doesn't repeat the original
+      mistake by putting it in a doc instead.
 
 ---
 
