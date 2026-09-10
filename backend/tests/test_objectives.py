@@ -23,14 +23,24 @@ from sqlalchemy import select
 from app.auth import get_current_user
 from app.db import get_session
 from app.main import app
-from app.models import AssessmentObjective, AuditLog, Control, Framework
-from tests.conftest import _app_session, _authed, _make_fake_user
+from app.models import AssessmentObjective, AuditLog, Control, Framework, Organization
+from tests.conftest import _app_session, _authed, _grant, _make_fake_user
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
 def admin_client(db_session, fake_msp_admin):
+    """practitioner_notes_edited_by is a real FK to user.id (unlike
+    Integrations' D.1 role-only gate), so the acting identity needs a
+    backing User row -- _grant() creates one, which in turn needs an
+    Organization to set home_org_id to, even though this router itself
+    has no org scoping at all."""
+    org = Organization(name=f"ObjectivesTestOrg-{uuid.uuid4().hex}")
+    db_session.add(org)
+    db_session.flush()
+    _grant(db_session, fake_msp_admin, org_id=org.id)
+
     app.dependency_overrides[get_session] = _app_session(db_session)
     app.dependency_overrides[get_current_user] = _authed(db_session, fake_msp_admin)
     yield TestClient(app)
