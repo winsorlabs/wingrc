@@ -19,11 +19,21 @@ storing or reading plaintext.
 Config format: "label1:fernetkey1,label2:fernetkey2,...". The first entry
 is the *primary* key — every new encryption uses it, and its label is
 stored alongside the ciphertext (IntegrationConnection.credential_key_version)
-so a future rotation (prepend a new primary, keep old labels around for
-decrypt) is a config change, not a data migration: MultiFernet tries every
+so a rotation (prepend a new primary, keep old labels around for decrypt)
+is a config change, not a data migration: MultiFernet tries every
 configured key in order, so ciphertext written under a retired primary
 keeps decrypting without a backfill, right up until that label is actually
 dropped from the list.
+
+That decrypt-with-any/encrypt-with-primary split is the whole rotation
+story this module was designed to make cheap — but nothing here actually
+re-encrypts existing rows onto the new primary; leaving old ciphertext on
+a retired key indefinitely is exactly what makes fully dropping that key
+unsafe later. `credential_rotation.py`'s `rotate_credential_keys()` (CLI:
+`wingrc rotate-credential-keys`) is the re-encryption step: walks every
+IntegrationConnection row, re-encrypts anything not already under the
+current primary, and updates credential_key_version -- the part that
+makes "drop the old label from this config string" actually safe to do.
 
 Generate a key with:
     python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -69,6 +79,17 @@ def _parse_keys() -> list[tuple[str, str]]:
     if not pairs:
         raise CredentialCipherError("WINGRC_CREDENTIAL_ENCRYPTION_KEYS has no usable entries.")
     return pairs
+
+
+def current_primary_label() -> str:
+    """The label of the key encrypt_credential() would use right now --
+    exposed on its own (no key material) so callers like
+    credential_rotation.py can decide "does this row already carry the
+    primary label" without reaching into _parse_keys() themselves. Raises
+    CredentialCipherError under the same fail-closed conditions as every
+    other function here (missing/malformed key config).
+    """
+    return _parse_keys()[0][0]
 
 
 def encrypt_credential(plaintext: str) -> tuple[str, str]:

@@ -11,7 +11,12 @@ import pytest
 from cryptography.fernet import Fernet
 
 from app.config import get_settings
-from app.crypto import CredentialCipherError, decrypt_credential, encrypt_credential
+from app.crypto import (
+    CredentialCipherError,
+    current_primary_label,
+    decrypt_credential,
+    encrypt_credential,
+)
 
 _KEY_A = Fernet.generate_key().decode()
 _KEY_B = Fernet.generate_key().decode()
@@ -86,6 +91,17 @@ def test_rotation_new_primary_still_decrypts_old_ciphertext(monkeypatch):
     new_ciphertext, new_label = encrypt_credential("value2")
     assert new_label == "v2"
     assert decrypt_credential(new_ciphertext) == "value2"
+
+
+def test_current_primary_label(monkeypatch):
+    _set_keys(monkeypatch, f"v2:{_KEY_B},v1:{_KEY_A}")
+    assert current_primary_label() == "v2"
+
+
+def test_current_primary_label_fails_closed_when_key_unset(monkeypatch):
+    _set_keys(monkeypatch, None)
+    with pytest.raises(CredentialCipherError):
+        current_primary_label()
 
 
 def test_decrypt_fails_closed_when_key_retired(monkeypatch):

@@ -737,6 +737,112 @@ def seed_baselines_cmd(
         session.close()
 
 
+@app.command(name="rotate-credential-keys")
+def rotate_credential_keys_cmd(
+    apply: bool = typer.Option(
+        False, help="Apply the rotation (default: dry-run only, no writes committed)"
+    ),
+    db_url: str = typer.Option(None, "--db-url", help="Override DATABASE_URL"),
+) -> None:
+    """Re-encrypt every stored IntegrationConnection credential onto the
+    current primary key (crypto.py's WINGRC_CREDENTIAL_ENCRYPTION_KEYS,
+    first-listed entry), updating credential_key_version to match.
+
+    Defaults to dry-run; pass --apply to commit. Idempotent -- a row
+    already labeled with the current primary is left untouched, so
+    re-running after a successful rotation reports nothing to do.
+
+    Fail-closed: every credential needing rotation is decrypt-checked
+    before anything is written. If even one can't be decrypted with any
+    configured key, --apply changes NOTHING and reports exactly which
+    connector failed -- never a partial rotation, never a silent skip.
+
+    A pre-flight `pg_dump` of the whole target database is taken before
+    the write, every time --apply actually has something to do (skipped
+    when there's nothing to rotate, since no write follows either) -- see
+    _preflight_backup, the same helper reset-dev uses. If the dump fails,
+    this command aborts without rotating anything.
+
+    This changes WHICH KEY existing ciphertext is under; it does not
+    change WINGRC_CREDENTIAL_ENCRYPTION_KEYS itself. The safe rotation
+    sequence is: (1) add the new key to the env var ahead of the old one
+    (new key becomes primary; both present) and restart the backend,
+    (2) confirm the existing credential still decrypts (e.g. Test
+    Connection on the Liongard card), (3) run this command --apply,
+    (4) confirm every row now carries the new label and still decrypts,
+    (5) only then remove the old key from the env var and restart,
+    (6) confirm decryption still works with only the new key present.
+    Removing the old key before step 4 is verified defeats the entire
+    safety property this ordering exists for.
+    """
+    import os
+
+    if db_url:
+        os.environ["DATABASE_URL"] = db_url
+
+    from .credential_rotation import rotate_credential_keys
+    from .crypto import CredentialCipherError
+    from .db import SessionLocal as _SL  # re-import to pick up env override
+
+    session = _SL()
+    try:
+        try:
+            preview = rotate_credential_keys(session, dry_run=True)
+        except CredentialCipherError as e:
+            typer.echo(f"Refusing to run: {e}")
+            raise typer.Exit(code=1) from e
+
+        typer.echo(f"Primary key label: {preview['primary_label']}")
+        if preview["already_current"]:
+            typer.echo(
+                f"Already on primary ({len(preview['already_current'])}): "
+                f"{preview['already_current']}"
+            )
+        if preview["failed"]:
+            typer.echo(f"FAILED to decrypt ({len(preview['failed'])}) -- fix before retrying:")
+            for f in preview["failed"]:
+                typer.echo(f"  {f['connector_key']} (labeled {f['old_label']!r}): {f['error']}")
+            typer.echo(
+                "\nNothing written. Every configured key that could have "
+                "decrypted these rows must be present in "
+                "WINGRC_CREDENTIAL_ENCRYPTION_KEYS before rotating."
+            )
+            raise typer.Exit(code=1)
+
+        if not preview["rotated"]:
+            typer.echo("Nothing to rotate -- every credential is already on the primary key.")
+            return
+
+        for r in preview["rotated"]:
+            typer.echo(
+                f"  {r['connector_key']}: {r['old_label']!r} -> {r['new_label']!r}"
+                f"{' (would rotate)' if not apply else ''}"
+            )
+
+        if not apply:
+            typer.echo(
+                f"\n{len(preview['rotated'])} credential(s) would be rotated. "
+                "DRY RUN -- nothing written. Re-run with --apply to commit."
+            )
+            return
+
+        db_url_obj = session.get_bind().engine.url  # type: ignore[attr-defined]
+        try:
+            backup_path = _preflight_backup(db_url_obj)
+        except RuntimeError as e:
+            typer.echo(f"Pre-flight backup failed -- aborting WITHOUT rotating anything: {e}")
+            raise typer.Exit(code=1) from e
+        typer.echo(f"Pre-flight backup written to {backup_path}")
+
+        result = rotate_credential_keys(session, dry_run=False)
+        typer.echo(f"\n{len(result['rotated'])} credential(s) rotated. Applied.")
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 @app.command()
 def views() -> None:
     """List the available CMMC list views."""

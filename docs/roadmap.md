@@ -945,6 +945,62 @@ Items without a status are planned but not yet started.
     `vitest`, `vite build`, real browser walkthrough logged in as a
     `consultant_admin` user with direct Postgres role verification) had
     completed by the time of landing.
+- **Credential encryption key rotation** (2026-09-11) — built the
+  re-encryption command D.1's design left for later: `crypto.py` already
+  supported decrypt-with-any-configured-key / encrypt-with-primary
+  (`MultiFernet`), but nothing actually walked existing rows onto a new
+  primary, so "drop a retired key from
+  `WINGRC_CREDENTIAL_ENCRYPTION_KEYS`" was never actually safe to do —
+  the ciphertext would just silently stop decrypting for any row still
+  under it. Triggered by a concrete need: the production key had passed
+  through a chat transcript and needed retiring, and rotating while
+  exactly one credential existed was the cheap moment to prove the path
+  before it's needed under pressure.
+  - **New**: `backend/app/credential_rotation.py`'s
+    `rotate_credential_keys(session, dry_run=True)` — walks every
+    `IntegrationConnection` row with a stored credential, decrypts
+    (`crypto.decrypt_credential`, already tries every configured key —
+    no per-row targeted-by-label decrypt exists or is needed, since
+    MultiFernet's blind trial produces the identical plaintext as long as
+    the row's original key is still configured), and for any row not
+    already labeled with the current primary
+    (`crypto.current_primary_label()`, new — exposes just the label, no
+    key material), re-encrypts under the primary and updates
+    `credential_key_version`.
+  - **Fail-closed, whole-run "change nothing"**: every row needing
+    rotation is decrypt-checked *before* any row is mutated. One
+    undecryptable row (e.g. its key was already dropped from config)
+    refuses the entire run — not just that row — since a half-rotated
+    table (some rows on the old key, some on the new) is exactly the
+    state a `pg_dump` restore exists to make recoverable from and painful
+    without one.
+  - **CLI**: `wingrc rotate-credential-keys` (`cli.py`), `--apply` to
+    commit (default dry-run), reusing `reset-dev`'s own
+    `_preflight_backup` helper — taken once, right before the real write,
+    skipped when there's nothing to rotate (no write, no need). Dry-run
+    always runs first regardless of `--apply` and reports the same
+    decrypt-failure detail the real run would, so a bad key config is
+    caught before anyone commits to it.
+  - **Audit**: one `integration_connection.key_rotated` entry per rotated
+    row (`actor="system"`, `context={"via": "cli"}`, matching
+    `backfill-missing-control-states`'s own CLI-actor convention);
+    before/after carry the old/new key *labels* only, never key material
+    or the credential itself.
+  - **Tests**: `test_crypto.py` (+`current_primary_label`),
+    `test_credential_rotation.py` (round-trip under the new key alone
+    after the old one is fully dropped from config; idempotent re-run;
+    fail-closed across multiple rows — one bad row blocks a co-existing
+    good one too; audit entry content), `test_cli_rotate_credential_keys.py`
+    (backup-failure aborts without rotating, backup-success precedes the
+    real write — order tracked explicitly, not inferred; dry-run never
+    touches `pg_dump`; nothing-to-rotate skips the backup; fail-closed
+    reports and exits non-zero without attempting a backup at all).
+  - **Live rotation on wl-util-1**: see this entry's own follow-up note
+    or the commit history for the actual key labels involved and
+    whether the retired key has been removed from the environment yet —
+    intentionally not detailed inline here (see this task's own
+    instruction: report key labels only, never material, and the label
+    is deployment state that can change independently of this doc).
 
 ---
 

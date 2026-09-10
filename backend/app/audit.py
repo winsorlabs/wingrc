@@ -33,6 +33,12 @@ Scoped to meaningful compliance mutations (signal, not firehose):
   integration_connection.test              — test-connection attempted
                                  (ok/fail only — never the credential or
                                  the full response body)
+  integration_connection.key_rotated       — encrypted_credential
+                                 re-encrypted onto a new primary key
+                                 (credential_rotation.py, CLI:
+                                 rotate-credential-keys). before/after
+                                 carry the old/new key *labels* only —
+                                 never key material, never the credential.
   practitioner_notes.edit     — an msp_admin edited an AI-drafted
                                  practitioner note (routers/objectives.py).
                                  before/after carry the full old/new text
