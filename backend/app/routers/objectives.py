@@ -35,12 +35,13 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..audit import log_event
 from ..auth import CurrentUser, get_current_user, require_role
 from ..db import get_session
-from ..models import AssessmentObjective, User
+from ..models import AssessmentObjective
 
 router = APIRouter(
     prefix="/objectives",
@@ -96,18 +97,30 @@ class PractitionerNotesIn(BaseModel):
 def _resolve_editor(session: Session, user_id: uuid.UUID | None) -> ResolvedEditorOut | None:
     """No org scoping here (unlike audit_log.py's _identity_out) --
     practitioner_notes_edited_by isn't an org-scoped fact, so there's no
-    org_id to filter by. Same ADR 0006 fallback chain otherwise: row gone
+    org_id to filter by. Deliberately does NOT use session.get(User, ...):
+    that runs under user's RLS policy (0015), home_org_id = app.current_org,
+    which is the *viewer's* org, not the edited-by user's -- a real editor
+    in a different org would be silently misreported as "deleted" (or, on
+    a connection where app.current_org has been touched and then rolled
+    back without being reset, ''::uuid raises outright -- migration 0025
+    hit this exact class of bug once already for the same reason). Calls
+    migration 0033's auth.resolve_user_identity() SECURITY DEFINER
+    function instead, which intentionally bypasses RLS for this one
+    cross-org lookup. Same ADR 0006 fallback chain otherwise: row gone
     entirely -> "deleted"; row present but scrubbed -> "anonymized"; else
     "active" with real display_name/email."""
     if user_id is None:
         return None
-    user = session.get(User, user_id)
-    if user is None:
+    row = session.execute(
+        text("SELECT display_name, email, deleted_at FROM auth.resolve_user_identity(:id)"),
+        {"id": user_id},
+    ).first()
+    if row is None:
         return ResolvedEditorOut(id=user_id, status="deleted", display_name=None, email=None)
-    if user.deleted_at is not None:
+    if row.deleted_at is not None:
         return ResolvedEditorOut(id=user_id, status="anonymized", display_name=None, email=None)
     return ResolvedEditorOut(
-        id=user_id, status="active", display_name=user.display_name, email=user.email
+        id=user_id, status="active", display_name=row.display_name, email=row.email
     )
 
 
