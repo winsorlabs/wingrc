@@ -308,24 +308,61 @@ class AssessmentObjective(Base):
     # cmmc_practitioner_notes.yaml), advisory only -- what assessors
     # typically examine and what evidence typically demonstrates the
     # objective, never a verdict ("candidates, never auto-met" applies to
-    # guidance text the same as it does to control state). Mirrors
-    # is_draft's pattern above: stays True until a qualified human
-    # reviews it, and seed_catalog.py's upsert never overwrites a
-    # reviewed (is_draft=False) note -- see that module's docstring for
-    # the exact rule.
+    # guidance text the same as it does to control state).
+    #
+    # Migration 0032 removed the earlier draft/reviewed status concept
+    # (practitioner_notes_is_draft) -- deliberately, per Jarrod: "reviewed"
+    # implied "now authoritative," but a human-edited note is still one
+    # practitioner's opinion, never official CMMC guidance, no matter who
+    # touched it last. Nothing here "graduates." The AI-authorship caveat
+    # (frontend ControlDrawer's practitioner-notes callout) is permanent
+    # and renders unconditionally, regardless of edit state.
+    #
+    # Provenance replaces status: a note is either untouched (edited_at
+    # IS NULL -- still exactly what seed_catalog.py wrote) or edited
+    # (edited_at IS NOT NULL, edited_by names who). The AI-origin
+    # statement in the UI never disappears even when edited; edit
+    # provenance is additional, not a replacement. Editing is msp_admin
+    # only -- see routers/objectives.py for why (this table is
+    # deployment-wide catalog data, not org-scoped, same tier as D.1's
+    # Integrations router).
+    #
+    # practitioner_notes_original: the AI-generated text, frozen at
+    # whichever seed wrote it -- never touched by an edit, only by a
+    # reseed of an *untouched* row (see seeds/catalog.py's
+    # _should_write_practitioner_notes). Lets a mangled edit be reverted
+    # without re-running generation. practitioner_notes_generated_at/
+    # _model describe that original generation and likewise never change
+    # on edit -- "AI-generated on <date> by <model>" stays true forever,
+    # even for an edited note.
+    #
+    # practitioner_notes_edited_by/_edited_at: NULL/NULL means untouched.
+    # edited_by is ON DELETE SET NULL (not a hard requirement to keep the
+    # editing user's account alive), but _edited_at is the actual
+    # "has this been edited" signal used everywhere (reseed protection,
+    # UI provenance) precisely because it can't be nulled out by that
+    # cascade -- an edited note stays protected/labeled as edited even if
+    # its editor's account is later hard-deleted (ADR 0006); it just loses
+    # the ability to name them.
     #
     # NOT currently included in any export (SSP bundle, PDF, etc.) -- the
     # bundle_service.py pipeline has no reference to guidance at all
-    # today. Whoever adds that must carry the AI-authorship caveat (see
-    # frontend PractitionerNoteCaveat) into the export alongside the text;
-    # a warning that only exists in the web UI is worthless once the
-    # content is exported and handed to someone else.
+    # today. Whoever adds that must carry the AI-authorship caveat into
+    # the export alongside the text; a warning that only exists in the
+    # web UI is worthless once the content is exported and handed to
+    # someone else.
     practitioner_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    practitioner_notes_is_draft: Mapped[bool] = mapped_column(Boolean, server_default="true")
+    practitioner_notes_original: Mapped[str | None] = mapped_column(Text, nullable=True)
     practitioner_notes_generated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     practitioner_notes_model: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    practitioner_notes_edited_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    practitioner_notes_edited_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 # ---------------------------------------------------------------------------

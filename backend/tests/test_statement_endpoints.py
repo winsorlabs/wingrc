@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -72,7 +73,7 @@ def _seed(db_session, *, org_id: uuid.UUID | None = None, fake_msp_admin=None) -
             "CMMC Assessment Guide - Level 2, Version 2.13 (September 2024) - AC.L2-TEST[a]"
         ),
         practitioner_notes="Assessors typically check for a maintained user list.",
-        practitioner_notes_is_draft=True,
+        practitioner_notes_original="Assessors typically check for a maintained user list.",
     )
     obj_b = AssessmentObjective(
         control_id=ctrl.id,
@@ -151,9 +152,14 @@ def test_get_statements_returns_official_guidance(client, db_session, fake_msp_a
 
 
 @pytest.mark.integration
-def test_get_statements_returns_practitioner_notes_with_draft_flag(
+def test_get_statements_returns_practitioner_notes_with_provenance(
     client, db_session, fake_msp_admin
 ):
+    """Migration 0032: provenance (edited_at/_by, resolved to a display
+    identity) replaces the old draft/reviewed flag. An untouched note
+    (obj_b has none at all, obj_a's hasn't been edited) reads
+    edited_at/_by as None -- never a falsy default that could be misread
+    as some kind of "reviewed" status."""
     d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     items = client.get(_base_url(d)).json()
     obj_a_item = next(i for i in items if i["objective_key"] == "a")
@@ -162,13 +168,30 @@ def test_get_statements_returns_practitioner_notes_with_draft_flag(
         obj_a_item["practitioner_notes"]
         == "Assessors typically check for a maintained user list."
     )
-    assert obj_a_item["practitioner_notes_is_draft"] is True
+    assert obj_a_item["practitioner_notes_edited_at"] is None
+    assert obj_a_item["practitioner_notes_edited_by"] is None
     assert obj_b_item["practitioner_notes"] is None
-    # Never returned as False by default -- the schema default matches the
-    # DB default (both "draft until reviewed"), so an objective with no
-    # note at all still reads as draft=True rather than something falsy
-    # that could be misread as "reviewed."
-    assert obj_b_item["practitioner_notes_is_draft"] is True
+    assert obj_b_item["practitioner_notes_edited_at"] is None
+    assert obj_b_item["practitioner_notes_edited_by"] is None
+
+
+@pytest.mark.integration
+def test_get_statements_resolves_practitioner_notes_editor(client, db_session, fake_msp_admin):
+    """An edited note's edited_by resolves to a display identity the same
+    way audit-log actors do (routers/objectives.py's _resolve_editor) --
+    confirms get_statements' StatementOut population site actually calls
+    it rather than leaving the raw UUID unresolved."""
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    d["obj_a"].practitioner_notes_edited_by = fake_msp_admin.id
+    d["obj_a"].practitioner_notes_edited_at = datetime.now(UTC)
+    db_session.flush()
+
+    items = client.get(_base_url(d)).json()
+    obj_a_item = next(i for i in items if i["objective_key"] == "a")
+    assert obj_a_item["practitioner_notes_edited_at"] is not None
+    assert obj_a_item["practitioner_notes_edited_by"]["id"] == str(fake_msp_admin.id)
+    assert obj_a_item["practitioner_notes_edited_by"]["status"] == "active"
+    assert obj_a_item["practitioner_notes_edited_by"]["display_name"] == fake_msp_admin.display_name
 
 
 @pytest.mark.integration

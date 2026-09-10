@@ -470,6 +470,22 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
   font-size: 0.72rem;
   color: var(--muted);
 }
+.drawer-notes-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+.drawer-notes-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.drawer-notes-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
 /* The section itself already carries the left-accent border and
    background framing -- the shared .drawer-guidance-text treatment
    underneath would otherwise double up on both. */

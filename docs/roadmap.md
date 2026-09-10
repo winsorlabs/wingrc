@@ -546,7 +546,9 @@ Items without a status are planned but not yet started.
     missing one real NIST SP 800-171A objective letter from our catalog
     (316 objectives seeded vs. 320 that actually exist).
   - **`practitioner_notes` / `practitioner_notes_is_draft` /
-    `_generated_at` / `_model`** — AI-drafted (Claude Sonnet 5, authored
+    `_generated_at` / `_model`** — **superseded 2026-09-10, see that date's
+    "Practitioner notes: edit model revision" entry below; `_is_draft` no
+    longer exists.** AI-drafted (Claude Sonnet 5, authored
     2026-09-09), advisory only, all 316/316 objectives covered
     (`backend/app/seeds/cmmc_practitioner_notes.yaml`). Framing rules
     enforced while writing and self-audited afterward (grepped for
@@ -573,8 +575,9 @@ Items without a status are planned but not yet started.
     carries a non-dismissible AI-authorship warning callout that renders
     every time the section renders (not a one-time banner — someone
     landing on an arbitrary objective months later has no memory of
-    having dismissed anything), plus a draft/reviewed status badge and
-    generation date + model. **Not currently exported anywhere** —
+    having dismissed anything), plus (**superseded 2026-09-10** — see
+    below; was a draft/reviewed status badge) generation date + model.
+    **Not currently exported anywhere** —
     `bundle_service.py` has no reference to guidance at all today; the
     export path (SSP bundle, PDF) doesn't exist yet for this content, so
     the caveat obligation is a documented constraint on whoever adds it,
@@ -700,6 +703,106 @@ Items without a status are planned but not yet started.
     `wingrc backfill-missing-control-states --apply` against real data is
     a deliberate follow-up step for Jarrod, after reviewing the dry-run
     report against whichever real assessments exist there.
+- **Practitioner notes: edit model revision** (2026-09-10, migration 0032).
+  Revises a decision made in 2026-09-09's guidance-split work above, same
+  day the catalog-reconciliation entry shipped. Jarrod's call: the
+  draft/reviewed status this shipped with implied a note could "graduate"
+  to authoritative once a human signed off on it — but a human-edited
+  practitioner note is still one practitioner's opinion, never official
+  CMMC guidance, so marking it "reviewed" would launder it into something
+  it isn't. Removed the concept entirely rather than layering a fix on
+  top of it.
+  - **Provenance replaces status.** `practitioner_notes_is_draft` is gone
+    (column dropped). New columns: `practitioner_notes_original` (the
+    AI-generated text, frozen at seed time, for revert),
+    `practitioner_notes_edited_by` (FK `user.id`, `ON DELETE SET NULL`),
+    `practitioner_notes_edited_at` (the actual "has this been edited"
+    signal everywhere — reseed protection, UI display — chosen over
+    `_edited_by` specifically because a cascade can null the latter but
+    never the former). An untouched note reads "AI-generated — not
+    official CMMC guidance," plus generation date/model; an edited one
+    reads "AI-generated, edited by \<name\> on \<date\> — not official CMMC
+    guidance." The AI-origin statement never disappears, even for a note a
+    human has fully rewritten — it says what the note *is* (AI-original,
+    possibly human-touched), never *where it sits in a review workflow*.
+    The permanent AI-authorship caveat callout in `ControlDrawer.tsx`
+    (may-contain-errors, verify against the Guide and your C3PAO) is
+    unchanged — it already rendered unconditionally and still does,
+    regardless of edit state.
+  - **Editing**: `PATCH /objectives/{id}/practitioner-notes` (new
+    deployment-wide router, `backend/app/routers/objectives.py`),
+    `msp_admin` only. Considered and rejected `msp_engineer`:
+    `assessment_objective` has no `org_id`, so there's no membership
+    boundary to scope an engineer's write to — editing here changes
+    catalog content every org on the deployment sees, the same
+    "deployment-wide, not per-org" shape D.1 Integrations already draws
+    an admin-only line around. Considered and explicitly rejected a
+    `c3pao_assessor` write exception even though Jarrod's original ask was
+    "admin or C3PAO" — that role is deliberately, permanently read-only
+    (`require_write()`), and carving an exception here would weaken that
+    security property as a side effect of this task rather than a
+    decision made on its own terms. **Not built, sketched for Jarrod to
+    decide separately**: a C3PAO "suggest an edit" surface that lands as a
+    proposal an `msp_admin` reviews and applies, never a direct write —
+    would need its own table (proposed text, proposing assessor, target
+    objective, status) and review UI; out of scope here.
+  - **Revert**: `POST /objectives/{id}/practitioner-notes/revert` restores
+    `practitioner_notes` from the frozen `practitioner_notes_original` and
+    clears `_edited_by`/`_edited_at` back to `NULL` — which also makes the
+    row reseed-eligible again, same as one that was never touched. 409s if
+    no original is on record (shouldn't happen: seeding always sets
+    `_original` alongside `practitioner_notes`); 400s if the note hasn't
+    been edited (nothing to revert to).
+  - **Reseed protection carried forward**: `seeds/catalog.py`'s
+    `_should_write_practitioner_notes()` now checks
+    `practitioner_notes_edited_at IS NULL` instead of the old draft flag —
+    the same never-clobber-a-human-edit guarantee, keyed on a different
+    signal.
+  - **Audit**: both endpoints write `practitioner_notes.edit` /
+    `practitioner_notes.revert` via the existing `log_event()` path, actor
+    resolved from the request's authenticated identity (no explicit
+    `actor=` needed — the same `_current_actor` ContextVar every other
+    router relies on). `before_value`/`after_value` carry the full
+    old/new note text (added `"practitioner_notes"` to `audit.py`'s
+    `_TEXT_KEYS` so it gets the same 4000-char truncation as other long
+    fields) — chosen over storing only a diff or nothing at all because
+    the existing `log_event(before_value=..., after_value=...)` pattern
+    already does this for every other edited-text field in the codebase
+    (e.g. `control_state.update`), and a full before/after is what makes
+    "who changed this note and to what" answerable straight from the
+    audit log without needing the (deployment-local, never exported)
+    edit to still be live.
+  - **Migration** (`0032_practitioner_notes_edit`): backfills
+    `practitioner_notes_original` from the current `practitioner_notes`
+    for every populated row, so revert works immediately for
+    already-seeded content — no note's *text* is lost. The one thing
+    deliberately lost: any row already marked reviewed
+    (`practitioner_notes_is_draft = false`) loses that status, with no
+    replacement value, because the concept itself is what's being
+    removed. Checked before writing the migration: no row on any known
+    deployment (bench or wl-util-1) had actually been marked reviewed yet
+    — the feature this undoes shipped the day before with no review UI
+    ever built for it — so in practice this discarded no real signal, but
+    the migration does the same thing regardless.
+  - **Frontend**: `ControlDrawer.tsx`'s practitioner-notes panel replaces
+    the Draft/Reviewed `status-badge` with the provenance text above, and
+    adds inline Edit (textarea + Save/Cancel) and Revert (confirm-inline,
+    matching `ApiTokensPanel.tsx`'s revoke-confirm pattern) affordances,
+    both gated by a new `canEditPractitionerNotes(role)` in `lib/roles.ts`
+    (`msp_admin` only, mirroring the backend gate) rather than the
+    existing general-purpose `canWrite`, since ordinary `msp_engineer`
+    assessment write access does not extend to editing shared catalog
+    content.
+  - **Verified**: backend unit + integration tests (edit round-trip,
+    reseed-doesn't-clobber-an-edited-note, revert restores the original
+    and clears the edit markers, `msp_engineer`/`c3pao_assessor` both
+    403, audit entries for both actions), `ruff check` clean, full local
+    `pytest -m "not integration"` suite green. Bench-stack verification
+    (migration up/down/up, full integration suite, `tsc`, `vitest`,
+    `vite build`, real browser pass with direct Postgres checks) tracked
+    separately per this entry's own "land it" scope — see the commit this
+    entry ships with for whether that had completed by the time of
+    landing.
 
 ---
 

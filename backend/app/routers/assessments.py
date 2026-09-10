@@ -39,6 +39,7 @@ from ..models import (
     OrgProduct,
     Product,
 )
+from .objectives import ResolvedEditorOut, _resolve_editor
 
 router = APIRouter(
     prefix="/orgs/{org_id}",
@@ -135,10 +136,17 @@ class StatementOut(BaseModel):
     # source is non-null just because guidance is).
     official_guidance: str | None = None
     official_guidance_source: str | None = None
+    # practitioner_notes provenance replaces the old draft/reviewed status
+    # (migration 0032) -- edited_at is NULL for an untouched AI-generated
+    # note; edited_by names who last edited it (resolved to a display
+    # name/status the same way audit-log actors are). Neither implies the
+    # note is now "authoritative" -- the AI-authorship caveat in the UI
+    # renders unconditionally either way.
     practitioner_notes: str | None = None
-    practitioner_notes_is_draft: bool = True
     practitioner_notes_generated_at: datetime | None = None
     practitioner_notes_model: str | None = None
+    practitioner_notes_edited_at: datetime | None = None
+    practitioner_notes_edited_by: ResolvedEditorOut | None = None
     body: str
     status: str | None = None
     control_discussion: str | None = None
@@ -788,9 +796,12 @@ def get_statements(
             official_guidance=o.official_guidance,
             official_guidance_source=o.official_guidance_source,
             practitioner_notes=o.practitioner_notes,
-            practitioner_notes_is_draft=o.practitioner_notes_is_draft,
             practitioner_notes_generated_at=o.practitioner_notes_generated_at,
             practitioner_notes_model=o.practitioner_notes_model,
+            practitioner_notes_edited_at=o.practitioner_notes_edited_at,
+            practitioner_notes_edited_by=_resolve_editor(
+                session, o.practitioner_notes_edited_by
+            ),
             body=existing[o.id].body if o.id in existing else "",
             status=existing[o.id].status if o.id in existing else None,
             control_discussion=ctrl.discussion,
@@ -892,11 +903,14 @@ def upsert_statements(
             official_guidance=objectives[stmt.objective_id].official_guidance,
             official_guidance_source=objectives[stmt.objective_id].official_guidance_source,
             practitioner_notes=objectives[stmt.objective_id].practitioner_notes,
-            practitioner_notes_is_draft=objectives[stmt.objective_id].practitioner_notes_is_draft,
             practitioner_notes_generated_at=objectives[
                 stmt.objective_id
             ].practitioner_notes_generated_at,
             practitioner_notes_model=objectives[stmt.objective_id].practitioner_notes_model,
+            practitioner_notes_edited_at=objectives[stmt.objective_id].practitioner_notes_edited_at,
+            practitioner_notes_edited_by=_resolve_editor(
+                session, objectives[stmt.objective_id].practitioner_notes_edited_by
+            ),
             body=stmt.body,
             status=stmt.status,
         )

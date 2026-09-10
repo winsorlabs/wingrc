@@ -91,14 +91,17 @@ export interface StatementRow {
   // Two separately-sourced fields, never blended -- mirrors backend
   // StatementOut/AssessmentObjective field-for-field. official_guidance is
   // government-sourced (CMMC Assessment Guide); practitioner_notes is
-  // AI-drafted and advisory, carrying its own draft/review + generation
-  // provenance so staleness and review status are never invisible.
+  // AI-drafted and advisory. Migration 0032 replaced the old draft/review
+  // status with provenance: the AI-authorship caveat is permanent and
+  // renders regardless of edit state; practitioner_notes_edited_at/_by say
+  // whether (and by whom) an msp_admin has since edited it in place.
   official_guidance: string | null;
   official_guidance_source: string | null;
   practitioner_notes: string | null;
-  practitioner_notes_is_draft: boolean;
   practitioner_notes_generated_at: string | null;
   practitioner_notes_model: string | null;
+  practitioner_notes_edited_at: string | null;
+  practitioner_notes_edited_by: ResolvedIdentity | null;
   body: string;
   status: string | null;
   control_discussion: string | null;
@@ -372,6 +375,18 @@ export interface ResolvedIdentity {
   status: "active" | "anonymized" | "deleted";
   display_name: string | null;
   email: string | null;
+}
+
+// Response shape for PATCH/POST .../objectives/{id}/practitioner-notes
+// (and its /revert sibling) -- mirrors backend routers/objectives.py's
+// PractitionerNotesOut.
+export interface PractitionerNotesUpdate {
+  objective_id: string;
+  practitioner_notes: string | null;
+  practitioner_notes_generated_at: string | null;
+  practitioner_notes_model: string | null;
+  practitioner_notes_edited_at: string | null;
+  practitioner_notes_edited_by: ResolvedIdentity | null;
 }
 
 export interface AuditLogRow {

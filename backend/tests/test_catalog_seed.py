@@ -15,6 +15,7 @@ actually surfaced.
 """
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -268,26 +269,41 @@ def test_practitioner_notes_cover_every_seeded_objective(db_session):
 
 
 @pytest.mark.integration
-def test_practitioner_notes_are_draft_on_first_seed(db_session):
+def test_practitioner_notes_untouched_on_first_seed(db_session):
+    """Migration 0032: there's no draft/reviewed flag any more. A freshly
+    seeded note has practitioner_notes_edited_at/_by both NULL (nobody has
+    edited it yet) and practitioner_notes_original populated (frozen copy
+    for a future revert)."""
     seed_catalog(db_session)
-    non_draft_with_notes = (
+    edited_with_notes = (
         db_session.query(AssessmentObjective)
         .filter(
             AssessmentObjective.practitioner_notes.isnot(None),
-            AssessmentObjective.practitioner_notes_is_draft.is_(False),
+            AssessmentObjective.practitioner_notes_edited_at.isnot(None),
         )
         .count()
     )
-    assert non_draft_with_notes == 0, "A freshly-seeded practitioner note is not marked draft"
+    assert edited_with_notes == 0, "A freshly-seeded practitioner note should not show as edited"
+
+    missing_original = (
+        db_session.query(AssessmentObjective)
+        .filter(
+            AssessmentObjective.practitioner_notes.isnot(None),
+            AssessmentObjective.practitioner_notes_original.is_(None),
+        )
+        .count()
+    )
+    assert missing_original == 0, "A freshly-seeded practitioner note has no original to revert to"
 
 
 @pytest.mark.integration
-def test_reseed_does_not_overwrite_a_reviewed_practitioner_note(db_session):
-    """The whole point of practitioner_notes_is_draft: once a qualified
-    human reviews a note (flips is_draft to False, optionally edits the
-    text), re-running seed_catalog must never silently overwrite it --
-    the same "candidates, never auto-met" discipline this codebase already
-    applies to control state."""
+def test_reseed_does_not_overwrite_an_edited_practitioner_note(db_session):
+    """The whole point of the edited_at signal (successor to the old
+    practitioner_notes_is_draft flag): once an msp_admin edits a note,
+    re-running seed_catalog must never silently overwrite it -- the same
+    "candidates, never auto-met" discipline this codebase already applies
+    to control state. Edited (not reviewed) is deliberate: editing doesn't
+    make a note authoritative, it just means reseed should leave it alone."""
     seed_catalog(db_session)
     obj = (
         db_session.query(AssessmentObjective)
@@ -296,23 +312,24 @@ def test_reseed_does_not_overwrite_a_reviewed_practitioner_note(db_session):
     )
     assert obj is not None, "fixture assumption: at least one objective has practitioner_notes"
 
-    obj.practitioner_notes = "Reviewed and rewritten by a human C3PAO."
-    obj.practitioner_notes_is_draft = False
+    obj.practitioner_notes = "Edited and rewritten by an msp_admin."
+    obj.practitioner_notes_edited_at = datetime.now(UTC)
     db_session.flush()
 
     seed_catalog(db_session)
     db_session.refresh(obj)
 
-    assert obj.practitioner_notes == "Reviewed and rewritten by a human C3PAO."
-    assert obj.practitioner_notes_is_draft is False
+    assert obj.practitioner_notes == "Edited and rewritten by an msp_admin."
+    assert obj.practitioner_notes_edited_at is not None
 
 
 @pytest.mark.integration
-def test_reseed_still_updates_an_unreviewed_draft_note(db_session):
-    """Contrast with the reviewed case above: an untouched draft (the
-    seed-time default) should keep tracking the source YAML on reseed --
-    otherwise a content fix to cmmc_practitioner_notes.yaml would never
-    reach any row, reviewed or not."""
+def test_reseed_still_updates_an_unedited_note(db_session):
+    """Contrast with the edited case above: an untouched note (the
+    seed-time default, edited_at still NULL) should keep tracking the
+    source YAML on reseed -- otherwise a content fix to
+    cmmc_practitioner_notes.yaml would never reach any row, edited or
+    not."""
     seed_catalog(db_session)
     obj = (
         db_session.query(AssessmentObjective)
@@ -320,9 +337,9 @@ def test_reseed_still_updates_an_unreviewed_draft_note(db_session):
         .first()
     )
     original_text = obj.practitioner_notes
-    assert obj.practitioner_notes_is_draft is True
+    assert obj.practitioner_notes_edited_at is None
 
-    obj.practitioner_notes = "stale placeholder, still unreviewed"
+    obj.practitioner_notes = "stale placeholder, still unedited"
     db_session.flush()
 
     seed_catalog(db_session)

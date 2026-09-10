@@ -33,6 +33,14 @@ Scoped to meaningful compliance mutations (signal, not firehose):
   integration_connection.test              — test-connection attempted
                                  (ok/fail only — never the credential or
                                  the full response body)
+  practitioner_notes.edit     — an msp_admin edited an AI-drafted
+                                 practitioner note (routers/objectives.py).
+                                 before/after carry the full old/new text
+                                 (truncated past _MAX_BODY_LEN like any
+                                 other long field — see _TEXT_KEYS below).
+  practitioner_notes.revert   — an edited note was reverted to its
+                                 AI-generated original; before/after are
+                                 the edited text and the restored original.
 
 NOT logged (noise):
   _seed_control_states() bulk insert on assessment creation
@@ -92,7 +100,13 @@ from sqlalchemy.orm import Session
 from .models import AuditLog
 
 _MAX_BODY_LEN = 4000
-_TEXT_KEYS = ("body", "description", "requirement_text", "change_reason")
+_TEXT_KEYS = (
+    "body",
+    "description",
+    "requirement_text",
+    "change_reason",
+    "practitioner_notes",
+)
 
 _current_ip: ContextVar[str | None] = ContextVar("_current_ip", default=None)
 

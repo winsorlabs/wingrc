@@ -95,3 +95,12 @@ export function canSeeIntegrations(role: string | null | undefined): boolean {
 export function canSeeSecurity(role: string | null | undefined): boolean {
   return canSeeUsers(role) || canSeeApiTokens(role) || canSeeAuditLog(role);
 }
+
+// Matches routers/objectives.py's router-wide require_role("msp_admin")
+// (migration 0032). msp_engineer was considered and rejected there —
+// practitioner_notes has no org_id to scope an msp_engineer's write to,
+// since editing it changes catalog content every org on this deployment
+// sees — same reasoning as canSeeIntegrations above.
+export function canEditPractitionerNotes(role: string | null | undefined): boolean {
+  return role === "msp_admin";
+}

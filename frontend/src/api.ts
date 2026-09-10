@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, IntegrationConnector, InvitedUser, MfaEnrollData, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, ProductRow, RaciAssignmentRow, ScopeChange, ScopeEntity, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, IntegrationConnector, InvitedUser, MfaEnrollData, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductRow, RaciAssignmentRow, ScopeChange, ScopeEntity, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -655,6 +655,19 @@ export const api = {
 
   testIntegrationConnection: (connectorKey: string) =>
     req<IntegrationConnector>(`/integrations/${connectorKey}/test`, { method: "POST" }),
+
+  // ── Practitioner notes (migration 0032) — deployment-wide, not
+  // org-scoped; msp_admin only (backend/app/routers/objectives.py). ────
+  editPractitionerNotes: (objectiveId: string, text: string) =>
+    req<PractitionerNotesUpdate>(`/objectives/${objectiveId}/practitioner-notes`, {
+      method: "PATCH",
+      body: JSON.stringify({ text }),
+    }),
+
+  revertPractitionerNotes: (objectiveId: string) =>
+    req<PractitionerNotesUpdate>(`/objectives/${objectiveId}/practitioner-notes/revert`, {
+      method: "POST",
+    }),
 
   downloadBundle: async (orgId: string, assessmentId: string): Promise<void> => {
     const r = await fetch(`/api/orgs/${orgId}/assessments/${assessmentId}/bundle`);

@@ -248,7 +248,12 @@ export function App() {
           {navCategory === "assessments" && (
             assessment ? (
               assessmentsTab === "board" ? (
-                <AssessmentBoard org={org} assessment={assessment} canWrite={canWrite} />
+                <AssessmentBoard
+                  org={org}
+                  assessment={assessment}
+                  canWrite={canWrite}
+                  currentUserRole={user.role}
+                />
               ) : (
                 <div className="workspace-content">
                   <RolesPanel orgId={org.id} assessmentId={assessment.id} canWrite={canWrite} />

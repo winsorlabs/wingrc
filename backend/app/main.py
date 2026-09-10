@@ -25,6 +25,7 @@ from .routers import (
     evidence,
     frameworks,
     integrations,
+    objectives,
     orgs,
     raci,
     scope,
@@ -67,6 +68,7 @@ app.include_router(audit_log.router)
 app.include_router(dashboard.router)
 app.include_router(raci.router)
 app.include_router(integrations.router)
+app.include_router(objectives.router)
 
 
 @app.get("/health")

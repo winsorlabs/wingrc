@@ -1,11 +1,21 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Contact, RaciAssignmentRow, StatementRow } from "../types";
+import { canEditPractitionerNotes } from "../lib/roles";
+import type { Contact, RaciAssignmentRow, ResolvedIdentity, StatementRow } from "../types";
 import { EvidenceSection } from "./EvidenceSection";
 import { RaciSection } from "./RaciSection";
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString();
+}
+
+// Migration 0032: provenance replaces the old draft/reviewed status. Never
+// implies the note is now authoritative -- editorLabel below deliberately
+// says "edited by", never "reviewed by".
+function editorLabel(identity: ResolvedIdentity): string {
+  if (identity.status === "active") return identity.display_name ?? identity.email ?? "a user";
+  if (identity.status === "anonymized") return "an anonymized user";
+  return "a deleted user";
 }
 
 const STMT_STATUSES = [
@@ -22,9 +32,10 @@ interface StatementItem {
   official_guidance: string | null;
   official_guidance_source: string | null;
   practitioner_notes: string | null;
-  practitioner_notes_is_draft: boolean;
   practitioner_notes_generated_at: string | null;
   practitioner_notes_model: string | null;
+  practitioner_notes_edited_at: string | null;
+  practitioner_notes_edited_by: ResolvedIdentity | null;
   body: string;
   status: string;
   id: string | null;
@@ -39,6 +50,7 @@ interface Props {
   controlId: string;
   controlTitle: string;
   canWrite: boolean;
+  currentUserRole: string | null | undefined;
   onClose: () => void;
   onSave: (updates: Array<{ objectiveId: string; status: string }>) => void;
   onEvidenceChanged?: () => void;
@@ -53,9 +65,10 @@ function fromRow(row: StatementRow): StatementItem {
     official_guidance: row.official_guidance,
     official_guidance_source: row.official_guidance_source,
     practitioner_notes: row.practitioner_notes,
-    practitioner_notes_is_draft: row.practitioner_notes_is_draft,
     practitioner_notes_generated_at: row.practitioner_notes_generated_at,
     practitioner_notes_model: row.practitioner_notes_model,
+    practitioner_notes_edited_at: row.practitioner_notes_edited_at,
+    practitioner_notes_edited_by: row.practitioner_notes_edited_by,
     body: row.body,
     status: row.status ?? "draft",
     id: row.id,
@@ -71,6 +84,7 @@ export function ControlDrawer({
   controlId,
   controlTitle,
   canWrite,
+  currentUserRole,
   onClose,
   onSave,
   onEvidenceChanged,
@@ -82,6 +96,17 @@ export function ControlDrawer({
   const [saved, setSaved] = useState(false);
   const [openGuidance, setOpenGuidance] = useState<Record<string, boolean>>({});
   const [showDiscussion, setShowDiscussion] = useState(false);
+  const canEditNotes = canEditPractitionerNotes(currentUserRole);
+  // Practitioner-notes edit/revert state, keyed by objective_id -- separate
+  // from the implementation-statement body/status state above (fieldset
+  // further down): these are two unrelated forms living in the same
+  // objective row, gated by two different permission axes (canWrite vs
+  // canEditNotes).
+  const [editingNotesId, setEditingNotesId] = useState<string | null>(null);
+  const [notesDraft, setNotesDraft] = useState("");
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [notesError, setNotesError] = useState<string | null>(null);
+  const [confirmRevertId, setConfirmRevertId] = useState<string | null>(null);
   const [evidenceCounts, setEvidenceCounts] = useState<Record<string, number>>({});
   const [evidenceDirty, setEvidenceDirty] = useState(false);
   // Fetched once per drawer open (the whole assessment's worth), not once
@@ -165,6 +190,59 @@ export function ControlDrawer({
 
   function handleRaciRemoved(raciId: string) {
     setRaciAssignments((prev) => prev.filter((a) => a.id !== raciId));
+  }
+
+  function startEditingNotes(item: StatementItem) {
+    setNotesError(null);
+    setEditingNotesId(item.objective_id);
+    setNotesDraft(item.practitioner_notes ?? "");
+  }
+
+  function cancelEditingNotes() {
+    setEditingNotesId(null);
+    setNotesDraft("");
+    setNotesError(null);
+  }
+
+  function applyNotesUpdate(objectiveId: string, update: {
+    practitioner_notes: string | null;
+    practitioner_notes_generated_at: string | null;
+    practitioner_notes_model: string | null;
+    practitioner_notes_edited_at: string | null;
+    practitioner_notes_edited_by: ResolvedIdentity | null;
+  }) {
+    setItems((prev) =>
+      prev.map((it) => (it.objective_id === objectiveId ? { ...it, ...update } : it))
+    );
+  }
+
+  async function handleSaveNotes(objectiveId: string) {
+    setSavingNotes(true);
+    setNotesError(null);
+    try {
+      const result = await api.editPractitionerNotes(objectiveId, notesDraft);
+      applyNotesUpdate(objectiveId, result);
+      setEditingNotesId(null);
+      setNotesDraft("");
+    } catch (e: unknown) {
+      setNotesError((e as Error).message);
+    } finally {
+      setSavingNotes(false);
+    }
+  }
+
+  async function handleRevertNotes(objectiveId: string) {
+    setSavingNotes(true);
+    setNotesError(null);
+    try {
+      const result = await api.revertPractitionerNotes(objectiveId);
+      applyNotesUpdate(objectiveId, result);
+      setConfirmRevertId(null);
+    } catch (e: unknown) {
+      setNotesError((e as Error).message);
+    } finally {
+      setSavingNotes(false);
+    }
   }
 
   function handleClose() {
@@ -257,30 +335,113 @@ export function ControlDrawer({
                         It may contain errors, omissions, or outdated interpretations. Verify
                         against the CMMC Assessment Guide and your C3PAO before relying on it.
                       </div>
-                      {item.practitioner_notes ? (
+                      {editingNotesId === item.objective_id ? (
+                        <div className="drawer-notes-edit">
+                          <textarea
+                            className="drawer-textarea drawer-textarea-sm"
+                            value={notesDraft}
+                            onChange={(e) => setNotesDraft(e.target.value)}
+                            rows={6}
+                          />
+                          {notesError && (
+                            <div className="error-msg" style={{ padding: "0.25rem 0" }}>
+                              {notesError}
+                            </div>
+                          )}
+                          <div className="drawer-notes-edit-actions">
+                            <button
+                              className="btn-primary btn-sm"
+                              onClick={() => handleSaveNotes(item.objective_id)}
+                              disabled={savingNotes || notesDraft.trim() === ""}
+                            >
+                              {savingNotes ? "Saving…" : "Save"}
+                            </button>
+                            <button
+                              className="btn-ghost btn-sm"
+                              onClick={cancelEditingNotes}
+                              disabled={savingNotes}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : item.practitioner_notes ? (
                         <>
                           <div className="drawer-guidance-text">{item.practitioner_notes}</div>
                           <div className="drawer-guidance-meta">
-                            {item.practitioner_notes_is_draft ? (
-                              <span className="status-badge status-warning">
-                                Unreviewed draft
+                            {/* Provenance, not status (migration 0032) -- an
+                                edit adds "edited by X on Y" alongside the AI
+                                origin, it never replaces it. Nothing here
+                                ever reads "reviewed" -- that would imply the
+                                note is now authoritative, which it isn't. */}
+                            {item.practitioner_notes_edited_at && item.practitioner_notes_edited_by ? (
+                              <span className="drawer-guidance-meta-item">
+                                AI-generated, edited by{" "}
+                                {editorLabel(item.practitioner_notes_edited_by)} on{" "}
+                                {formatDate(item.practitioner_notes_edited_at)} — not official CMMC
+                                guidance.
                               </span>
                             ) : (
-                              <span className="status-badge status-active">Reviewed</span>
-                            )}
-                            {item.practitioner_notes_generated_at && (
                               <span className="drawer-guidance-meta-item">
-                                Generated {formatDate(item.practitioner_notes_generated_at)}
-                                {item.practitioner_notes_model
-                                  ? ` by ${item.practitioner_notes_model}`
-                                  : ""}
+                                AI-generated — not official CMMC guidance.
+                                {item.practitioner_notes_generated_at &&
+                                  ` Generated ${formatDate(item.practitioner_notes_generated_at)}${
+                                    item.practitioner_notes_model
+                                      ? ` by ${item.practitioner_notes_model}`
+                                      : ""
+                                  }.`}
                               </span>
                             )}
                           </div>
+                          {canEditNotes && (
+                            <div className="drawer-notes-actions">
+                              <button
+                                className="btn-ghost btn-xs"
+                                onClick={() => startEditingNotes(item)}
+                              >
+                                Edit
+                              </button>
+                              {item.practitioner_notes_edited_at &&
+                                (confirmRevertId === item.objective_id ? (
+                                  <span className="delete-confirm">
+                                    <span>Restore AI original?</span>
+                                    <button
+                                      className="btn-danger btn-xs"
+                                      onClick={() => handleRevertNotes(item.objective_id)}
+                                      disabled={savingNotes}
+                                    >
+                                      {savingNotes ? "Reverting…" : "Yes, revert"}
+                                    </button>
+                                    <button
+                                      className="btn-ghost btn-xs"
+                                      onClick={() => setConfirmRevertId(null)}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <button
+                                    className="btn-ghost btn-xs btn-destructive"
+                                    onClick={() => setConfirmRevertId(item.objective_id)}
+                                  >
+                                    Revert to AI original
+                                  </button>
+                                ))}
+                            </div>
+                          )}
                         </>
                       ) : (
                         <div className="drawer-guidance-empty">
                           No practitioner notes yet for this objective.
+                          {canEditNotes && (
+                            <button
+                              className="btn-ghost btn-xs"
+                              style={{ marginLeft: "0.5rem" }}
+                              onClick={() => startEditingNotes(item)}
+                            >
+                              Add notes
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>

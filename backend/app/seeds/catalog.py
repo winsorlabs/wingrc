@@ -14,14 +14,17 @@ discipline:
     the data file.
 
   cmmc_practitioner_notes.yaml  -- AI-drafted, advisory. Populates
-    AssessmentObjective.practitioner_notes. Always inserted as a draft
-    (practitioner_notes_is_draft=True); see _upsert_objective's docstring
-    for the upsert rule that protects a human's review from being
-    silently overwritten by a later reseed.
+    AssessmentObjective.practitioner_notes (and practitioner_notes_original,
+    kept in sync with it for every row a human hasn't touched). See
+    _should_write_practitioner_notes's docstring for the upsert rule that
+    protects a human's edit from being silently overwritten by a later
+    reseed -- editing, not review, is what now gates this (migration 0032
+    removed the draft/reviewed status concept entirely; see
+    models.py's AssessmentObjective docstring for why).
 
 Safe to call repeatedly -- uses SELECT-then-upsert so running it twice
 yields identical state, EXCEPT for practitioner_notes once a human has
-reviewed it (see above).
+edited it (see above).
 
 Usage (CLI):
     wingrc seed-catalog
@@ -196,27 +199,31 @@ def _upsert_control(
 
 
 def _should_write_practitioner_notes(existing: AssessmentObjective | None) -> bool:
-    """Reseeding must never clobber a human's review of an AI-drafted
-    note. Write practitioner_notes on a fresh insert (existing is None)
-    or when the current row is still an untouched draft -- either never
-    populated (practitioner_notes is None) or populated but not yet
-    reviewed (practitioner_notes_is_draft is still True, the seed-time
-    default). Once a human reviews a note and flips is_draft to False,
-    every later reseed leaves practitioner_notes/model/generated_at alone
-    -- even if the source YAML's text for that objective has since
-    changed. That's a deliberate trade-off (documented in
-    backend/app/seeds/README-ish module docstring above and in
-    ROADMAP.md's writeup for this feature): a content improvement to an
-    already-reviewed note requires a human to re-touch that row, the same
-    way improving a workbook importer's parsing never silently rewrites
-    an org's already-confirmed scope_entity data.
+    """Reseeding must never clobber a human's edit of an AI-drafted note.
+    Write practitioner_notes (+ _original/_model/_generated_at) on a fresh
+    insert (existing is None) or when the current row is still untouched
+    -- either never populated (practitioner_notes is None) or populated
+    but never edited (practitioner_notes_edited_at is still NULL, the
+    seed-time default). edited_at, not edited_by, is the signal: it's
+    never nulled by the ON DELETE SET NULL on edited_by (see models.py),
+    so a note stays protected even if its editor's account is later
+    hard-deleted.
+
+    Once a human edits a note (see routers/objectives.py), every later
+    reseed leaves practitioner_notes/_original/_model/_generated_at/
+    _edited_by/_edited_at alone entirely -- even if the source YAML's text
+    for that objective has since changed. That's a deliberate trade-off:
+    a content improvement to an already-edited note requires a human to
+    re-touch that row (or explicitly revert it first), the same way
+    improving a workbook importer's parsing never silently rewrites an
+    org's already-confirmed scope_entity data.
 
     official_guidance has no equivalent protection -- see _upsert_objective
     for why that's intentional, not an oversight.
     """
     return (
         existing is None
-        or existing.practitioner_notes_is_draft
+        or existing.practitioner_notes_edited_at is None
         or existing.practitioner_notes is None
     )
 
@@ -283,7 +290,7 @@ def _upsert_objective(
     wrote_notes = 0
     if notes_text is not None and _should_write_practitioner_notes(obj if not is_new else None):
         obj.practitioner_notes = notes_text
-        obj.practitioner_notes_is_draft = True
+        obj.practitioner_notes_original = notes_text
         obj.practitioner_notes_generated_at = _PRACTITIONER_NOTES_GENERATED_AT
         obj.practitioner_notes_model = _PRACTITIONER_NOTES_MODEL
         wrote_notes = 1

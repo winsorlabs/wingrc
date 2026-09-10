@@ -1,9 +1,10 @@
 # MSP practitioner notes, per objective. AI-drafted (Claude Sonnet 5,
-# 2026-09-09) -- advisory only, NOT official CMMC content. See
-# AssessmentObjective.practitioner_notes / models.py for the draft/review
-# discipline this feeds (practitioner_notes_is_draft defaults true on
-# every seeded row; a reseed never overwrites a row a human has reviewed
-# -- see seeds/catalog.py's _should_write_practitioner_notes).
+# 2026-09-09) -- advisory only, NOT official CMMC content, permanently
+# (see AssessmentObjective.practitioner_notes / models.py -- migration
+# 0032 removed the old draft/reviewed status; provenance replaces it).
+# A reseed never overwrites a row an msp_admin has edited in the UI --
+# see seeds/catalog.py's _should_write_practitioner_notes, keyed on
+# practitioner_notes_edited_at rather than a review flag.
 #
 # Framing rules followed while writing these (do not relax on a future
 # edit without re-reading CLAUDE.md's "candidates, never auto-met" rule):

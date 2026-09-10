@@ -104,9 +104,10 @@ interface Props {
   org: Org;
   assessment: Assessment;
   canWrite: boolean;
+  currentUserRole: string | null | undefined;
 }
 
-export function AssessmentBoard({ org, assessment, canWrite }: Props) {
+export function AssessmentBoard({ org, assessment, canWrite, currentUserRole }: Props) {
   const [rows, setRows] = useState<ControlStateRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -355,6 +356,7 @@ export function AssessmentBoard({ org, assessment, canWrite }: Props) {
           controlId={drawerControl.controlId}
           controlTitle={drawerControl.title}
           canWrite={canWrite}
+          currentUserRole={currentUserRole}
           onClose={() => setDrawerControl(null)}
           onSave={handleStatementSave}
           onEvidenceChanged={handleEvidenceChanged}
