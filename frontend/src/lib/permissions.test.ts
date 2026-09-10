@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ALL_ROLES,
   canCreateOrg,
+  canEditPractitionerNotes,
   canSeeApiTokens,
   canSeeAuditLog,
   canSeeSecurity,
@@ -140,5 +141,31 @@ describe("canSeeUsers / canSeeApiTokens / canSeeAuditLog / canSeeSecurity", () =
   it("canSeeSecurity is false when every sub-item is hidden — the category itself must not render an empty room", () => {
     expect(canSeeSecurity("customer_poc")).toBe(false);
     expect(canSeeSecurity("c3pao_assessor")).toBe(false);
+  });
+});
+
+// Migration 0032: matches routers/objectives.py's router-wide
+// require_role("msp_admin") exactly -- msp_admin only, no msp_engineer
+// exception (practitioner_notes has no org_id to scope a write to), and
+// no c3pao_assessor exception (that role stays permanently read-only,
+// deliberately not carved out here — see that router's own docstring).
+describe("canEditPractitionerNotes", () => {
+  const expected: Record<string, boolean> = {
+    msp_admin: true,
+    msp_engineer: false,
+    customer_poc: false,
+    c3pao_assessor: false,
+  };
+
+  it("covers every known role — fails loudly if a role is added without an explicit expectation above", () => {
+    expect(ALL_ROLES.sort()).toEqual(Object.keys(expected).sort());
+    for (const role of ALL_ROLES) {
+      expect(canEditPractitionerNotes(role)).toBe(expected[role]);
+    }
+  });
+
+  it("no user (null/undefined role): defaults closed, not open", () => {
+    expect(canEditPractitionerNotes(null)).toBe(false);
+    expect(canEditPractitionerNotes(undefined)).toBe(false);
   });
 });
