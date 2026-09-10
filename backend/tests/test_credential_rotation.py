@@ -62,6 +62,11 @@ def _seed_connection(db_session, *, connector_key: str, plaintext: str) -> Integ
     )
     db_session.add(row)
     db_session.flush()
+    # Commit (not just flush): rotate_credential_keys()'s own
+    # dry_run=True and fail-closed paths call session.rollback(), which
+    # would otherwise expunge a flush-only row from the session/DB before
+    # the test ever gets to assert against it.
+    db_session.commit()
     return row
 
 

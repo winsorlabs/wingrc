@@ -1,11 +1,19 @@
 """Tests for `wingrc rotate-credential-keys` (app/cli.py).
 
-Mirrors test_cli_reset_dev.py's pre-flight-backup ordering tests exactly
--- same monkeypatch pattern (app.cli.SessionLocal -> the fixture session,
-_preflight_backup stubbed/tracked) -- since this command reuses the same
+Mirrors test_cli_reset_dev.py's pre-flight-backup ordering tests --
+_preflight_backup stubbed/tracked -- since this command reuses the same
 helper and the same safety property matters here for the same reason: a
 rotation that dies mid-way with some rows on the old key and some on the
 new must be recoverable from a backup.
+
+One deliberate difference from reset_dev's own tests: this command does
+`from .db import SessionLocal as _SL` INSIDE the function body (matching
+backfill-missing-control-states-cmd's own --db-url-override pattern), not
+`SessionLocal()` via the name imported at module level into app.cli the
+way reset_dev() does -- so the fixture session is substituted by patching
+app.db.SessionLocal (what that local import actually re-reads at call
+time), not app.cli.SessionLocal (which reset_dev() reads, but this
+command never touches).
 
 Run in-container:
     docker compose exec backend pytest tests/test_cli_rotate_credential_keys.py -m integration -v
@@ -65,7 +73,7 @@ class TestPreflightBackupOrdering:
         row = _seed_connection(db_session)
         _set_keys(monkeypatch, f"v2:{_KEY_B},v1:{_KEY_A}")
 
-        monkeypatch.setattr("app.cli.SessionLocal", lambda: db_session)
+        monkeypatch.setattr("app.db.SessionLocal", lambda: db_session)
         monkeypatch.setattr(db_session, "close", lambda: None)
 
         def _boom(_db_url):
@@ -91,7 +99,7 @@ class TestPreflightBackupOrdering:
         row = _seed_connection(db_session)
         _set_keys(monkeypatch, f"v2:{_KEY_B},v1:{_KEY_A}")
 
-        monkeypatch.setattr("app.cli.SessionLocal", lambda: db_session)
+        monkeypatch.setattr("app.db.SessionLocal", lambda: db_session)
         monkeypatch.setattr(db_session, "close", lambda: None)
 
         order = []
@@ -129,7 +137,7 @@ def test_dry_run_by_default_writes_nothing(monkeypatch, db_session: Session):
     row = _seed_connection(db_session)
     _set_keys(monkeypatch, f"v2:{_KEY_B},v1:{_KEY_A}")
 
-    monkeypatch.setattr("app.cli.SessionLocal", lambda: db_session)
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db_session)
     monkeypatch.setattr(db_session, "close", lambda: None)
 
     backup_called = []
@@ -152,7 +160,7 @@ def test_nothing_to_rotate_skips_backup(monkeypatch, db_session: Session):
     # No second key added -- the seeded row is already on the (only,
     # therefore primary) configured key.
 
-    monkeypatch.setattr("app.cli.SessionLocal", lambda: db_session)
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db_session)
     monkeypatch.setattr(db_session, "close", lambda: None)
 
     backup_called = []
@@ -176,7 +184,7 @@ def test_fail_closed_reports_and_exits_nonzero_without_attempting_backup(
     # actually encrypted under -- it's now permanently undecryptable.
     _set_keys(monkeypatch, f"v2:{_KEY_B}")
 
-    monkeypatch.setattr("app.cli.SessionLocal", lambda: db_session)
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db_session)
     monkeypatch.setattr(db_session, "close", lambda: None)
 
     backup_called = []
