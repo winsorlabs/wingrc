@@ -1,5 +1,12 @@
 # Plan — Auth/RBAC completion (roadmap item I) + frontend admin surface
 
+**Role count note (2026-09-11):** everywhere below that says "four roles"
+predates `consultant_admin` (migration 0034) — five roles ship now. This
+plan's I.1–I.9 slices are a historical design record of the original
+four-role build and are left as written rather than retrofitted; see
+`docs/roadmap.md`'s `consultant_admin` Done entry for the fifth role's own
+full writeup (naming, per-route can/cannot classification, rank ladder).
+
 **Status:** I.1 ✅ merged · I.2 ✅ merged · I.3 ✅ merged · I.4 ✅ merged · I.5 ✅ closed (5 deviations — see I.5; 308/308 integration tests green on wl-util-1, browser smoke test confirmed) · I.6 ✅ merged (all 6 items) · I.7 ✅ merged (users + API tokens admin panels, invite-redemption page) · I.8 ✅ closed (see I.8) · I.9 automated verification ✅ (pytest + tsc + vitest all green), one manual browser walkthrough still outstanding — see I.9 · **User deletion (ADR 0006) ✅ closed, out-of-band — see that section below, not part of I.1–I.9** · **Audit log viewer ✅ closed, out-of-band — see that section below, not part of I.1–I.9** · **Non-MSP org-picker landing gap ✅ closed, out-of-band — see that section below, not part of I.1–I.9** · **MFA QR code third-party disclosure fixed (ADR 0008), out-of-band — see that ADR, not part of I.1–I.9** · **All automated checks above (pytest, `tsc -b`, `vitest`) confirmed together in one combined pass on wl-util-1, 2026-08-17: full pytest suite (396/396 integration, 530/530 total), `tsc -b` clean, `vitest run` 25/25, plus two browser smoke tests (multi-org scoping, single-org landing) — see roadmap.md's now-closed "Known defects" entry for the full account. I.9's own self-service browser walkthrough was not part of that pass — see I.9's note.**
 **Baseline:** 0088757
 **Scope:** close the gaps identified in the audit of item I, then land the frontend

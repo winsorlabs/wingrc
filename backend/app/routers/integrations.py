@@ -8,11 +8,23 @@ POST   /integrations/{connector_key}/test          Test the stored credential li
 
 Deployment-wide, not org-scoped (see models.py's IntegrationConnection
 docstring for why — Liongard's own tenancy model is one API key per MSP
-instance). msp_admin only, router-wide: unlike most routers here there's no
-org_id to check membership against, and every operation on this router —
-even viewing whether a credential is configured — is deployment-level
-config, not tenant data, so it gets the same "no per-route exception" gate
-users.py uses for its own admin-only routes.
+instance). Gated to msp_admin + consultant_admin (migration 0034),
+router-wide: unlike most routers here there's no org_id to check
+membership against.
+
+consultant_admin's inclusion here is a deliberate compliance-data
+classification, not a security one -- integration config feeds the magic
+loop's scope population, so it's grouped with scope/assessments/evidence
+rather than with users.py's identity-administration gate. Flagged, not
+silently accepted: this router shares the exact deployment-wide-scope
+property that got routers/objectives.py excluded (a consultant hired for
+one client's engagement can reconfigure or clear a credential every other
+client on this deployment depends on, same as objectives.py's practitioner
+notes would be every client's shared catalog content). The task that added
+consultant_admin explicitly named "integrations config" in scope, so this
+follows that instruction rather than silently overriding it -- but the
+tension is real and worth Jarrod revisiting if a multi-client MSP actually
+hires a per-client consultant for this specific screen.
 
 The credential is write-only over the API by design (see crypto.py + the
 Hard rules in CLAUDE.md's parent doc): PUT accepts it, nothing ever returns
@@ -40,7 +52,7 @@ from ..models import IntegrationConnection
 router = APIRouter(
     prefix="/integrations",
     tags=["integrations"],
-    dependencies=[Depends(require_role("msp_admin"))],
+    dependencies=[Depends(require_role("msp_admin", "consultant_admin"))],
 )
 
 

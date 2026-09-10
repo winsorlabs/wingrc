@@ -60,8 +60,22 @@ _TOKEN_PREFIX = "wingrc_"
 # Single ranking definition shared by API token minting (routers/users.py,
 # a token cannot be minted above the issuer's/target's own rank) and token
 # resolution below (a token cannot outlive the demotion of the user behind
-# it — see _resolve_api_token).
-_ROLE_RANK = {"msp_admin": 4, "msp_engineer": 3, "customer_poc": 2, "c3pao_assessor": 1}
+# it — see _resolve_api_token). Renumbered for consultant_admin (migration
+# 0034), slotted above msp_engineer/below msp_admin: only min()/comparison
+# expressions consume this map (verified before renumbering — no persisted
+# integer depends on the old values), so this is a pure code-level change,
+# no data migration needed. Rank alone does NOT imply route access — which
+# roles can reach which endpoints is an explicit per-route allowlist (see
+# routers/integrations.py, routers/objectives.py, routers/audit_log.py,
+# routers/users.py, routers/orgs.py for the consultant_admin
+# can/cannot classification), never inferred from where a role sits here.
+_ROLE_RANK = {
+    "msp_admin": 5,
+    "consultant_admin": 4,
+    "msp_engineer": 3,
+    "customer_poc": 2,
+    "c3pao_assessor": 1,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -803,6 +817,12 @@ def require_org_access(*roles: str):
 
 
 _READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+# consultant_admin (migration 0034) is deliberately NOT a member — it
+# writes compliance data (scope, assessments, evidence, RACI, ...), it's
+# only restricted from identity/security-administration routes, which is
+# an allowlist question (see _ROLE_RANK's comment above), not a
+# read/write one. c3pao_assessor stays the only permanently read-only
+# role, unchanged by this addition.
 _READ_ONLY_ROLES = frozenset({"c3pao_assessor"})
 
 

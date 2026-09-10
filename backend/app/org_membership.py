@@ -48,6 +48,12 @@ from sqlalchemy.orm import Session
 
 from .models import Organization
 
+# consultant_admin (migration 0034) is deliberately NOT a member: it's a
+# per-engagement role for an external party, so membership must be granted
+# explicitly per org via invite_user() (the same path customer_poc already
+# uses), never auto-fanned-out to every client the MSP serves — see
+# OrgMembership's own model docstring and routers/orgs.py's create_org()
+# for the same reasoning applied to the other two places this set matters.
 _AUTO_PROVISION_ROLES = frozenset({"msp_admin", "msp_engineer"})
 
 _GRANT_SQL = text(

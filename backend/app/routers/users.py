@@ -1,6 +1,15 @@
 # noqa: B008
 """User management and API token endpoints (msp_admin gated).
 
+Every route in this file is identity/security administration, which is
+exactly the surface migration 0034's consultant_admin role is restricted
+from — none of the gates below were extended to include it (unlike, say,
+routers/integrations.py). API token minting/listing/revoking stays gated
+to msp_admin + msp_engineer, not msp_admin + msp_engineer + consultant_admin:
+seeing which tokens exist (their role/expiry) and minting new ones is
+itself a security-relevant capability, not compliance-data work, so it
+wasn't extended just because it's already open to a second internal role.
+
 POST /orgs/{org_id}/users            — invite a user (returns raw invite token)
 GET  /orgs/{org_id}/users            — list users
 PATCH /orgs/{org_id}/users/{user_id} — update role / is_active
@@ -50,7 +59,15 @@ router = APIRouter(
     dependencies=[Depends(require_write())],
 )
 
-_VALID_ROLES = {"msp_admin", "msp_engineer", "customer_poc", "c3pao_assessor"}
+# The set of assignable role VALUES (what a user/token/membership row can
+# be), not who may assign them — every route below stays gated to
+# msp_admin (or msp_admin+msp_engineer for tokens) regardless of this set,
+# per the consultant_admin can/cannot audit (migration 0034): an msp_admin
+# can invite a consultant_admin or mint them a token, but a
+# consultant_admin cannot reach any route in this file itself (user
+# management and API token minting are exactly the identity/security
+# surface this role is restricted from).
+_VALID_ROLES = {"msp_admin", "consultant_admin", "msp_engineer", "customer_poc", "c3pao_assessor"}
 _VALID_METHODS = {"local", "sso"}
 _INVITE_TTL_HOURS = 48
 

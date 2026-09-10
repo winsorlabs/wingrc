@@ -15,9 +15,19 @@ feature's roadmap writeup for a sketched alternative: a C3PAO "suggest an
 edit" surface an msp_admin reviews before it lands, never a direct write).
 msp_engineer was also considered and rejected: this table has no org_id at
 all, so there's no membership boundary to scope an msp_engineer's write to
--- editing here changes catalog content every org on this deployment sees,
-which is exactly the "deployment-wide, not per-org" shape D.1's
-Integrations router already draws the same admin-only line around.
+-- editing here changes catalog content every org on this deployment sees.
+
+consultant_admin (migration 0034) was considered and rejected for the
+same deployment-wide reason, deliberately -- NOT extended here the way it
+was for routers/integrations.py. The distinction: an external consultant
+hired for one client's engagement editing AI-drafted guidance every other
+client on this deployment reads is a bigger blast radius than a single
+compliance-data mutation, and unlike integrations config there's no
+"Can" list entry naming this explicitly, so the omission is read as
+deliberate rather than inferred. (Integrations diverged from this router
+on the identical deployment-wide-scope property -- see that router's own
+docstring for the tension that leaves open, flagged rather than silently
+accepted.)
 
 Read access to practitioner_notes (and its provenance) is NOT gated here
 -- it already flows through the existing

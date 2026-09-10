@@ -19,8 +19,14 @@
 // sets, so if the backend map changes, the matching constant here needs a
 // manual edit.
 
+// Renumbered for consultant_admin (migration 0034), slotted above
+// msp_engineer/below msp_admin — mirrors backend/app/auth.py's _ROLE_RANK
+// exactly. Rank alone does not imply route access; see canSeeIntegrations
+// below and the per-route classification in the backend routers
+// themselves for what consultant_admin can/cannot actually reach.
 export const ROLE_RANK: Record<string, number> = {
-  msp_admin: 4,
+  msp_admin: 5,
+  consultant_admin: 4,
   msp_engineer: 3,
   customer_poc: 2,
   c3pao_assessor: 1,
@@ -28,6 +34,7 @@ export const ROLE_RANK: Record<string, number> = {
 
 export const ROLE_LABELS: Record<string, string> = {
   msp_admin: "MSP Admin",
+  consultant_admin: "Consultant Admin",
   msp_engineer: "MSP Engineer",
   customer_poc: "Customer POC",
   c3pao_assessor: "C3PAO Assessor",
@@ -81,17 +88,27 @@ export function canSeeAuditLog(role: string | null | undefined): boolean {
   return role === "msp_admin";
 }
 
-// Matches routers/integrations.py's router-wide require_role("msp_admin")
-// (D.1) — unlike Security's three sub-items, there's only one gate here
-// since every route on that router, including GET, is admin-only.
+// Matches routers/integrations.py's router-wide
+// require_role("msp_admin", "consultant_admin") (D.1 + migration 0034) —
+// unlike Security's three sub-items, there's only one gate here since
+// every route on that router, including GET, shares it. consultant_admin
+// is included deliberately (compliance-data classification, not a
+// security one — see that router's own docstring for the deployment-wide
+// tension this leaves open, flagged rather than silently accepted).
+export const INTEGRATIONS_ROLES = new Set(["msp_admin", "consultant_admin"]);
+
 export function canSeeIntegrations(role: string | null | undefined): boolean {
-  return role === "msp_admin";
+  return !!role && INTEGRATIONS_ROLES.has(role);
 }
 
 // Whether the Security nav *category* itself should render at all — hiding
 // an empty category is a nav-shell-specific concern the old per-tab-only
 // gating never had to answer (OrgSettings always showed something, since
-// Scope's tabs were never role-gated).
+// Scope's tabs were never role-gated). Deliberately does NOT check
+// canSeeIntegrations — Integrations has its own top-level nav entry
+// (see showIntegrations in SideNav.tsx), not part of the Security
+// category, so consultant_admin seeing Integrations doesn't put them in
+// range of Security's other three sub-items.
 export function canSeeSecurity(role: string | null | undefined): boolean {
   return canSeeUsers(role) || canSeeApiTokens(role) || canSeeAuditLog(role);
 }
@@ -100,7 +117,11 @@ export function canSeeSecurity(role: string | null | undefined): boolean {
 // (migration 0032). msp_engineer was considered and rejected there —
 // practitioner_notes has no org_id to scope an msp_engineer's write to,
 // since editing it changes catalog content every org on this deployment
-// sees — same reasoning as canSeeIntegrations above.
+// sees. consultant_admin (migration 0034) was considered and rejected for
+// the same deployment-wide reason -- deliberately NOT extended here the
+// way it was for canSeeIntegrations above; see routers/objectives.py's
+// own docstring for the distinction (no "Can" list entry named this
+// explicitly, unlike integrations config).
 export function canEditPractitionerNotes(role: string | null | undefined): boolean {
   return role === "msp_admin";
 }

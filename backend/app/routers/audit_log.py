@@ -5,6 +5,26 @@ GET /orgs/{org_id}/audit-log — paginated, filterable, msp_admin only.
 The log is append-only by design (see audit.py) — this router has no
 mutating endpoints and never will.
 
+**consultant_admin (migration 0034) does NOT get this gate, decided and
+reported here rather than left accidental.** The log is one undifferentiated
+stream, not filterable by category before it reaches the caller: alongside
+compliance-relevant entries (control_state.update, evidence, RACI,
+practitioner_notes.edit/revert, bundle.export) it also carries every
+identity/security-administration event for this org -- user.invite,
+user.role_change, user.mfa_reset, user.anonymize/.delete, api_token.create/
+.revoke, integration_connection.credential_set/.delete -- plus IP addresses.
+An external consultant has a real, legitimate interest in the first
+category; granting the whole log discloses the second category too --
+who has admin access, when tokens were minted, when credentials were
+rotated, from which IPs -- which is exactly the identity/security surface
+this role is supposed to be restricted from, regardless of the consultant's
+legitimate interest in the rest. Read-only access doesn't change that
+analysis: this is a security-relevant disclosure question, not a
+write-permission one. Left as msp_admin-only rather than half-built: a
+future filtered view (compliance-category actions only) could resolve
+this cleanly, but that's a new capability, not a role-gate tweak, and
+isn't built here -- see docs/roadmap.md for the open item.
+
 Identity resolution: `actor` and `entity_id` (when `entity_type == "user"`)
 are durable GUIDs stored verbatim in audit_log — never overwritten, never
 joined into the stored row. Resolving them to a human-readable name/email

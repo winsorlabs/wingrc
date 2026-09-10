@@ -1232,7 +1232,8 @@ class User(Base):
         UniqueConstraint("home_org_id", "email", name="uq_user_home_org_id_email"),
         CheckConstraint("login_method IN ('sso','local','api')", name="ck_user_login_method"),
         CheckConstraint(
-            "role IN ('msp_admin','msp_engineer','customer_poc','c3pao_assessor')",
+            "role IN ('msp_admin','consultant_admin','msp_engineer',"
+            "'customer_poc','c3pao_assessor')",
             name="ck_user_role",
         ),
     )
@@ -1386,7 +1387,8 @@ class ApiToken(Base):
     __tablename__ = "api_token"
     __table_args__ = (
         CheckConstraint(
-            "role IN ('msp_admin','msp_engineer','customer_poc','c3pao_assessor')",
+            "role IN ('msp_admin','consultant_admin','msp_engineer',"
+            "'customer_poc','c3pao_assessor')",
             name="ck_api_token_role",
         ),
     )
@@ -1425,6 +1427,13 @@ class OrgMembership(Base):
     membership, not the person: the same user can hold a different role
     on each org they're a member of.
 
+    `consultant_admin` (migration 0034) is deliberately NOT in
+    org_membership.py's `_AUTO_PROVISION_ROLES` — it's a per-engagement
+    role for an external party, so membership must be granted explicitly
+    per org (the same invite_user() path every customer_poc uses), never
+    auto-fanned-out to every client the MSP serves the way msp_admin/
+    msp_engineer are.
+
     RLS is enabled (`org_membership_tenant_isolation`, same single-org
     `app.current_org` pattern as every other org-scoped table) for
     defense-in-depth consistency with the rest of the schema, even though
@@ -1444,7 +1453,8 @@ class OrgMembership(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "org_id", name="uq_org_membership_user_org"),
         CheckConstraint(
-            "role IN ('msp_admin','msp_engineer','customer_poc','c3pao_assessor')",
+            "role IN ('msp_admin','consultant_admin','msp_engineer',"
+            "'customer_poc','c3pao_assessor')",
             name="ck_org_membership_role",
         ),
     )

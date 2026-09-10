@@ -828,16 +828,21 @@ org creation. `docs/roadmap.md`'s Done section has the fuller writeup
 (Authentication entry, plus the Auth/RBAC-completion Done entry added
 2026-09-07).
 
-**Roles — the three-role sketch below is superseded, not unresolved.** Four
-roles shipped: `msp_admin`, `msp_engineer`, `customer_poc`, `c3pao_assessor`
-(see `_ROLE_RANK` in `auth.py`). The mapping is: **MSP User** below split
-into two tiers (`msp_admin` / `msp_engineer`, ranked, not equal); **Org
-User** → `customer_poc`; **Assessor** → `c3pao_assessor`, and its
-"read-only, cannot mutate state" requirement is enforced in code (see
-above), not just a role label. This is a real design evolution (finer MSP
-permissioning than originally sketched), not a gap that needs
-reconciling — left below as the original design intent, not because it's
-still open.
+**Roles — the three-role sketch below is superseded, not unresolved.**
+Four-plus-one roles shipped as of 2026-09-11: `msp_admin`,
+`consultant_admin`, `msp_engineer`, `customer_poc`, `c3pao_assessor` (see
+`_ROLE_RANK` in `auth.py`). The mapping is: **MSP User** below split into
+two tiers (`msp_admin` / `msp_engineer`, ranked, not equal), plus a fifth,
+later addition with no analog in the original sketch —
+`consultant_admin`, a restricted role for an external consultant (full
+compliance-data access, no identity/security administration; see
+`docs/roadmap.md`'s `consultant_admin` Done entry for the full per-route
+classification); **Org User** → `customer_poc`; **Assessor** →
+`c3pao_assessor`, and its "read-only, cannot mutate state" requirement is
+enforced in code (see above), not just a role label. This is a real
+design evolution (finer MSP permissioning than originally sketched), not
+a gap that needs reconciling — left below as the original design intent,
+not because it's still open.
 
 **Roles (original sketch, superseded by the four shipped roles above):**
 - **MSP User** — platform operator; manages multiple tenant orgs; can activate

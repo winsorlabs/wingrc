@@ -271,6 +271,15 @@ def _build_system_description_out(
     "",
     response_model=OrgOut,
     status_code=201,
+    # consultant_admin (migration 0034) deliberately excluded: creating a
+    # new org is an MSP-business decision (onboarding a new client engine-
+    # wide), not "this tenant's compliance data" -- and provision_new_org_
+    # memberships() below only grants membership to msp_admin/msp_engineer,
+    # so a consultant_admin caller would create an org it then has no
+    # membership in and can never reach again. Adding the role here without
+    # also adding it to org_membership.py's _AUTO_PROVISION_ROLES (a change
+    # deliberately NOT made — see that constant's own docstring) would be a
+    # footgun, not an oversight to fix later.
     dependencies=[Depends(require_role("msp_admin", "msp_engineer"))],
 )
 def create_org(body: OrgIn, session: Session = Depends(get_session)) -> OrgOut:

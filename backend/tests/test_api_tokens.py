@@ -179,6 +179,54 @@ def test_create_api_token_on_behalf_of_exceeds_target_role_403(client, db_sessio
 
 
 # ---------------------------------------------------------------------------
+# consultant_admin (migration 0034) and the renumbered _ROLE_RANK ladder --
+# consultant_admin itself never reaches this endpoint (excluded from
+# require_org_access("msp_admin", "msp_engineer"), see
+# test_consultant_admin_role.py for that 403), but an msp_admin minting a
+# token *for* a consultant_admin target must still respect the rank clamp.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_create_api_token_for_consultant_admin_target_cannot_be_msp_admin_role(
+    client, db_session, fake_msp_admin
+):
+    """The literal scenario this ladder slot exists to prevent: a token
+    scoped to a consultant_admin target must not be mintable at msp_admin
+    rank, even by a real msp_admin caller -- rank(msp_admin)=5 >
+    rank(consultant_admin)=4 against the target's own role."""
+    _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
+    target = _seed_user(db_session, org_id=fake_msp_admin.org_id, role="consultant_admin")
+
+    r = client.post(
+        f"/orgs/{fake_msp_admin.org_id}/api-tokens",
+        json={"name": "x", "role": "msp_admin", "user_id": str(target.id)},
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.integration
+def test_create_api_token_at_consultant_admin_rank_for_consultant_admin_target_succeeds(
+    client, db_session, fake_msp_admin
+):
+    """Contrast with the above: minting a token AT the target's own rank
+    (consultant_admin for a consultant_admin target) is exactly what an
+    msp_admin should be able to do -- e.g. to issue a scoped API token for
+    an external consultant's own tooling."""
+    _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
+    target = _seed_user(db_session, org_id=fake_msp_admin.org_id, role="consultant_admin")
+
+    r = client.post(
+        f"/orgs/{fake_msp_admin.org_id}/api-tokens",
+        json={"name": "x", "role": "consultant_admin", "user_id": str(target.id)},
+    )
+    assert r.status_code == 201
+    assert r.json()["role"] == "consultant_admin"
+
+
+# ---------------------------------------------------------------------------
 # 5. invite_user still rejects login_method="api"
 # ---------------------------------------------------------------------------
 
@@ -267,6 +315,85 @@ def test_api_token_role_not_escalated_after_promotion(client, db_session, fake_m
     me = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert me.status_code == 200
     assert me.json()["role"] == "customer_poc"
+
+
+@pytest.mark.integration
+def test_api_token_role_clamps_to_consultant_admin_after_demotion(
+    client, db_session, fake_msp_admin
+):
+    """Same effective_role = min(token role, user role) mechanic as the
+    msp_admin->customer_poc case above, exercised at the new rank slot:
+    a token minted at msp_admin, whose holder is then demoted to
+    consultant_admin, must clamp down to consultant_admin -- not stay at
+    msp_admin, and not fall further than the demotion actually went."""
+    _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
+    target = _seed_user(db_session, org_id=fake_msp_admin.org_id, role="msp_admin")
+
+    minted = client.post(
+        f"/orgs/{fake_msp_admin.org_id}/api-tokens",
+        json={"name": "x", "role": "msp_admin", "user_id": str(target.id)},
+    )
+    assert minted.status_code == 201
+    token = minted.json()["token"]
+
+    patched = client.patch(
+        f"/orgs/{fake_msp_admin.org_id}/users/{target.id}",
+        json={"role": "consultant_admin"},
+    )
+    assert patched.status_code == 200
+
+    del app.dependency_overrides[get_current_user]
+
+    me = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert me.status_code == 200
+    assert me.json()["role"] == "consultant_admin"
+
+    # The clamped-down token must not reach an msp_admin-only route either
+    # (invite_user) -- confirms the clamp is a real effective-role change,
+    # not just a cosmetic field on /auth/me.
+    r = client.post(
+        f"/orgs/{fake_msp_admin.org_id}/users",
+        json={
+            "email": f"{uuid.uuid4().hex[:8]}@example.com",
+            "display_name": "Should be blocked",
+            "role": "customer_poc",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.integration
+def test_api_token_role_not_escalated_past_consultant_admin_after_promotion(
+    client, db_session, fake_msp_admin
+):
+    """Mirror of test_api_token_role_not_escalated_after_promotion at the
+    new rank slot: a token minted at consultant_admin, whose holder is
+    then promoted to msp_admin, must stay at consultant_admin -- a
+    promotion never retroactively escalates a token already minted."""
+    _seed_org(db_session, fake_msp_admin.org_id)
+    _grant(db_session, fake_msp_admin)
+    target = _seed_user(db_session, org_id=fake_msp_admin.org_id, role="consultant_admin")
+
+    minted = client.post(
+        f"/orgs/{fake_msp_admin.org_id}/api-tokens",
+        json={"name": "x", "role": "consultant_admin", "user_id": str(target.id)},
+    )
+    assert minted.status_code == 201
+    token = minted.json()["token"]
+
+    patched = client.patch(
+        f"/orgs/{fake_msp_admin.org_id}/users/{target.id}",
+        json={"role": "msp_admin"},
+    )
+    assert patched.status_code == 200
+
+    del app.dependency_overrides[get_current_user]
+
+    me = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert me.status_code == 200
+    assert me.json()["role"] == "consultant_admin"
 
 
 # ---------------------------------------------------------------------------

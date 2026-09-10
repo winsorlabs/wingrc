@@ -357,7 +357,16 @@ HIBP k-anonymity check. RLS via `SET LOCAL app.current_org` with SECURITY DEFINE
 functions on a pinned search_path. `wingrc_app` role, NOBYPASSRLS. Router-level
 guards on all routers.
 
-Roles: `msp_admin`, `msp_engineer`, `customer_poc`, `c3pao_assessor`.
+Roles: `msp_admin`, `consultant_admin`, `msp_engineer`, `customer_poc`,
+`c3pao_assessor`. `consultant_admin` (migration 0034) is a restricted
+platform role for an external consultant (e.g. a C3PAO hired to help, not
+to assess): full access to compliance data, no access to identity/security
+administration (user management, API tokens, audit log). Rank sits above
+`msp_engineer`, below `msp_admin`. Not auto-provisioned into every org the
+way `msp_admin`/`msp_engineer` are — membership is per-engagement, granted
+explicitly. See `docs/roadmap.md`'s Done entry for the full can/cannot
+classification of every `require_role`/`require_org_access("msp_admin")`
+call site.
 
 The completion plan covers, in order: audit coverage for privilege-affecting
 mutations plus a deny-by-default route harness (I.1); `c3pao_assessor` write

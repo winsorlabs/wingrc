@@ -20,7 +20,7 @@ Items without a status are planned but not yet started.
 - **Findings + POA&M models** — `finding` and `poa_m_item` tables; gap/deficiency/weakness/observation types; severity; remediation milestones.
 - **Assessor Bundle Export** — downloadable ZIP (SSP + evidence + scores + status) for C3PAO handoff; `backend/app/bundle_service.py` assembly, `GET /orgs/{org_id}/assessments/{assessment_id}/bundle`, "Generate Assessor Bundle" button on the board. Verified against a real downloaded zip. **Amended 2026-08-06** (out-of-band, not a new roadmap slice): evidence folder in the export restructured to `evidence/<family>/<control>/<objective>/` so an assessor can navigate to one objective's evidence directly — see `docs/adr/0007-per-objective-evidence-folders-in-bundle-export.md`.
 - **Onboarding Wizard v1** — Organization Profile (SSP header fields: CAGE/UEI/address/phone/logo), System Description (system type, CUI categories/storage/boundary/flow narrative), and Personnel Repository (contacts + documentation-role assignment) — migrations 0011/0012/0013; `GET/PATCH /orgs/{org_id}/profile`, `POST /orgs/{org_id}/logo`, `GET/PUT /orgs/{org_id}/system-description`, contacts CRUD + role endpoints (`contacts.py`). 3-step wizard on org creation, plus a persistent tabbed Settings page for later edits.
-- **Authentication** — session-based login (opaque tokens, HttpOnly+Secure cookie), local password (PBKDF2-HMAC-SHA256, FIPS-140 rationale) + TOTP MFA + backup codes, Microsoft Entra ID SSO, API tokens for machine access — migration 0015. Four roles shipped (`msp_admin`/`msp_engineer`/`customer_poc`/`c3pao_assessor`); see Deferred for role-guard coverage. **Known defect (2026-08-07), fixed 2026-08-11–13, verified 2026-08-17:** `require_org_access()`'s single-org gate meant MSP staff couldn't open any org but their own — full writeup moved to Done below (multi-org access entry), closed out of Known defects.
+- **Authentication** — session-based login (opaque tokens, HttpOnly+Secure cookie), local password (PBKDF2-HMAC-SHA256, FIPS-140 rationale) + TOTP MFA + backup codes, Microsoft Entra ID SSO, API tokens for machine access — migration 0015. Four roles shipped (`msp_admin`/`msp_engineer`/`customer_poc`/`c3pao_assessor`); see Deferred for role-guard coverage. **Known defect (2026-08-07), fixed 2026-08-11–13, verified 2026-08-17:** `require_org_access()`'s single-org gate meant MSP staff couldn't open any org but their own — full writeup moved to Done below (multi-org access entry), closed out of Known defects. **Five roles as of 2026-09-11** — `consultant_admin` added (migration 0034); see that date's Done entry below, not a correction to this one.
 - **Multi-org access (ADR 0009 M.1–M.6)** — many-to-many `org_membership`
   replacing the old single-org gate. Fixed the defect above: an `msp_admin`
   could previously list every org (`GET /orgs`) and create new ones
@@ -803,6 +803,143 @@ Items without a status are planned but not yet started.
     separately per this entry's own "land it" scope — see the commit this
     entry ships with for whether that had completed by the time of
     landing.
+- **`consultant_admin`: a restricted platform role for an external
+  consultant** (2026-09-11, migration 0034). A fifth platform role — full
+  access to compliance data, no access to identity/security
+  administration — for the case CLAUDE.md's five-layer model didn't
+  originally distinguish: an MSP hiring an outside party (e.g. a C3PAO
+  brought on to *help* rather than assess) to work inside a client's
+  assessment without handing them the keys to user/token/audit
+  administration.
+  - **Naming, confirmed before building.** Jarrod's original suggestion
+    was `mssp_admin`. Flagged and rejected before any code was written:
+    an MSSP is the same category of company as the MSP operating the
+    tenant, so the name doesn't convey "external, restricted" — and
+    `ContactDocumentationRole`'s CHECK constraint already uses `mssp` for
+    a *documentation* role (who filled out a form), a different concept
+    entirely. Two `mssp` meanings in the same app is the exact
+    naming-drift problem this codebase keeps having to fix (see the
+    RocketCyber vendor-CRM lesson and CLAUDE.md's "verify reference
+    data" discipline). Jarrod confirmed `consultant_admin`.
+  - **The classification IS the role definition.** Every existing
+    `require_role(...)` / `require_org_access("msp_admin", ...)` call
+    site was audited and classified explicitly (not inferred per-route
+    as the work went) — full per-route reasoning lives in each router's
+    own module docstring, not just here:
+    - **Compliance data — extended:** `routers/scope.py`,
+      `routers/assessments.py`, `routers/evidence.py`,
+      `routers/contacts.py`, `routers/raci.py`, `routers/bundle.py`,
+      `routers/dashboard.py` needed no change at all — none of them
+      carry a role-specific allowlist beyond `require_org_access()` +
+      `require_write()`, so `consultant_admin` inherits full read/write
+      access to scope, assets, system description, contacts,
+      assessments, control states, evidence, RACI, and bundle export
+      simply by being a non-read-only role with an `org_membership` row.
+      `routers/integrations.py`'s router-wide gate was extended to
+      `require_role("msp_admin", "consultant_admin")` — the one place
+      an explicit code change was needed to grant a "Can" item.
+    - **Identity/security administration — NOT extended:**
+      `routers/users.py` (every route: invite, list, patch, delete,
+      reset-mfa, unlock, reset-password, create API user) and its
+      `api-tokens` routes (create/list/revoke, previously
+      `msp_admin`+`msp_engineer`) stay exactly as gated. `routers/orgs.py`'s
+      `create_org` (`msp_admin`+`msp_engineer`) also stays unextended —
+      not for security reasons but because it's an MSP-business decision
+      (onboarding a new client engine-wide) that would leave a
+      `consultant_admin` caller owning an org it has no membership in
+      and can never reach again, since `org_membership.py`'s
+      `_AUTO_PROVISION_ROLES` (which grants every `msp_admin`/
+      `msp_engineer` membership in every newly created org) was
+      deliberately NOT extended to include it — that auto-fan-out is
+      exactly what "restricted, per-engagement" rules out.
+    - **Audit log — decided and reported, not left accidental.**
+      `routers/audit_log.py`'s `require_org_access("msp_admin")` was
+      NOT extended. The log is one undifferentiated stream: alongside
+      compliance-relevant entries (`control_state.update`, evidence,
+      RACI, `practitioner_notes.edit`/`.revert`, `bundle.export`) it also
+      carries every identity/security-administration event for the org
+      — `user.invite`, `user.role_change`, `user.mfa_reset`,
+      `user.anonymize`/`.delete`, `api_token.create`/`.revoke`,
+      `integration_connection.credential_set`/`.delete` — plus IP
+      addresses. A consultant has a real, legitimate interest in the
+      first category; granting the whole log discloses the second too.
+      Read-only access doesn't change that analysis — it's a
+      disclosure question, not a write-permission one. Left
+      `msp_admin`-only rather than half-built a filtered view; that's a
+      new capability (a compliance-category-only audit view), not a
+      role-gate tweak, and isn't built here.
+    - **Practitioner notes — NOT extended, unlike Integrations, on the
+      identical deployment-wide-scope property.** `routers/objectives.py`
+      (migration 0032's practitioner-notes edit/revert) stays
+      `msp_admin`-only. `AssessmentObjective` has no `org_id` at all —
+      editing a note changes catalog content every org on the deployment
+      reads, not just the one client a consultant was engaged for.
+      Integrations shares that exact deployment-wide-scope property (one
+      Liongard credential per MSP instance) and WAS extended, because
+      this task's own "Can" list named "integrations config" explicitly
+      and objectives editing was never named — the omission is read as
+      deliberate rather than inferred, but the tension between the two
+      routers' outcomes on the same underlying property is real and
+      flagged in both docstrings, not silently accepted. Worth Jarrod
+      revisiting if a multi-client MSP actually hires a per-client
+      consultant for the Integrations screen specifically.
+  - **Rank ladder renumbered**, `auth.py`'s `_ROLE_RANK`: `msp_admin: 5,
+    consultant_admin: 4, msp_engineer: 3, customer_poc: 2,
+    c3pao_assessor: 1` (previously `msp_admin: 4` down to
+    `c3pao_assessor: 1`). Verified before renumbering that the map is
+    consumed only by `min()`/comparison expressions (API token rank
+    clamp, `_resolve_api_token`'s demotion clamp) — no persisted integer
+    depends on the old numbering, so this was a pure code-level change.
+    Rank does not imply route access on its own — every route-gate
+    decision above is an explicit allowlist, never inferred from where a
+    role sits in this ladder.
+  - **Not read-only.** `consultant_admin` is not in `auth.py`'s
+    `_READ_ONLY_ROLES` (`c3pao_assessor` stays the sole permanently
+    read-only member, unchanged).
+  - **Migration 0034**: extends the role `CHECK` constraint on every
+    table that has one — `ck_user_role`, `ck_api_token_role`,
+    `ck_org_membership_role`. `ContactDocumentationRole`'s own `mssp`
+    documentation-role value is untouched (see the naming rationale
+    above for why the two are deliberately kept separate).
+  - **Frontend** (`lib/roles.ts`): `ROLE_RANK`/`ROLE_LABELS` updated
+    (`ALL_ROLES` derives from `ROLE_RANK`'s keys, so both role pickers in
+    `UsersPanel.tsx` and `ApiTokensPanel.tsx` — already driven entirely
+    by `ALL_ROLES`/`ROLE_LABELS`/`ROLE_RANK` — picked up the new role
+    with no component changes needed). New `canSeeIntegrations` allowlist
+    (`INTEGRATIONS_ROLES = {"msp_admin", "consultant_admin"}`);
+    `canSeeUsers`/`canSeeApiTokens`/`canSeeAuditLog`/`canSeeSecurity`/
+    `canEditPractitionerNotes` all left unchanged (still evaluate false
+    for `consultant_admin`) — Integrations is its own top-level `SideNav`
+    entry, not part of the Security category, so seeing it doesn't imply
+    seeing Security's three sub-items.
+  - **Tests**: `test_consultant_admin_role.py` (new) — reuses
+    `test_assessor_readonly.py`'s own scenario/case builders so the
+    "CAN write compliance data" / "CANNOT reach admin-gated cases" matrix
+    runs against the identical endpoint surface that file already proves
+    `c3pao_assessor` is blocked from, plus standalone checks for scope,
+    RACI, bundle export, integrations config, audit log, `create_org`,
+    and practitioner-notes editing; a rank-ladder assertion; and a
+    `_READ_ONLY_ROLES` regression guard confirming `c3pao_assessor`'s
+    write-block survived the renumber. `test_api_tokens.py` gained the
+    literal scenario the rank slot exists to prevent — an `msp_admin`
+    minting a token *for* a `consultant_admin` target cannot mint it at
+    `msp_admin` role — plus the demotion/promotion clamp cases
+    (`_resolve_api_token`'s `effective_role = min(...)`) at the new rank
+    slot specifically. `permissions.test.ts` extended with
+    `consultant_admin` expectations on every existing "covers every known
+    role" axis plus a new `canSeeIntegrations` describe block.
+  - **Docs**: this entry; `CLAUDE.md`'s role list;
+    `docs/PLAN-auth-rbac-completion.md`'s status header (five roles now,
+    not four — flagged as a follow-up note, the four-role slices
+    I.1–I.9 themselves are left as the historical record they are); root
+    `ROADMAP.md` item I's "three-role sketch... superseded" note updated
+    to "four-plus-one."
+  - **Verification**: tracked against this entry's own "land it" scope —
+    see the commit this entry ships with for whether the full bench-stack
+    pass (migration up/down/up, full integration suite, `ruff`, `tsc`,
+    `vitest`, `vite build`, real browser walkthrough logged in as a
+    `consultant_admin` user with direct Postgres role verification) had
+    completed by the time of landing.
 
 ---
 
