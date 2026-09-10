@@ -134,15 +134,21 @@ def test_consultant_admin_blocked_on_user_and_token_management(db_session, stora
     )
 
 
-def test_consultant_admin_blocked_on_list_users(db_session, storage):
-    """GET .../users isn't in _CASE_IDS (that list is mutating-endpoint
-    only) -- covered separately since it's still part of "user
-    management" this role must not reach."""
+def test_consultant_admin_can_list_users(db_session, storage):
+    """Corrected after a real bench-stack failure, not assumed: GET
+    .../users is require_org_access() with no role restriction at all
+    (users.py:154-158) -- ANY org member can already list users today,
+    including customer_poc and c3pao_assessor. This predates
+    consultant_admin and isn't part of the msp_admin-gated identity/
+    security surface (invite/patch/delete/reset-mfa/unlock/reset-password
+    all stay separately gated, asserted 403 elsewhere in this file) --
+    only the mutating actions are restricted, not visibility into who's
+    on the engagement."""
     org_id = uuid.uuid4()
     _seed_scenario(db_session, org_id=org_id)
     client = _client_as(db_session, storage, _as_role("consultant_admin", org_id=org_id))
     r = client.get(f"/orgs/{org_id}/users")
-    assert r.status_code == 403
+    assert r.status_code == 200
 
 
 def test_consultant_admin_blocked_on_list_api_tokens(db_session, storage):

@@ -839,10 +839,15 @@ Items without a status are planned but not yet started.
       `require_role("msp_admin", "consultant_admin")` — the one place
       an explicit code change was needed to grant a "Can" item.
     - **Identity/security administration — NOT extended:**
-      `routers/users.py` (every route: invite, list, patch, delete,
+      `routers/users.py`'s mutating routes (invite, patch, delete,
       reset-mfa, unlock, reset-password, create API user) and its
       `api-tokens` routes (create/list/revoke, previously
-      `msp_admin`+`msp_engineer`) stay exactly as gated. `routers/orgs.py`'s
+      `msp_admin`+`msp_engineer`) stay exactly as gated. One exception
+      found on the bench stack, not assumed: `GET .../users` (list) has
+      no role restriction at all — pre-existing, unrelated to this task,
+      already open to every org member including `customer_poc`/
+      `c3pao_assessor`, so `consultant_admin` inherits that same
+      visibility rather than being newly granted anything. `routers/orgs.py`'s
       `create_org` (`msp_admin`+`msp_engineer`) also stays unextended —
       not for security reasons but because it's an MSP-business decision
       (onboarding a new client engine-wide) that would leave a

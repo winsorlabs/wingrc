@@ -1,17 +1,25 @@
 # noqa: B008
 """User management and API token endpoints (msp_admin gated).
 
-Every route in this file is identity/security administration, which is
-exactly the surface migration 0034's consultant_admin role is restricted
-from — none of the gates below were extended to include it (unlike, say,
-routers/integrations.py). API token minting/listing/revoking stays gated
-to msp_admin + msp_engineer, not msp_admin + msp_engineer + consultant_admin:
-seeing which tokens exist (their role/expiry) and minting new ones is
-itself a security-relevant capability, not compliance-data work, so it
-wasn't extended just because it's already open to a second internal role.
+Every *mutating* route in this file is identity/security administration,
+which is exactly the surface migration 0034's consultant_admin role is
+restricted from — none of those gates were extended to include it
+(unlike, say, routers/integrations.py). API token minting/listing/
+revoking stays gated to msp_admin + msp_engineer, not msp_admin +
+msp_engineer + consultant_admin: seeing which tokens exist (their
+role/expiry) and minting new ones is itself a security-relevant
+capability, not compliance-data work, so it wasn't extended just because
+it's already open to a second internal role.
+
+GET /orgs/{org_id}/users is the one exception, pre-existing and
+unrelated to this task: require_org_access() with no role restriction at
+all, so any org member (including customer_poc/c3pao_assessor today, and
+now consultant_admin too) can already list who's on the engagement —
+found via a real bench-stack test failure, not assumed. Only the
+mutating actions below are msp_admin-gated.
 
 POST /orgs/{org_id}/users            — invite a user (returns raw invite token)
-GET  /orgs/{org_id}/users            — list users
+GET  /orgs/{org_id}/users            — list users (no role gate — see above)
 PATCH /orgs/{org_id}/users/{user_id} — update role / is_active
 POST /orgs/{org_id}/users/{user_id}/reset-mfa — admin MFA reset
 DELETE /orgs/{org_id}/users/{user_id} — deactivate
