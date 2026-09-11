@@ -1,0 +1,24 @@
+# Normalize line endings for every text file to LF in the repository,
+# regardless of the checking-out platform's core.autocrlf setting. Without
+# this, a Windows checkout with core.autocrlf=true (wl-dt26's setting) can
+# silently rewrite the entire working tree to CRLF the next time something
+# touches enough files (a branch switch, a fresh clone, a bridge-side
+# edit) -- `git status` then reports hundreds of "modified" files that are
+# pure line-ending churn, `git diff --stat` looks catastrophic, and
+# `git diff -w --stat` (whitespace-insensitive) shows the truth: empty.
+* text=auto eol=lf
+
+# Binary files: never subject to line-ending normalization or diffing.
+*.xlsx binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.pdf binary
+*.zip binary
