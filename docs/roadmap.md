@@ -1031,6 +1031,77 @@ Items without a status are planned but not yet started.
       store it durably (password manager / wherever the Postgres/MinIO
       secrets live) precisely so this doesn't repeat the original
       mistake by putting it in a doc instead.
+- **RACI copy-forward on new assessment creation** (2026-09-10) — closes
+  the decision recorded in `docs/PLAN-gui-restructure.md`'s G.7 section
+  ("decided: copy forward from the most recent prior assessment, editable
+  from there... not implemented in this pass"). Before this,
+  `start_assessment` seeded no RACI rows at all, so an org's second
+  assessment always opened with all 320 objectives unassigned even when
+  the first assessment had been fully staffed.
+  - `engine.py:copy_forward_raci` is a separate function the router calls
+    right after `start_assessment()`, in the same transaction — not a step
+    inside `start_assessment` itself, which has 40+ existing call sites
+    (mostly test fixtures) with no expectation of a RACI side effect;
+    changing its return shape would have touched all of them for no
+    reason.
+  - **The join is by objective, not by row id.** Every new assessment gets
+    entirely new `control_state` rows, so copy-forward resolves each
+    source assignment's `AssessmentObjective` (a stable, deployment-wide
+    catalog identity) and finds the matching `control_state` row in the
+    new assessment by `(assessment_id, objective_id)`. All letters and all
+    contacts on an objective carry, not just R.
+  - **Which prior assessment — decided by checking reachable states, not
+    guessing:** most recent by `started_at`, status ignored, scoped to the
+    same `framework_id`. The obvious-seeming safer rule — prefer the most
+    recent *completed* assessment — turned out to be a dead end:
+    `Assessment.status` never transitions past `"in_progress"` anywhere in
+    this codebase today, so filtering to submitted/closed would make
+    copy-forward permanently unreachable. Framework-scoping prevents a
+    more-recent-but-incompatible-framework assessment from silently
+    shadowing an older, compatible one.
+  - **Framework/catalog drift:** an objective present in the source
+    assessment but absent from the new one (a catalog change) is skipped
+    and counted (`skipped_no_match`), not treated as an error — every
+    other matching objective still carries.
+  - **Departed contacts — checked the schema before assuming a
+    deactivation flag existed:** `Contact` has no `deleted_at`/active
+    column; deletion is a hard delete with
+    `RaciAssignment.contact_id ON DELETE CASCADE`, so a departed contact's
+    assignment is already gone by the time copy-forward runs — nothing to
+    skip in the realistic case. Kept a defensive
+    `skipped_inactive_contact` counter anyway (cheap, forward-compatible
+    if soft-deactivation is added later); a test bypasses the FK via
+    `DISABLE/ENABLE TRIGGER` to exercise the otherwise-unreachable branch
+    directly.
+  - **Made visible, not silent:** the summary (source assessment,
+    carried/skipped counts, objectives still unassigned) rides on the
+    assessment-creation response (`AssessmentOut.raci_copy_forward`) rather
+    than also becoming a Roles-view banner — the `raci.copy_forward` audit
+    log entry is the durable record for anyone who misses the one-time
+    response, so a second delivery mechanism wasn't worth the added
+    surface. `OrgPicker.tsx` interrupts the normal auto-navigate-to-board
+    flow with a one-screen confirmation whenever something was actually
+    carried, so inheriting last cycle's assignments can't be missed by not
+    reading a toast.
+  - **Not retroactive** — existing assessments are not backfilled; this
+    only applies to assessments created after it shipped.
+  - Tests: objective-based (not row-id-based) mapping, multiple
+    letters/contacts on one objective, an unmatched objective skipped
+    without error, the defensive inactive-contact branch, an org's first
+    assessment creating cleanly with zero assignments and no error. Full
+    regression suite, ruff, tsc, vitest, and build all clean.
+  - **Verified live on an isolated bench stack, not just the test suite:**
+    seeded Acme MSP, bulk-assigned Jane Smith as R across the PS family
+    plus an override adding Bob Jones as A on one objective (multi-letter/
+    multi-contact case), started a second assessment — the frontend
+    confirmation screen reported "Carried 5 RACI assignment(s)," and a
+    direct Postgres query confirmed all 5 landed on the new assessment's
+    `control_state` rows against the correct objectives. Hard-deleted Bob
+    Jones (cascade removed his assignment immediately, before a third
+    assessment ever existed), started a third assessment, and confirmed in
+    Postgres that only Jane's 4 assignments carried
+    (`skipped_inactive_contact: 0` — correct, since the cascade already
+    took care of it) with a matching `raci.copy_forward` audit log entry.
 
 ---
 

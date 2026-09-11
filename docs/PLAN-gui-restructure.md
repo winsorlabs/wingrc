@@ -771,6 +771,13 @@ behavior is unchanged (starts empty) — this is a recorded decision for
 whoever picks up the actual copy-forward implementation, not a completed
 slice.
 
+**Built 2026-09-10** — see `docs/roadmap.md`'s Done entry for the full
+writeup, not duplicated here. `engine.py:copy_forward_raci` implements
+this decision as stated (most recent prior assessment on the same
+framework, editable from there); the two open questions this section left
+unresolved (framework mismatch, departed contacts) were decided at build
+time — see the roadmap entry.
+
 ### Part 3, 2026-09-09 — CRM (Customer Responsibility Matrix)
 
 The deferred CRM roadmap item, unblocked now that RACI data exists —
