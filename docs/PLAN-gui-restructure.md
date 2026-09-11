@@ -854,47 +854,162 @@ same as they do against `nist-800-171-r2`.
 
 ---
 
-## G.9 — Tools import wizard
+## G.9 — Tools import wizard ✅ SHIPPED 2026-09-11 (pending live wl-util-1 verification — see status line at the end of this section)
 
-**Goal:** "tool library activate/deactivate, plus import wizard / manual
-creation."
+**Original goal:** "tool library activate/deactivate, plus import wizard /
+manual creation."
 
-**Current state:** activate/deactivate already fully exists
-(`ProductsPanel.tsx`, `engine.py`'s magic loop, per CLAUDE.md's "Assessment
-engine" Done section). "Import wizard" here means importing/authoring new
-`Product`/`BaselineControl`/`BaselineEvidenceSpec` rows (the baseline
-library itself), currently only loadable from `baselines/*.yaml` via
-`seed_baselines_cmd` — a CLI-only, deployment-time operation, not a runtime
-admin action.
+**What actually shipped is narrower than the original goal, on purpose —
+Jarrod's own revision mid-slice.** The original prompt for this slice
+described Tools as *assigning products to tenants* from the deployment
+tier; that was explicitly dropped before any code was committed
+(`OrgProduct` writes, activation, and any UI for it stay exactly where
+they were — per-org, via `ProductsPanel.tsx` / `engine.py`'s magic loop,
+fired from inside an org). The design-decision split this section
+originally proposed ("activate/deactivate stays per-org; import wizard
+moves to deployment tier") is what actually landed, but the deployment-tier
+half is **library management**, not tenant assignment: it manages the
+`Product`/`BaselineControl`/`BaselineEvidenceSpec` rows themselves, and
+never creates an `OrgProduct` row. "Manual single-entry creation" (the
+`POST /admin/products` / `.../baseline-controls` form this section
+originally proposed) was dropped too — the YAML stays the sole authoring
+format; this screen ingests and reviews it, it does not edit fields
+in-app. If in-app field editing is wanted later, that's its own slice with
+its own versioning design (see the hazard below).
 
-### Design decision — is this an org-facing or deployment-facing feature?
+### What shipped
 
-The product baseline library is **not org-scoped** — it's shared reference
-data (`Product.framework_id` links to the catalog, not to any
-`Organization`). An "import wizard" for it is therefore an MSP-deployment-
-level admin action (adding a new tool to the shared library everyone's orgs
-can then activate), not something that belongs under a per-org "Tools" nav
-item the way activate/deactivate does. **Recommend splitting the nav item's
-two halves across two different access levels**: activate/deactivate stays
-per-org under Tools (unchanged); "import wizard / manual creation" belongs
-under Security-adjacent deployment administration (same tier as G.11's
-pre-org screen — msp_admin, not org-scoped), not literally inside the
-per-org Tools screen. Flagging this now rather than building an org-scoped
-UI for deployment-scoped data.
+- **Library view** (`GET /admin/products`) — every `Product` with provider,
+  category, asset_type, framework, `is_published` state, and a
+  control/objective count computed from `BaselineControl`.
+- **Deployment footprint** (`GET /admin/products/{id}/footprint`) — which
+  orgs have a given product and at what `OrgProduct.status`, read-only.
+  Cross-org by nature (the whole point is one product's footprint across
+  every org in one view), so it reads through a new SECURITY DEFINER
+  function, `auth.product_deployment_footprint(p_product_id)` (migration
+  `0037_product_footprint`), the same M.2/M.5 pattern — RLS on
+  `org_product` is untouched; `EXECUTE` is restricted to `wingrc_app`.
+- **Tool detail** (`GET /admin/products/{id}`) — product metadata plus its
+  full baseline mapping grouped by control (classification, coverage_basis,
+  objectives, provider_contribution, customer_action, scope_note, evidence
+  specs). `coverage_basis = platform_only` rows render visually distinct
+  (`ToolDetailPanel.tsx`'s `.coverage-basis-platform-only` styling) with an
+  inline note that they're excluded from magic-loop activation — a reader
+  who misses that distinction misreads the whole mapping.
+- **Documentation attachments** — new `product_document` table (migration
+  `0036_product_document`), FK to `product`, storage key
+  `products/{product_id}/{document_id}/{document_id}{ext}` (no org prefix —
+  `Product` is deployment-wide, unlike `Evidence`'s per-org key). Reuses
+  `storage.py`'s existing `StorageClient` abstraction and `evidence.py`'s
+  upload validation pipeline (magic bytes, extension/MIME allowlist, 50 MB
+  cap) rather than inventing a second path. The YAML's `source_docs:` free
+  text (now actually stored — migration `0038_product_source_docs` added
+  the column; it was parsed by nothing and stored nowhere before this
+  slice) is kept as-is; an upload references one of those strings via
+  `source_docs_ref` rather than replacing it. This closes the provenance
+  chain: vendor document → mapping claim → tenant's control_state.
+- **Import** (`POST /admin/products/import/dry-run` then `.../import/apply`)
+  — `backend/app/baseline_import.py`'s `validate()` collects every problem
+  in the file in one pass (unknown control ids, bad
+  classification/coverage_basis/candidate_state/evidence_type enum values,
+  malformed objective keys, and the minimization invariant —
+  `classification == customer_owns` rows may never carry evidence specs).
+  Dry-run shows a diff (new product vs. changed/unchanged controls on an
+  existing key) before anything is written; apply independently
+  re-validates rather than trusting a token from a prior dry-run call — see
+  that module's own docstring for why that's deliberate, not duplicated
+  work. On apply, the product lands with `is_published = False`.
+- **Publish / unpublish** (`POST .../publish`, `.../unpublish`) —
+  `Product.is_published` (schema column since migration 0002, set `False`
+  by the seeder, read nowhere until this slice) is now enforced at the two
+  real read paths: `routers/assessments.py:list_products_for_assessment`
+  (the tenant-facing list) and `engine.py:activate_org_product` (the actual
+  gate against direct API activation, not just the UI). Migration
+  `0039_publish_existing_products` backfills every existing product to
+  `is_published = True` — **every product in the database had
+  `is_published = False` before this slice**, so a naive filter would have
+  silently emptied every tenant's Tools panel, including any tenant with
+  RocketCyber already active. Landed as its own commit, separate from the
+  nav/import/document work, so it can be reverted independently — its
+  `downgrade()` is a deliberate no-op (blindly reverting would erase real
+  admin publish/unpublish decisions made after the backfill, not just the
+  migration's own change).
+- **Nav**: `AdminArea.tsx`'s section nav is now built on the same
+  `SideNavKit.tsx` presentational primitives `SideNav.tsx` uses (extracted
+  from `SideNav.tsx`'s own hand-rolled class-name helpers), rather than a
+  parallel hardcoded single-button nav. Top bar stays context-only (the
+  existing `WinGRC › Administration` breadcrumb). Users (deployment Users
+  directory, slice B / `G.11`) is intentionally not present as a disabled
+  placeholder — see `SideNav.tsx`'s own Library-category comment for why
+  that pattern is a standing mistake, not a precedent to repeat.
+- **Access**: router-wide `require_role("msp_admin", "consultant_admin")`,
+  matching `routers/integrations.py` exactly. Mirrored in `lib/roles.ts` as
+  its **own** constant, `TOOLS_LIBRARY_ROLES` / `canSeeToolsLibrary` — not
+  a reuse of `INTEGRATIONS_ROLES`, even though the two sets are identical
+  today (see that file's own opening comment on why each axis gets its own
+  name). Every import/publish/unpublish/document upload-or-delete event is
+  audit-logged (`product.import`, `product.publish`, `product.unpublish`,
+  `product_document.upload`, `product_document.delete` — `audit.py`'s
+  docstring list was updated to match).
 
-### Changes
-- Backend: `POST /admin/baselines/import` (YAML upload, reusing
-  `seed_baselines`'s existing parsing/validation logic verbatim — same "one
-  content-assembly path" principle the PDF SSP spec calls out for its own
-  reuse concern) and `POST /admin/products` / `.../baseline-controls` for
-  manual single-entry creation.
-- Frontend: new admin-tier screen (not under the per-org side nav — see
-  Design decision above), YAML upload + manual form.
+**On `consultant_admin`, asked for explicitly, not resolved:** this is a
+materially stronger version of the tension `routers/integrations.py`'s own
+docstring already flags. A consultant engaged for one client's assessment
+(C3PAO hired to help, not to assess — see `consultant_admin`'s own
+definition in the roadmap's Auth/RBAC section) would, with this gate, be
+able to import and publish a baseline change that alters compliance
+conclusions for *every other client on the deployment*, not just the one
+they're engaged on. Integrations config has a comparable shape but a
+narrower blast radius (a bad credential fails loudly, a test-connection
+call, nothing silently rewrites another tenant's `control_state`). The gate
+is unchanged here on purpose — this is Jarrod's call, not a decision to
+make silently in code.
 
-### Exit criteria
-Imported YAML produces identical `Product`/`BaselineControl`/
-`BaselineEvidenceSpec` rows to running `wingrc seed-baselines` on the same
-file — same regression-parity bar as G.5's workbook-apply test.
+### The baseline-versioning hazard (§4 of the slice prompt) — flagged, not fixed
+
+`seed_baselines` (and now this screen's import path, which calls the same
+function) **upserts**. Editing `rocketcyber.yaml` and re-seeding —or
+re-importing through this screen— retroactively changes the compliance
+claims for every tenant that already activated that product: their
+`control_state` was set under the old mapping, and the justification for it
+is silently replaced under them with no record that anything changed. This
+predates this screen; it's the same gap `seed_baselines` always had, just
+now reachable at runtime instead of only via a CLI re-seed.
+
+This is the same principle already enforced elsewhere in this codebase —
+`sprs_snapshot` is never retroactively rewritten, the audit log is
+append-only, bundle exports are point-in-time snapshots — but it is **not**
+enforced here, and this slice deliberately does not attempt to fix it.
+Real options, none chosen yet:
+- **Immutable baseline versions** — each import creates a new versioned
+  `Product`/`BaselineControl` set rather than mutating the existing rows;
+  `OrgProduct` pins to the version active when it was activated.
+  Correct but a real migration: every `BaselineControl` FK in the schema
+  (`ControlState.sourced_from_product_id`, evidence task fan-out, etc.)
+  would need to reason about "which version," not just "which product."
+- **`OrgProduct` pinned to an import timestamp/hash**, mapping resolved
+  against a point-in-time snapshot of the baseline rather than the live
+  row. Smaller schema footprint, but the "what did version N actually say"
+  question still needs somewhere to live — effectively immutable versions
+  again, just implicit instead of a first-class table.
+- **Do nothing beyond the warning already shipped** (see below) and treat
+  baseline edits as a rare, deliberate, MSP-wide operational event — like
+  editing the control catalog itself — rather than something the product
+  needs to protect tenants from automatically. Cheapest, but leaves the
+  silent-rewrite risk exactly where it is today.
+
+What *did* ship: the risk is now visible at the moment it's taken. Dry-run
+computes `affected_org_count`/`affected_org_names` — live (`active` or
+`candidate`) `OrgProduct` rows for the product's key — and the wizard shows
+that warning before Apply is enabled. It does not block the import; it
+makes the blast radius legible to whoever is about to cause it.
+
+### Verification status
+
+Backend (`pytest`, `ruff check .`) and static typecheck have not yet run on
+a live stack for this slice — see this section's own header. Bench-stack
+verification (two orgs, one with RocketCyber active, per the slice's own
+§6 checklist) is the next step before landing.
 
 ---
 
@@ -1072,7 +1187,7 @@ only self-healing via auto-provisioning.
 | Assessments → current assessments | Full | Nav relocation only |
 | Assessments → templates | `Framework` catalog model (single-framework only) | Decision needed; framework authoring UI + endpoints if (a) (G.8) |
 | Tools → activate/deactivate | Full | None |
-| Tools → import wizard | YAML parsing logic (CLI-only) | Admin-tier endpoints + UI (G.9) |
+| Tools → baseline library management | YAML parsing logic (CLI-only) | Shipped 2026-09-11 (G.9): admin-tier endpoints + UI, `product_document` table, `is_published` enforcement + backfill migration, `product_deployment_footprint()` SECURITY DEFINER function — pending bench-stack verification |
 | Library → Lists | View/export logic + endpoint | Frontend wrapper only |
 | Library → Baselines/Plans/Policies/Procedures | Nothing | **New `Document` model**, full CRUD, **entire frontend** (G.10) |
 | Security → Users, API Tokens, Audit Log | Full | Nav relocation only |

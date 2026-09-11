@@ -1360,6 +1360,60 @@ Item 1's source content is written and validated: `docs/wl-util-1-worked-example
 
 ---
 
+### P. Baseline versioning
+
+Added 2026-09-11, flagged by the G.9 Tools baseline-library screen
+(`docs/PLAN-gui-restructure.md`'s G.9 section) but **predates that
+screen** — it is `seed_baselines`'s own long-standing gap, only made more
+reachable once a runtime admin action could trigger it, not something
+this screen introduced.
+
+**The problem:** `seed_baselines` upserts `Product`/`BaselineControl`/
+`BaselineEvidenceSpec` rows by key. Editing `baselines/rocketcyber.yaml`
+and re-seeding (via the CLI, or now via G.9's import screen) retroactively
+changes the compliance claims of every tenant that already activated that
+product — their `control_state` was set under the *old* mapping, and the
+justification for it is silently replaced under them, with no record that
+anything changed. This is the same class of problem this codebase already
+refuses to allow elsewhere: `sprs_snapshot` is never retroactively
+rewritten, the audit log is append-only, bundle exports are point-in-time
+snapshots. Today's baseline edit *does* rewrite yesterday's record, and
+nothing in the schema or the magic loop notices.
+
+**Options, none chosen yet:**
+1. **Immutable baseline versions.** Each import creates a new versioned
+   `Product`/`BaselineControl` set rather than mutating the existing rows;
+   `OrgProduct` pins to the version that was active at activation time.
+   Correct, but every FK that currently points at `BaselineControl`
+   (`ControlState.sourced_from_product_id`, the evidence-task fan-out,
+   G.9's own footprint/detail queries) has to learn to reason about "which
+   version," not just "which product" — a real migration, not a bolt-on.
+2. **`OrgProduct` pinned to an import timestamp/hash**, with the mapping
+   resolved against a point-in-time snapshot rather than the live row.
+   Smaller schema footprint than (1), but "what did version N actually
+   say" still needs somewhere durable to live — this is effectively
+   option 1 with the versioning made implicit instead of a first-class
+   table, which tends to be harder to reason about later, not easier.
+3. **Do nothing beyond a warning at import time** and treat baseline
+   edits as a rare, deliberate, MSP-wide operational event — the same way
+   editing the control catalog itself already is — rather than something
+   the product actively protects tenants from. Cheapest today; leaves the
+   silent-rewrite risk exactly where it has always been.
+
+**What already shipped (G.9), which is not a fix:** the risk is now
+*visible* at the moment it's taken. The import dry-run computes how many
+orgs have the product `active`/`candidate` today and shows that count and
+the org names before Apply is enabled. It does not block the import and it
+does not solve the underlying versioning question — it just stops the
+rewrite from being silent.
+
+**Not started.** No design has been chosen; this entry exists so the
+choice gets made deliberately rather than by whichever option is easiest
+to bolt on under time pressure the next time this gap causes a real
+incident.
+
+---
+
 ## Sequencing
 
 ```
