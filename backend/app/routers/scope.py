@@ -772,6 +772,19 @@ def set_liongard_environment_mapping(
         session.add(row)
     row.liongard_environment_id = match.id
     row.liongard_environment_name = match.name
+    # Set explicitly rather than relying on the column's server-side
+    # onupdate=func.now() (models.py): on an UPDATE (re-mapping), the ORM
+    # marks a server-onupdate column expired after flush rather than
+    # populating it via RETURNING, so reading row.updated_at below would
+    # trigger a lazy-reload SELECT that runs after this request's commit
+    # has already cleared SET LOCAL app.current_org -- RLS then matches
+    # zero rows and raises ObjectDeletedError. Found via the integration
+    # test suite exercising a second PUT (re-map) on the bench stack, not
+    # assumed -- this failure mode is real in production too, since a real
+    # COMMIT clears SET LOCAL the same way. IntegrationConnection's own
+    # router (routers/integrations.py) never hit this because it never
+    # returns updated_at in a response at all.
+    row.updated_at = datetime.now(UTC)
     session.flush()
 
     log_event(
