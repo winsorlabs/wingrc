@@ -1020,11 +1020,21 @@ correctness risk in an otherwise-thin wrapper around existing M.2 machinery).
 **Goal:** the MSP-admin surface for granting existing users access to
 organizations, per the request. **Depends on M.7 and M.8.**
 
-**Current state:** no such screen exists. The only ways to grant access
-today are: auto-provisioning (M.2, automatic, not admin-initiated),
-`invite_user` (creates a *new* user, can't target an existing one — this
-gap is exactly why ADR 0009's Migration step 6 flagged "re-inviting an
-existing user into a second org" as unsupported today).
+**Current state:** no directory/grant/revoke backend or UI exists yet —
+M.7/M.8 and this screen's actual content are all still unbuilt. **The host
+shell this screen was always meant to land in now exists, though**
+(2026-09-11, out of the Integrations-relocation task, not this one):
+`App.tsx` gained a deployment-tier `"admin"` screen state — reached from
+`OrgPicker` via a header button gated by role, not nested under any org's
+side nav — and `frontend/src/components/AdminArea.tsx` is its shell,
+holding a small internal section nav (Integrations is the only section
+today). The mount-point question this section used to leave open
+("likely the natural landing point is `OrgPicker` itself... gaining an
+admin-only entry point") is answered: that's exactly what got built.
+Whoever picks up M.7/M.8/this screen next adds a new `AdminSection` value
+and a new entry in `AdminArea.tsx`'s section nav — the screen itself, its
+role gate for wherever `AccessAdminPanel` lands, and the directory/grant/
+revoke work below are all still to build.
 
 ### Changes
 - `frontend/src/components/AccessAdminPanel.tsx` (new) — user directory
@@ -1034,9 +1044,8 @@ existing user into a second org" as unsupported today).
   import admin screen (both are "MSP staff administering the deployment,"
   not "an org's own settings") — not nested under any single org's side
   nav, since granting access to org B shouldn't require already being
-  inside org A's UI. Likely the natural landing point is `OrgPicker`
-  itself (already the pre-org screen today) gaining an admin-only entry
-  point, matching the plan's own naming ("pre-org screen").
+  inside org A's UI. Lands as a new section in `AdminArea.tsx` (see
+  "Current state" above), not a separate top-level screen.
 
 ### Tests
 Browser smoke test: as `msp_admin`, find an existing `customer_poc` from
@@ -1068,4 +1077,4 @@ only self-healing via auto-provisioning.
 | Library → Baselines/Plans/Policies/Procedures | Nothing | **New `Document` model**, full CRUD, **entire frontend** (G.10) |
 | Security → Users, API Tokens, Audit Log | Full | Nav relocation only |
 | Org dashboard | Nothing | One new small table (G.2), aggregation endpoint(s), **entire frontend** (G.3/G.4) |
-| Pre-org admin (grant access) | `org_membership` model + grant primitive (M.2) | Directory read + grant/revoke endpoints (M.7/M.8), **entire frontend** (G.11) |
+| Pre-org admin (grant access) | `org_membership` model + grant primitive (M.2), deployment-tier host shell (`AdminArea.tsx`, 2026-09-11) | Directory read + grant/revoke endpoints (M.7/M.8), the panel itself (G.11) |

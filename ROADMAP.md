@@ -291,6 +291,20 @@ approval workflow below (D.2, D.3) are still not built — this section's
 scope was deliberately just the screen, credential storage, and
 test-connection.
 
+**Amended 2026-09-11: the "What" section below (a new top-level
+Integrations section in the per-org side nav, "per-org connection
+state") was wrong from the start.** `IntegrationConnection` is and always
+was deployment-wide (see the second "Open question" below, resolved the
+same day this was shipped) — the frontend nav placement just never
+matched that fact, so an admin working in one client's org could clear or
+replace a credential every other client on the deployment depends on.
+Moved to a new deployment-tier "Administration" area, reachable from
+`OrgPicker` (the pre-org screen), not nested under any org — see
+`docs/roadmap.md`'s Done section for the full writeup. Left uncorrected
+below since this section is a historical record of what was specified and
+resolved on 2026-09-09; the amendment is the correction, not a rewrite of
+that history.
+
 **Added 2026-09-06 (Jarrod).** Item D above specifies the connector *backend*
 (the `collect()` interface, BYO-credential handling, evidence writes) but no
 UI surface for an MSP admin to actually set one up. This is that surface.

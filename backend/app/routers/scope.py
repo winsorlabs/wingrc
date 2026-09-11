@@ -664,8 +664,8 @@ def _get_liongard_credential(session: Session) -> tuple[dict[str, Any], dict[str
         raise HTTPException(
             status_code=400,
             detail=(
-                "Liongard isn't configured yet -- add a credential on the Integrations page "
-                "first."
+                "Liongard isn't configured yet -- add a credential in "
+                "Administration → Integrations first."
             ),
         )
     try:

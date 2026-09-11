@@ -510,6 +510,13 @@ Items without a status are planned but not yet started.
     keyed by `connector_key`, so a second connector (Datto RMM next, per
     item D's priority order) is a new module + one registry entry — not a
     rework of the router or the screen.
+  - **Amended 2026-09-11:** the frontend placement described above ("New
+    top-level Integrations nav category" under the per-org side nav) was
+    wrong from the start and has been corrected — see the Done entry
+    below ("Move Integrations to deployment-tier Administration"). The
+    backend facts in this entry (deployment-wide `integration_connection`,
+    RBAC) were always correct and are unchanged; only where the frontend
+    mounted the screen was the bug.
 - **Objective guidance: official + practitioner notes, split** (2026-09-09,
   substantially delivers root `ROADMAP.md` **item E**, "Objective tips").
   Fixes the sparsity bug where `AssessmentObjective.guidance` was populated

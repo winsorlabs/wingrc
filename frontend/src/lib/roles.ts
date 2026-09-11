@@ -105,10 +105,14 @@ export function canSeeIntegrations(role: string | null | undefined): boolean {
 // an empty category is a nav-shell-specific concern the old per-tab-only
 // gating never had to answer (OrgSettings always showed something, since
 // Scope's tabs were never role-gated). Deliberately does NOT check
-// canSeeIntegrations — Integrations has its own top-level nav entry
-// (see showIntegrations in SideNav.tsx), not part of the Security
-// category, so consultant_admin seeing Integrations doesn't put them in
-// range of Security's other three sub-items.
+// canSeeIntegrations — Integrations moved out of the per-org side nav
+// entirely (it was never org-scoped data; see routers/integrations.py's
+// own docstring) into App.tsx's deployment-tier AdminArea, reachable from
+// OrgPicker. Keeping this function's definition free of it, unchanged,
+// still matters for the same reason it always did: a consultant_admin who
+// can see Integrations still shouldn't be put in range of Security's
+// other three (org-scoped, identity-administration) sub-items just
+// because both checks happen to be true for them.
 export function canSeeSecurity(role: string | null | undefined): boolean {
   return canSeeUsers(role) || canSeeApiTokens(role) || canSeeAuditLog(role);
 }

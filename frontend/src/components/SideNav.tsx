@@ -1,13 +1,20 @@
-import { canSeeApiTokens, canSeeAuditLog, canSeeIntegrations, canSeeSecurity, canSeeUsers } from "../lib/roles";
+import { canSeeApiTokens, canSeeAuditLog, canSeeSecurity, canSeeUsers } from "../lib/roles";
 import type { OnboardingStatus } from "../types";
 
+// No "integrations" category here (moved out, not renamed) -- Integrations
+// was never actually org-scoped data (routers/integrations.py carries no
+// org_id on any route; IntegrationConnection is deployment-wide, one
+// credential per MSP instance). Rendering it inside this per-org side nav
+// let an admin working in one client's org clear or replace a credential
+// every other client on the deployment depends on. It now lives in
+// App.tsx's deployment-tier AdminArea, reachable from OrgPicker -- see
+// AdminArea.tsx and App.tsx's own "admin" screen state.
 export type NavCategory =
   | "dashboard"
   | "scope"
   | "assessments"
   | "tools"
   | "library"
-  | "integrations"
   | "security";
 export type ScopeTab = "profile" | "system" | "contacts" | "assets";
 // RACI is assessment-scoped data (docs/PLAN-gui-restructure.md G.7's
@@ -52,7 +59,6 @@ export function SideNav({
   const showUsers = canSeeUsers(currentUserRole);
   const showAuditLog = canSeeAuditLog(currentUserRole);
   const showSecurity = canSeeSecurity(currentUserRole);
-  const showIntegrations = canSeeIntegrations(currentUserRole);
 
   function indicator(complete: boolean) {
     return <span className={`completion-dot${complete ? " complete" : ""}`}>{complete ? "✓" : "○"}</span>;
@@ -156,14 +162,6 @@ export function SideNav({
           </div>
         )}
       </div>
-
-      {showIntegrations && (
-        <div className="side-nav-category">
-          <button className={categoryClass("integrations")} onClick={() => onSelectCategory("integrations")}>
-            Integrations
-          </button>
-        </div>
-      )}
 
       {showSecurity && (
         <div className="side-nav-category">

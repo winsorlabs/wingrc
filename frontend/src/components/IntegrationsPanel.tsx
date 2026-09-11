@@ -130,6 +130,21 @@ export function IntegrationsPanel({ canWrite }: Props) {
 
   return (
     <div className="integrations-panel">
+      {/* Credentials are deployment-wide (one Liongard account per MSP
+          instance) but a sync is per-org: configuring a credential here
+          does not by itself pull anything into any org's scope graph.
+          Each org still needs its own Liongard Environment mapped, from
+          that org's Scope → Assets screen ("Sync from Liongard") --
+          LiongardSyncWizard.tsx. Stated here because this screen and that
+          one are no longer adjacent in the nav (this moved to the
+          deployment-tier Administration area; the mapping/sync stays
+          org-scoped on purpose — see AdminArea.tsx's own comment). */}
+      <div className="field-hint" style={{ marginBottom: "1rem" }}>
+        Configuring a credential here doesn't sync anything by itself — each org still needs
+        its Liongard Environment mapped from that org's Scope → Assets screen ("Sync from
+        Liongard").
+      </div>
+
       {error && <div className="form-error">{error}</div>}
 
       <div className="integrations-list">

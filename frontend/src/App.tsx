@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { AccountSettings } from "./components/AccountSettings";
+import { AdminArea } from "./components/AdminArea";
 import { ApiTokensPanel } from "./components/ApiTokensPanel";
 import { AssessmentBoard } from "./components/AssessmentBoard";
 import { AssetsPanel } from "./components/AssetsPanel";
 import { AuditLogPanel } from "./components/AuditLogPanel";
 import { ContactsPanel } from "./components/ContactsPanel";
-import { IntegrationsPanel } from "./components/IntegrationsPanel";
 import { InviteAcceptPage } from "./components/InviteAcceptPage";
 import { LoginPage } from "./components/LoginPage";
 import { OnboardingWizard } from "./components/OnboardingWizard";
@@ -20,10 +20,15 @@ import { SideNav } from "./components/SideNav";
 import { SystemDescriptionForm } from "./components/SystemDescriptionForm";
 import { UsersPanel } from "./components/UsersPanel";
 import { useAuth } from "./hooks/useAuth";
-import { canSeeApiTokens, canSeeAuditLog, canSeeUsers } from "./lib/roles";
+import { canSeeApiTokens, canSeeAuditLog, canSeeIntegrations, canSeeUsers } from "./lib/roles";
 import type { Assessment, OnboardingStatus, Org } from "./types";
 
-type Screen = "orgs" | "nav" | "onboarding" | "account";
+// "admin" is the deployment-tier area (Integrations today; G.9/G.11 land
+// here later -- see AdminArea.tsx). Reached from "orgs" (OrgPicker, the
+// pre-org screen), not nested inside "nav" (an open org) -- the entire
+// point of this screen existing separately is that its data isn't
+// org-scoped, so it shouldn't be reachable only from within one org's UI.
+type Screen = "orgs" | "nav" | "onboarding" | "account" | "admin";
 
 // Separate from Screen (which only makes sense once `user` exists): this
 // picks between the two pre-auth pages. There's no router in this codebase
@@ -97,7 +102,18 @@ export function App() {
     setScreen("orgs");
   }
 
+  function openAdmin() {
+    setScreen("admin");
+  }
+
   const showAccountButton = screen !== "account";
+  // Only offered from the pre-org screen (OrgPicker), not universally --
+  // this is the "pre-org" tier (G.11's own naming), and surfacing it while
+  // already deep in an org's nav would blur the exact separation this
+  // screen exists to enforce. Getting back from "nav" to "orgs" already
+  // works today (the breadcrumb's org-name link); from there the
+  // Administration button is visible again.
+  const showAdminButton = screen === "orgs" && canSeeIntegrations(user?.role);
 
   if (isLoading) return <div className="app-loading">Loading…</div>;
   if (!user) {
@@ -140,7 +156,18 @@ export function App() {
             <span>Setup</span>
           </nav>
         )}
+        {screen === "admin" && (
+          <nav className="breadcrumb">
+            <span>›</span>
+            <a onClick={goBack}>Administration</a>
+          </nav>
+        )}
         <div className="header-icons">
+          {showAdminButton && (
+            <button className="header-gear" onClick={openAdmin} aria-label="Administration" title="Administration">
+              🛠
+            </button>
+          )}
           {showAccountButton && (
             <button
               className="header-gear"
@@ -293,16 +320,6 @@ export function App() {
             </div>
           )}
 
-          {navCategory === "integrations" && (
-            <div className="workspace-content">
-              {/* Reachable only when canSeeIntegrations(user.role) is true
-                  (SideNav) -- that's msp_admin already, so canWrite alone
-                  is enough here, same as canWrite always being true for
-                  msp_admin elsewhere. */}
-              <IntegrationsPanel canWrite={canWrite} />
-            </div>
-          )}
-
           {navCategory === "security" && (
             <div className="workspace-content">
               {/* Re-checks role here, not just in SideNav: securityTab
@@ -326,6 +343,8 @@ export function App() {
           )}
         </div>
       )}
+
+      {screen === "admin" && <AdminArea canWrite={canWrite} />}
 
       {screen === "onboarding" && org && (
         <OnboardingWizard
