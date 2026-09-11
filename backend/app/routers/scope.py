@@ -785,7 +785,16 @@ def set_liongard_environment_mapping(
         context={"via": "api", "created": is_new},
     )
     session.commit()
-    session.refresh(row)
+    # No session.refresh() here, deliberately -- OrgLiongardEnvironment is
+    # RLS-protected (unlike IntegrationConnection, whose own set/test
+    # endpoints in routers/integrations.py do refresh after commit): by the
+    # time commit() returns, this request's app.current_org setting has
+    # already been reset, so a post-commit refresh's SELECT matches zero
+    # rows under RLS and raises InvalidRequestError -- found by the
+    # integration test suite, not assumed. expire_on_commit=False (see
+    # conftest.py's db_session docstring; matches db.py's production
+    # SessionLocal) means row's already-set attributes stay valid without
+    # one anyway, same as create_scope_entity/patch_scope_entity above.
     return LiongardEnvironmentMappingOut(
         liongard_environment_id=row.liongard_environment_id,
         liongard_environment_name=row.liongard_environment_name,
