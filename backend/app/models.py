@@ -390,6 +390,14 @@ class Product(Base):
     assumed_config: Mapped[list] = mapped_column(
         JSONB, server_default=text("'[]'::jsonb")
     )
+    # The YAML's source_docs: list, verbatim (migration 0038) -- free-text
+    # claims of what the mapping was authored from (e.g. "RocketCyber_SIEM_
+    # and_SOC_Baseline.docx (Winsors Labs MSP baseline, v1.0)"). Never
+    # replaced by a real upload -- see ProductDocument's own docstring for
+    # why the claim and the artifact are deliberately two different things.
+    source_docs: Mapped[list] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb")
+    )
     is_published: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -485,6 +493,51 @@ class BaselineEvidenceSpec(Base):
     artifact_description: Mapped[str] = mapped_column(Text)
     evidence_type: Mapped[str] = mapped_column(String(20))
     kb_reference: Mapped[str | None] = mapped_column(Text)
+
+
+class ProductDocument(Base):
+    """A real file attached to a baseline library product -- the vendor's
+    CRM, the MSP's own baseline doc, KB exports.
+
+    Closes a provenance gap: the YAML's `source_docs` field (Product.role's
+    sibling, stored as free text on the baseline file itself, not a
+    column here) names a source document with no file behind it anywhere
+    in this app. `source_docs_ref` is a free-text pointer to which
+    source_docs string this upload corresponds to -- not a real FK, since
+    source_docs is an unstructured list with no natural key. Keeps
+    source_docs itself untouched: that string is the record of what the
+    mapping was authored from, this row is the artifact, not a
+    replacement for the claim.
+
+    Deployment-wide like Product itself -- no org_id, no RLS. Storage key
+    follows Evidence's convention (models.py:Evidence): id-based path so a
+    crafted filename can't path-traverse, original name kept in `title`.
+    """
+
+    __tablename__ = "product_document"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('crm', 'baseline_doc', 'kb_export', 'other')",
+            name="ck_product_document_kind",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("product.id", ondelete="CASCADE"), index=True
+    )
+    title: Mapped[str] = mapped_column(String(400))
+    kind: Mapped[str] = mapped_column(String(20), default="other")
+    source_docs_ref: Mapped[str | None] = mapped_column(Text)
+    storage_key: Mapped[str] = mapped_column(Text)
+    mime_type: Mapped[str | None] = mapped_column(String(100))
+    file_size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    sha256_hash: Mapped[str | None] = mapped_column(String(64))
+    uploaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 # ---------------------------------------------------------------------------

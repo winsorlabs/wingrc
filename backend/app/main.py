@@ -17,6 +17,7 @@ from .auth import CurrentUser, get_client_ip, get_current_user
 from .catalog import ALL_VIEWS
 from .config import get_settings
 from .routers import (
+    admin_products,
     assessments,
     audit_log,
     bundle,
@@ -69,6 +70,7 @@ app.include_router(dashboard.router)
 app.include_router(raci.router)
 app.include_router(integrations.router)
 app.include_router(objectives.router)
+app.include_router(admin_products.router)
 
 
 @app.get("/health")

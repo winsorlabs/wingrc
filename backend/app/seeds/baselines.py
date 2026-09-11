@@ -84,7 +84,23 @@ def _seed_product(
     fw: Framework,
     ctrl_lookup: dict[str, Control],
     data: dict,
+    *,
+    reset_published: bool = False,
 ) -> dict:
+    """Upsert one product + its baseline_control/evidence_spec rows.
+
+    reset_published: False for this module's own callers (the CLI seeding
+    git-tracked baseline files at deploy time -- a lower-stakes trust
+    boundary, since those files are reviewed in git; re-running the seed
+    must never silently un-publish a tool a deployment already exposed to
+    its tenants). The Tools admin screen's import path (baseline_import.py)
+    passes True: an admin-uploaded YAML is a higher-stakes boundary, and
+    G.9's whole point is that publishing is a deliberate act, not
+    something that survives a re-import unattended -- re-importing an
+    already-published product's mapping must force a fresh review, not
+    carry the old publish decision forward onto new (possibly different)
+    compliance claims.
+    """
     pd = data["product"]
 
     product = session.scalars(
@@ -100,6 +116,7 @@ def _seed_product(
             asset_type=pd.get("asset_type", "SPA"),
             role=pd.get("role", "").strip(),
             assumed_config=pd.get("assumed_config", []),
+            source_docs=pd.get("source_docs", []),
             is_published=False,
         )
         session.add(product)
@@ -111,6 +128,9 @@ def _seed_product(
         product.asset_type = pd.get("asset_type", "SPA")
         product.role = pd.get("role", "").strip()
         product.assumed_config = pd.get("assumed_config", [])
+        product.source_docs = pd.get("source_docs", [])
+        if reset_published:
+            product.is_published = False
     session.flush()
 
     bcs_written = 0

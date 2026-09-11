@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, IntegrationConnector, InvitedUser, LiongardEnvironmentMapping, LiongardEnvironmentOption, MfaEnrollData, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductRow, RaciAssignmentRow, ScopeChange, ScopeEntity, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, IntegrationConnector, InvitedUser, LiongardEnvironmentMapping, LiongardEnvironmentOption, MfaEnrollData, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, ProductLibraryItem, ProductPublishState, ProductRow, RaciAssignmentRow, ScopeChange, ScopeEntity, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -702,6 +702,78 @@ export const api = {
 
   testIntegrationConnection: (connectorKey: string) =>
     req<IntegrationConnector>(`/integrations/${connectorKey}/test`, { method: "POST" }),
+
+  // ── Tools library (G.9) — deployment-wide, not org-scoped; msp_admin /
+  // consultant_admin only (backend/app/routers/admin_products.py). Never
+  // writes OrgProduct -- activation stays inside the org (getProducts /
+  // activateProduct above). ────────────────────────────────────────────
+  listToolsLibrary: () => req<ProductLibraryItem[]>("/admin/products"),
+
+  getToolDetail: (productId: string) => req<ProductDetail>(`/admin/products/${productId}`),
+
+  getToolFootprint: (productId: string) =>
+    req<ProductFootprintRow[]>(`/admin/products/${productId}/footprint`),
+
+  publishTool: (productId: string) =>
+    req<ProductPublishState>(`/admin/products/${productId}/publish`, { method: "POST" }),
+
+  unpublishTool: (productId: string) =>
+    req<ProductPublishState>(`/admin/products/${productId}/unpublish`, { method: "POST" }),
+
+  dryRunBaselineImport: async (file: File): Promise<BaselineImportPreview> => {
+    const form = new FormData();
+    form.append("file", file);
+    const r = await fetch(`${BASE}/admin/products/import/dry-run`, { method: "POST", body: form });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<BaselineImportPreview>;
+  },
+
+  applyBaselineImport: async (file: File): Promise<BaselineImportResult> => {
+    const form = new FormData();
+    form.append("file", file);
+    const r = await fetch(`${BASE}/admin/products/import/apply`, { method: "POST", body: form });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      const detail = body.detail;
+      const msg = detail && typeof detail === "object" && Array.isArray(detail.problems)
+        ? detail.problems.join("; ")
+        : detail ?? `${r.status} ${r.statusText}`;
+      throw new Error(msg);
+    }
+    return r.json() as Promise<BaselineImportResult>;
+  },
+
+  listToolDocuments: (productId: string) =>
+    req<ProductDocumentItem[]>(`/admin/products/${productId}/documents`),
+
+  uploadToolDocument: async (
+    productId: string,
+    file: File,
+    data: { title?: string; kind: string; source_docs_ref?: string }
+  ): Promise<ProductDocumentItem> => {
+    const form = new FormData();
+    form.append("file", file);
+    if (data.title) form.append("title", data.title);
+    form.append("kind", data.kind);
+    if (data.source_docs_ref) form.append("source_docs_ref", data.source_docs_ref);
+    const r = await fetch(`${BASE}/admin/products/${productId}/documents`, { method: "POST", body: form });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<ProductDocumentItem>;
+  },
+
+  deleteToolDocument: async (productId: string, documentId: string): Promise<void> => {
+    const r = await fetch(`${BASE}/admin/products/${productId}/documents/${documentId}`, { method: "DELETE" });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  },
+
+  toolDocumentDownloadUrl: (productId: string, documentId: string): string =>
+    `${BASE}/admin/products/${productId}/documents/${documentId}/download`,
 
   // ── Practitioner notes (migration 0032) — deployment-wide, not
   // org-scoped; msp_admin only (backend/app/routers/objectives.py). ────

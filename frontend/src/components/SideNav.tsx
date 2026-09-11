@@ -1,4 +1,5 @@
 import { canSeeApiTokens, canSeeAuditLog, canSeeSecurity, canSeeUsers } from "../lib/roles";
+import { SideNavCategory, SideNavItem, SideNavRoot, SideNavSubitem, SideNavSubitems } from "./SideNavKit";
 import type { OnboardingStatus } from "../types";
 
 // No "integrations" category here (moved out, not renamed) -- Integrations
@@ -8,7 +9,10 @@ import type { OnboardingStatus } from "../types";
 // let an admin working in one client's org clear or replace a credential
 // every other client on the deployment depends on. It now lives in
 // App.tsx's deployment-tier AdminArea, reachable from OrgPicker -- see
-// AdminArea.tsx and App.tsx's own "admin" screen state.
+// AdminArea.tsx and App.tsx's own "admin" screen state. Same reasoning
+// keeps "tools" here as *activation only* (ProductsPanel) while the
+// baseline *library* management screen lives in AdminArea's own "tools"
+// section -- two screens sharing an English name, not the same data.
 export type NavCategory =
   | "dashboard"
   | "scope"
@@ -64,137 +68,121 @@ export function SideNav({
     return <span className={`completion-dot${complete ? " complete" : ""}`}>{complete ? "✓" : "○"}</span>;
   }
 
-  function categoryClass(c: NavCategory) {
-    return `side-nav-item${category === c ? " active" : ""}`;
-  }
-
-  function scopeSubClass(t: ScopeTab) {
-    return `side-nav-subitem${category === "scope" && scopeTab === t ? " active" : ""}`;
-  }
-
-  function assessmentsSubClass(t: AssessmentsTab) {
-    return `side-nav-subitem${category === "assessments" && assessmentsTab === t ? " active" : ""}`;
-  }
-
-  function securitySubClass(t: SecurityTab) {
-    return `side-nav-subitem${category === "security" && securityTab === t ? " active" : ""}`;
-  }
-
   return (
-    <nav className="side-nav">
-      <div className="side-nav-category">
-        <button className={categoryClass("dashboard")} onClick={() => onSelectCategory("dashboard")}>
+    <SideNavRoot>
+      <SideNavCategory>
+        <SideNavItem active={category === "dashboard"} onClick={() => onSelectCategory("dashboard")}>
           Dashboard
-        </button>
-      </div>
+        </SideNavItem>
+      </SideNavCategory>
 
-      <div className="side-nav-category">
-        <button className={categoryClass("scope")} onClick={() => onSelectCategory("scope")}>
+      <SideNavCategory>
+        <SideNavItem active={category === "scope"} onClick={() => onSelectCategory("scope")}>
           Scope
-        </button>
+        </SideNavItem>
         {category === "scope" && (
-          <div className="side-nav-subitems">
-            <button className={scopeSubClass("profile")} onClick={() => onSelectScopeTab("profile")}>
+          <SideNavSubitems>
+            <SideNavSubitem active={scopeTab === "profile"} onClick={() => onSelectScopeTab("profile")}>
               {status && indicator(status.profile.complete)}
               Org Profile
-            </button>
-            <button className={scopeSubClass("system")} onClick={() => onSelectScopeTab("system")}>
+            </SideNavSubitem>
+            <SideNavSubitem active={scopeTab === "system"} onClick={() => onSelectScopeTab("system")}>
               {status && indicator(status.system_description.complete)}
               System Description
-            </button>
-            <button className={scopeSubClass("contacts")} onClick={() => onSelectScopeTab("contacts")}>
+            </SideNavSubitem>
+            <SideNavSubitem active={scopeTab === "contacts"} onClick={() => onSelectScopeTab("contacts")}>
               {status && indicator(status.personnel.complete)}
               Personnel &amp; Contacts
-            </button>
-            <button className={scopeSubClass("assets")} onClick={() => onSelectScopeTab("assets")}>
+            </SideNavSubitem>
+            <SideNavSubitem active={scopeTab === "assets"} onClick={() => onSelectScopeTab("assets")}>
               Assets
-            </button>
+            </SideNavSubitem>
             {/* G.6: no separate pages — the diagrams live inside the System
                 Description editor. These entries route there and ask it to
                 scroll to/highlight the relevant section, so they light up
                 together with "System Description" rather than tracking
                 their own active state. */}
-            <button className={scopeSubClass("system")} onClick={() => onFocusSystemSection("network_diagram")}>
+            <SideNavSubitem active={scopeTab === "system"} onClick={() => onFocusSystemSection("network_diagram")}>
               Network Diagram
-            </button>
-            <button className={scopeSubClass("system")} onClick={() => onFocusSystemSection("data_flow_diagram")}>
+            </SideNavSubitem>
+            <SideNavSubitem active={scopeTab === "system"} onClick={() => onFocusSystemSection("data_flow_diagram")}>
               Data Flow Diagram
-            </button>
-          </div>
+            </SideNavSubitem>
+          </SideNavSubitems>
         )}
-      </div>
+      </SideNavCategory>
 
-      <div className="side-nav-category">
-        <button className={categoryClass("assessments")} onClick={() => onSelectCategory("assessments")}>
+      <SideNavCategory>
+        <SideNavItem active={category === "assessments"} onClick={() => onSelectCategory("assessments")}>
           Assessments
-        </button>
+        </SideNavItem>
         {category === "assessments" && (
-          <div className="side-nav-subitems">
-            <button className={assessmentsSubClass("board")} onClick={() => onSelectAssessmentsTab("board")}>
+          <SideNavSubitems>
+            <SideNavSubitem active={assessmentsTab === "board"} onClick={() => onSelectAssessmentsTab("board")}>
               Assessment Board
-            </button>
-            <button className={assessmentsSubClass("roles")} onClick={() => onSelectAssessmentsTab("roles")}>
+            </SideNavSubitem>
+            <SideNavSubitem active={assessmentsTab === "roles"} onClick={() => onSelectAssessmentsTab("roles")}>
               Roles
-            </button>
-          </div>
+            </SideNavSubitem>
+          </SideNavSubitems>
         )}
-      </div>
+      </SideNavCategory>
 
-      <div className="side-nav-category">
-        <button className={categoryClass("tools")} onClick={() => onSelectCategory("tools")}>
+      <SideNavCategory>
+        <SideNavItem active={category === "tools"} onClick={() => onSelectCategory("tools")}>
           Tools
-        </button>
-      </div>
+        </SideNavItem>
+      </SideNavCategory>
 
-      <div className="side-nav-category">
-        <button className={categoryClass("library")} onClick={() => onSelectCategory("library")}>
+      <SideNavCategory>
+        <SideNavItem active={category === "library"} onClick={() => onSelectCategory("library")}>
           Library
-        </button>
+        </SideNavItem>
         {category === "library" && (
-          <div className="side-nav-subitems">
+          <SideNavSubitems>
             {/* None of these are built yet (G.10) except Lists' backend
                 export logic, which has no frontend wrapper either. */}
-            <button className="side-nav-subitem side-nav-subitem--placeholder" disabled>Lists</button>
-            <button className="side-nav-subitem side-nav-subitem--placeholder" disabled>Baselines</button>
-            <button className="side-nav-subitem side-nav-subitem--placeholder" disabled>Plans</button>
-            <button className="side-nav-subitem side-nav-subitem--placeholder" disabled>Policies</button>
-            <button className="side-nav-subitem side-nav-subitem--placeholder" disabled>Procedures</button>
-          </div>
+            <SideNavSubitem active={false} disabled>Lists</SideNavSubitem>
+            <SideNavSubitem active={false} disabled>Baselines</SideNavSubitem>
+            <SideNavSubitem active={false} disabled>Plans</SideNavSubitem>
+            <SideNavSubitem active={false} disabled>Policies</SideNavSubitem>
+            <SideNavSubitem active={false} disabled>Procedures</SideNavSubitem>
+          </SideNavSubitems>
         )}
-      </div>
+      </SideNavCategory>
 
       {showSecurity && (
-        <div className="side-nav-category">
-          <button className={categoryClass("security")} onClick={() => onSelectCategory("security")}>
+        <SideNavCategory>
+          <SideNavItem active={category === "security"} onClick={() => onSelectCategory("security")}>
             Security
-          </button>
+          </SideNavItem>
           {category === "security" && (
-            <div className="side-nav-subitems">
+            <SideNavSubitems>
               {showUsers && (
-                <button className={securitySubClass("users")} onClick={() => onSelectSecurityTab("users")}>
+                <SideNavSubitem active={securityTab === "users"} onClick={() => onSelectSecurityTab("users")}>
                   Users
-                </button>
+                </SideNavSubitem>
               )}
               {showApiTokens && (
-                <button
-                  className={securitySubClass("api-tokens")}
+                <SideNavSubitem
+                  active={securityTab === "api-tokens"}
                   onClick={() => onSelectSecurityTab("api-tokens")}
                 >
                   API Tokens
-                </button>
+                </SideNavSubitem>
               )}
               {showAuditLog && (
-                <button
-                  className={securitySubClass("audit-log")}
+                <SideNavSubitem
+                  active={securityTab === "audit-log"}
                   onClick={() => onSelectSecurityTab("audit-log")}
                 >
                   Audit Log
-                </button>
+                </SideNavSubitem>
               )}
-            </div>
+            </SideNavSubitems>
           )}
-        </div>
+        </SideNavCategory>
       )}
-    </nav>
+    </SideNavRoot>
   );
 }

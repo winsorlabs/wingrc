@@ -526,6 +526,114 @@ export interface LiongardEnvironmentMapping {
   updated_at: string | null;
 }
 
+// ── Tools library (G.9) — mirrors backend/app/routers/admin_products.py's
+// schemas field-for-field. Deployment-wide, not org-scoped: editing this
+// data changes compliance conclusions for every org that has activated
+// the product, not just one tenant's view of it.
+export interface ProductLibraryItem {
+  id: string;
+  key: string;
+  name: string;
+  provider: string;
+  category: string;
+  asset_type: string;
+  framework_name: string;
+  is_published: boolean;
+  control_count: number;
+  objective_count: number;
+}
+
+export interface BaselineEvidenceSpecItem {
+  id: string;
+  artifact_description: string;
+  evidence_type: string;
+  kb_reference: string | null;
+}
+
+export interface BaselineControlItem {
+  control_id: string;
+  family: string;
+  title: string;
+  objectives: string[];
+  classification: string;
+  // "platform_only" is excluded from the magic loop -- vendor
+  // self-attestation on its own infrastructure, not customer-system
+  // coverage. Render this value distinctly; see engine.py's own comment.
+  coverage_basis: string;
+  candidate_state: string;
+  provider_contribution: string | null;
+  customer_action: string | null;
+  note: string | null;
+  scope_note: string | null;
+  evidence_specs: BaselineEvidenceSpecItem[];
+}
+
+export interface ProductDocumentItem {
+  id: string;
+  title: string;
+  kind: string;
+  source_docs_ref: string | null;
+  mime_type: string | null;
+  file_size_bytes: number | null;
+  uploaded_at: string;
+}
+
+export interface ProductDetail {
+  id: string;
+  key: string;
+  name: string;
+  provider: string;
+  category: string;
+  asset_type: string;
+  role: string;
+  assumed_config: string[];
+  is_published: boolean;
+  // The YAML's source_docs: strings, verbatim -- what the mapping was
+  // authored from. A ProductDocumentItem upload references one of these
+  // (source_docs_ref); it never replaces the string itself.
+  source_docs: string[];
+  baseline_controls: BaselineControlItem[];
+  documents: ProductDocumentItem[];
+}
+
+export interface ProductFootprintRow {
+  org_id: string;
+  org_name: string;
+  status: string;
+}
+
+export interface BaselineControlChange {
+  control_id: string;
+  change_type: string;
+  classification: string;
+  coverage_basis: string;
+  field_diffs: Record<string, [unknown, unknown]>;
+}
+
+export interface BaselineImportPreview {
+  problems: string[];
+  product_key: string;
+  product_is_new: boolean;
+  product_name: string;
+  control_changes: BaselineControlChange[];
+  // Live (active/candidate) OrgProduct rows for this product key -- the
+  // "how many tenants are affected" warning §4 requires before apply.
+  affected_org_count: number;
+  affected_org_names: string[];
+}
+
+export interface BaselineImportResult {
+  product_id: string;
+  product_key: string;
+  baseline_controls: number;
+  evidence_specs: number;
+}
+
+export interface ProductPublishState {
+  id: string;
+  is_published: boolean;
+}
+
 // ── Integrations (D.1) — mirrors backend/app/routers/integrations.py's
 // IntegrationOut field-for-field. Deployment-wide, not org-scoped -- see
 // that router's own module docstring for why (Liongard's API key is scoped

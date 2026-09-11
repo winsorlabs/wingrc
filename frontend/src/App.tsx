@@ -20,7 +20,7 @@ import { SideNav } from "./components/SideNav";
 import { SystemDescriptionForm } from "./components/SystemDescriptionForm";
 import { UsersPanel } from "./components/UsersPanel";
 import { useAuth } from "./hooks/useAuth";
-import { canSeeApiTokens, canSeeAuditLog, canSeeIntegrations, canSeeUsers } from "./lib/roles";
+import { canSeeApiTokens, canSeeAuditLog, canSeeIntegrations, canSeeToolsLibrary, canSeeUsers } from "./lib/roles";
 import type { Assessment, OnboardingStatus, Org } from "./types";
 
 // "admin" is the deployment-tier area (Integrations today; G.9/G.11 land
@@ -113,7 +113,11 @@ export function App() {
   // screen exists to enforce. Getting back from "nav" to "orgs" already
   // works today (the breadcrumb's org-name link); from there the
   // Administration button is visible again.
-  const showAdminButton = screen === "orgs" && canSeeIntegrations(user?.role);
+  // Or'd across every deployment-tier admin capability (Integrations,
+  // Tools/G.9) rather than checking one and assuming the other -- those
+  // are separate authorization axes (lib/roles.ts's own opening comment)
+  // that happen to admit the same two roles today, not the same gate.
+  const showAdminButton = screen === "orgs" && (canSeeIntegrations(user?.role) || canSeeToolsLibrary(user?.role));
 
   if (isLoading) return <div className="app-loading">Loading…</div>;
   if (!user) {

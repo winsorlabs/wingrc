@@ -64,6 +64,31 @@ Scoped to meaningful compliance mutations (signal, not firehose):
                                  which now carries source="liongard" for a
                                  connector-applied row instead of always
                                  "workbook").
+  product.import               — a baseline library YAML was imported
+                                 through the Tools admin screen
+                                 (routers/admin_products.py, G.9).
+                                 after_value carries the product key and
+                                 baseline_control/evidence_spec counts, not
+                                 the uploaded YAML itself. org_id=None
+                                 (deployment-wide, like Product itself).
+                                 Always lands with is_published=False --
+                                 see product.publish below for the
+                                 separate, deliberate act that exposes it.
+  product.publish               — an admin exposed a baseline library
+  product.unpublish               product to every tenant (or hid it
+                                 again). before/after carry is_published
+                                 only. Never touches org_product or
+                                 control_state — see engine.py's
+                                 activate_org_product for the enforcement
+                                 this gates, and CLAUDE.md's roadmap for
+                                 why decoupling publish from activation
+                                 matters (activation stays an org-level
+                                 act; publish/unpublish is deployment-wide).
+  product_document.upload       — a real file was attached to a baseline
+  product_document.delete         library product (the vendor's CRM, the
+                                 MSP's own baseline doc, a KB export --
+                                 G.9). after_value/before_value carry
+                                 title/kind only, never the file bytes.
 
 NOT logged (noise):
   _seed_control_states() bulk insert on assessment creation

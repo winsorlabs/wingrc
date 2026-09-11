@@ -101,6 +101,24 @@ export function canSeeIntegrations(role: string | null | undefined): boolean {
   return !!role && INTEGRATIONS_ROLES.has(role);
 }
 
+// Matches routers/admin_products.py's router-wide
+// require_role("msp_admin", "consultant_admin") (baseline-library
+// management screen, G.9). Deliberately its own constant, not a reuse of
+// INTEGRATIONS_ROLES even though the two sets are identical today — this
+// file's opening comment is explicit that each authorization axis gets
+// its own name, and two screens sharing a gate today is a coincidence,
+// not a fact about the gate. See admin_products.py's own docstring for
+// the open question of whether consultant_admin belongs here at all: a
+// consultant engaged for one client could publish a baseline change that
+// alters compliance conclusions for every other client on the
+// deployment. Flagged there, not resolved — do not change this set to
+// "fix" that without a decision from Jarrod.
+export const TOOLS_LIBRARY_ROLES = new Set(["msp_admin", "consultant_admin"]);
+
+export function canSeeToolsLibrary(role: string | null | undefined): boolean {
+  return !!role && TOOLS_LIBRARY_ROLES.has(role);
+}
+
 // Whether the Security nav *category* itself should render at all — hiding
 // an empty category is a nav-shell-specific concern the old per-tab-only
 // gating never had to answer (OrgSettings always showed something, since
