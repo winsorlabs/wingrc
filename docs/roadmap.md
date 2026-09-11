@@ -1214,6 +1214,98 @@ Items without a status are planned but not yet started.
     on a re-sync.
   - D.3 (approval workflow, scheduling) remains not built, per the task's
     explicit scope boundary.
+- **Move Integrations to deployment-tier Administration, out of org nav**
+  (2026-09-11) — closes a real bug D.1's own frontend introduced:
+  `routers/integrations.py` carries no `org_id` on any route and
+  `IntegrationConnection`'s docstring says it's deliberately not
+  org-scoped (one credential per MSP instance), but `SideNav.tsx` rendered
+  it inside the per-org side nav anyway. An admin working in one client's
+  org could clear or replace a credential every other client on the
+  deployment depends on, with nothing on screen indicating the blast
+  radius. Frontend-only fix — the backend already had the right shape.
+  - **The seam, held exactly where it was specified:** the connector list,
+    credential set/replace/clear, and test-connection all moved up
+    (everything `IntegrationsPanel.tsx` renders). `org_liongard_environment`
+    (migration 0035, D.2), `LiongardSyncWizard` (mounted from
+    `AssetsPanel.tsx`), and the `.../liongard/environment[s]` routes all
+    stayed exactly where they were — genuinely org-scoped data, not part
+    of this bug. Getting this backwards (dragging the mapping upward, or
+    leaving the credential downstairs) was the explicit failure mode to
+    avoid; verified live that neither happened, not just read from the
+    diff.
+  - **New `App.tsx` screen state, not a route** — this codebase has no
+    router (`App.tsx` is a screen state machine, same pattern
+    `InviteAcceptPage`'s pre-auth split already uses). Added `"admin"` to
+    `Screen`, reached via a header button on the `"orgs"` screen
+    (`OrgPicker`, the pre-org tier) gated by the unchanged
+    `canSeeIntegrations`, and only offered from `"orgs"` — not
+    universally — so the affordance doesn't blur the exact org/deployment
+    separation this move exists to enforce. The breadcrumb's
+    "Administration" text is the way back, mirroring the existing
+    org-name-breadcrumb-as-back-link pattern already used for `"nav"` and
+    `"onboarding"`.
+  - **New `AdminArea.tsx` is a shell, not a single hardcoded panel** —
+    Integrations is its only section today, but it carries its own small
+    internal section nav so `docs/PLAN-gui-restructure.md`'s G.9
+    (baseline-library import) and G.11 (pre-org access-grant screen) —
+    both already documented elsewhere as belonging to this same
+    deployment tier, before this task existed — land as new sections here
+    instead of each inventing a new top-level screen. G.11's own entry is
+    updated to note the host shell now exists (see that doc). No
+    placeholder nav entries added for either, per the task's explicit
+    instruction — `SideNav.tsx`'s Library category is already a standing
+    example of how those age.
+  - **Cross-references updated, not just moved:** `routers/scope.py`'s
+    `_get_liongard_credential` error text now says "add a credential in
+    Administration → Integrations first" instead of the stale
+    "Integrations page"; `IntegrationsPanel.tsx` gained a line stating
+    plainly that configuring a credential there doesn't sync anything by
+    itself, since the two screens are no longer adjacent in the nav.
+  - **The role-gate tension is surfaced, not resolved** — per the task's
+    explicit instruction, `require_role("msp_admin", "consultant_admin")`
+    and `canSeeIntegrations` are byte-for-byte unchanged.
+    `routers/integrations.py`'s own docstring already flagged that
+    `consultant_admin` reaching a deployment-wide screen was a tension
+    worth Jarrod revisiting; moving the screen to the deployment tier
+    makes that tension *visible* (a consultant_admin now sees a
+    top-level "Administration" area, not a nav entry buried in one org's
+    side nav) rather than creating a new one. Read: this move doesn't by
+    itself argue for removing consultant_admin's access — the underlying
+    justification in that docstring (integrations config is a compliance-
+    data concern grouped with scope/assessments/evidence, not an
+    identity-administration one) doesn't change just because the screen's
+    address changed — but it does make the shape of what a consultant
+    sees more legible to anyone auditing role assignments, which is worth
+    weighing against the "hired for one client, sees a deployment-wide
+    admin area" discomfort the original docstring named. Still Jarrod's
+    call.
+  - Tests: three new `App.test.tsx` cases (button visible for msp_admin
+    and opens `AdminArea`/`IntegrationsPanel`; absent entirely for
+    customer_poc; breadcrumb returns to the picker) plus the unmodified
+    `canSeeIntegrations` coverage in `permissions.test.ts`. 851 backend
+    tests, ruff, `tsc -b`, `vitest run` (65/65), and `vite build` all
+    clean on the bench stack.
+  - **Verified live on an isolated bench stack, not just the test suite**
+    (fixture Liongard mock server reused from D.2's verification, same
+    honesty discipline — no real Liongard key was needed for this slice
+    since it's a nav move, not a connector change): logged in as a seeded
+    `msp_admin`, confirmed the 🛠 Administration button appears only on
+    the org-picker screen and opens `AdminArea` showing exactly the
+    "doesn't sync anything by itself" banner and the Liongard card;
+    configured the credential there against the mock server, mapped
+    Acme MSP's `Assets → Sync from Liongard` to the mock Environment,
+    ran a real dry-run (2 devices + 1 person, Discovery-state device
+    correctly excluded) and applied it, confirmed in Postgres the 3 rows
+    landed with `source="liongard"` and the environment-identifying
+    `source_ref`; removed the credential and confirmed the org-side
+    wizard's error read "Liongard isn't configured yet — add a credential
+    in Administration → Integrations first," not a generic failure;
+    logged in as a seeded `customer_poc` and confirmed the header shows
+    only the account/logout icons — no Administration button — while the
+    org's own Security category remained correctly absent for that role
+    too (unrelated to this change, confirmed unaffected).
+  - M.7/M.8/G.11 themselves were not started here, per the task's explicit
+    instruction — only their host shell exists now.
 
 ---
 
