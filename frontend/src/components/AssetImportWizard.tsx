@@ -1,12 +1,7 @@
 import { useState } from "react";
 import { api } from "../api";
 import type { DryRunResult, ScopeChange } from "../types";
-
-const CHANGE_LABELS: Record<string, string> = {
-  new: "New",
-  changed: "Changed",
-  missing: "Missing",
-};
+import { ScopeChangeDiffTable } from "./ScopeChangeDiffTable";
 
 interface Props {
   orgId: string;
@@ -106,54 +101,19 @@ export function AssetImportWizard({ orgId, onClose, onApplied }: Props) {
                   ? "No changes detected — the scope graph already matches this workbook."
                   : "Review the changes below. Uncheck any row you don't want applied, then confirm."}
               </div>
-              {dryRun.changes.length > 0 && (
-                <div className="table-scroll">
-                  <table className="contacts-table import-diff-table">
-                    <thead>
-                      <tr>
-                        <th></th>
-                        <th>Change</th>
-                        <th>Type</th>
-                        <th>Name</th>
-                        <th>Detail</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {dryRun.changes.map((c, idx) => {
-                        const applicable = c.change_type === "new" || c.change_type === "changed";
-                        return (
-                          <tr key={`${c.entity_type}-${c.natural_key}-${idx}`}>
-                            <td>
-                              {applicable && (
-                                <input
-                                  type="checkbox"
-                                  checked={!excluded.has(idx)}
-                                  onChange={() => toggleExcluded(idx)}
-                                />
-                              )}
-                            </td>
-                            <td>
-                              <span className={`change-badge change-badge-${c.change_type}`}>
-                                {CHANGE_LABELS[c.change_type] ?? c.change_type}
-                              </span>
-                            </td>
-                            <td>{c.entity_type}</td>
-                            <td>{c.natural_key}</td>
-                            <td>
-                              {c.change_type === "missing" ? (
-                                <span className="field-hint">Not touched — apply never deletes</span>
-                              ) : Object.keys(c.field_diffs).length > 0 ? (
-                                Object.keys(c.field_diffs).join(", ")
-                              ) : (
-                                <span className="field-hint">New row</span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+              {dryRun.warnings.length > 0 && (
+                <div className="form-error">
+                  {dryRun.warnings.map((w, i) => (
+                    <div key={i}>⚠ {w}</div>
+                  ))}
                 </div>
+              )}
+              {dryRun.changes.length > 0 && (
+                <ScopeChangeDiffTable
+                  changes={dryRun.changes}
+                  excluded={excluded}
+                  onToggle={toggleExcluded}
+                />
               )}
             </>
           )}

@@ -337,6 +337,20 @@ priority order.
 
 ### D.2 — Scope / Inventory as a connector target
 
+**Shipped 2026-09-11.** Full writeup in `docs/roadmap.md`'s Done section —
+not duplicated here. Summary: `org_liongard_environment` (migration 0035)
+maps a WinGRC org to a Liongard Environment id; `connectors/liongard.py`
+pulls `InventoryState="Inventory"` device profiles and identities via
+Liongard's real v2 query endpoints (materially different from this
+section's original assumption — see the Done entry for what changed and
+why); `importers/liongard.py` maps them onto the canonical
+`scope_entity.attributes` vocabulary this section specified below, as the
+third writer alongside the manual UI and the workbook importer; the pull
+routes through the existing `reconcile()` → dry-run → apply flow with zero
+parallel ingest path — `routers/scope.py`'s existing
+`POST /imports/workbook/apply` applies connector-sourced changes
+unmodified. D.3 (approval workflow, scheduling) remains not built.
+
 **Added 2026-09-06 (Jarrod).** D's Architecture section says connector output
 "writes into the existing `evidence` + `evidence_state_link` tables" with "no
 new schema required." That's correct for evidence-collection connectors, but

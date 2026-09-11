@@ -54,6 +54,16 @@ Scoped to meaningful compliance mutations (signal, not firehose):
                                  per assessment creation, not one per
                                  assignment carried — after_value carries
                                  the source assessment id and counts only.
+  liongard_environment.set    — an org's WinGRC-org-to-Liongard-Environment
+                                 mapping was created or changed
+                                 (routers/scope.py, D.2). before/after carry
+                                 the environment id + display name only.
+                                 No entry for the sync dry-run itself (it
+                                 writes nothing -- see scope_entity.import_apply
+                                 below for the actual per-row sync record,
+                                 which now carries source="liongard" for a
+                                 connector-applied row instead of always
+                                 "workbook").
 
 NOT logged (noise):
   _seed_control_states() bulk insert on assessment creation

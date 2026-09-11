@@ -1555,3 +1555,39 @@ class IntegrationConnection(Base):
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), onupdate=func.now()
     )
+
+
+class OrgLiongardEnvironment(Base):
+    """D.2 -- maps one WinGRC org to one Liongard Environment.
+
+    Org-scoped (unlike IntegrationConnection above, which is deployment-wide
+    -- the credential is one MSP-wide Liongard account, but *which*
+    Environment under that account corresponds to *which* WinGRC org is
+    per-tenant data, not shared reference data). D.1 left this as D.2's
+    concern -- "a separate, org-scoped table, not a column" on
+    integration_connection -- see that model's own docstring.
+
+    1:1 today (unique org_id): an org syncing from more than one Liongard
+    Environment isn't a case this connector needs to support yet. Extend to
+    many-to-one if that changes rather than guessing now.
+
+    liongard_environment_name is a display cache only, refreshed whenever
+    the mapping is (re)set via connectors/liongard.py:list_environments()
+    -- never the source of truth, which is liongard_environment_id plus
+    Liongard's own Environment record.
+    """
+
+    __tablename__ = "org_liongard_environment"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), unique=True, index=True)
+    liongard_environment_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    liongard_environment_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now()
+    )

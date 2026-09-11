@@ -10,6 +10,19 @@ Endpoints:
   POST   /orgs/{org_id}/imports/workbook/apply     Apply a confirmed diff
   POST   /orgs/{org_id}/exports/{view_id}          Render a CMMC list
 
+  GET    /orgs/{org_id}/integrations/liongard/environments   Available Liongard Environments
+  GET    /orgs/{org_id}/integrations/liongard/environment    This org's Environment mapping
+  PUT    /orgs/{org_id}/integrations/liongard/environment    Set the mapping
+  POST   /orgs/{org_id}/integrations/liongard/sync/dry-run   Pull + reconcile, no writes
+
+D.2: the Liongard device/user pull reuses this exact dry-run -> apply shape
+(see the section at the bottom of this file) -- its dry-run endpoint builds
+the identical DryRunOut/ScopeChangeOut this module already returns for
+workbook imports, and its apply step is the *same*
+POST /imports/workbook/apply endpoint above, unmodified. Nothing about that
+endpoint's body actually depends on the source being a workbook -- see its
+own docstring.
+
 Moved here from main.py (G.5) -- scope was the last resource whose endpoints
 lived directly in main.py instead of a dedicated router (see
 docs/PLAN-gui-restructure.md's G.5 section). The move also closes a real
@@ -28,9 +41,11 @@ calls the identical reconcile() + repo.upsert() functions this router does.
 
 from __future__ import annotations
 
+import json
 import tempfile
 import uuid
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +59,8 @@ from .. import repo
 from ..audit import log_event
 from ..auth import require_org_access, require_write
 from ..catalog import VIEWS_BY_ID
+from ..connectors import liongard as liongard_connector
+from ..crypto import CredentialCipherError, decrypt_credential
 from ..db import get_session
 from ..domain import (
     CanonicalEntity,
@@ -54,8 +71,9 @@ from ..domain import (
     Source,
     normalize_mac_address,
 )
+from ..importers.liongard import build_source_ref, devices_to_canonical, identities_to_canonical
 from ..importers.workbook import parse_workbook, resolve_canonical_device_attributes
-from ..models import ScopeEntity
+from ..models import IntegrationConnection, OrgLiongardEnvironment, ScopeEntity
 from ..reconcile import reconcile
 from ..render import render_view
 
@@ -257,6 +275,13 @@ class ScopeChangeOut(BaseModel):
 class DryRunOut(BaseModel):
     summary: dict[str, int]
     changes: list[ScopeChangeOut]
+    # Pull-level warnings that aren't tied to any single change row -- e.g.
+    # a Liongard record with no usable natural key, so it was never turned
+    # into a CanonicalEntity at all and can't appear in `changes`. Always
+    # empty for the workbook path today; added for D.2's Liongard sync
+    # rather than as a workbook-specific field, since "a warning too broad
+    # to attach to one row" isn't source-specific.
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ScopeChangeIn(BaseModel):
@@ -569,7 +594,14 @@ def import_apply(
                 "natural_key": entity.natural_key,
                 "change_type": c.change_type,
             },
-            context={"via": "api", "source": "workbook"},
+            # Read from the change's own incoming.source rather than
+            # hardcoding "workbook": this endpoint is intentionally
+            # source-agnostic -- D.2's Liongard sync dry-run (below) reuses
+            # it unmodified to apply connector-sourced changes too, per
+            # ROADMAP.md D.2's "reuse the existing apply path, don't build
+            # a parallel one." A hardcoded label here would mislabel every
+            # Liongard-sourced apply in the audit log.
+            context={"via": "api", "source": entity.source.value},
         )
         applied += 1
 
@@ -595,3 +627,254 @@ def export_view(
     out = Path(tempfile.gettempdir()) / f"{view_id}.xlsx"
     render_view(view, entities, out)
     return FileResponse(out, filename=f"{view_id}.xlsx")
+
+
+# ---------------------------------------------------------------------------
+# Liongard connector (D.2): org <-> Environment mapping, sync dry-run.
+# Apply reuses POST /imports/workbook/apply above unmodified -- see this
+# file's module docstring.
+# ---------------------------------------------------------------------------
+
+
+class LiongardEnvironmentOption(BaseModel):
+    id: int
+    name: str
+
+
+class LiongardEnvironmentMappingIn(BaseModel):
+    liongard_environment_id: int
+
+
+class LiongardEnvironmentMappingOut(BaseModel):
+    liongard_environment_id: int
+    liongard_environment_name: str | None
+    updated_at: datetime | None
+
+
+def _get_liongard_credential(session: Session) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Load and decrypt the deployment-wide Liongard credential
+    (IntegrationConnection, migration 0030 -- D.1). Raises a specific
+    HTTPException rather than a generic 500 for either failure mode, same
+    discipline as routers/integrations.py's own test_connection.
+    """
+    row = session.scalars(
+        select(IntegrationConnection).where(IntegrationConnection.connector_key == "liongard")
+    ).first()
+    if row is None or row.encrypted_credential is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Liongard isn't configured yet -- add a credential on the Integrations page "
+                "first."
+            ),
+        )
+    try:
+        credential = json.loads(decrypt_credential(row.encrypted_credential))
+    except CredentialCipherError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Could not decrypt the stored Liongard credential -- check the deployment's "
+                "WINGRC_CREDENTIAL_ENCRYPTION_KEYS configuration."
+            ),
+        ) from e
+    return (row.config or {}), credential
+
+
+def _get_liongard_mapping(session: Session, org_id: uuid.UUID) -> OrgLiongardEnvironment | None:
+    return session.scalars(
+        select(OrgLiongardEnvironment).where(OrgLiongardEnvironment.org_id == org_id)
+    ).first()
+
+
+@router.get(
+    "/{org_id}/integrations/liongard/environments",
+    response_model=list[LiongardEnvironmentOption],
+)
+def list_liongard_environments(
+    org_id: uuid.UUID, session: Session = Depends(get_session)
+) -> list[LiongardEnvironmentOption]:
+    """Environments visible to this deployment's Liongard key -- for the
+    org-mapping picker below. org_id is accepted (and required by the
+    org-access/write dependencies this router applies to every route) for
+    consistent auth scoping and URL shape even though the underlying call
+    doesn't use it -- environments come from the one deployment-wide
+    credential, not from anything org-specific.
+    """
+    config, credential = _get_liongard_credential(session)
+    try:
+        environments = liongard_connector.list_environments(config, credential)
+    except liongard_connector.LiongardAPIError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return [LiongardEnvironmentOption(id=e.id, name=e.name) for e in environments]
+
+
+@router.get(
+    "/{org_id}/integrations/liongard/environment",
+    response_model=LiongardEnvironmentMappingOut | None,
+)
+def get_liongard_environment_mapping(
+    org_id: uuid.UUID, session: Session = Depends(get_session)
+) -> LiongardEnvironmentMappingOut | None:
+    row = _get_liongard_mapping(session, org_id)
+    if row is None:
+        return None
+    return LiongardEnvironmentMappingOut(
+        liongard_environment_id=row.liongard_environment_id,
+        liongard_environment_name=row.liongard_environment_name,
+        updated_at=row.updated_at,
+    )
+
+
+@router.put(
+    "/{org_id}/integrations/liongard/environment",
+    response_model=LiongardEnvironmentMappingOut,
+)
+def set_liongard_environment_mapping(
+    org_id: uuid.UUID,
+    body: LiongardEnvironmentMappingIn,
+    session: Session = Depends(get_session),
+) -> LiongardEnvironmentMappingOut:
+    """Validated against a live environment list, not just stored blind --
+    a typo'd Environment id would otherwise silently point this org's sync
+    at nothing (or, worse, if Liongard ever reused ids across MSP
+    instances, at the wrong tenant's data) with no feedback until the
+    first sync attempt failed confusingly.
+    """
+    config, credential = _get_liongard_credential(session)
+    try:
+        environments = liongard_connector.list_environments(config, credential)
+    except liongard_connector.LiongardAPIError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+    match = next((e for e in environments if e.id == body.liongard_environment_id), None)
+    if match is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Environment id {body.liongard_environment_id} was not found for this "
+                "Liongard account."
+            ),
+        )
+
+    row = _get_liongard_mapping(session, org_id)
+    is_new = row is None
+    before = (
+        None
+        if is_new
+        else {
+            "liongard_environment_id": row.liongard_environment_id,
+            "liongard_environment_name": row.liongard_environment_name,
+        }
+    )
+    if row is None:
+        row = OrgLiongardEnvironment(org_id=org_id)
+        session.add(row)
+    row.liongard_environment_id = match.id
+    row.liongard_environment_name = match.name
+    session.flush()
+
+    log_event(
+        session,
+        org_id=org_id,
+        action="liongard_environment.set",
+        entity_type="org_liongard_environment",
+        entity_id=row.id,
+        before_value=before,
+        after_value={"liongard_environment_id": match.id, "liongard_environment_name": match.name},
+        context={"via": "api", "created": is_new},
+    )
+    session.commit()
+    session.refresh(row)
+    return LiongardEnvironmentMappingOut(
+        liongard_environment_id=row.liongard_environment_id,
+        liongard_environment_name=row.liongard_environment_name,
+        updated_at=row.updated_at,
+    )
+
+
+@router.post("/{org_id}/integrations/liongard/sync/dry-run", response_model=DryRunOut)
+def liongard_sync_dry_run(
+    org_id: uuid.UUID, session: Session = Depends(get_session)
+) -> DryRunOut:
+    """Pull devices + identities from this org's mapped Liongard Environment
+    and return the reconcile diff. No writes -- same "confirmed diff before
+    mutation" contract as /imports/workbook/dry-run above; apply is the
+    identical POST /imports/workbook/apply endpoint, since its body doesn't
+    actually depend on the source being a workbook.
+
+    Both device-profiles and identities are pulled in one call (matching
+    ROADMAP.md item D's own framing of Liongard as "populates scope lists
+    (users, hardware, software)") rather than as two separate dry-runs --
+    the resulting diff mixes DEVICE and PERSON rows, exactly like a
+    workbook dry-run already mixes entity types from its own multiple
+    sheets.
+    """
+    mapping = _get_liongard_mapping(session, org_id)
+    if mapping is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No Liongard Environment is mapped to this org yet -- set one first.",
+        )
+    config, credential = _get_liongard_credential(session)
+
+    pulled_at = datetime.now(UTC).isoformat()
+    source_ref = build_source_ref(
+        mapping.liongard_environment_id, mapping.liongard_environment_name, pulled_at
+    )
+
+    try:
+        device_records = liongard_connector.pull_device_profiles(
+            config, credential, mapping.liongard_environment_id
+        )
+        identity_records = liongard_connector.pull_identities(
+            config, credential, mapping.liongard_environment_id
+        )
+    except liongard_connector.LiongardAPIError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+    devices, device_warnings = devices_to_canonical(device_records, source_ref)
+    identities, identity_warnings = identities_to_canonical(identity_records, source_ref)
+    incoming = devices + identities
+
+    row_warnings: dict[tuple[str, str], list[str]] = {}
+    pull_level_warnings: list[str] = []
+    for warnings_by_key in (device_warnings, identity_warnings):
+        for key, messages in warnings_by_key.items():
+            if key == ("_skipped", "_skipped"):
+                pull_level_warnings.extend(messages)
+            else:
+                row_warnings.setdefault(key, []).extend(messages)
+
+    current = repo.list_entities(session, org_id)
+    result = reconcile(current, incoming)
+
+    return DryRunOut(
+        summary=result.summary(),
+        warnings=pull_level_warnings,
+        changes=[
+            ScopeChangeOut(
+                change_type=c.change_type.value,
+                entity_type=c.entity_type.value,
+                natural_key=c.natural_key,
+                field_diffs={k: list(v) for k, v in c.field_diffs.items()},
+                incoming=(
+                    ScopeChangeIncoming(
+                        scope_category=(
+                            c.incoming.scope_category.value if c.incoming.scope_category else None
+                        ),
+                        status=c.incoming.status.value,
+                        in_boundary=c.incoming.in_boundary,
+                        source=c.incoming.source.value,
+                        source_ref=c.incoming.source_ref,
+                        attributes=c.incoming.attributes,
+                    )
+                    if c.incoming is not None
+                    else None
+                ),
+                warnings=row_warnings.get((c.entity_type.value, c.natural_key.strip().lower()), []),
+            )
+            for c in result.changes
+            if c.change_type.value != "unchanged"
+        ],
+    )

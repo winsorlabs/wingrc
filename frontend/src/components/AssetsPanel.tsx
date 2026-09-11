@@ -3,6 +3,7 @@ import { api } from "../api";
 import type { ScopeEntity } from "../types";
 import { AssetDrawer } from "./AssetDrawer";
 import { AssetImportWizard } from "./AssetImportWizard";
+import { LiongardSyncWizard } from "./LiongardSyncWizard";
 
 const TYPE_LABELS: Record<string, string> = { device: "Device", software: "Software" };
 
@@ -34,6 +35,7 @@ export function AssetsPanel({ orgId, canWrite }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [drawerAsset, setDrawerAsset] = useState<ScopeEntity | null | undefined>(undefined);
   const [showImport, setShowImport] = useState(false);
+  const [showLiongardSync, setShowLiongardSync] = useState(false);
 
   useEffect(() => {
     load();
@@ -84,6 +86,9 @@ export function AssetsPanel({ orgId, canWrite }: Props) {
           <>
             <button className="btn-ghost btn-sm" onClick={() => setShowImport(true)}>
               Import from Workbook
+            </button>
+            <button className="btn-ghost btn-sm" onClick={() => setShowLiongardSync(true)}>
+              Sync from Liongard
             </button>
             <button className="btn-primary btn-sm" onClick={() => setDrawerAsset(null)}>
               + Add Asset
@@ -159,6 +164,17 @@ export function AssetsPanel({ orgId, canWrite }: Props) {
           onClose={() => setShowImport(false)}
           onApplied={() => {
             setShowImport(false);
+            load();
+          }}
+        />
+      )}
+
+      {showLiongardSync && (
+        <LiongardSyncWizard
+          orgId={orgId}
+          onClose={() => setShowLiongardSync(false)}
+          onApplied={() => {
+            setShowLiongardSync(false);
             load();
           }}
         />

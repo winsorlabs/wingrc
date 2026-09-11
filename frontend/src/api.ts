@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, IntegrationConnector, InvitedUser, MfaEnrollData, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductRow, RaciAssignmentRow, ScopeChange, ScopeEntity, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, IntegrationConnector, InvitedUser, LiongardEnvironmentMapping, LiongardEnvironmentOption, MfaEnrollData, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductRow, RaciAssignmentRow, ScopeChange, ScopeEntity, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -634,6 +634,53 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ changes }),
     }),
+
+  // ── Liongard connector (D.2) — org-scoped; see routers/scope.py's own
+  // module docstring for why apply below is applyWorkbookImport, not a
+  // second endpoint: its body doesn't actually depend on the source.
+  // Errors here (wrong Environment id, expired key, rate limit) carry a
+  // specific, real message in `detail` -- parsed explicitly below rather
+  // than via the plain req() helper, matching dryRunWorkbookImport's own
+  // pattern, so the UI shows Liongard's actual error, not "400 Bad
+  // Request". ──────────────────────────────────────────────────────────
+  getLiongardEnvironmentMapping: (orgId: string) =>
+    req<LiongardEnvironmentMapping | null>(`/orgs/${orgId}/integrations/liongard/environment`),
+
+  listLiongardEnvironments: async (orgId: string): Promise<LiongardEnvironmentOption[]> => {
+    const r = await fetch(`${BASE}/orgs/${orgId}/integrations/liongard/environments`);
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<LiongardEnvironmentOption[]>;
+  },
+
+  setLiongardEnvironmentMapping: async (
+    orgId: string,
+    liongardEnvironmentId: number
+  ): Promise<LiongardEnvironmentMapping> => {
+    const r = await fetch(`${BASE}/orgs/${orgId}/integrations/liongard/environment`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ liongard_environment_id: liongardEnvironmentId }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<LiongardEnvironmentMapping>;
+  },
+
+  liongardSyncDryRun: async (orgId: string): Promise<DryRunResult> => {
+    const r = await fetch(`${BASE}/orgs/${orgId}/integrations/liongard/sync/dry-run`, {
+      method: "POST",
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<DryRunResult>;
+  },
 
   // ── Integrations (D.1) — deployment-wide, not org-scoped; msp_admin only
   // (backend/app/routers/integrations.py). ──────────────────────────────

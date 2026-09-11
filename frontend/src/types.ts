@@ -498,11 +498,32 @@ export interface ScopeChange {
   natural_key: string;
   field_diffs: Record<string, [unknown, unknown]>;
   incoming: ScopeChangeIncoming | null;
+  warnings: string[];
 }
 
 export interface DryRunResult {
   summary: Record<string, number>;
   changes: ScopeChange[];
+  // Pull-level warnings not tied to any one change row -- e.g. a source
+  // record with no usable natural key, so it never became a row at all.
+  // Always empty for the workbook import path today.
+  warnings: string[];
+}
+
+// ── Liongard connector (D.2) — mirrors backend/app/routers/scope.py's
+// Liongard section field-for-field. Org-scoped, unlike IntegrationConnector
+// above (see models.py's OrgLiongardEnvironment docstring for why: the
+// credential is deployment-wide, but which Environment maps to which
+// WinGRC org is per-tenant data).
+export interface LiongardEnvironmentOption {
+  id: number;
+  name: string;
+}
+
+export interface LiongardEnvironmentMapping {
+  liongard_environment_id: number;
+  liongard_environment_name: string | null;
+  updated_at: string | null;
 }
 
 // ── Integrations (D.1) — mirrors backend/app/routers/integrations.py's
