@@ -1102,6 +1102,111 @@ Items without a status are planned but not yet started.
     Postgres that only Jane's 4 assignments carried
     (`skipped_inactive_contact: 0` — correct, since the cascade already
     took care of it) with a matching `raci.copy_forward` audit log entry.
+- **D.2 — Liongard device/user pull into scope_entity** (2026-09-11) —
+  closes root `ROADMAP.md`'s D.2 item. `org_liongard_environment`
+  (migration 0035) maps a WinGRC org to a Liongard Environment id;
+  `connectors/liongard.py` pulls devices and identities;
+  `importers/liongard.py` maps them onto the canonical
+  `scope_entity.attributes` vocabulary as the third writer alongside the
+  manual Add Asset UI and the workbook importer. Routes through the
+  existing `reconcile()` → dry-run → apply flow — zero parallel ingest
+  path, per the task's explicit constraint.
+  - **Liongard's real API differs from the roadmap's assumptions — found
+    by pulling the actual schema, not assumed:** the published reference
+    docs (docs.liongard.com) don't show response bodies, so the real
+    request/response shapes came from Liongard's own Postman collection.
+    The inventory pull lives under `/api/v2/`, a POST "query" endpoint
+    with a request body (`{Environment, Filters, Pagination}`), not the
+    `/api/v1/` GET-list shape the existing D.1 test-connection call uses.
+    Environment ids are small integers, not UUIDs. Every record carries
+    `InventoryState` (`Discovery`/`Inventory`/`Archive`) — this connector
+    pulls and keeps only `"Inventory"` (Liongard-confirmed), filtered
+    client-side after fetching since the API's own `Filters` operator
+    syntax isn't documented anywhere reachable and guessing at it risks
+    silently returning zero rows instead of an honest error.
+  - **Apply reuses `POST /imports/workbook/apply` unmodified** — its body
+    never actually depended on the source being a workbook. The one real
+    fix needed: the audit log's `context.source` was hardcoded to
+    `"workbook"`; now reads the change's own `incoming.source`, so a
+    connector-applied row is correctly labeled `"liongard"` in the audit
+    trail instead of silently mislabeled.
+  - **Natural-key convergence with the workbook path, deliberately
+    mirrored:** devices key on `SerialNumber` (falling back to
+    `Hostname`), matching `importers/workbook.py`'s
+    Serial-or-Asset-Tag-then-Name precedent, so the same physical asset
+    scoped through both paths converges on one `scope_entity` row rather
+    than duplicating. Identities key on `Email` (Liongard's own
+    account-grouping key per its docs), falling back to `Username` then
+    `DisplayName`.
+  - **`responsible_contact_id` deliberately never set for Liongard
+    devices** — unlike the workbook's "Owner / Primary User" column,
+    Liongard's device-profile schema has no authoritative owner field;
+    `LastLoginUser` is telemetry (who last logged in), not an ownership
+    assignment, and mapping it would silently misattribute ownership.
+  - **No canonical PERSON attribute vocabulary exists anywhere in this
+    codebase** (only DEVICE/SOFTWARE has one) — identity records write
+    Liongard's own field names straight through, same as workbook-imported
+    users keep their raw column names; inventing a canonical PERSON schema
+    was out of scope for this task.
+  - Pagination loops on `Data.Pagination.HasMoreRows` with a 200-page
+    safety cap, not a fixed page count — a pull that silently stopped
+    partway through and presented itself as complete would mark real
+    assets MISSING in the reconcile diff, exactly the wrong failure mode.
+  - Errors are specific, not generic: wrong Environment id, expired key,
+    and HTTP 429 rate-limiting each surface their own message end to end
+    (connector → router → frontend), matching D.1's Test-connection
+    discipline.
+  - Two real bugs found and fixed via the integration test suite on the
+    bench stack, not assumed: (1) `session.refresh()` after commit on the
+    new RLS-protected `org_liongard_environment` table raised
+    `InvalidRequestError` — `app.current_org` is already reset by the time
+    commit() returns, so the refresh's SELECT matches zero rows under RLS;
+    fixed by dropping the refresh, matching `create_scope_entity`'s
+    existing no-refresh pattern. (2) Reading `row.updated_at` after
+    committing an UPDATE (re-mapping an org to a different Environment)
+    hit the column's server-side `onupdate=func.now()` expiry path — the
+    ORM marks that column expired after an UPDATE flush rather than
+    populating it via `RETURNING`, so the attribute access lazy-reloaded
+    under the same already-cleared `app.current_org`. Both are real
+    production failure modes (a real `COMMIT` clears `SET LOCAL` the same
+    way), not test-harness artifacts — fixed by setting `updated_at`
+    explicitly in Python instead of depending on the DB round-trip.
+  - Frontend: `LiongardSyncWizard` (environment picker → Sync Now →
+    review → apply) reuses `ScopeChangeDiffTable`, extracted from
+    `AssetImportWizard` — which now also surfaces the per-row and
+    pull-level dry-run warnings the backend always computed but the
+    frontend had never actually rendered (a real pre-existing gap, not new
+    scope, found while building the shared component).
+  - Tests: canonical-attribute mapping and natural-key fallback (unit),
+    connector pagination/`InventoryState` filtering/error surfacing with a
+    mocked `urlopen` (unit), and the full mapping/dry-run/apply HTTP flow
+    including the MISSING/NEW/CHANGED classification (integration). 851
+    backend tests, ruff, `tsc -b`, `vitest run` (62/62, `LiongardSyncWizard`
+    5/5), and `vite build` all clean on the bench stack.
+  - **No real Liongard key was available for this task — said so plainly
+    rather than presenting a mock-only run as end-to-end proof.** Verified
+    instead against a small real HTTP server
+    (`liongard_mock_server.py`, stdlib `http.server`) returning example
+    payloads captured from Liongard's own Postman collection, reached over
+    genuine network calls from `connectors/liongard.py` inside the bench
+    stack — not monkeypatched out — including real pagination (two actual
+    HTTP round-trips for a 2-page device pull), a real `X-ROAR-API-KEY`
+    auth-header check, and a Discovery-state row the connector had to
+    filter out over the wire, not just in a canned test fixture. Full flow
+    driven over real HTTP (login, TOTP MFA enrollment, environment listing,
+    mapping, dry-run, apply) against the running app: dry-run #1 reported
+    3 NEW (2 devices + 1 person, the Discovery-state device correctly
+    absent), apply reported 3 applied, and a direct Postgres query
+    confirmed all 3 `scope_entity` rows carry the canonical keys
+    (`make_oem`, `model`, `version`, `device_subtype`, `asset_tag`,
+    `mac_addresses`), `source="liongard"`, and a `source_ref` identifying
+    the environment + pull timestamp — plus `scope_entity.import_apply`
+    audit entries correctly labeled `source="liongard"` (the fix above).
+    Re-ran the identical dry-run afterward and confirmed
+    `summary={"new": 0, "changed": 0, "unchanged": 3}` — no spurious churn
+    on a re-sync.
+  - D.3 (approval workflow, scheduling) remains not built, per the task's
+    explicit scope boundary.
 
 ---
 
