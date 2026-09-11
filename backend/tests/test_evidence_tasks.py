@@ -59,6 +59,17 @@ def client(db_session, fake_msp_admin):
 def seeded(db_session):
     catalog = seed_catalog(db_session)
     seed_baselines(db_session)
+    # G.9: seed_baselines() (the real seeder, unlike this file's other
+    # fixtures) always creates products unpublished -- gates
+    # activate_org_product. This file tests evidence-task fan-out, not the
+    # publish gate, so publish everything seeded here rather than in
+    # seed_baselines itself (which must stay unpublished-by-default for
+    # real deployments). Lives on this shared base fixture, not just
+    # `scenario` below, so every test in this file gets it -- including
+    # the ones that re-query a product fresh by key instead of going
+    # through `scenario`.
+    for p in db_session.scalars(select(Product)):
+        p.is_published = True
     db_session.flush()
     return catalog
 
@@ -77,13 +88,6 @@ def scenario(db_session, seeded, fake_msp_admin):
         select(Product).where(Product.key == "rocketcyber")
     ).first()
     assert product is not None, "rocketcyber baseline not seeded"
-    # G.9: seed_baselines() (real seeder, unlike this file's other
-    # fixtures) always creates a product unpublished -- gates
-    # activate_org_product. This file tests evidence-task fan-out, not
-    # the publish gate, so publish it here rather than in seed_baselines
-    # itself (which must stay unpublished-by-default for real deployments).
-    product.is_published = True
-    db_session.flush()
 
     org = Organization(id=fake_msp_admin.org_id, name=f"EvTaskOrg-{uuid.uuid4().hex[:8]}")
     db_session.add(org)

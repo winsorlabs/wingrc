@@ -330,6 +330,7 @@ def test_import_apply_creates_rows_unpublished(admin_client, db_session):
 
 
 def test_import_apply_invalid_yaml_writes_nothing(admin_client, db_session):
+    _seed_framework_and_control(db_session)
     bad_yaml = b"""
 product:
   key: never-created
