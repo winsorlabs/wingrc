@@ -77,6 +77,13 @@ def scenario(db_session, seeded, fake_msp_admin):
         select(Product).where(Product.key == "rocketcyber")
     ).first()
     assert product is not None, "rocketcyber baseline not seeded"
+    # G.9: seed_baselines() (real seeder, unlike this file's other
+    # fixtures) always creates a product unpublished -- gates
+    # activate_org_product. This file tests evidence-task fan-out, not
+    # the publish gate, so publish it here rather than in seed_baselines
+    # itself (which must stay unpublished-by-default for real deployments).
+    product.is_published = True
+    db_session.flush()
 
     org = Organization(id=fake_msp_admin.org_id, name=f"EvTaskOrg-{uuid.uuid4().hex[:8]}")
     db_session.add(org)

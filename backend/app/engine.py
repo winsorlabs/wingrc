@@ -414,6 +414,19 @@ def activate_org_product(
 
     Returns {"objectives_updated": N, "tasks_created": N}.
     """
+    product_check = session.get(Product, product_id)
+    if product_check is None:
+        raise ValueError(f"Product {product_id} not found")
+    if not product_check.is_published:
+        # G.9: is_published is the deliberate act that exposes a reviewed
+        # baseline mapping to tenants. Blocking activation here, not just
+        # filtering the tenant's own product list, is what makes "cannot
+        # be activated by any path, including direct API calls" actually
+        # true -- a client that already knows product_id (e.g. from
+        # before it was unpublished, or by guessing) must not be able to
+        # activate it by calling this endpoint directly.
+        raise ValueError(f"Product {product_id} is not published")
+
     op = session.scalars(
         select(OrgProduct).where(
             OrgProduct.org_id == org_id,

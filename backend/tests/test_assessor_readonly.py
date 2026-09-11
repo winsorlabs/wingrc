@@ -146,6 +146,9 @@ def _seed_scenario(db_session, *, org_id: uuid.UUID) -> dict:
 
     # Already-active product (drives an evidence task + a linked reference
     # artifact) and a not-yet-active product (target of the activate case).
+    # G.9: is_published gates activation (engine.py:activate_org_product) --
+    # this file tests read-only/assessor permission behavior, not the
+    # publish gate itself, so both are seeded already-published.
     product_active = Product(
         framework_id=fw.id,
         key=f"prod-active-{uuid.uuid4().hex[:8]}",
@@ -154,6 +157,7 @@ def _seed_scenario(db_session, *, org_id: uuid.UUID) -> dict:
         category="EDR",
         asset_type="SPA",
         role="Test product",
+        is_published=True,
     )
     product_inactive = Product(
         framework_id=fw.id,
@@ -163,6 +167,7 @@ def _seed_scenario(db_session, *, org_id: uuid.UUID) -> dict:
         category="EDR",
         asset_type="SPA",
         role="Test product",
+        is_published=True,
     )
     db_session.add_all([product_active, product_inactive])
     db_session.flush()

@@ -104,6 +104,8 @@ def ref(db_session: Session) -> dict:
         category="ESP",
         asset_type="SPA",
         role="Test product for magic-loop integration tests",
+        is_published=True,  # G.9 gates activate_org_product; this file
+        # tests the magic loop itself, not the publish gate.
     )
     db_session.add(product)
     db_session.flush()

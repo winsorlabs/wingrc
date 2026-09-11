@@ -140,6 +140,12 @@ def _seed_rocketcyber(
         category="ESP",
         asset_type="SPA",
         role="Authoritative SIEM and 24/7 managed SOC.",
+        # G.9: is_published gates tenant visibility/activation (Product
+        # defaults to False -- see migration 0039's backfill note for why
+        # every real seeded product is deliberately marked True there).
+        # This test is about activation/list behavior for an already-
+        # published product, not publish/unpublish itself.
+        is_published=True,
     )
     db_session.add(product)
     db_session.flush()
@@ -386,6 +392,7 @@ def test_platform_only_controls_excluded_from_activation(client, db_session, fak
         framework_id=fw.id, key=f"rc-plat-{uuid.uuid4().hex[:8]}",
         name="RC Platform Test", provider="Kaseya", category="ESP",
         asset_type="SPA", role="Test product.",
+        is_published=True,  # G.9 -- see _seed_rocketcyber's own comment
     )
     db_session.add(product)
     db_session.flush()
@@ -467,6 +474,7 @@ def test_coverage_basis_counts_in_product_list(client, db_session, fake_msp_admi
         framework_id=fw.id, key=f"basis-test-{uuid.uuid4().hex[:8]}",
         name="Basis Test Product", provider="Test", category="ESP",
         asset_type="SPA", role="Test.",
+        is_published=True,  # G.9 -- see _seed_rocketcyber's own comment
     )
     db_session.add(product)
     db_session.flush()

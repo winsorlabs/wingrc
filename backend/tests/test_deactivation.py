@@ -99,6 +99,8 @@ def ref(db_session: Session, fake_msp_admin) -> dict:
     product = Product(
         framework_id=fw.id, key=f"prod-{uuid.uuid4().hex[:6]}", name="Test Tool",
         provider="Test Inc", category="EDR", asset_type="SPA", role="Test product",
+        is_published=True,  # G.9 gates activate_org_product; this file tests
+        # deactivation/reactivation behavior, not the publish gate itself.
     )
     db_session.add(product)
     db_session.flush()

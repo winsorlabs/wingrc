@@ -419,13 +419,25 @@ def activate_product(
     if assessment is None or assessment.org_id != org_id:
         raise HTTPException(status_code=404, detail="Assessment not found")
 
-    result = activate_org_product(
-        session,
-        org_id=org_id,
-        product_id=product_id,
-        assessment_id=assessment_id,
-        configuration_notes=body.configuration_notes,
-    )
+    try:
+        result = activate_org_product(
+            session,
+            org_id=org_id,
+            product_id=product_id,
+            assessment_id=assessment_id,
+            configuration_notes=body.configuration_notes,
+        )
+    except ValueError as e:
+        # G.9: activate_org_product raises ValueError for "not found" and
+        # "not published" -- translated to a real 4xx here rather than an
+        # uncaught 500, since "cannot be activated by any path, including
+        # direct API calls" needs a clean, testable rejection, not a raw
+        # exception. session.rollback() undoes activate_org_product's own
+        # flush()es before the ValueError, if any ran (the not-published
+        # check fires before any write in this function, but the pattern
+        # is defensive regardless of which check inside it raised).
+        session.rollback()
+        raise HTTPException(status_code=404, detail=str(e)) from e
     session.commit()
     return ActivateOut(**result)
 
@@ -443,9 +455,17 @@ def list_products_for_assessment(
     if assessment is None or assessment.org_id != org_id:
         raise HTTPException(status_code=404, detail="Assessment not found")
 
+    # G.9: is_published is the deliberate publish/unpublish gate on the
+    # baseline library -- an unpublished product (imported but not yet
+    # reviewed and exposed) must not appear in any tenant's Tools panel.
+    # See migration 0038 for why every product seeded before this filter
+    # existed is deliberately backfilled to is_published=True rather than
+    # left False (which would otherwise silently empty every tenant's
+    # already-active tool list the moment this filter shipped).
     products = session.scalars(
         select(Product)
         .where(Product.framework_id == assessment.framework_id)
+        .where(Product.is_published.is_(True))
         .order_by(Product.name)
     ).all()
 
