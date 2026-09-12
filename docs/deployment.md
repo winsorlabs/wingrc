@@ -186,14 +186,25 @@ exact two things a tenant would notice first.
 ```bash
 cd ~/dev/wingrc
 git pull --ff-only
-docker compose build backend nginx   # nginx bundles the frontend build — rebuild it whenever frontend/ changed, not just backend/
-docker compose up -d backend nginx   # migrations run automatically via backend's `alembic upgrade head && exec uvicorn ...` startup command
+docker compose build backend worker nginx   # nginx bundles the frontend build — rebuild it whenever frontend/ changed, not just backend/
+docker compose up -d backend worker nginx   # migrations run automatically via backend's `alembic upgrade head && exec uvicorn ...` startup command
 ```
 
 `db` and `minio` are untouched by an application-code deploy — only
-`backend` and `nginx` need to be recreated. Confirm exactly which
-migrations ran from the logs, by revision id, rather than trusting
-"migrations applied" as a summary:
+`backend`, `worker`, and `nginx` need to be recreated. **`worker` runs the
+same image as `backend`, built from the same `backend/Dockerfile`, but
+Compose does not restart it just because `backend` did** — it's a
+separate service with its own container, so a deploy that rebuilds and
+recreates only `backend` (forgetting `worker`) silently leaves the
+scheduler running old code indefinitely; this file exists precisely
+because this kind of drift bit us once already (see this section's own
+opening note), so don't let it happen to `worker` too. If your deployment
+doesn't run `worker` at all (host cron against `wingrc jobs-run-due`
+instead — see `cli.py`), there's nothing to rebuild here and this note
+doesn't apply.
+
+Confirm exactly which migrations ran from the logs, by revision id,
+rather than trusting "migrations applied" as a summary:
 
 ```bash
 docker logs <backend-container> 2>&1 | grep -A1 'Running upgrade'
@@ -247,6 +258,15 @@ meaningless.
   anything — say so plainly rather than reporting the read as verified;
   it's the degenerate case, not a positive result. `org_product` was empty
   on this box during the `0039` deploy for the same reason.
+
+- **If this deploy touches `worker` (scheduler.py) or adds/changes a
+  registered job:** `docker compose ps worker` should show it running
+  (there's no HEALTHCHECK on this one — it has no HTTP endpoint to probe,
+  just confirm it hasn't exited/restart-looped), and Administration ->
+  Scheduled Jobs (msp_admin) should show the affected job's `last_run`
+  advancing on its own interval rather than staying stale. Don't just
+  trust that a code change to a job's body took effect — wait for (or
+  don't wait past) one real interval and re-check.
 
 ### 7e. If a data-modifying migration did the wrong thing
 

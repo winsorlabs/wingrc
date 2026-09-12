@@ -1,3 +1,40 @@
+# Shared by backend and worker below (YAML anchor) -- both need the
+# identical DB/storage/credential-key config since they connect to the
+# same database and the worker's own job bodies (scheduler.py) may need
+# the same connector credentials backend does. Anchored once so the two
+# can't drift apart the way docs/deployment.md's own §7 warns an update
+# procedure can if only one of them gets remembered.
+x-backend-env: &backend-env
+  WINGRC_DATABASE_URL: postgresql+psycopg://wingrc:wingrc@db:5432/wingrc
+  WINGRC_TEST_DATABASE_URL: postgresql+psycopg://wingrc:wingrc@db:5432/wingrc_test
+  # Set explicitly (not left to Settings.environment's Python-level
+  # default) so `wingrc reset-dev`'s production guard (cli.py) sees a
+  # real "development" value here rather than reading as unset --
+  # unset now refuses, on purpose, since that's the actual shape of a
+  # fresh production deploy where nobody set this yet.
+  WINGRC_ENVIRONMENT: development
+  WINGRC_STORAGE_ENDPOINT: http://minio:9000
+  # Set WINGRC_STORAGE_PUBLIC_ENDPOINT in your host .env to the address
+  # browsers use to reach MinIO. Behind the nginx reverse proxy (see
+  # docs/deployment.md) this is the dedicated storage subdomain, e.g.
+  # https://storage.YOUR_HOSTNAME — NOT a path under the main app
+  # hostname; MinIO's own bucket routing needs the unprefixed path, so
+  # this must be a separate host, not a path prefix.
+  # Without it, presigned URLs contain the internal 'minio' hostname
+  # which browsers can't resolve.
+  WINGRC_STORAGE_PUBLIC_ENDPOINT: ${WINGRC_STORAGE_PUBLIC_ENDPOINT:-}
+  WINGRC_STORAGE_ACCESS_KEY: wingrc
+  WINGRC_STORAGE_SECRET_KEY: wingrc-dev-secret
+  # D.1: encrypts third-party integration credentials (Liongard, SMTP,
+  # etc.) at rest — see crypto.py. This dev key is fine for local/bench
+  # use only; a real deployment MUST set its own via a host .env override
+  # (WINGRC_CREDENTIAL_ENCRYPTION_KEYS in the shell/`.env`, not this
+  # file) and keep it out of git. crypto.py fails closed — with this
+  # unset, storing/reading any integration credential is refused
+  # outright rather than falling back to plaintext.
+  WINGRC_CREDENTIAL_ENCRYPTION_KEYS: ${WINGRC_CREDENTIAL_ENCRYPTION_KEYS:-dev:DFKuK2mEIJpixerxDMGU5xyQQwpWQBZxCFjOaZKjNSs=}
+  PYTHONPATH: /app
+
 services:
   db:
     image: postgres:18
@@ -46,36 +83,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    environment:
-      WINGRC_DATABASE_URL: postgresql+psycopg://wingrc:wingrc@db:5432/wingrc
-      WINGRC_TEST_DATABASE_URL: postgresql+psycopg://wingrc:wingrc@db:5432/wingrc_test
-      # Set explicitly (not left to Settings.environment's Python-level
-      # default) so `wingrc reset-dev`'s production guard (cli.py) sees a
-      # real "development" value here rather than reading as unset --
-      # unset now refuses, on purpose, since that's the actual shape of a
-      # fresh production deploy where nobody set this yet.
-      WINGRC_ENVIRONMENT: development
-      WINGRC_STORAGE_ENDPOINT: http://minio:9000
-      # Set WINGRC_STORAGE_PUBLIC_ENDPOINT in your host .env to the address
-      # browsers use to reach MinIO. Behind the nginx reverse proxy (see
-      # docs/deployment.md) this is the dedicated storage subdomain, e.g.
-      # https://storage.YOUR_HOSTNAME — NOT a path under the main app
-      # hostname; MinIO's own bucket routing needs the unprefixed path, so
-      # this must be a separate host, not a path prefix.
-      # Without it, presigned URLs contain the internal 'minio' hostname
-      # which browsers can't resolve.
-      WINGRC_STORAGE_PUBLIC_ENDPOINT: ${WINGRC_STORAGE_PUBLIC_ENDPOINT:-}
-      WINGRC_STORAGE_ACCESS_KEY: wingrc
-      WINGRC_STORAGE_SECRET_KEY: wingrc-dev-secret
-      # D.1: encrypts third-party integration credentials (Liongard, etc.)
-      # at rest — see crypto.py. This dev key is fine for local/bench use
-      # only; a real deployment MUST set its own via a host .env override
-      # (WINGRC_CREDENTIAL_ENCRYPTION_KEYS in the shell/`.env`, not this
-      # file) and keep it out of git. crypto.py fails closed — with this
-      # unset, storing/reading any integration credential is refused
-      # outright rather than falling back to plaintext.
-      WINGRC_CREDENTIAL_ENCRYPTION_KEYS: ${WINGRC_CREDENTIAL_ENCRYPTION_KEYS:-dev:DFKuK2mEIJpixerxDMGU5xyQQwpWQBZxCFjOaZKjNSs=}
-      PYTHONPATH: /app
+    environment: *backend-env
     volumes:
       - ./backend:/app
       # reset-dev's pre-flight pg_dump (cli.py) writes here — a named
@@ -87,6 +95,35 @@ services:
     command: >
       sh -c "alembic upgrade head &&
              exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  # The job scheduler's worker process (scheduler.py) -- same image as
+  # backend, different command, so scheduled jobs (currently: expiring
+  # stale invite tokens) run in a genuinely separate process and can never
+  # freeze the API's single uvicorn worker the way a slow in-process job
+  # would (see scheduler.py's own module docstring for the incident this
+  # design avoids repeating). depends_on backend's own health, not just
+  # db's, so the worker never queries job_run before backend's startup
+  # `alembic upgrade head` has created it.
+  #
+  # OPTIONAL: an operator may omit this service entirely and use host cron
+  # against `wingrc jobs-run-due` instead (see cli.py's jobs-run-due
+  # docstring) -- the backend has no dependency on this service at request
+  # time and stays fully functional either way. Omitting it just means
+  # scheduled jobs never run, which the Administration -> Scheduled Jobs
+  # panel then shows honestly (every job's "last run" stays empty) rather
+  # than silently.
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment: *backend-env
+    volumes:
+      - ./backend:/app
+    command: wingrc worker
 
   # Sole host-facing entry point (ports 80/443). Reverse-proxies to backend
   # and serves the frontend's production build directly — no frontend dev
