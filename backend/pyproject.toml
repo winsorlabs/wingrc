@@ -30,6 +30,11 @@ dev = [
     "pytest>=8.3",
     "ruff>=0.8",
     "httpx2",
+    # Fake SMTP server for the email connector's tests (connectors/smtp.py,
+    # email_service.py) -- stdlib `smtpd` was removed in 3.12 (PEP 594), so
+    # this is a genuinely new test-only dependency, not a stand-in for
+    # something already available. Never imported outside tests/.
+    "aiosmtpd>=1.4",
 ]
 ai = [
     "anthropic>=0.40",

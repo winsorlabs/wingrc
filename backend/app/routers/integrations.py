@@ -73,6 +73,11 @@ class IntegrationOut(BaseModel):
     help_text: str
     config_fields: list[str]
     credential_fields: list[str]
+    kind: str
+    # config_fields/credential_fields entries that may be submitted blank
+    # (e.g. SMTP's username/password for an unauthenticated relay) — the
+    # frontend uses this to skip the "required" marker on those fields.
+    optional_fields: list[str]
 
 
 class IntegrationCredentialIn(BaseModel):
@@ -111,6 +116,8 @@ def _out(spec: ConnectorSpec, row: IntegrationConnection | None) -> IntegrationO
         help_text=spec.help_text,
         config_fields=list(spec.config_fields),
         credential_fields=list(spec.credential_fields),
+        kind=spec.kind,
+        optional_fields=sorted(spec.optional_fields),
     )
 
 
@@ -133,14 +140,23 @@ def set_credential(
 ) -> IntegrationOut:
     spec = _get_spec(connector_key)
 
-    missing = [f for f in spec.config_fields if not body.config.get(f, "").strip()]
-    missing += [f for f in spec.credential_fields if not body.credential.get(f, "").strip()]
+    missing = [
+        f for f in spec.config_fields
+        if f not in spec.optional_fields and not body.config.get(f, "").strip()
+    ]
+    missing += [
+        f for f in spec.credential_fields
+        if f not in spec.optional_fields and not body.credential.get(f, "").strip()
+    ]
     if missing:
         raise HTTPException(
             status_code=400, detail=f"Missing required field(s): {', '.join(missing)}"
         )
 
-    credential_payload = json.dumps({f: body.credential[f] for f in spec.credential_fields})
+    # .get(f, "") rather than bare indexing: an optional_fields entry may be
+    # absent from the request body entirely (not just blank), and the
+    # missing-field check above deliberately doesn't require it to be present.
+    credential_payload = json.dumps({f: body.credential.get(f, "") for f in spec.credential_fields})
     try:
         ciphertext, key_version = encrypt_credential(credential_payload)
     except CredentialCipherError as e:
@@ -158,7 +174,7 @@ def set_credential(
         row = IntegrationConnection(connector_key=connector_key)
         session.add(row)
 
-    row.config = {f: body.config[f] for f in spec.config_fields}
+    row.config = {f: body.config.get(f, "") for f in spec.config_fields}
     row.encrypted_credential = ciphertext
     row.credential_key_version = key_version
     row.credential_hint = hint
