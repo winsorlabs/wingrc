@@ -1079,113 +1079,121 @@ the same export the CLI's `wingrc render` command already produces.
 
 ---
 
-## M.7, M.8 — ADR 0009 continuation: cross-org access administration
+## M.7, M.8 — ADR 0009 continuation: cross-org access administration ✅ SHIPPED 2026-09-12 (pending live wl-util-1 verification — see G.11's own status note)
 
 **Not `G`-numbered.** These are backend prerequisites for `G.11` below, but
 they extend ADR 0009's multi-org model (`org_membership`, the M.1–M.6
 sequence already landed) rather than being UI-restructure work — recorded
 under that ADR's own numbering for the same reason the ADR's "Flagged"
-section tracks `M.5`/`M.6` there and not here. `docs/adr/0009-multi-org-
-user-access.md` should get a corresponding update landing these, matching
-how M.1–M.6 are documented there today.
+section tracks `M.5`/`M.6` there and not here. See
+`docs/adr/0009-multi-org-user-access.md`'s new "M.7/M.8: the directory and
+the grant/revoke screen" section for the full design writeup — including
+the MSP-org-designation question this slice's own prompt raised as a new
+blocker, which turned out to already be solved by M.1's `deployment_settings`
+table, and what `User.role`/`User.home_org_id` are still authoritative for
+now that a real screen needed a precise answer instead of a theoretical one.
 
 ### M.7 — Deployment-wide user directory read
 
-**Goal:** the pre-org screen needs to show existing users to grant access
-to. **No endpoint today lists users outside one org.**
-`GET /orgs/{org_id}/users` (`routers/users.py:list_users`) filters by
-`User.home_org_id == org_id` — deliberately org-scoped, correct for its
-existing purpose (an org's own Users admin panel), wrong shape for "every
-user in this deployment, regardless of home org."
+Shipped as `auth.all_users_directory()` (migration `0040`), matching the
+planned SECURITY DEFINER pattern, called from the new
+`backend/app/routers/admin_users.py` (`GET /admin/users`). One deliberate
+deviation from this section's original spec: **the endpoint does not
+return `User.role`.** As of M.4, that column no longer governs access
+anywhere in the normal request path (`auth.py:_role_for_membership` treats
+it as a fallback for a membership row that should always exist) — showing
+it in a directory next to real per-org `org_membership.role` values would
+suggest it means something it doesn't. The function instead returns each
+user's `home_org_id` (still genuinely authoritative — see the ADR update)
+plus a `memberships` JSONB array (`org_id`/`org_name`/`role` per grant),
+built as one aggregate query rather than a second function + a client-side
+join. `GET /admin/users/msp-org` was added alongside it — not in this
+section's original scope, but needed for G.11's "invite into our MSP"
+action; it resolves `deployment_settings.msp_org_id` (M.1, already built)
+and returns `null` on a fresh deployment rather than erroring.
 
-**Design:** same SECURITY DEFINER pattern M.2/M.5 already established for
-"read across every org in one query" — `auth.msp_role_users()` (M.2) is
-almost this already (`SELECT id, role FROM user WHERE role IN
-('msp_admin','msp_engineer')`) but doesn't return enough for a picker UI
-(email, display_name) and doesn't include non-MSP users, which a grant
-target legitimately could be (granting a `customer_poc` from one client
-secondary access to a related org, or a `c3pao_assessor` a second
-engagement — both explicitly named as real scenarios in ADR 0009's
-Decision section). New `auth.all_users_directory()` SECURITY DEFINER
-function, EXECUTE restricted to `wingrc_app` (same restriction rationale as
-every M.2/M.5 function: this discloses identity information across org
-boundaries, not something to leave at Postgres's PUBLIC default).
-
-**Exit criteria:** new endpoint returns every `User` row's
-`(id, email, display_name, role, home_org_id)`, `msp_admin`-only
-(`require_role`, matching the access-tier this whole feature sits at).
+Role gate: `msp_admin` only, router-wide — matches the exit criteria
+exactly, and deliberately does **not** admit `consultant_admin` the way
+Integrations/Tools do (`lib/roles.ts`'s new `USER_DIRECTORY_ROLES`, its
+own constant).
 
 ### M.8 — Grant/revoke an existing user's org_membership
 
-**Goal:** the actual mutation — give a user found via M.7 access to a
-specific org, or remove it.
+Shipped in `routers/users.py` (not a new file — org-scoped, so it lives
+alongside the other `/orgs/{org_id}/...` identity-administration routes):
+- `POST /orgs/{org_id}/memberships` — reuses `org_membership.py`'s
+  existing `_grant()` directly, exactly as planned. Idempotent
+  (`granted: false` on a repeat call, not an error); `200`, not `201`,
+  since it may or may not have just created a row.
+- `DELETE /orgs/{org_id}/memberships/{user_id}` — the self-protection
+  question this section flagged as "a real edge case to design
+  deliberately" resolved into **two** unconditional guards, not one:
+  self-revoke is always refused (mirrors `deactivate_user`'s existing
+  unconditional self-block), and revoking the last `msp_admin` membership
+  from an org is always refused (checked by counting remaining
+  `msp_admin` memberships on that org, excluding the target). Neither
+  guard is conditional on "unless someone else already has access" — an
+  admin can't self-revoke even when a co-admin remains, matching
+  `deactivate_user`'s own unconditional shape rather than inventing a
+  more permissive variant.
 
-**Design:** this is `org_membership.py`'s existing `_grant()`/
-`auth.grant_org_membership()` SECURITY DEFINER function (M.2), already
-built, already idempotent (`ON CONFLICT DO NOTHING`), already carrying the
-"no authorization check of its own, caller is responsible" contract — this
-slice is the first *deliberate, admin-initiated* caller of it, as opposed
-to M.2's automatic new-org/new-user provisioning. No new migration. New
-endpoint only:
-- `POST /orgs/{org_id}/memberships` (`{user_id, role}`) — `msp_admin`-only,
-  `require_org_access("msp_admin")` (the target org's own admin grants
-  access into it — matches every other org-scoped admin action's gate).
-- `DELETE /orgs/{org_id}/memberships/{user_id}` — revoke. Needs a self-
-  protection check mirroring `deactivate_user`'s existing pattern (an admin
-  should not be able to revoke their own last remaining membership and
-  lock themselves out) — flagged as a real edge case to design deliberately,
-  not fixed here.
-
-**Exit criteria:** grant/revoke round-trip correctly updates
-`org_membership`; revoking the caller's own only membership is rejected
-with a clear error, tested explicitly (this is the one genuinely new
-correctness risk in an otherwise-thin wrapper around existing M.2 machinery).
+Both events are audit-logged (`org_membership.grant`/`.revoke`) —
+`audit.py`'s docstring event list was updated to match.
 
 ---
 
-## G.11 — Pre-org screen (MSP admin: grant org access)
+## G.11 — Pre-org screen (MSP admin: grant org access) ✅ SHIPPED 2026-09-12 (pending live wl-util-1 verification)
 
 **Goal:** the MSP-admin surface for granting existing users access to
-organizations, per the request. **Depends on M.7 and M.8.**
+organizations, per the request. **Depended on M.7 and M.8**, both shipped
+in the same slice.
 
-**Current state:** no directory/grant/revoke backend or UI exists yet —
-M.7/M.8 and this screen's actual content are all still unbuilt. **The host
-shell this screen was always meant to land in now exists, though**
-(2026-09-11, out of the Integrations-relocation task, not this one):
-`App.tsx` gained a deployment-tier `"admin"` screen state — reached from
-`OrgPicker` via a header button gated by role, not nested under any org's
-side nav — and `frontend/src/components/AdminArea.tsx` is its shell,
-holding a small internal section nav (Integrations is the only section
-today). The mount-point question this section used to leave open
-("likely the natural landing point is `OrgPicker` itself... gaining an
-admin-only entry point") is answered: that's exactly what got built.
-Whoever picks up M.7/M.8/this screen next adds a new `AdminSection` value
-and a new entry in `AdminArea.tsx`'s section nav — the screen itself, its
-role gate for wherever `AccessAdminPanel` lands, and the directory/grant/
-revoke work below are all still to build.
-
-### Changes
-- `frontend/src/components/AccessAdminPanel.tsx` (new) — user directory
-  (M.7) with search/filter, org picker, role selector, grant button; a
-  per-org membership list with revoke actions (M.8).
-- Mount point: **msp_admin-only, deployment-tier**, alongside G.9's baseline-
-  import admin screen (both are "MSP staff administering the deployment,"
-  not "an org's own settings") — not nested under any single org's side
-  nav, since granting access to org B shouldn't require already being
-  inside org A's UI. Lands as a new section in `AdminArea.tsx` (see
-  "Current state" above), not a separate top-level screen.
+### What shipped
+- `frontend/src/components/UserDirectoryPanel.tsx` (new) — named for what
+  it does rather than `AccessAdminPanel` (this section's original working
+  name): a cross-org user directory table (name, email, home org, and a
+  chip per `org_membership` row showing org + role, each with its own
+  inline revoke), a "Grant access…" action per user opening an org+role
+  picker, and an "Invite to `<MSP org name>`" action that becomes the
+  meaningful "add a user to our MSP" affordance now that the MSP org has
+  a name — it calls the existing `POST /orgs/{org_id}/users` invite
+  endpoint against `GET /admin/users/msp-org`'s resolved org id, not a
+  new invite mechanism. Degrades to a plain prompt ("no MSP org
+  designated yet — run `manage.py bootstrap-admin`") when that lookup
+  returns `null`, per this slice's own explicit fresh-deployment
+  requirement.
+- Mount point: `AdminArea.tsx` gains a third section, **Users** — named
+  that, not "Security" (the tenant nav's equivalent category name),
+  because it holds exactly one thing today and "Security" would
+  overpromise; renaming later if a deployment-wide audit-log view
+  arrives is cheap. Gated to `msp_admin` only (`canSeeUserDirectory`),
+  the one section of the three that does *not* admit `consultant_admin` —
+  `AdminArea` now takes a `currentUserRole` prop specifically so this one
+  section can decide whether to render its own nav entry, which
+  Integrations/Tools never needed to do.
+- No bulk "grant to every org" action was built for any role. If one is
+  ever added, it must exclude `consultant_admin` — `org_membership.py`'s
+  `_AUTO_PROVISION_ROLES` deliberately leaves that role out, and a
+  bulk-grant affordance on this exact screen is where that intent would
+  most easily get undone by accident.
 
 ### Tests
-Browser smoke test: as `msp_admin`, find an existing `customer_poc` from
-org A via the directory, grant them access to org B, confirm they can now
-open org B (the literal end-to-end proof this whole ADR 0009 sequence has
-been building toward since M.4's regression test).
+Backend: `test_admin_users.py` (directory cross-org read, role gate) and
+new cases in `test_org_membership.py` (grant creates/idempotent/reaches-
+the-real-endpoint, revoke removes access for real, last-admin refused,
+self-revoke refused, unknown user/membership 404). Frontend:
+`UserDirectoryPanel.test.tsx` (directory rendering, grant flow, revoke
+confirm-then-execute flow, fresh-deployment prompt, invite-into-MSP-org
+flow) and `AdminArea.test.tsx` extended for the new section's role gate.
 
-### Exit criteria
-`tsc -b` clean, `pytest` green for M.7/M.8, live walkthrough on wl-util-1 —
-same verification bar ADR 0009's own M.4 exit criteria set, since this is
-the feature that finally makes that fix *usable* by an admin rather than
-only self-healing via auto-provisioning.
+### Exit criteria / verification status
+Backend suite, `ruff`, and local collection are clean (see this doc's own
+verification-status convention from G.9). Live wl-util-1 walkthrough — the
+literal end-to-end proof this ADR 0009 sequence has been building toward
+since M.4's regression test (grant a `customer_poc` access to a second
+org via the directory, confirm they can now open it) — had not run as of
+this section's last edit; see the roadmap's Done-section entry for
+whatever it says once it has.
 
 ---
 

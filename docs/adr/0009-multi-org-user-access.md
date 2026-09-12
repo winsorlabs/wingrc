@@ -13,9 +13,14 @@ plus a live walkthrough (created a second org as `msp_admin`, completed
 `OnboardingWizard` end to end, confirmed data stayed scoped between the
 two orgs) and a second smoke test (`c3pao_assessor`/`customer_poc` each
 land directly on their own org, no picker, no create-org form). See
-`docs/roadmap.md`'s Done section for the closed defect writeup. `M.7`/`M.8`
-(deployment-wide user directory + admin-initiated grant/revoke — see
-`docs/PLAN-gui-restructure.md`'s `G.11`) not started.
+`docs/roadmap.md`'s Done section for the closed defect writeup.
+
+**`M.7`/`M.8` (deployment-wide user directory + admin-initiated
+grant/revoke, `G.11`) landed 2026-09-12** — see this ADR's new "M.7/M.8:
+the directory and the grant/revoke screen" section below for the design,
+the MSP-org-designation decision it depends on, and what `User.role`/
+`User.home_org_id` turned out to still be authoritative for once M.7's
+directory made that question concrete instead of theoretical.
 
 **Severity: this documents a functional defect in already-shipped
 behavior, not groundwork for unbuilt features.** An msp_admin cannot open
@@ -745,3 +750,112 @@ anchoring them to a slightly-approximate-but-real org.
   is preserved byte-for-byte by the backfill in Migration step 2, and step
   3 only *adds* access (existing MSP users gain reach into other existing
   orgs), never removes any.
+
+## M.7/M.8: the directory and the grant/revoke screen
+
+Landed 2026-09-12 (`docs/PLAN-gui-restructure.md`'s `G.11`). Two things
+worth recording here rather than only in that plan doc: the MSP-org
+designation this slice depends on turned out to already exist, and what
+`User.role`/`User.home_org_id` are still authoritative for, once a real
+screen needed to answer that question precisely instead of leaving it
+implicit.
+
+### The MSP-org designation was already built — M.1 anticipated this
+
+The slice that requested M.7/M.8 opened with what looked like a new
+blocker: `Organization` has no MSP/customer distinction, so "invite a new
+user into our MSP" has no org to target. Read closely, this is *not* a
+gap — it's exactly what `deployment_settings.msp_org_id` (this ADR's own
+Boundary section, migration `0023`, M.1) already exists to answer. That
+table was designed as "an integrity anchor, not an access-control input,"
+but a deployment-level pointer to an existing org id is precisely the
+shape a "which org is ours" UI question needs too, and there is no reason
+to duplicate it with a second pointer. `GET /admin/users/msp-org`
+(`routers/admin_users.py`) is the first thing to actually *read*
+`deployment_settings` outside `manage.py bootstrap-admin` itself —
+confirmed by grep before writing it, not assumed. This does not change
+what `deployment_settings` is for: still integrity, not authorization;
+still written exactly once, by `bootstrap-admin`, never by a runtime
+endpoint. The read only resolves which org to target for an ordinary,
+already-gated `POST /orgs/{org_id}/users` call — it is not a new
+authorization decision.
+
+The "exactly one" and "fresh deployment" concerns this decision needed to
+address were both already handled by M.1's design, not newly solved
+here: the `CHECK (id = 1)` singleton constraint enforces exactly one row
+can ever exist, and migration `0023`'s own backfill deliberately inserts
+zero rows on a fresh database (no `msp_admin` exists yet to anchor to) —
+`bootstrap-admin` populates it at first run instead. `GET
+/admin/users/msp-org` returns `null` in that state rather than erroring,
+and the Users screen shows a plain prompt ("no MSP org designated yet —
+run `manage.py bootstrap-admin`") instead of hiding the invite action
+silently or crashing. Nothing about login or session resolution reads
+this table at all, so a deployment sitting in this state authenticates
+normally — verified, not assumed, by `test_admin_users.py::TestMspOrg::
+test_returns_none_when_not_designated`.
+
+### What `User.role`/`User.home_org_id` are still authoritative for
+
+M.7's own directory needed to answer this precisely: it shows a user's
+access, and showing the wrong thing would be worse than showing nothing.
+Traced against the actual `auth.py` implementation, not assumed from this
+ADR's own aspirational Design section:
+
+- **`User.home_org_id` remains genuinely authoritative** for two things,
+  both narrower than "which orgs can this user reach": session
+  resolution's default `app.current_org` before a specific route's
+  `org_id` is known (`_resolve_session`, `_resolve_api_token`), and the
+  audit-log anchor for account-level events with no org in the URL (login,
+  password change, MFA — this ADR's own "Impact on the audit log" section
+  already called this out correctly).
+- **`User.role` is no longer authoritative for anything.** `auth.py:
+  _role_for_membership` reads it only as a fallback when a membership row
+  is unexpectedly missing for `(user_id, org_id)` — logged as a warning
+  when that actually fires, since every user-creation path (`bootstrap-
+  admin`, `invite_user`, `create_api_user`) provisions one. It is
+  effectively dead weight pending `User.role`'s eventual removal (this
+  ADR's own Migration step 4, not yet done).
+
+Three docstrings (`models.py`'s `OrgMembership`, `org_membership.py`'s
+module docstring, `test_org_membership.py`'s module docstring) still
+asserted the pre-M.4 state — "nothing reads `org_membership` for
+authorization yet" — as if it were still current, months after M.4
+actually shipped. Fixed as its own commit, ahead of this feature work,
+for the same reason this ADR's own opening paragraph exists: a stale
+claim about what's authoritative is exactly the kind of thing that causes
+a false alarm or a wrong design decision later, and this project has
+already paid that cost once.
+
+**Consequence for the directory's own design:** `auth.all_users_directory()`
+(migration `0040`) deliberately does not return `User.role` at all. A
+directory built against the literal M.7 spec text would have shown a bare
+"role" column that no longer means what a reader would assume it means;
+showing per-org `org_membership.role` values instead (the real, current
+access facts) avoids manufacturing exactly the kind of stale-looking
+signal this section just finished correcting three instances of in prose.
+
+### Grant/revoke — M.8
+
+`POST /orgs/{org_id}/memberships` reuses `org_membership.py`'s existing
+`_grant()` (→ `auth.grant_org_membership()`, migration `0025`) directly —
+no new SECURITY DEFINER function, no parallel write path. It is
+org-scoped (`require_org_access("msp_admin")`), not deployment-tier,
+because the target org's own admin is who grants access into it, matching
+every other org-scoped admin action.
+
+`DELETE /orgs/{org_id}/memberships/{user_id}` needed no bypass either —
+by the time it runs, `require_org_access` has already set
+`app.current_org` to the one org being acted on, so an ordinary DELETE
+against `org_membership` is correctly RLS-scoped. Two unconditional
+guards, checked before the delete: self-revoke is always refused
+(mirrors `deactivate_user`'s existing unconditional self-block, not a
+new pattern), and revoking the last `msp_admin` membership from an org is
+always refused, checked by counting remaining `msp_admin` memberships on
+that org excluding the target. Neither guard existed anywhere in this
+codebase before this slice — `org_membership.py` only ever granted.
+
+No bulk-grant action was built for either M.7 or M.8, and `consultant_admin`
+was not added to `require_role` here — it's identity administration
+across every client on the deployment, msp_admin only, matching
+`lib/roles.ts`'s `USER_DIRECTORY_ROLES` (its own constant, not a reuse of
+`TOOLS_LIBRARY_ROLES`/`INTEGRATIONS_ROLES`).
