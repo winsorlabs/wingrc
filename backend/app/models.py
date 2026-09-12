@@ -1470,11 +1470,25 @@ class ApiToken(Base):
 class OrgMembership(Base):
     """One user's access grant to one org, with a role scoped to that grant.
 
-    See docs/adr/0009-multi-org-user-access.md. `User.home_org_id`/
-    `User.role` remain authoritative for *authorization* until the M.4
-    enforcement cutover — require_org_access() doesn't consult this table
-    yet. As of M.2, rows here are fully correct and complete: auto-
-    provisioning (routers/orgs.py's create_org(), routers/users.py's
+    See docs/adr/0009-multi-org-user-access.md. **This table is
+    authoritative for access as of M.4** (landed 2026-08-17, verified on
+    wl-util-1): `auth.py:require_org_access()` reads this table directly,
+    403s if no row exists, and takes the effective role from the
+    membership it finds. `User.home_org_id` remains authoritative for a
+    different, narrower job — session resolution's default
+    `app.current_org` before a specific route's `org_id` is known, and the
+    audit-log anchor for account-level events with no org in the URL —
+    but not for deciding which orgs a user can reach. `User.role` is no
+    longer authoritative for anything: `_role_for_membership` (auth.py)
+    falls back to it only if a membership row is unexpectedly missing,
+    logging a warning when that happens, since every user-creation path
+    (bootstrap-admin, invite_user, create_api_user) provisions one.
+    (An earlier version of this docstring said the opposite — that
+    `require_org_access()` didn't consult this table yet. That was
+    correct when M.2 landed and became stale once M.4 shipped without
+    this comment being updated to match; corrected here rather than left
+    for the next reader to discover by tracing the code themselves.)
+    Auto-provisioning (routers/orgs.py's create_org(), routers/users.py's
     invite_user(), via org_membership.py) keeps every existing
     msp_admin/msp_engineer granted into every org. Role travels with the
     membership, not the person: the same user can hold a different role
@@ -1488,12 +1502,15 @@ class OrgMembership(Base):
     msp_engineer are.
 
     RLS is enabled (`org_membership_tenant_isolation`, same single-org
-    `app.current_org` pattern as every other org-scoped table) for
-    defense-in-depth consistency with the rest of the schema, even though
-    nothing queries this table under RLS enforcement in the normal
-    per-request path yet (M.4). The cross-org reads/writes auto-
-    provisioning needs — "every existing MSP user," "grant into every
-    other org" — cannot be expressed as any single value of
+    `app.current_org` pattern as every other org-scoped table), and as of
+    M.4 an ordinary per-org request (e.g. `require_org_access`'s own
+    membership lookup, or M.8's grant/revoke endpoints) genuinely runs
+    under it — `app.current_org` is set to the one org the request is
+    about, RLS matches the query to it, no bypass involved. The
+    cross-org reads/writes auto-provisioning (and M.7's directory) need
+    — "every existing MSP user," "grant into every other org," "every
+    membership row across every org" — cannot be expressed as any single
+    value of
     app.current_org at all; those go through SECURITY DEFINER functions
     (auth.msp_role_users/auth.grant_org_membership, migration 0025),
     matching auth.resolve_session/find_user_for_login's existing

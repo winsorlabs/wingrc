@@ -2,10 +2,19 @@
 
 Two entry points, called from routers/orgs.py's create_org() and
 routers/users.py's invite_user() respectively — the two places a new
-(user, org) pairing can come into existence. Neither is wired into
-require_org_access() yet; that's M.4. As of M.2, org_membership rows are
-fully correct and complete, but User.home_org_id/User.role remain the
-only thing access control actually reads.
+(user, org) pairing can come into existence. **M.4 landed 2026-08-17**:
+auth.py's require_org_access() reads org_membership directly and is now
+authoritative for access — see OrgMembership's own model docstring for
+the full account. (This module's docstring used to say the opposite —
+"neither is wired into require_org_access() yet" — which was true at M.2
+and went stale the moment M.4 shipped without this comment being updated;
+fixed here rather than left for the next reader to trip over.) The two
+functions below are still exactly what they were at M.2: the
+auto-provisioning rule that keeps every existing msp_admin/msp_engineer
+granted into every org, called from the same two call sites. M.8 (grant/
+revoke initiated by an admin through the new Administration → Users
+screen, not this file) reuses `_grant` directly rather than duplicating
+its SECURITY DEFINER call.
 
 Role-at-grant-time semantics (ADR 0009's Decision, stated explicitly per
 that section rather than left to fall out of the loop): every grant made

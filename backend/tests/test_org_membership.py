@@ -8,9 +8,15 @@ M.2: auto-provisioning. Neither create_org()/invite_user() nor migration
 deployment can't exhibit the multi-org case at all) — every multi-org
 scenario below is seeded synthetically for exactly that reason.
 
-require_org_access() still gates on User.home_org_id/User.role exclusively
-as of M.2 — org_membership is fully correct and complete after this
-slice, but nothing reads it for authorization yet. That's M.4.
+The tests below cover M.1/M.2 (schema + auto-provisioning) as of the
+session that wrote them — require_org_access() did not yet consult
+org_membership at that point. **M.4 has since landed** (2026-08-17):
+require_org_access() now reads org_membership directly and is
+authoritative for access — see OrgMembership's model docstring and
+test_org_access_guard.py's own module docstring for the real coverage of
+that cutover. (This file's docstring used to assert the pre-M.4 state as
+still current; corrected here as part of the same M.7/M.8 pass that
+found the identical stale claim in models.py and org_membership.py.)
 
 Run in-container:
     docker compose exec backend pytest tests/test_org_membership.py -m integration -v
