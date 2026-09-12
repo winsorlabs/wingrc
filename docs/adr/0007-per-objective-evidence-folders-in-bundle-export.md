@@ -18,8 +18,9 @@ a tree to that objective's evidence; every file lives in one undifferentiated
 folder regardless of which control or objective it satisfies.
 
 `Evidence` is many-to-many with objectives via `EvidenceStateLink`
-(`models.py:630`, "one artifact can satisfy multiple control objectives via
-EvidenceStateLink (evidence minimization)"), so a target folder shape of
+(`Evidence`'s own model docstring, "an artifact is stored once and can
+satisfy multiple control objectives via EvidenceStateLink (evidence
+minimization)"), so a target folder shape of
 `evidence/<family>/<control>/<objective>/` immediately raises three
 questions this ADR settles:
 

@@ -71,6 +71,9 @@ confirming — both in the UI and with a direct `psql` query against
 "unassigned" bucket, per that widget's own code comment) was confirmed to
 actually populate a named contact once evidence-task and RACI data
 existed together. G.8–G.11 and M.7/M.8 remain proposed, not implemented.
+**Correction (2026-09-12):** G.9, G.11, and M.7/M.8 have since shipped and
+been verified — see their own sections below and `docs/roadmap.md`'s Done
+section. G.8 and G.10 remain not started.
 **Baseline:** `e481a00` (G.1 landed and verified; supersedes the prior
 `83fe49f` baseline this plan was originally written against).
 **Scope:** replace the current screen-state-machine navigation with a persistent
@@ -1225,4 +1228,4 @@ through the real endpoint. Full details and the corrected numbers are in
 | Library → Baselines/Plans/Policies/Procedures | Nothing | **New `Document` model**, full CRUD, **entire frontend** (G.10) |
 | Security → Users, API Tokens, Audit Log | Full | Nav relocation only |
 | Org dashboard | Nothing | One new small table (G.2), aggregation endpoint(s), **entire frontend** (G.3/G.4) |
-| Pre-org admin (grant access) | `org_membership` model + grant primitive (M.2), deployment-tier host shell (`AdminArea.tsx`, 2026-09-11) | Directory read + grant/revoke endpoints (M.7/M.8), the panel itself (G.11) |
+| Pre-org admin (grant access) | `org_membership` model + grant primitive (M.2), deployment-tier host shell (`AdminArea.tsx`, 2026-09-11) | Shipped 2026-09-12 (M.7/M.8/G.11): `auth.all_users_directory()`, `POST`/`DELETE /orgs/{org_id}/memberships`, `UserDirectoryPanel.tsx` — verified on an isolated bench stack and live against real Postgres, see `docs/roadmap.md`'s Done section |

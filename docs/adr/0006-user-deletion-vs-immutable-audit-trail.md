@@ -8,7 +8,7 @@ docs/PLAN-auth-rbac-completion.md's "User deletion (ADR 0006)" section
 
 The I.7 admin surface (UsersPanel, `docs/PLAN-auth-rbac-completion.md`) gives
 MSP admins a users list. `DELETE /orgs/{org_id}/users/{user_id}`
-(`backend/app/routers/users.py:235`, `deactivate_user`) already exists behind
+(`backend/app/routers/users.py`, `deactivate_user`) already exists behind
 that HTTP verb — but despite the method name, it does not delete the row. It
 sets `is_active = False`, revokes sessions, and logs `user.deactivate`. That is
 the only "removal" affordance in the product today, and it is fully
@@ -20,7 +20,7 @@ which is exactly the kind of one-off, ungoverned operation a real admin
 feature should replace.
 
 The obstacle is that `audit_log` is deliberately append-only:
-`test_audit_service_has_no_mutating_paths` (`backend/tests/test_deactivation.py:514`)
+`test_audit_service_has_no_mutating_paths` (`backend/tests/test_deactivation.py`)
 asserts `audit.py` contains no `session.update()`/`session.delete()` path, and
 `audit.py`'s module docstring documents a pending DB-level hardening step
 (`REVOKE UPDATE, DELETE ON audit_log FROM wingrc`, also noted in migration
@@ -116,7 +116,9 @@ str(user.id)` OR (`entity_type = 'user'` AND `entity_id = user.id`).
    delete.** Revoke sessions; cascade-delete `user_session`, `mfa_backup_code`,
    `api_token` (nothing compliance-relevant lives there); scrub `email` to a
    deterministic, collision-free placeholder (`deleted-{user.id}@wingrc.invalid`
-   — satisfies `uq_user_org_email`), `display_name` to `"Deleted user"`, and
+   — satisfies `uq_user_home_org_id_email`, renamed from `uq_user_org_email`
+   by ADR 0009's M.3 `org_id`→`home_org_id` rename, after this ADR was
+   written), `display_name` to `"Deleted user"`, and
    null `entra_oid`/`totp_secret`/`password_hash`. Mark the row permanently
    inert in a way distinguishable from ordinary deactivation (a
    `deleted_at` timestamp, not reuse of `is_active` — an admin can reactivate

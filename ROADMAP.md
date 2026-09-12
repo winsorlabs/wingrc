@@ -896,16 +896,18 @@ not because it's still open.
 
 **What lands when auth ships:**
 - The `audit_log.actor` field carries real user identity (no schema change needed
-  if the actor field was wired as "system" placeholders). **Partially true —
-  verified 2026-09-07, and still genuinely open:** `audit.py`'s own module
-  docstring says it plainly — `routers/users.py` (and `auth.py`) events carry
-  the real authenticated actor now, but `assessments.py`/`evidence.py`/
-  `contacts.py`/`orgs.py`/`bundle.py` "have not been retrofitted yet and
-  still default to `actor='system'`... that retrofit is not part of this
-  slice." So the core CMMC data-mutation audit trail — control-state
-  changes, evidence attach/detach, statement edits — still logs `"system"`
-  as the actor even though the real user is known via auth. This is a real
-  remaining gap, not resolved by auth shipping alone.
+  if the actor field was wired as "system" placeholders). **Closed — fixed
+  2026-09-07, same day as the "still genuinely open" note directly below
+  this line was written, and never updated to match.** `log_event()`'s
+  `actor`/`actor_type` now default to a ContextVar (`_current_actor`)
+  stamped once per request by `auth.py`'s `get_current_user()` — see
+  `docs/roadmap.md`'s Done section, "Audit log actor retrofit for core
+  CMMC routers" entry, for the fix and the real threading bug it
+  surfaced along the way. `assessments.py`/`evidence.py`/`contacts.py`/
+  `orgs.py`/`bundle.py`, and every `engine.py` assessment-lifecycle
+  function reached through them, now log the real authenticated actor —
+  confirmed against `audit.py`'s current module docstring, not assumed
+  from this note alone.
 - `org_id` scoping in every endpoint is enforced via the session's user context,
   not just a path parameter (the path parameter becomes a claim check).
 - RBAC guards on the router layer (FastAPI dependency injection).

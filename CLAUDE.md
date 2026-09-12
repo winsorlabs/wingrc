@@ -103,8 +103,10 @@ Violating these produces incorrect assessments. Enforce them in every review.
 
 React 19 + Vite (SPA) · FastAPI (Python 3.13) · PostgreSQL 18 + pgvector ·
 SQLAlchemy 2.0 + Alembic · S3-compatible storage (MinIO in dev, Azure Blob /
-AWS S3 in cloud). One container image; deploy to Docker / Azure Container Apps /
-GCC High / air-gapped.
+AWS S3 in cloud). Two application images — `backend` (FastAPI) and `nginx`
+(reverse proxy, bundling the built frontend as static files), per
+`docker-compose.yml` — plus unmodified `postgres`/`minio` base images;
+deploy to Docker / Azure Container Apps / GCC High / air-gapped.
 
 - Keep the domain core DB-agnostic and unit-testable (`backend/app/domain.py`,
   `backend/app/assessment.py`).
@@ -119,14 +121,14 @@ GCC High / air-gapped.
 
 | Path | Purpose |
 |---|---|
-| `backend/app/models.py` | All SQLAlchemy models (single file, ~1100 lines) |
+| `backend/app/models.py` | All SQLAlchemy models (single file, ~1660 lines) |
 | `backend/app/assessment.py` | Pure domain functions: `compute_sprs`, `magic_loop_updates` |
 | `backend/app/engine.py` | DB adapter: `start_assessment`, `activate_org_product`, `deactivate_org_product`, `recompute_sprs` |
 | `backend/app/bundle_service.py` | Bundle snapshot + ZIP render (pure function over frozen dataclasses) |
 | `backend/app/routers/` | FastAPI routers: `assessments`, `bundle`, `contacts`, `evidence`, `frameworks`, `orgs` |
 | `backend/app/storage.py` | `StorageClient` ABC + `MinIOClient` + `NullStorageClient` |
 | `backend/app/audit.py` | `log_event()` — writes `AuditLog` rows |
-| `backend/migrations/` | Alembic migrations (currently 0001–0015) |
+| `backend/app/migrations/` | Alembic migrations (currently 0001–0040) |
 | `baselines/` | YAML product baselines (`heimdal.yaml`, `rocketcyber.yaml`, …) |
 | `docs/fips.md` | FIPS 140-2/140-3 crypto boundary documentation |
 | `docs/architecture.md` | Authoritative architecture description (the five layers) — companion to this file's terse session version |
@@ -302,7 +304,14 @@ stubs in other test files inherit the default and are unaffected.
 
 ---
 
-## Data model snapshot (current migrations through 0017)
+## Data model snapshot (accurate as of migration 0017 — not maintained
+since; the schema has grown substantially — `OrgMembership`,
+`DeploymentSettings`, `IntegrationConnection`, `OrgLiongardEnvironment`,
+`ProductDocument`, `User`/`UserSession`/`ApiToken`/`PasswordHistory`/
+`MfaBackupCode`, `SprsSnapshot`, among others, none shown below. Read
+`backend/app/models.py` directly for the current, complete schema; treat
+this diagram as an orientation sketch of the core assessment spine, not
+an inventory)
 
 ```
 Organization
@@ -355,7 +364,9 @@ Shipped (migrations 0015–0017): local login + Entra SSO; session cookies
 @ 600k iterations. TOTP MFA with backup codes. Exponential-backoff lockout.
 HIBP k-anonymity check. RLS via `SET LOCAL app.current_org` with SECURITY DEFINER
 functions on a pinned search_path. `wingrc_app` role, NOBYPASSRLS. Router-level
-guards on all routers.
+guards on all routers. Multi-org access (`org_membership`, per-membership
+role — see `docs/adr/0009-multi-org-user-access.md`) is what `require_org_access()`
+actually enforces; a role is not a fixed property of a `User` row.
 
 Roles: `msp_admin`, `consultant_admin`, `msp_engineer`, `customer_poc`,
 `c3pao_assessor`. `consultant_admin` (migration 0034) is a restricted
@@ -457,8 +468,10 @@ key, fail-closed, never persisted) — this is the MSP holding its own
 credential (self-hosted deployment), not WinGRC-the-vendor holding a
 customer's; see root `ROADMAP.md` item D / D.1 / **D.4** for the full
 reasoning and the open question D.4 tracks for a future *hosted* WinGRC.
-D.2 (the actual `scope_entity` pull) and D.3 (approval workflow) are not
-built yet.
+**D.2 ✅ DONE (2026-09-11)** — the actual `scope_entity` pull
+(`importers/liongard.py`), routed through the same dry-run/apply review
+flow the workbook importer uses. See `docs/roadmap.md`'s Done entry for
+the full writeup. D.3 (approval workflow) is not built yet.
 
 ### 9. Evidence task enhancements
 
