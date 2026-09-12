@@ -251,6 +251,21 @@ def revoke_membership(
       guard (a customer_poc-less org is unusual, not broken); an
       msp_admin-less org has no one left who can ever grant access back
       into it through this screen again.
+
+    Note on reachability: this endpoint is itself gated by
+    require_org_access("msp_admin"), so the caller always already holds
+    msp_admin on org_id. That means the second guard can only actually
+    fire, through this endpoint, in the same case the first guard already
+    blocks (user_id == current_user.id) -- if the caller is revoking
+    someone else's msp_admin membership, the caller's own membership is
+    by definition a second one still standing, so "other_admins == 0"
+    can't be true for a different target. The guard is kept anyway as a
+    correct, independent invariant on the data itself (not merely on this
+    one call site) -- cheap, and it stops being redundant the moment any
+    future caller of this logic isn't gated the same way. Tested by
+    calling this function directly, bypassing require_org_access, since
+    that's the only way to construct "last admin, target != caller" at
+    all (see test_org_membership.py's own comment on this).
     """
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="Cannot revoke your own membership")

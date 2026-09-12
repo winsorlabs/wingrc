@@ -28,6 +28,7 @@ import uuid
 import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
@@ -517,6 +518,11 @@ def test_grant_membership_creates_exactly_one_row(client, db_session, fake_msp_a
     db_session.add(home_org)
     db_session.flush()
     _grant(db_session, fake_msp_admin)
+    # fake_msp_admin must itself hold msp_admin on other_org to grant
+    # into it -- M.8's own design ("the target org's own admin grants
+    # access into it"), enforced by require_org_access before this
+    # endpoint's own logic ever runs.
+    _grant(db_session, fake_msp_admin, org_id=other_org.id)
     target = _seed_user(db_session, org_id=home_org.id, role="customer_poc")
     db_session.add(OrgMembership(user_id=target.id, org_id=home_org.id, role="customer_poc"))
     db_session.flush()
@@ -537,6 +543,7 @@ def test_grant_membership_is_idempotent(client, db_session, fake_msp_admin):
     db_session.add(home_org)
     db_session.flush()
     _grant(db_session, fake_msp_admin)
+    _grant(db_session, fake_msp_admin, org_id=other_org.id)
     target = _seed_user(db_session, org_id=home_org.id, role="customer_poc")
     db_session.add(OrgMembership(user_id=target.id, org_id=home_org.id, role="customer_poc"))
     db_session.flush()
@@ -566,6 +573,7 @@ def test_granted_user_can_actually_reach_the_org(client, db_session, fake_msp_ad
     db_session.add(home_org)
     db_session.flush()
     _grant(db_session, fake_msp_admin)
+    _grant(db_session, fake_msp_admin, org_id=other_org.id)
     target = _seed_user(db_session, org_id=home_org.id, role="customer_poc")
     db_session.add(OrgMembership(user_id=target.id, org_id=home_org.id, role="customer_poc"))
     db_session.flush()
@@ -595,6 +603,7 @@ def test_grant_membership_rejects_invalid_role(client, db_session, fake_msp_admi
     db_session.add(home_org)
     db_session.flush()
     _grant(db_session, fake_msp_admin)
+    _grant(db_session, fake_msp_admin, org_id=other_org.id)
     target = _seed_user(db_session, org_id=home_org.id, role="customer_poc")
     db_session.add(OrgMembership(user_id=target.id, org_id=home_org.id, role="customer_poc"))
     db_session.flush()
@@ -613,6 +622,7 @@ def test_grant_membership_unknown_user_404(client, db_session, fake_msp_admin):
     db_session.add(home_org)
     db_session.flush()
     _grant(db_session, fake_msp_admin)
+    _grant(db_session, fake_msp_admin, org_id=other_org.id)
 
     r = client.post(
         f"/orgs/{other_org.id}/memberships",
@@ -628,6 +638,7 @@ def test_revoke_membership_removes_access_for_real(client, db_session, fake_msp_
     db_session.add(home_org)
     db_session.flush()
     _grant(db_session, fake_msp_admin)
+    _grant(db_session, fake_msp_admin, org_id=other_org.id)
     target = _seed_user(db_session, org_id=home_org.id, role="customer_poc")
     db_session.add(OrgMembership(user_id=target.id, org_id=home_org.id, role="customer_poc"))
     db_session.add(OrgMembership(user_id=target.id, org_id=other_org.id, role="customer_poc"))
@@ -650,41 +661,47 @@ def test_revoke_membership_removes_access_for_real(client, db_session, fake_msp_
 
 
 @pytest.mark.integration
-def test_revoke_last_msp_admin_refused(client, db_session, fake_msp_admin):
-    """fake_msp_admin is themself the only msp_admin on other_org -- this
-    is the client fixture's own identity, not a second seeded user, since
-    the guard cares about count-of-admins-on-the-org, not who's asking."""
-    home_org = Organization(id=fake_msp_admin.org_id, name=f"HomeOrg-{uuid.uuid4().hex[:8]}")
+def test_revoke_last_msp_admin_refused(db_session, fake_msp_admin):
+    """Calls revoke_membership() directly rather than through the HTTP
+    client: the endpoint's own require_org_access("msp_admin") gate means
+    any HTTP caller authorized to reach it already holds msp_admin on
+    other_org, so a *different* target can never actually be "the last
+    admin" through that path (the caller is always a second one still
+    standing) -- see revoke_membership's own docstring note. Calling the
+    function directly, with a current_user who does NOT hold membership
+    on other_org at all, is the only way to exercise this guard against a
+    target that genuinely is the org's sole msp_admin.
+    """
+    from app.routers.users import revoke_membership
+
     other_org = _seed_org(db_session)
-    db_session.add(home_org)
-    db_session.flush()
-    _grant(db_session, fake_msp_admin)
     lone_admin = _seed_user(db_session, org_id=other_org.id, role="msp_admin")
     db_session.add(OrgMembership(user_id=lone_admin.id, org_id=other_org.id, role="msp_admin"))
     db_session.flush()
 
-    r = client.delete(f"/orgs/{other_org.id}/memberships/{lone_admin.id}")
-    assert r.status_code == 409
+    with pytest.raises(HTTPException) as exc_info:
+        revoke_membership(
+            org_id=other_org.id, user_id=lone_admin.id, db=db_session, current_user=fake_msp_admin
+        )
+    assert exc_info.value.status_code == 409
     assert _membership_role(db_session, user_id=lone_admin.id, org_id=other_org.id) == "msp_admin"
 
 
 @pytest.mark.integration
-def test_revoke_last_msp_admin_allowed_when_another_admin_remains(
-    client, db_session, fake_msp_admin
-):
-    home_org = Organization(id=fake_msp_admin.org_id, name=f"HomeOrg-{uuid.uuid4().hex[:8]}")
+def test_revoke_last_msp_admin_allowed_when_another_admin_remains(db_session, fake_msp_admin):
+    from app.routers.users import revoke_membership
+
     other_org = _seed_org(db_session)
-    db_session.add(home_org)
-    db_session.flush()
-    _grant(db_session, fake_msp_admin)
     admin_one = _seed_user(db_session, org_id=other_org.id, role="msp_admin")
     admin_two = _seed_user(db_session, org_id=other_org.id, role="msp_admin")
     db_session.add(OrgMembership(user_id=admin_one.id, org_id=other_org.id, role="msp_admin"))
     db_session.add(OrgMembership(user_id=admin_two.id, org_id=other_org.id, role="msp_admin"))
     db_session.flush()
 
-    r = client.delete(f"/orgs/{other_org.id}/memberships/{admin_one.id}")
-    assert r.status_code == 200
+    result = revoke_membership(
+        org_id=other_org.id, user_id=admin_one.id, db=db_session, current_user=fake_msp_admin
+    )
+    assert result == {"ok": True}
     assert _membership_role(db_session, user_id=admin_one.id, org_id=other_org.id) is None
     assert _membership_role(db_session, user_id=admin_two.id, org_id=other_org.id) == "msp_admin"
 
@@ -709,6 +726,7 @@ def test_revoke_nonexistent_membership_404(client, db_session, fake_msp_admin):
     db_session.add(home_org)
     db_session.flush()
     _grant(db_session, fake_msp_admin)
+    _grant(db_session, fake_msp_admin, org_id=other_org.id)
     stranger = _seed_user(db_session, org_id=home_org.id, role="customer_poc")
     db_session.flush()  # no membership row on other_org for this user
 
