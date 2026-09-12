@@ -1661,3 +1661,82 @@ class OrgLiongardEnvironment(Base):
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), onupdate=func.now()
     )
+
+
+class JobRun(Base):
+    """One execution attempt of a scheduled job (scheduler.py) -- the
+    outbound-email slice's sibling infrastructure prerequisite for D.3.
+
+    This is a compliance record, not just worker plumbing: D.3's daily
+    Liongard sync means the scope boundary can change with no human
+    initiating it, and "when did this last run, did it succeed, what did
+    it produce" is exactly the kind of thing a C3PAO can ask about. So
+    this table follows the same discipline as `audit_log`/`sprs_snapshot`
+    elsewhere in this codebase -- append-only, never retroactively
+    rewritten. A row transitions running -> succeeded/failed exactly once
+    and is never updated again after finished_at is set; a later
+    successful run is a NEW row, not an edit of the failed one. Retention
+    is deliberately unbounded here (no scheduled purge) -- silently
+    truncating this history would be exactly the wrong failure mode for
+    a compliance artifact.
+
+    Deliberately separate from audit_log, not a new audit_log action type:
+    audit_log records *actor-initiated* compliance mutations (a human or
+    an authenticated API caller did X), and a cron tick has no actor. A
+    job whose body changes something audit-worthy (a future D.3 sync
+    writing scope_entity, once that lands through the dry-run/review/apply
+    path) still writes its own ordinary audit_log row for that change --
+    the two tables cross-reference by time/job_name, not by a shared key,
+    since nothing here needs a hard FK into audit_log or vice versa.
+
+    Deployment-wide, like IntegrationConnection/DeploymentSettings above --
+    no org_id, no RLS. A job that touches per-org data must set
+    app.current_org itself for that portion of its work (see scheduler.py's
+    module docstring for the full RLS decision); this table records that
+    the job ran, not which org(s) it touched.
+    """
+
+    __tablename__ = "job_run"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    # No index=True here -- the migration's composite
+    # ix_job_run_job_name_created_at (job_name, created_at DESC) already
+    # serves a plain job_name lookup as its leading column; a separate
+    # single-column index would be redundant.
+    job_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    # When this run was due, per the registry's interval -- distinct from
+    # started_at (when it actually acquired the lock and began), which can
+    # lag scheduled_for under load.
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # NULL while status='running'; set exactly once, at the same time
+    # status moves to its terminal value.
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)  # running|succeeded|failed
+    # Small, job-defined summary of what the run produced (e.g.
+    # {"expired_count": 3}) -- "a reference to whatever it produced," per
+    # this slice's own spec. Never large/unbounded data; a job that
+    # produces something substantial (e.g. a future dry-run diff) belongs
+    # in its own table, referenced here by id, not inlined.
+    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Populated on failure only; never cleared by a later run (that's a
+    # new row). Exception str(), not a full traceback -- enough to explain
+    # what happened without risking a stray secret from deep in a
+    # traceback ending up here (see this codebase's existing discipline
+    # around never logging credentials/tokens).
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # hostname:pid of whichever worker process ran this -- lets an
+    # operator with multiple worker replicas tell them apart; not a
+    # foreign key to anything.
+    worker_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running', 'succeeded', 'failed')", name="ck_job_run_status"
+        ),
+    )
