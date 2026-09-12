@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, IntegrationConnector, InvitedUser, LiongardEnvironmentMapping, LiongardEnvironmentOption, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, ProductLibraryItem, ProductPublishState, ProductRow, RaciAssignmentRow, ScopeChange, ScopeEntity, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserDirectoryEntry, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, IntegrationConnector, InvitedUser, LiongardEnvironmentMapping, LiongardEnvironmentOption, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, ProductLibraryItem, ProductPublishState, ProductRow, RaciAssignmentRow, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserDirectoryEntry, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -800,6 +800,12 @@ export const api = {
   listUserDirectory: () => req<UserDirectoryEntry[]>("/admin/users"),
 
   getMspOrg: () => req<MspOrg | null>("/admin/users/msp-org"),
+
+  // ── Scheduled jobs (job scheduler, D.3's second infrastructure
+  // prerequisite) — deployment-wide, not org-scoped; msp_admin only
+  // (backend/app/routers/scheduled_jobs.py). Read-only in this slice; no
+  // run-now/enable-disable actions exist yet. ───────────────────────────
+  listScheduledJobs: () => req<ScheduledJob[]>("/admin/scheduled-jobs"),
 
   // ── Practitioner notes (migration 0032) — deployment-wide, not
   // org-scoped; msp_admin only (backend/app/routers/objectives.py). ────

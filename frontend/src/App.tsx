@@ -20,7 +20,7 @@ import { SideNav } from "./components/SideNav";
 import { SystemDescriptionForm } from "./components/SystemDescriptionForm";
 import { UsersPanel } from "./components/UsersPanel";
 import { useAuth } from "./hooks/useAuth";
-import { canSeeApiTokens, canSeeAuditLog, canSeeEmail, canSeeIntegrations, canSeeToolsLibrary, canSeeUserDirectory, canSeeUsers } from "./lib/roles";
+import { canSeeApiTokens, canSeeAuditLog, canSeeEmail, canSeeIntegrations, canSeeScheduledJobs, canSeeToolsLibrary, canSeeUserDirectory, canSeeUsers } from "./lib/roles";
 import type { Assessment, OnboardingStatus, Org } from "./types";
 
 // "admin" is the deployment-tier area (Integrations today; G.9/G.11 land
@@ -141,7 +141,8 @@ export function App() {
     (canSeeIntegrations(user?.role) ||
       canSeeEmail(user?.role) ||
       canSeeToolsLibrary(user?.role) ||
-      canSeeUserDirectory(user?.role));
+      canSeeUserDirectory(user?.role) ||
+      canSeeScheduledJobs(user?.role));
 
   if (isLoading) return <div className="app-loading">Loading…</div>;
   if (!user) {

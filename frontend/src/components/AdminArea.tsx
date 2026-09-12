@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { canSeeUserDirectory } from "../lib/roles";
+import { canSeeScheduledJobs, canSeeUserDirectory } from "../lib/roles";
 import { IntegrationsPanel } from "./IntegrationsPanel";
+import { ScheduledJobsPanel } from "./ScheduledJobsPanel";
 import { SideNavCategory, SideNavItem, SideNavRoot } from "./SideNavKit";
 import { ToolsLibraryPanel } from "./ToolsLibraryPanel";
 import { UserDirectoryPanel } from "./UserDirectoryPanel";
@@ -43,7 +44,14 @@ import { UserDirectoryPanel } from "./UserDirectoryPanel";
 // for the full reasoning. That's why this section, alone of the three,
 // needs the caller's role passed in to decide whether to render its nav
 // entry at all.
-type AdminSection = "integrations" | "email" | "tools" | "users";
+//
+// Scheduled Jobs (job scheduler, D.3's second infrastructure prerequisite)
+// is read-only admin visibility into scheduler.py's job registry -- same
+// msp_admin-only gate and same "needs the caller's role" reasoning as
+// Users above, for the same reason (operational/identity-adjacent
+// infrastructure status, not compliance-data configuration; see
+// routers/scheduled_jobs.py's own docstring).
+type AdminSection = "integrations" | "email" | "tools" | "users" | "scheduled-jobs";
 
 interface Props {
   canWrite: boolean;
@@ -53,6 +61,7 @@ interface Props {
 export function AdminArea({ canWrite, currentUserRole }: Props) {
   const [section, setSection] = useState<AdminSection>("integrations");
   const showUsers = canSeeUserDirectory(currentUserRole);
+  const showScheduledJobs = canSeeScheduledJobs(currentUserRole);
 
   return (
     <div className="workspace-shell">
@@ -79,6 +88,16 @@ export function AdminArea({ canWrite, currentUserRole }: Props) {
             </SideNavItem>
           </SideNavCategory>
         )}
+        {showScheduledJobs && (
+          <SideNavCategory>
+            <SideNavItem
+              active={section === "scheduled-jobs"}
+              onClick={() => setSection("scheduled-jobs")}
+            >
+              Scheduled Jobs
+            </SideNavItem>
+          </SideNavCategory>
+        )}
       </SideNavRoot>
 
       <div className="workspace-content">
@@ -86,6 +105,7 @@ export function AdminArea({ canWrite, currentUserRole }: Props) {
         {section === "email" && <IntegrationsPanel canWrite={canWrite} kind="notification" />}
         {section === "tools" && <ToolsLibraryPanel />}
         {section === "users" && showUsers && <UserDirectoryPanel />}
+        {section === "scheduled-jobs" && showScheduledJobs && <ScheduledJobsPanel />}
       </div>
     </div>
   );

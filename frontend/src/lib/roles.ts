@@ -156,6 +156,21 @@ export function canSeeUserDirectory(role: string | null | undefined): boolean {
   return !!role && USER_DIRECTORY_ROLES.has(role);
 }
 
+// Matches routers/scheduled_jobs.py's router-wide require_role("msp_admin")
+// (job scheduler, D.3's second infrastructure prerequisite). msp_admin
+// only, NOT consultant_admin -- deliberately following
+// USER_DIRECTORY_ROLES's reasoning rather than INTEGRATIONS_ROLES'/
+// TOOLS_LIBRARY_ROLES': this is operational/identity-adjacent
+// infrastructure status (is the worker container even running, did a
+// background sweep crash), not compliance-data configuration. See that
+// router's own docstring for why this may need revisiting once D.3 adds
+// per-org sync jobs.
+export const SCHEDULED_JOBS_ROLES = new Set(["msp_admin"]);
+
+export function canSeeScheduledJobs(role: string | null | undefined): boolean {
+  return !!role && SCHEDULED_JOBS_ROLES.has(role);
+}
+
 // Whether the Security nav *category* itself should render at all — hiding
 // an empty category is a nav-shell-specific concern the old per-tab-only
 // gating never had to answer (OrgSettings always showed something, since

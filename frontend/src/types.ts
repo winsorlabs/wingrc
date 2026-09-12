@@ -701,6 +701,26 @@ export interface MspOrg {
   org_name: string;
 }
 
+// Mirrors backend/app/routers/scheduled_jobs.py's ScheduledJobOut. Read
+// only in this slice -- no run-now/enable-disable fields exist because
+// no such actions exist yet.
+export interface ScheduledJobLastRun {
+  started_at: string;
+  finished_at: string | null;
+  status: "running" | "succeeded" | "failed";
+  error: string | null;
+  result: Record<string, unknown> | null;
+  worker_id: string;
+}
+
+export interface ScheduledJob {
+  job_name: string;
+  interval_seconds: number;
+  // null means "never run -- due now," not "no schedule."
+  last_run: ScheduledJobLastRun | null;
+  next_due_at: string | null;
+}
+
 export interface MembershipGrantResult {
   user_id: string;
   org_id: string;
