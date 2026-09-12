@@ -1,7 +1,12 @@
-// This file hand-mirrors three independent backend authorization axes.
-// They are separate concepts, not tiers of one "permission level" — do not
-// conflate them, and if a fourth axis shows up, give it its own constant
-// rather than folding it into one of these:
+// This file hand-mirrors several independent backend authorization axes
+// (ROLE_RANK, READ_ONLY_ROLES, ORG_CREATOR_ROLES, API_TOKEN_ROLES,
+// INTEGRATIONS_ROLES, TOOLS_LIBRARY_ROLES, USER_DIRECTORY_ROLES, and the
+// per-function gates below — count deliberately not pinned here since
+// it's grown before and will again; check the exports themselves, not
+// this comment, for the current set). They are separate concepts, not
+// tiers of one "permission level" — do not conflate them, and if a new
+// axis shows up, give it its own constant rather than folding it into
+// one of these:
 //   - ROLE_RANK: relative seniority, used for clamping assignable roles
 //     (e.g. ApiTokensPanel can't mint a token above the current user's rank).
 //   - READ_ONLY_ROLES: which roles auth.py's require_write() blocks from
