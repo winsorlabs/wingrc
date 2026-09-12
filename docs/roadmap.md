@@ -1307,6 +1307,76 @@ Items without a status are planned but not yet started.
   - M.7/M.8/G.11 themselves were not started here, per the task's explicit
     instruction — only their host shell exists now.
 
+- **Deployment-tier baseline library management (G.9)** — shipped
+  2026-09-11 (`b0feb90`, `81d63d9`, `ae7bf7d`, `2210fb7`; see
+  `docs/PLAN-gui-restructure.md`'s G.9 section for the full design
+  writeup, including the mid-slice scope revision that dropped tenant
+  assignment from this screen entirely). AdminArea's Tools section:
+  library list, read-only tool detail (baseline mapping grouped by
+  control, `platform_only` visually distinct), cross-org deployment
+  footprint via a new SECURITY DEFINER function
+  (`auth.product_deployment_footprint`, migration 0037), documentation
+  attachments (new `product_document` table, migration 0036, reusing
+  `storage.py`/`evidence.py`'s existing upload pipeline), baseline YAML
+  import (dry-run diff + affected-org-count warning, then a re-validated
+  apply), and publish/unpublish. `Product.is_published` — schema since
+  migration 0002, read nowhere until this slice — is now enforced at both
+  real read paths (`list_products_for_assessment`,
+  `engine.py:activate_org_product`), landed as its own commit
+  (`81d63d9`) separate from the screen itself so it can be reverted
+  independently. Migration 0039 backfills every pre-existing product to
+  published.
+  - **Verified on an isolated bench stack** (`docker compose -p
+    wingrc_g9`, fresh clone, own network/volumes, torn down afterward —
+    not the shared instance): full backend suite 867/867 (`pytest`, no
+    `-m` filter — unit + integration together), `ruff check .` clean,
+    `npx tsc -b` clean, `vitest run` 72/72 (5 new: `AdminArea.test.tsx`,
+    `ToolsLibraryPanel.test.tsx`, `ToolImportWizard.test.tsx`), `vite
+    build` clean. Two test bugs surfaced only by running the full suite
+    (not caught locally beforehand) and fixed on the bench branch before
+    merge: `test_import_apply_invalid_yaml_writes_nothing` hadn't seeded
+    a `Framework` row, so the router's own 409 fired before validation
+    ever ran; `test_artifact_dedup_same_key_creates_one_task` used
+    `test_evidence_tasks.py`'s `seeded` fixture directly (not `scenario`),
+    which hadn't been publishing its product.
+  - **The migration-backfill scenario was verified live, not just by
+    reading the SQL**: downgraded the bench app database to
+    `0038_product_source_docs`, seeded the catalog and RocketCyber
+    baseline (landing `is_published=False`, the real default), created a
+    second org and directly inserted an `OrgProduct(status="active")` row
+    for it — simulating a tenant that activated RocketCyber before this
+    slice existed, the way a real deployment's data would look — then ran
+    `alembic upgrade head`. Confirmed by direct query: `is_published`
+    flipped to `true`, the `OrgProduct` row was byte-for-byte unchanged
+    (status, `activated_at`, `product_id`), and calling the real
+    `list_products_for_assessment` function in-process for that org
+    returned RocketCyber as active. This is the specific case flagged in
+    G.9's own exit criteria as the most likely place to do silent damage —
+    an **active**, not merely candidate, pre-existing tenant — and it
+    passed.
+  - **Live visual/keyboard nav-parity check (side nav matching the
+    tenant's) was not completed** — Chrome browser automation could not
+    reach the bench frontend on wl-util-1's LAN address from this
+    session's environment (reachable by `curl` from wl-util-1 itself;
+    every `navigate`/screenshot attempt from the browser tool returned an
+    error page, on two different ports and two tabs). Jarrod chose to
+    merge on the strength of the automated verification above rather than
+    block on this; a manual spot-check of the nav is still worth doing
+    when convenient. Flagged here rather than silently treated as done.
+  - **On `consultant_admin`** (asked for explicitly in the task, not
+    resolved): this role reaching this screen is a stronger version of
+    the tension `routers/integrations.py`'s own docstring already flags —
+    a consultant engaged for one client's assessment could import and
+    publish a baseline change that alters compliance conclusions for
+    every other client on the deployment, not just the one they're
+    engaged on. The gate (`require_role("msp_admin", "consultant_admin")`,
+    mirrored in `lib/roles.ts` as its own `TOOLS_LIBRARY_ROLES` constant,
+    not a reuse of `INTEGRATIONS_ROLES`) is unchanged — Jarrod's call, not
+    made here.
+  - **Baseline versioning (§4 of the task) was explicitly flagged, not
+    fixed** — see Planned item P below. What shipped is visibility (the
+    import dry-run's affected-org-count warning), not a solution.
+
 ---
 
 ## Planned

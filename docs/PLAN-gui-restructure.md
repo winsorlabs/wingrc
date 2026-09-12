@@ -854,7 +854,7 @@ same as they do against `nist-800-171-r2`.
 
 ---
 
-## G.9 — Tools import wizard ✅ SHIPPED 2026-09-11 (pending live wl-util-1 verification — see status line at the end of this section)
+## G.9 — Tools import wizard ✅ SHIPPED AND VERIFIED 2026-09-11 (live nav-parity check not completed — see "Verification status" below)
 
 **Original goal:** "tool library activate/deactivate, plus import wizard /
 manual creation."
@@ -1006,10 +1006,23 @@ makes the blast radius legible to whoever is about to cause it.
 
 ### Verification status
 
-Backend (`pytest`, `ruff check .`) and static typecheck have not yet run on
-a live stack for this slice — see this section's own header. Bench-stack
-verification (two orgs, one with RocketCyber active, per the slice's own
-§6 checklist) is the next step before landing.
+Verified on an isolated bench stack (`docker compose -p wingrc_g9`, fresh
+clone, own network/volumes, torn down after): full backend suite 867/867
+(`pytest`, unit + integration together), `ruff check .` clean, `npx tsc -b`
+clean, `vitest run` 72/72, `vite build` clean. The migration-backfill
+scenario (§6's "test with a tenant that has it active, not just
+candidate") was verified live against a simulated pre-existing tenant, not
+just read from the SQL — see `docs/roadmap.md`'s Done-section entry for
+the exact steps and result. Two test bugs were found and fixed by running
+the full suite (also detailed there).
+
+**Not completed:** the live visual/keyboard nav-parity check. Chrome
+browser automation could not reach the bench frontend on wl-util-1's LAN
+address from this session's environment, despite the server itself
+responding correctly to `curl` from wl-util-1 — a reachability issue in
+this environment, not a code problem. Jarrod chose to merge on the
+strength of the automated verification rather than block on it; a manual
+spot-check is still worth doing when convenient.
 
 ---
 
@@ -1187,7 +1200,7 @@ only self-healing via auto-provisioning.
 | Assessments → current assessments | Full | Nav relocation only |
 | Assessments → templates | `Framework` catalog model (single-framework only) | Decision needed; framework authoring UI + endpoints if (a) (G.8) |
 | Tools → activate/deactivate | Full | None |
-| Tools → baseline library management | YAML parsing logic (CLI-only) | Shipped 2026-09-11 (G.9): admin-tier endpoints + UI, `product_document` table, `is_published` enforcement + backfill migration, `product_deployment_footprint()` SECURITY DEFINER function — pending bench-stack verification |
+| Tools → baseline library management | YAML parsing logic (CLI-only) | Shipped 2026-09-11 (G.9): admin-tier endpoints + UI, `product_document` table, `is_published` enforcement + backfill migration, `product_deployment_footprint()` SECURITY DEFINER function — verified on an isolated bench stack (867/867 backend, `tsc -b`/`vitest`/`vite build` clean); live nav-parity check not completed, see `docs/roadmap.md`'s Done section |
 | Library → Lists | View/export logic + endpoint | Frontend wrapper only |
 | Library → Baselines/Plans/Policies/Procedures | Nothing | **New `Document` model**, full CRUD, **entire frontend** (G.10) |
 | Security → Users, API Tokens, Audit Log | Full | Nav relocation only |
