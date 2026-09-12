@@ -141,6 +141,8 @@ describe("UserDirectoryPanel — invite into the designated MSP org", () => {
       is_active: false,
       invite_token: "raw-token-value",
       invite_expires_at: "2026-09-20T00:00:00Z",
+      email_sent: false,
+      email_error: "Email link cannot be built: WINGRC_PUBLIC_URL is not configured.",
     });
 
     render(<UserDirectoryPanel />);
