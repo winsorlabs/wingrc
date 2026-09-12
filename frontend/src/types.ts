@@ -653,3 +653,43 @@ export interface IntegrationConnector {
   config_fields: string[];
   credential_fields: string[];
 }
+
+// ── Deployment-wide user directory (ADR 0009 M.7/M.8, G.11) — mirrors
+// backend/app/routers/admin_users.py's schemas field-for-field.
+// Deliberately no bare "role" field: as of M.4, User.role no longer
+// governs access anywhere in the normal request path (it's a logged
+// fallback for a membership row that should always exist) -- showing it
+// next to real per-org membership roles would suggest it means something
+// it doesn't. See that router's own docstring.
+export interface MembershipEntry {
+  org_id: string;
+  org_name: string;
+  role: string;
+}
+
+export interface UserDirectoryEntry {
+  id: string;
+  email: string;
+  display_name: string;
+  home_org_id: string;
+  home_org_name: string;
+  deleted_at: string | null;
+  memberships: MembershipEntry[];
+}
+
+// null when no org has been designated yet (a fresh deployment that
+// hasn't run `manage.py bootstrap-admin`) -- the Users screen must
+// degrade to a clear prompt in that state, not error.
+export interface MspOrg {
+  org_id: string;
+  org_name: string;
+}
+
+export interface MembershipGrantResult {
+  user_id: string;
+  org_id: string;
+  role: string;
+  // False when the membership already existed -- the grant call is
+  // idempotent, this isn't a failure.
+  granted: boolean;
+}

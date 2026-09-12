@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, IntegrationConnector, InvitedUser, LiongardEnvironmentMapping, LiongardEnvironmentOption, MfaEnrollData, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, ProductLibraryItem, ProductPublishState, ProductRow, RaciAssignmentRow, ScopeChange, ScopeEntity, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, IntegrationConnector, InvitedUser, LiongardEnvironmentMapping, LiongardEnvironmentOption, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, ProductLibraryItem, ProductPublishState, ProductRow, RaciAssignmentRow, ScopeChange, ScopeEntity, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserDirectoryEntry, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -557,6 +557,22 @@ export const api = {
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   },
 
+  // ── Org-access grant/revoke (ADR 0009 M.8) — org-scoped; msp_admin only
+  // (backend/app/routers/users.py). ─────────────────────────────────────
+  grantMembership: (orgId: string, data: { user_id: string; role: string }) =>
+    req<MembershipGrantResult>(`/orgs/${orgId}/memberships`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  revokeMembership: async (orgId: string, userId: string): Promise<void> => {
+    const r = await fetch(`${BASE}/orgs/${orgId}/memberships/${userId}`, { method: "DELETE" });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+  },
+
   // ── Audit log (read-only, msp_admin only — see backend/app/routers/audit_log.py) ──
   listAuditLog: (
     orgId: string,
@@ -774,6 +790,16 @@ export const api = {
 
   toolDocumentDownloadUrl: (productId: string, documentId: string): string =>
     `${BASE}/admin/products/${productId}/documents/${documentId}/download`,
+
+  // ── User directory (ADR 0009 M.7, G.11) — deployment-wide, not
+  // org-scoped; msp_admin only, NOT consultant_admin (backend/app/
+  // routers/admin_users.py — identity administration, not compliance-data
+  // configuration; see that router's own docstring for the distinction
+  // from Integrations/Tools). Grant/revoke itself is org-scoped —
+  // grantMembership/revokeMembership above. ─────────────────────────────
+  listUserDirectory: () => req<UserDirectoryEntry[]>("/admin/users"),
+
+  getMspOrg: () => req<MspOrg | null>("/admin/users/msp-org"),
 
   // ── Practitioner notes (migration 0032) — deployment-wide, not
   // org-scoped; msp_admin only (backend/app/routers/objectives.py). ────

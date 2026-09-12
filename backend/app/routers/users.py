@@ -29,6 +29,11 @@ POST /orgs/{org_id}/users/{user_id}/delete — permanent hard-delete (ADR 0006, 
 POST /orgs/{org_id}/users/{user_id}/anonymize — scrub PII, keep row + audit trail (ADR 0006)
 POST /orgs/{org_id}/users/api        — create an API user (service account) + its first token
 
+POST   /orgs/{org_id}/memberships            — grant an existing user access to this
+                                                org (ADR 0009 M.8), idempotent
+DELETE /orgs/{org_id}/memberships/{user_id}  — revoke; refuses self-revoke and
+                                                revoking the last msp_admin
+
 GET    /orgs/{org_id}/api-tokens            — list tokens
 POST   /orgs/{org_id}/api-tokens            — create token (raw value returned once)
 DELETE /orgs/{org_id}/api-tokens/{token_id} — revoke
@@ -57,7 +62,7 @@ from ..auth import (
 )
 from ..db import get_session
 from ..models import ApiToken, AuditLog, OrgMembership, User
-from ..org_membership import provision_new_user_memberships
+from ..org_membership import _grant, provision_new_user_memberships
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +174,124 @@ def list_users(
         select(User).where(User.home_org_id == org_id).order_by(User.created_at)
     ).scalars().all()
     return [_user_out(u) for u in rows]
+
+
+# ---------------------------------------------------------------------------
+# Org-access grant/revoke (ADR 0009 M.8) -- admin-initiated org_membership
+# mutation, reached from the new deployment-tier Administration -> Users
+# screen (G.11) via a user found in that screen's directory (M.7,
+# routers/admin_users.py). Org-scoped here, not in admin_users.py: the
+# target org's own msp_admin grants access into it, matching every other
+# org-scoped admin action's gate -- the same reasoning create_org's own
+# comment gives for why granting isn't extended to consultant_admin.
+# ---------------------------------------------------------------------------
+
+class GrantMembershipIn(BaseModel):
+    user_id: uuid.UUID
+    role: str
+
+
+@router.post("/memberships", status_code=200)
+def grant_membership(
+    org_id: uuid.UUID,
+    body: GrantMembershipIn,
+    db: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(require_org_access("msp_admin")),
+):
+    """Idempotent by construction (org_membership.py's _grant / auth.
+    grant_org_membership, ON CONFLICT DO NOTHING) -- granting twice
+    returns granted=False the second time rather than erroring, so the
+    UI can call this without first checking whether a membership already
+    exists. 200, not 201, for the same reason: this may or may not have
+    just created a row.
+    """
+    if body.role not in _VALID_ROLES:
+        raise HTTPException(status_code=422, detail=f"Invalid role: {body.role}")
+    target = db.get(User, body.user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    granted = _grant(db, user_id=body.user_id, org_id=org_id, role=body.role)
+    log_event(
+        db,
+        org_id=org_id,
+        action="org_membership.grant",
+        entity_type="org_membership",
+        entity_id=body.user_id,
+        after_value={"user_id": str(body.user_id), "role": body.role, "granted": granted},
+        context={"admin": str(current_user.id)},
+        actor=str(current_user.id),
+        actor_type=actor_type_for(current_user),
+    )
+    db.commit()
+    return {
+        "user_id": str(body.user_id),
+        "org_id": str(org_id),
+        "role": body.role,
+        "granted": granted,
+    }
+
+
+@router.delete("/memberships/{user_id}", status_code=200)
+def revoke_membership(
+    org_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(require_org_access("msp_admin")),
+):
+    """Two unconditional guards, checked before anything else -- matching
+    deactivate_user's own unconditional self-block above, not a
+    conditional "unless you're not the last one" exception:
+
+    - Self-revoke is always refused. An admin should never be able to
+      lock themselves out of an org through this screen, regardless of
+      whether anyone else still has access.
+    - Revoking the last msp_admin membership from this org is always
+      refused. Every other role can be revoked down to zero without a
+      guard (a customer_poc-less org is unusual, not broken); an
+      msp_admin-less org has no one left who can ever grant access back
+      into it through this screen again.
+    """
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot revoke your own membership")
+
+    membership = db.execute(
+        select(OrgMembership).where(
+            OrgMembership.user_id == user_id, OrgMembership.org_id == org_id
+        )
+    ).scalar_one_or_none()
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Membership not found")
+
+    if membership.role == "msp_admin":
+        other_admins = db.execute(
+            select(func.count()).select_from(OrgMembership).where(
+                OrgMembership.org_id == org_id,
+                OrgMembership.role == "msp_admin",
+                OrgMembership.user_id != user_id,
+            )
+        ).scalar_one()
+        if other_admins == 0:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot revoke the last msp_admin membership from this org",
+            )
+
+    before = {"role": membership.role}
+    db.delete(membership)
+    log_event(
+        db,
+        org_id=org_id,
+        action="org_membership.revoke",
+        entity_type="org_membership",
+        entity_id=user_id,
+        before_value=before,
+        context={"admin": str(current_user.id)},
+        actor=str(current_user.id),
+        actor_type=actor_type_for(current_user),
+    )
+    db.commit()
+    return {"ok": True}
 
 
 class PatchUserIn(BaseModel):

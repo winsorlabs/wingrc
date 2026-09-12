@@ -20,7 +20,7 @@ import { SideNav } from "./components/SideNav";
 import { SystemDescriptionForm } from "./components/SystemDescriptionForm";
 import { UsersPanel } from "./components/UsersPanel";
 import { useAuth } from "./hooks/useAuth";
-import { canSeeApiTokens, canSeeAuditLog, canSeeIntegrations, canSeeToolsLibrary, canSeeUsers } from "./lib/roles";
+import { canSeeApiTokens, canSeeAuditLog, canSeeIntegrations, canSeeToolsLibrary, canSeeUserDirectory, canSeeUsers } from "./lib/roles";
 import type { Assessment, OnboardingStatus, Org } from "./types";
 
 // "admin" is the deployment-tier area (Integrations today; G.9/G.11 land
@@ -114,10 +114,13 @@ export function App() {
   // works today (the breadcrumb's org-name link); from there the
   // Administration button is visible again.
   // Or'd across every deployment-tier admin capability (Integrations,
-  // Tools/G.9) rather than checking one and assuming the other -- those
-  // are separate authorization axes (lib/roles.ts's own opening comment)
-  // that happen to admit the same two roles today, not the same gate.
-  const showAdminButton = screen === "orgs" && (canSeeIntegrations(user?.role) || canSeeToolsLibrary(user?.role));
+  // Tools/G.9, Users/G.11) rather than checking one and assuming the
+  // others -- those are separate authorization axes (lib/roles.ts's own
+  // opening comment), and Users in particular admits a strictly narrower
+  // role set (msp_admin only, not consultant_admin) than the other two.
+  const showAdminButton =
+    screen === "orgs" &&
+    (canSeeIntegrations(user?.role) || canSeeToolsLibrary(user?.role) || canSeeUserDirectory(user?.role));
 
   if (isLoading) return <div className="app-loading">Loading…</div>;
   if (!user) {
@@ -348,7 +351,7 @@ export function App() {
         </div>
       )}
 
-      {screen === "admin" && <AdminArea canWrite={canWrite} />}
+      {screen === "admin" && <AdminArea canWrite={canWrite} currentUserRole={user.role} />}
 
       {screen === "onboarding" && org && (
         <OnboardingWizard

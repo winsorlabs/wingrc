@@ -119,6 +119,22 @@ export function canSeeToolsLibrary(role: string | null | undefined): boolean {
   return !!role && TOOLS_LIBRARY_ROLES.has(role);
 }
 
+// Matches routers/admin_users.py's router-wide require_role("msp_admin")
+// (deployment-wide user directory + org-access grant/revoke, ADR 0009
+// M.7/M.8/G.11). Deliberately its own constant, NOT a reuse of
+// TOOLS_LIBRARY_ROLES/INTEGRATIONS_ROLES even though this file's other
+// deployment-tier gates admit consultant_admin -- this one doesn't, and
+// that's not an oversight to reconcile later. Integrations/Tools are
+// compliance-data configuration; this is identity administration across
+// every client on the deployment, the exact line canSeeUsers (the
+// org-scoped equivalent) already draws against canSeeIntegrations for
+// the very same role. See admin_users.py's own docstring.
+export const USER_DIRECTORY_ROLES = new Set(["msp_admin"]);
+
+export function canSeeUserDirectory(role: string | null | undefined): boolean {
+  return !!role && USER_DIRECTORY_ROLES.has(role);
+}
+
 // Whether the Security nav *category* itself should render at all — hiding
 // an empty category is a nav-shell-specific concern the old per-tab-only
 // gating never had to answer (OrgSettings always showed something, since

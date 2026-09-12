@@ -89,6 +89,21 @@ Scoped to meaningful compliance mutations (signal, not firehose):
                                  MSP's own baseline doc, a KB export --
                                  G.9). after_value/before_value carry
                                  title/kind only, never the file bytes.
+  org_membership.grant           — an msp_admin granted a user access to
+                                 an org (routers/users.py, ADR 0009 M.8).
+                                 org_id is the target org being granted
+                                 into. after_value carries {user_id, role,
+                                 granted} -- granted is False when the
+                                 membership already existed (idempotent
+                                 call), logged either way so a repeated
+                                 grant attempt is visible in the trail.
+  org_membership.revoke          — an msp_admin removed a user's access
+                                 to an org. before_value carries the role
+                                 that was removed. Refused outright
+                                 (400/409, no log entry) rather than
+                                 logged-then-blocked if it would revoke
+                                 the actor's own membership or the last
+                                 msp_admin membership in that org.
 
 NOT logged (noise):
   _seed_control_states() bulk insert on assessment creation

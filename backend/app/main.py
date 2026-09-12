@@ -18,6 +18,7 @@ from .catalog import ALL_VIEWS
 from .config import get_settings
 from .routers import (
     admin_products,
+    admin_users,
     assessments,
     audit_log,
     bundle,
@@ -71,6 +72,7 @@ app.include_router(raci.router)
 app.include_router(integrations.router)
 app.include_router(objectives.router)
 app.include_router(admin_products.router)
+app.include_router(admin_users.router)
 
 
 @app.get("/health")

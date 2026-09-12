@@ -38,7 +38,7 @@ from app.main import app
 from app.manage import _bootstrap_admin_core
 from app.models import DeploymentSettings, Organization, OrgMembership, User
 from app.org_membership import provision_new_org_memberships, provision_new_user_memberships
-from tests.conftest import _app_session, _authed, _grant
+from tests.conftest import _app_session, _authed, _grant, _make_fake_user
 
 _STRONG_PASSWORD = "correct-horse-battery-staple-and-then-some"
 
@@ -49,6 +49,17 @@ def client(db_session, fake_msp_admin):
     app.dependency_overrides[get_current_user] = _authed(db_session, fake_msp_admin)
     yield TestClient(app)
     app.dependency_overrides.clear()
+
+
+def _client_for(db_session, user) -> TestClient:
+    """A TestClient authenticated as `user` -- for the handful of M.8
+    tests that need to act as the *target* of a grant/revoke, not just
+    fake_msp_admin. Caller is responsible for app.dependency_overrides.
+    clear() afterward (the `client` fixture above does this via its own
+    teardown; this bare helper doesn't have one to hook into)."""
+    app.dependency_overrides[get_session] = _app_session(db_session)
+    app.dependency_overrides[get_current_user] = _authed(db_session, user)
+    return TestClient(app)
 
 
 def _load_backfill_pass_2_sql() -> str:
@@ -491,5 +502,215 @@ def test_patch_user_role_change_updates_org_membership(client, db_session, fake_
         json={"role": "msp_engineer"},
     )
     assert r.status_code == 200
-
     assert _membership_role(db_session, user_id=target.id, org_id=home_org.id) == "msp_engineer"
+
+
+# ---------------------------------------------------------------------------
+# M.8 — POST/DELETE /orgs/{org_id}/memberships (admin-initiated grant/revoke)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_grant_membership_creates_exactly_one_row(client, db_session, fake_msp_admin):
+    home_org = Organization(id=fake_msp_admin.org_id, name=f"HomeOrg-{uuid.uuid4().hex[:8]}")
+    other_org = _seed_org(db_session)
+    db_session.add(home_org)
+    db_session.flush()
+    _grant(db_session, fake_msp_admin)
+    target = _seed_user(db_session, org_id=home_org.id, role="customer_poc")
+    db_session.add(OrgMembership(user_id=target.id, org_id=home_org.id, role="customer_poc"))
+    db_session.flush()
+
+    r = client.post(
+        f"/orgs/{other_org.id}/memberships",
+        json={"user_id": str(target.id), "role": "customer_poc"},
+    )
+    assert r.status_code == 200
+    assert r.json()["granted"] is True
+    assert _membership_role(db_session, user_id=target.id, org_id=other_org.id) == "customer_poc"
+
+
+@pytest.mark.integration
+def test_grant_membership_is_idempotent(client, db_session, fake_msp_admin):
+    home_org = Organization(id=fake_msp_admin.org_id, name=f"HomeOrg-{uuid.uuid4().hex[:8]}")
+    other_org = _seed_org(db_session)
+    db_session.add(home_org)
+    db_session.flush()
+    _grant(db_session, fake_msp_admin)
+    target = _seed_user(db_session, org_id=home_org.id, role="customer_poc")
+    db_session.add(OrgMembership(user_id=target.id, org_id=home_org.id, role="customer_poc"))
+    db_session.flush()
+
+    body = {"user_id": str(target.id), "role": "customer_poc"}
+    first = client.post(f"/orgs/{other_org.id}/memberships", json=body)
+    second = client.post(f"/orgs/{other_org.id}/memberships", json=body)
+
+    assert first.status_code == 200 and first.json()["granted"] is True
+    assert second.status_code == 200 and second.json()["granted"] is False
+    rows = db_session.execute(
+        select(OrgMembership).where(
+            OrgMembership.user_id == target.id, OrgMembership.org_id == other_org.id
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+
+
+@pytest.mark.integration
+def test_granted_user_can_actually_reach_the_org(client, db_session, fake_msp_admin):
+    """§8's explicit ask: verify against the real endpoint, not by
+    reasoning about the grant in isolation. M.4 makes this testable --
+    before it, org_membership could be perfectly correct and
+    require_org_access would still 403 every cross-org request."""
+    home_org = Organization(id=fake_msp_admin.org_id, name=f"HomeOrg-{uuid.uuid4().hex[:8]}")
+    other_org = _seed_org(db_session)
+    db_session.add(home_org)
+    db_session.flush()
+    _grant(db_session, fake_msp_admin)
+    target = _seed_user(db_session, org_id=home_org.id, role="customer_poc")
+    db_session.add(OrgMembership(user_id=target.id, org_id=home_org.id, role="customer_poc"))
+    db_session.flush()
+
+    grant_resp = client.post(
+        f"/orgs/{other_org.id}/memberships",
+        json={"user_id": str(target.id), "role": "customer_poc"},
+    )
+    assert grant_resp.status_code == 200
+
+    target_identity = _make_fake_user(
+        id=target.id, org_id=home_org.id, role="customer_poc", email=target.email,
+        display_name=target.display_name,
+    )
+    target_client = _client_for(db_session, target_identity)
+    try:
+        r = target_client.get(f"/orgs/{other_org.id}/users")
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == 200
+
+
+@pytest.mark.integration
+def test_grant_membership_rejects_invalid_role(client, db_session, fake_msp_admin):
+    home_org = Organization(id=fake_msp_admin.org_id, name=f"HomeOrg-{uuid.uuid4().hex[:8]}")
+    other_org = _seed_org(db_session)
+    db_session.add(home_org)
+    db_session.flush()
+    _grant(db_session, fake_msp_admin)
+    target = _seed_user(db_session, org_id=home_org.id, role="customer_poc")
+    db_session.add(OrgMembership(user_id=target.id, org_id=home_org.id, role="customer_poc"))
+    db_session.flush()
+
+    r = client.post(
+        f"/orgs/{other_org.id}/memberships",
+        json={"user_id": str(target.id), "role": "superuser"},
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.integration
+def test_grant_membership_unknown_user_404(client, db_session, fake_msp_admin):
+    home_org = Organization(id=fake_msp_admin.org_id, name=f"HomeOrg-{uuid.uuid4().hex[:8]}")
+    other_org = _seed_org(db_session)
+    db_session.add(home_org)
+    db_session.flush()
+    _grant(db_session, fake_msp_admin)
+
+    r = client.post(
+        f"/orgs/{other_org.id}/memberships",
+        json={"user_id": str(uuid.uuid4()), "role": "customer_poc"},
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.integration
+def test_revoke_membership_removes_access_for_real(client, db_session, fake_msp_admin):
+    home_org = Organization(id=fake_msp_admin.org_id, name=f"HomeOrg-{uuid.uuid4().hex[:8]}")
+    other_org = _seed_org(db_session)
+    db_session.add(home_org)
+    db_session.flush()
+    _grant(db_session, fake_msp_admin)
+    target = _seed_user(db_session, org_id=home_org.id, role="customer_poc")
+    db_session.add(OrgMembership(user_id=target.id, org_id=home_org.id, role="customer_poc"))
+    db_session.add(OrgMembership(user_id=target.id, org_id=other_org.id, role="customer_poc"))
+    db_session.flush()
+
+    r = client.delete(f"/orgs/{other_org.id}/memberships/{target.id}")
+    assert r.status_code == 200
+    assert _membership_role(db_session, user_id=target.id, org_id=other_org.id) is None
+
+    target_identity = _make_fake_user(
+        id=target.id, org_id=home_org.id, role="customer_poc", email=target.email,
+        display_name=target.display_name,
+    )
+    target_client = _client_for(db_session, target_identity)
+    try:
+        r2 = target_client.get(f"/orgs/{other_org.id}/users")
+    finally:
+        app.dependency_overrides.clear()
+    assert r2.status_code == 403
+
+
+@pytest.mark.integration
+def test_revoke_last_msp_admin_refused(client, db_session, fake_msp_admin):
+    """fake_msp_admin is themself the only msp_admin on other_org -- this
+    is the client fixture's own identity, not a second seeded user, since
+    the guard cares about count-of-admins-on-the-org, not who's asking."""
+    home_org = Organization(id=fake_msp_admin.org_id, name=f"HomeOrg-{uuid.uuid4().hex[:8]}")
+    other_org = _seed_org(db_session)
+    db_session.add(home_org)
+    db_session.flush()
+    _grant(db_session, fake_msp_admin)
+    lone_admin = _seed_user(db_session, org_id=other_org.id, role="msp_admin")
+    db_session.add(OrgMembership(user_id=lone_admin.id, org_id=other_org.id, role="msp_admin"))
+    db_session.flush()
+
+    r = client.delete(f"/orgs/{other_org.id}/memberships/{lone_admin.id}")
+    assert r.status_code == 409
+    assert _membership_role(db_session, user_id=lone_admin.id, org_id=other_org.id) == "msp_admin"
+
+
+@pytest.mark.integration
+def test_revoke_last_msp_admin_allowed_when_another_admin_remains(
+    client, db_session, fake_msp_admin
+):
+    home_org = Organization(id=fake_msp_admin.org_id, name=f"HomeOrg-{uuid.uuid4().hex[:8]}")
+    other_org = _seed_org(db_session)
+    db_session.add(home_org)
+    db_session.flush()
+    _grant(db_session, fake_msp_admin)
+    admin_one = _seed_user(db_session, org_id=other_org.id, role="msp_admin")
+    admin_two = _seed_user(db_session, org_id=other_org.id, role="msp_admin")
+    db_session.add(OrgMembership(user_id=admin_one.id, org_id=other_org.id, role="msp_admin"))
+    db_session.add(OrgMembership(user_id=admin_two.id, org_id=other_org.id, role="msp_admin"))
+    db_session.flush()
+
+    r = client.delete(f"/orgs/{other_org.id}/memberships/{admin_one.id}")
+    assert r.status_code == 200
+    assert _membership_role(db_session, user_id=admin_one.id, org_id=other_org.id) is None
+    assert _membership_role(db_session, user_id=admin_two.id, org_id=other_org.id) == "msp_admin"
+
+
+@pytest.mark.integration
+def test_revoke_self_refused(client, db_session, fake_msp_admin):
+    home_org = Organization(id=fake_msp_admin.org_id, name=f"HomeOrg-{uuid.uuid4().hex[:8]}")
+    db_session.add(home_org)
+    db_session.flush()
+    _grant(db_session, fake_msp_admin)
+
+    r = client.delete(f"/orgs/{home_org.id}/memberships/{fake_msp_admin.id}")
+    assert r.status_code == 400
+    role = _membership_role(db_session, user_id=fake_msp_admin.id, org_id=home_org.id)
+    assert role == "msp_admin"
+
+
+@pytest.mark.integration
+def test_revoke_nonexistent_membership_404(client, db_session, fake_msp_admin):
+    home_org = Organization(id=fake_msp_admin.org_id, name=f"HomeOrg-{uuid.uuid4().hex[:8]}")
+    other_org = _seed_org(db_session)
+    db_session.add(home_org)
+    db_session.flush()
+    _grant(db_session, fake_msp_admin)
+    stranger = _seed_user(db_session, org_id=home_org.id, role="customer_poc")
+    db_session.flush()  # no membership row on other_org for this user
+
+    r = client.delete(f"/orgs/{other_org.id}/memberships/{stranger.id}")
+    assert r.status_code == 404
