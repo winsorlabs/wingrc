@@ -16,11 +16,19 @@ land directly on their own org, no picker, no create-org form). See
 `docs/roadmap.md`'s Done section for the closed defect writeup.
 
 **`M.7`/`M.8` (deployment-wide user directory + admin-initiated
-grant/revoke, `G.11`) landed 2026-09-12** — see this ADR's new "M.7/M.8:
-the directory and the grant/revoke screen" section below for the design,
-the MSP-org-designation decision it depends on, and what `User.role`/
-`User.home_org_id` turned out to still be authoritative for once M.7's
-directory made that question concrete instead of theoretical.
+grant/revoke, `G.11`) landed and verified 2026-09-12**: full pytest suite
+(883/883), `ruff` clean, `tsc -b` clean, `vitest run` 78/78 on an isolated
+bench stack, plus a live end-to-end walkthrough through the real HTTP
+dependency chain against real Postgres — a `customer_poc` homed in one
+org correctly 403'd against a second org before any grant, appeared in
+the cross-org directory to an `msp_admin` whose own home org differed
+from theirs, reached the second org with a real 200 once granted, and
+403'd again once revoked; self-revoke was confirmed refused (400) the
+same way. See this ADR's new "M.7/M.8: the directory and the grant/revoke
+screen" section below for the design, the MSP-org-designation decision it
+depends on, and what `User.role`/`User.home_org_id` turned out to still
+be authoritative for once M.7's directory made that question concrete
+instead of theoretical.
 
 **Severity: this documents a functional defect in already-shipped
 behavior, not groundwork for unbuilt features.** An msp_admin cannot open

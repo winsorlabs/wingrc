@@ -1079,7 +1079,7 @@ the same export the CLI's `wingrc render` command already produces.
 
 ---
 
-## M.7, M.8 — ADR 0009 continuation: cross-org access administration ✅ SHIPPED 2026-09-12 (pending live wl-util-1 verification — see G.11's own status note)
+## M.7, M.8 — ADR 0009 continuation: cross-org access administration ✅ SHIPPED AND VERIFIED 2026-09-12 (see G.11's own status note)
 
 **Not `G`-numbered.** These are backend prerequisites for `G.11` below, but
 they extend ADR 0009's multi-org model (`org_membership`, the M.1–M.6
@@ -1142,7 +1142,7 @@ Both events are audit-logged (`org_membership.grant`/`.revoke`) —
 
 ---
 
-## G.11 — Pre-org screen (MSP admin: grant org access) ✅ SHIPPED 2026-09-12 (pending live wl-util-1 verification)
+## G.11 — Pre-org screen (MSP admin: grant org access) ✅ SHIPPED AND VERIFIED 2026-09-12
 
 **Goal:** the MSP-admin surface for granting existing users access to
 organizations, per the request. **Depended on M.7 and M.8**, both shipped
@@ -1187,13 +1187,25 @@ confirm-then-execute flow, fresh-deployment prompt, invite-into-MSP-org
 flow) and `AdminArea.test.tsx` extended for the new section's role gate.
 
 ### Exit criteria / verification status
-Backend suite, `ruff`, and local collection are clean (see this doc's own
-verification-status convention from G.9). Live wl-util-1 walkthrough — the
-literal end-to-end proof this ADR 0009 sequence has been building toward
-since M.4's regression test (grant a `customer_poc` access to a second
-org via the directory, confirm they can now open it) — had not run as of
-this section's last edit; see the roadmap's Done-section entry for
-whatever it says once it has.
+Verified on an isolated bench stack (`docker compose -p wingrc_b`, fresh
+clone, own network/volumes, torn down after): full backend suite
+883/883, `ruff check .` clean, `npx tsc -b` clean, `vitest run` 78/78,
+`vite build` clean. Two test bugs were found by running the full suite
+and fixed before merge (see `docs/roadmap.md`'s Done-section entry).
+
+**The literal end-to-end proof** — this ADR 0009 sequence's whole point
+since M.4's regression test — was run live against real Postgres, through
+the actual HTTP dependency chain (`TestClient` + `dependency_overrides`,
+not a bare function call bypassing `require_org_access`; see the roadmap
+entry for a call I got wrong on the first pass and why): bootstrapped an
+`msp_admin`, created two more orgs, seeded a `customer_poc` homed in one
+of them, confirmed the directory showed that user to the admin (home org
+different from the caller's), confirmed the `customer_poc` got a real
+403 reaching the third org, granted them access through the real
+endpoint, confirmed 200 on the same request afterward, then revoked it
+and confirmed 403 again. Self-revoke was also verified refused (400)
+through the real endpoint. Full details and the corrected numbers are in
+`docs/roadmap.md`'s Done-section entry.
 
 ---
 

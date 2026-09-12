@@ -1401,6 +1401,90 @@ Items without a status are planned but not yet started.
     credentials rather than creating or resetting an account on a real
     deployment to get past it.
 
+- **Deployment-wide user directory + org-access grant/revoke (M.7/M.8,
+  G.11)** — shipped and verified 2026-09-12 (`d497c96`, `305828e`,
+  `c8468d3`, `99740e5`; see `docs/adr/0009-multi-org-user-access.md`'s
+  new M.7/M.8 section and `docs/PLAN-gui-restructure.md`'s M.7/M.8/G.11
+  sections for the full design writeup). `auth.all_users_directory()`
+  (migration 0040) backs a new `GET /admin/users` — deliberately does not
+  return `User.role` (no longer authoritative for access as of M.4;
+  showing it next to real per-org membership roles would mislead).
+  `GET /admin/users/msp-org` resolves `deployment_settings.msp_org_id`
+  (ADR 0009 M.1, already existed — not a new decision) for the "invite a
+  new MSP user into our MSP" action, returning `null` on a fresh
+  deployment rather than erroring. Grant/revoke landed in the existing
+  `users.py` as `POST`/`DELETE /orgs/{org_id}/memberships`: grant reuses
+  `org_membership.py`'s existing `_grant()` directly; revoke refuses
+  self-revoke and refuses revoking the last `msp_admin` from an org, both
+  unconditionally. New `UserDirectoryPanel.tsx` under Administration →
+  Users, gated `msp_admin` only (not `consultant_admin`, unlike
+  Integrations/Tools).
+  - **A standing docstring bug was found and fixed first, as its own
+    commit, ahead of the feature work**: `models.py`'s `OrgMembership`,
+    `org_membership.py`'s module docstring, and `test_org_membership.py`'s
+    module docstring all still asserted "`require_org_access()` doesn't
+    consult this table yet, that's M.4" — true when M.2 landed, false
+    since M.4 shipped 2026-08-17, and never corrected. Re-verified against
+    the actual `auth.py` implementation before fixing, not assumed from
+    the bug report.
+  - **Verified on an isolated bench stack** (`docker compose -p
+    wingrc_b`, fresh clone, own network/volumes, torn down after): full
+    backend suite 883/883 (up from 867 pre-slice), `ruff check .` clean,
+    `npx tsc -b` clean, `vitest run` 78/78 (5 new:
+    `UserDirectoryPanel.test.tsx`; `AdminArea.test.tsx` extended to 3),
+    `vite build` clean.
+  - **Two rounds of test bugs were found only by running the full suite**,
+    not caught locally beforehand, and fixed on the bench branch before
+    merge: first, all 9 new grant/revoke tests 403'd because the test
+    only granted the caller (`fake_msp_admin`) membership on their own
+    home org, never on the *target* org being granted into — fixed by
+    granting the caller `msp_admin` on the target org too, matching M.8's
+    actual design ("the target org's own admin grants access into it").
+    That fix in turn exposed a real, worth-documenting finding: because
+    the revoke endpoint requires the caller to already hold `msp_admin`
+    on the target org, the "last `msp_admin`" guard can only ever fire,
+    through the HTTP endpoint, in the exact case the separate self-revoke
+    guard already blocks — a caller revoking someone *else's* `msp_admin`
+    membership is always, by construction, a second admin still standing.
+    Documented in `revoke_membership`'s own docstring rather than deleted
+    as dead code (it stops being redundant the moment any future caller
+    of this logic isn't gated the same way), and tested by calling the
+    function directly, bypassing `require_org_access`, since that's the
+    only way to construct "last admin, target differs from caller" at all.
+  - **The literal end-to-end proof — this ADR 0009 sequence's whole point
+    since M.4's regression test — was run live**, not just in pytest:
+    bootstrapped an `msp_admin` on a fresh bench Postgres, created two
+    more orgs (three total), seeded a `customer_poc` homed in one of
+    them. Confirmed via the real `GET /admin/users` directory call that
+    the admin could see this user despite their home org differing from
+    the admin's own. Confirmed via a real `TestClient` request (dependency
+    overrides on `get_session`/`get_current_user`, going through the
+    actual `require_org_access` chain — not a bare function call) that
+    the `customer_poc` got a real 403 against the third org before any
+    grant. Granted access through the real `POST .../memberships`
+    endpoint, then confirmed the same request now returned 200. Revoked
+    through the real `DELETE .../memberships/{user_id}` endpoint,
+    confirmed 403 again. Self-revoke was separately confirmed refused
+    (400) the same way. Audit log rows for both the grant and the revoke
+    were confirmed present in Postgres with the correct `org_id` (the
+    target org, not the actor's home org) and role values.
+  - **A verification mistake, caught and corrected in the same session,
+    not silently discarded**: the first attempt at the "before grant,
+    access is denied" check called `list_users(...)` directly as a plain
+    Python function rather than through `TestClient`, which meant
+    `require_org_access` — a FastAPI dependency, not code inside the
+    function body — never actually ran, so the "check" trivially returned
+    200 regardless of membership state. Caught immediately (the result
+    contradicted every other signal), and the entire live-verification
+    pass was redone through `TestClient` with real dependency overrides,
+    which is what the numbers above reflect. Recorded here because a
+    verification method that silently doesn't verify what it claims to is
+    exactly the kind of mistake worth naming, not quietly fixing and
+    moving on as if it hadn't happened.
+  - Liongard/API-token scope questions and any deployment-wide audit-log
+    view remain explicitly out of scope, per the task's own instruction —
+    not started, not attempted.
+
 ---
 
 ## Planned
