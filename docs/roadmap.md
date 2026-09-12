@@ -1515,6 +1515,82 @@ Items without a status are planned but not yet started.
     walkthrough was performed, for the same credential reason as the
     prior deploy.
 
+- **Outbound email (D.3 prerequisite #1 of 2 — job scheduler is #2, not
+  built here)** — generic SMTP registered as a connector
+  (`backend/app/connectors/smtp.py`) through the same `ConnectorSpec`/
+  `IntegrationConnection` machinery D.1 built for Liongard, extended with
+  two small, backward-compatible additions: `ConnectorSpec.kind` (a UI
+  grouping discriminator — `"data_source"` vs `"notification"`, since SMTP
+  reaches the API through the identical `/integrations/*` endpoints as
+  Liongard but isn't a scope data source and reads oddly grouped with
+  one) and `ConnectorSpec.optional_fields` (SMTP's username/password are
+  legitimately blank for an unauthenticated internal relay — the first
+  connector where "missing" isn't always invalid). Encryption mode is a
+  three-way string (`starttls`/`tls`/`none`), not a boolean; port is
+  free-form text, not a 587/465 dropdown, since SMTP2GO (the provider in
+  use) publishes 2525/8025 fallbacks; certificate verification defaults
+  on, with an explicit, honestly-named `verify_cert` opt-out for a
+  self-signed internal relay. Test-connection genuinely exercises
+  connect/EHLO/TLS-upgrade/AUTH and reports which step failed, but does
+  not send a real message — see `connectors/smtp.py`'s own docstring for
+  why (no per-connector "send to" parameter in the generic test-connection
+  interface, and repeated test-connection clicks shouldn't spam an inbox).
+  Sending itself is one boundary, `backend/app/email_service.py`, called
+  synchronously from the two existing token-issuing call sites
+  (`routers/users.py`'s `invite_user`/`reset_user_password`) — deliberately
+  not fire-and-forget; see that module's docstring for the honest
+  reasoning (a queue is the real fix, and that's this list's second open
+  item below).
+  - **Content rule, enforced by construction at the only two call
+    sites that exist:** these emails carry zero compliance content — no
+    control ids, findings, evidence, asset names, scores — in body or
+    subject. The pattern is "something needs your attention, sign in to
+    WinGRC" plus a link (`?invite_token=...`, picked up once by `App.tsx`'s
+    lazy initial state and stripped from the visible URL via
+    `history.replaceState` since it's a credential, then prefilled — not
+    auto-submitted — into `InviteAcceptPage`'s existing manual token
+    field). A new `WINGRC_PUBLIC_URL` setting supplies the browser-facing
+    hostname the backend has no other way to know; unset, both call sites
+    fall back cleanly to the pre-existing manual-delivery path.
+  - **Fallback contract, not a nice-to-have:** manual delivery (the raw
+    token in the response body) is never removed and never depends on
+    email succeeding — `email_sent`/`email_error` on the invite/reset
+    response tell the admin which happened, whether the cause is
+    `WINGRC_PUBLIC_URL` unset, SMTP unconfigured, or a real send failure.
+    Covered by `tests/test_user_email_wiring.py`.
+  - Audit logging (`email.send`, recipient + template + outcome) and log
+    lines never carry the raw invite/reset token or the SMTP credential —
+    asserted directly in tests, not assumed
+    (`tests/test_user_email_wiring.py`'s log/audit-row tests,
+    `tests/test_email_service.py::test_credential_and_body_never_logged`).
+    Single-use redemption of the token itself was already covered by the
+    I.5 password-lifecycle tests (`test_reset_token_single_use`) before
+    this slice — not re-derived here, just confirmed still true.
+  - **Deliberately left open, so the gap is recorded rather than assumed
+    solved:** no retry, no delivery record, no bounce handling. A failed
+    send today is visible once, synchronously, in the API response that
+    triggered it — there is no queue, no "retry this later," and no
+    stored record of who was ever emailed what and whether it actually
+    landed. `email_service.send()` is written so a future job-scheduler
+    slice's queue worker can call it unchanged (plain function, session +
+    args in, result out, nothing request-specific baked in), but that
+    queue is D.3's second prerequisite and is not built here. Until it
+    exists, "the admin saw `email_sent: false` and delivered the token by
+    hand" is the only recovery path for a failed send — by design, not by
+    oversight, but a real gap for anyone relying on this for anything
+    higher-volume than the two low-frequency admin actions it serves
+    today.
+  - **Verification status:** unit tests (`tests/test_smtp_connector.py`,
+    `tests/test_email_service.py`, `tests/test_user_email_wiring.py`)
+    exercise a real local fake SMTP server (`aiosmtpd`, a new dev-only
+    dependency — stdlib `smtpd` was removed in Python 3.12/PEP 594) across
+    STARTTLS, implicit TLS, no encryption, auth success/failure, no-auth,
+    cert-verification on/off, and connect timeout/refusal — never a
+    monkeypatched `smtplib` call. **No real SMTP provider was exercised in
+    this session** (no test credentials were supplied) — this is a
+    fake-server-only result, not end-to-end proof against SMTP2GO or any
+    other real provider, same caveat D.1's own Liongard check named.
+
 ---
 
 ## Planned
