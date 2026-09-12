@@ -1484,6 +1484,36 @@ Items without a status are planned but not yet started.
   - Liongard/API-token scope questions and any deployment-wide audit-log
     view remain explicitly out of scope, per the task's own instruction —
     not started, not attempted.
+  - **Deployed to wl-util-1 (dev.wingrc.us) 2026-09-12.** Backed up first
+    (`pg_dump --format=custom`, verified via `pg_restore --list` — 350
+    TOC entries — before touching anything, per `docs/deployment.md`'s
+    §7a). Migration `0039_publish_existing_products` →
+    `0040_admin_users_secdef` ran cleanly; no data-modifying migration
+    this time, so there was no before/after backfill diff to run.
+    `deployment_settings.msp_org_id` was checked before deploying (per
+    the task's explicit instruction, not assumed) and found already set
+    to Acme MSP, this box's only org — the earlier `0023` migration's own
+    backfill had anchored it correctly since Acme MSP already existed
+    with an `msp_admin` at that migration's time. `GET /admin/users`
+    (called in-process) correctly returned all 5 real users, including
+    two ADR-0006-anonymized rows, with no error. **The cross-org read was
+    not exercised** — every user on this deployment is homed in the same
+    single org, so there is nothing to cross; reported as the degenerate
+    case, not a verified cross-org result, matching `0039`'s own
+    `org_product` finding. Grant then revoke were exercised against a
+    clearly-named throwaway user (`wingrc-verification-throwaway@
+    wingrc.invalid`, `is_active=False`) attributed to Jarrod's real admin
+    identity for accurate audit trail, confirmed via direct query
+    (`org_membership` row created then removed) and via the two resulting
+    `audit_log` rows (`org_membership.grant`/`.revoke`, correct `org_id`),
+    then the throwaway user was hard-deleted — appropriate for a record
+    with no real history, not the ADR 0006 anonymize case. This check
+    called the router functions directly rather than through the full
+    HTTP layer (a real admin login wasn't available); `docs/deployment.md`
+    §7d now names this distinction explicitly, after getting it wrong
+    once during Slice B's own bench verification. No login-based UI
+    walkthrough was performed, for the same credential reason as the
+    prior deploy.
 
 ---
 
