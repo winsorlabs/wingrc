@@ -30,6 +30,7 @@ from .routers import (
     objectives,
     orgs,
     raci,
+    scheduled_jobs,
     scope,
 )
 from .routers import auth as auth_router
@@ -73,6 +74,7 @@ app.include_router(integrations.router)
 app.include_router(objectives.router)
 app.include_router(admin_products.router)
 app.include_router(admin_users.router)
+app.include_router(scheduled_jobs.router)
 
 
 @app.get("/health")
