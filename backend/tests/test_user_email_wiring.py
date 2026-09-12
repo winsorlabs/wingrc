@@ -19,6 +19,7 @@ Run in-container:
 
 from __future__ import annotations
 
+import email
 import json
 import logging
 import socket
@@ -96,6 +97,15 @@ def fake_server():
     controller.start()
     yield handler, port
     controller.stop()
+
+
+def _decoded_body(raw: bytes) -> str:
+    """The long invite/reset link exceeds RFC 5322's ~78-char line length,
+    so EmailMessage.set_content() transfer-encodes the body as
+    quoted-printable with soft line breaks -- a naive .decode() on the raw
+    envelope bytes would see the link split mid-string. Parse it properly
+    instead, the way any real mail client would."""
+    return email.message_from_bytes(raw).get_payload(decode=True).decode()
 
 
 def _configure_smtp(db_session, *, port: int) -> None:
@@ -202,8 +212,8 @@ def test_invite_sends_real_email_with_link_and_ttl_no_compliance_content(
     assert body["email_error"] is None
 
     assert len(handler.messages) == 1
-    delivered = handler.messages[0].decode()
-    assert "invitee@example.com" in delivered
+    assert b"invitee@example.com" in handler.messages[0]  # header, raw bytes are fine
+    delivered = _decoded_body(handler.messages[0])
     assert f"?invite_token={body['invite_token']}" in delivered
     assert "48" in delivered  # TTL stated in the body
     # Content rule: no compliance-domain vocabulary anywhere in the email.
@@ -234,7 +244,7 @@ def test_reset_password_sends_real_email(
     assert body["email_sent"] is True
 
     assert len(handler.messages) == 1
-    delivered = handler.messages[0].decode()
+    delivered = _decoded_body(handler.messages[0])
     assert f"?invite_token={body['reset_token']}" in delivered
 
     get_settings.cache_clear()
