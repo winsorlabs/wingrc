@@ -215,6 +215,38 @@ meaningless.
   than creating or resetting an account on a live deployment to get past
   it — that's an account-modifying action on production, not a deploy
   step.
+- **Check any deployment-level setting the new code reads for the first
+  time, rather than assuming it's populated.** `deployment_settings.
+  msp_org_id` (ADR 0009 M.1) existed for a full month before Slice B's
+  Users screen became the first thing to ever read it — nothing had
+  reason to check its value before, so its state on any given box was
+  genuinely unknown until checked. Query it before deploying anything
+  that starts depending on it, and report what's there rather than
+  assuming the happy path.
+- **A real end-to-end functional check (not just a read) can use a
+  throwaway record instead of asking for credentials or touching a real
+  one** — clearly named (e.g. `*-verification-throwaway@wingrc.invalid`,
+  `is_active=False`), exercised through the real function/endpoint,
+  confirmed via a real query (including audit log rows, when the action
+  is audit-logged), then deleted outright once confirmed. A throwaway
+  record created solely for this check has no history worth preserving,
+  so a hard delete is correct here — this is not the ADR 0006
+  anonymize-don't-delete case, which exists to protect *real* audit
+  history tied to a real account. Prefer calling the underlying function
+  directly (`db.SessionLocal()` + the router function, passing a real
+  admin's identity as `current_user` for accurate audit attribution) for
+  a quick check; for anything where the HTTP authorization layer itself
+  is what's in question, go through `TestClient` with `dependency_overrides`
+  instead — a bare function call skips `Depends(require_org_access(...))`
+  entirely, which looks like a pass even when the caller shouldn't have
+  access at all (see `docs/roadmap.md`'s M.7/M.8 Done entry for the exact
+  mistake this correction is written from).
+- **A cross-org (or otherwise multi-entity) code path may have nothing to
+  actually cross on a given box.** If the live data only has one of
+  whatever the new code was built to span — one org, one product, one
+  anything — say so plainly rather than reporting the read as verified;
+  it's the degenerate case, not a positive result. `org_product` was empty
+  on this box during the `0039` deploy for the same reason.
 
 ### 7e. If a data-modifying migration did the wrong thing
 
