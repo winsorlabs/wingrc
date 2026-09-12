@@ -1590,6 +1590,24 @@ Items without a status are planned but not yet started.
     this session** (no test credentials were supplied) — this is a
     fake-server-only result, not end-to-end proof against SMTP2GO or any
     other real provider, same caveat D.1's own Liongard check named.
+    **Verified 2026-09-12 on wl-util-1, live, this run:** an isolated
+    `docker compose -p wingrc_outbound_email` project (fresh clone under
+    `~/bench/outbound-email`, its own network/volumes, no host ports
+    published — the live `wingrc` project on that box was never touched)
+    with real Postgres and MinIO — **908/908 backend tests** (`pytest -q`,
+    every integration test included, not just the new ones), `ruff check .`
+    clean, and a throwaway `node:24-alpine` container running the
+    frontend's own scripts unmodified — `npm test` (**78/78** vitest,
+    12 files) and `npm run build` (`tsc -b && vite build`) both clean. Two
+    bugs surfaced only at this stage, not locally, and were fixed and
+    re-verified in place: a naive test assertion that didn't account for
+    `EmailMessage`'s quoted-printable line-wrapping of the long invite/
+    reset link (`test_user_email_wiring.py`), and a pre-existing test
+    fixture (`UserDirectoryPanel.test.tsx`) not updated for the new
+    `email_sent`/`email_error` fields on `InvitedUser`, caught by `tsc -b`.
+    No browser walkthrough was performed — this is a backend/API slice
+    with a thin, already-shared (`IntegrationsPanel`) UI surface, not new
+    interactive UI, unlike G.7's own live-browser check.
 
 ---
 
