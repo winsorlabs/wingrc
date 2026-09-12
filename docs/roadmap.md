@@ -1376,6 +1376,30 @@ Items without a status are planned but not yet started.
   - **Baseline versioning (§4 of the task) was explicitly flagged, not
     fixed** — see Planned item P below. What shipped is visibility (the
     import dry-run's affected-org-count warning), not a solution.
+  - **Deployed to wl-util-1 (dev.wingrc.us) 2026-09-12.** Backed up first
+    (`pg_dump --format=custom`, verified restorable via `pg_restore
+    --list` — 342 TOC entries — before touching anything; the box's own
+    "just pulled `git pull`, ran migrations, restarted" habit had no
+    written backup step, so this deploy wrote one:
+    `docs/deployment.md`'s new §7). Migrations `0036_product_document` →
+    `0037_product_footprint` → `0038_product_source_docs` →
+    `0039_publish_existing_products` ran cleanly. Backfill verified by
+    diffing before/after query output, not eyeballing: `product.is_published`
+    flipped `false→true` for the one seeded product (RocketCyber), and the
+    `org_product` table's diff was empty in both directions (0 rows before,
+    0 rows after — this deployment has no tenant with any product activated
+    yet, so the specific "does the active tenant keep seeing it" scenario
+    the deploy prompt was written to guard against does not currently
+    exist on this box; verified generically instead via the library/detail/
+    footprint endpoints called in-process against real data, and
+    `control_state`/`evidence_task` counts confirmed unchanged, 320/0
+    respectively). No Liongard credential is configured on this box either
+    (`integration_connection` has zero rows), so the Liongard end-to-end
+    dry-run check was not performable — reported as not-done rather than
+    mocked. The login-based UI walkthrough (Administration → Integrations/
+    Tools rendering correctly) was left to Jarrod to do with his own
+    credentials rather than creating or resetting an account on a real
+    deployment to get past it.
 
 ---
 

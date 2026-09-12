@@ -128,6 +128,101 @@ docker compose restart nginx
 so nginx picks up the refreshed files from the volume. Set yourself a
 recurring reminder; there's no automated fallback if it's missed.
 
+## 7. Updating an existing deployment
+
+Written 2026-09-12 after the first real deploy that carried a
+data-modifying migration against a live tenant (the `Product.is_published`
+backfill, migration `0039`) — three slices had accumulated on `main`
+without a documented update procedure, which is exactly the kind of drift
+that turns a routine deploy into an improvised one. Follow this for every
+update from here on rather than re-deriving it.
+
+### 7a. Back up first — non-negotiable for any deploy carrying a migration
+
+Never skip this because "it's just a schema change" — `0039` looked like a
+trivial `UPDATE ... SET is_published = true`, and it was exactly the
+migration that could have silently emptied a live tenant's Tools panel if
+the backfill's `WHERE` clause were wrong. Back up before every migrating
+deploy, not just ones that look risky in advance.
+
+```bash
+docker exec <backend-container> sh -c \
+  'pg_dump --format=custom --file /backups/pre-deploy-<label>-$(date -u +%Y%m%dT%H%M%SZ).dump "postgresql://<user>:<password>@db:5432/<dbname>"'
+```
+
+Notes:
+- Use a **plain** `postgresql://` URL, not the app's `postgresql+psycopg://`
+  SQLAlchemy driver string — `pg_dump` doesn't understand the `+psycopg`
+  suffix and fails closed with a confusing "socket not found" error if you
+  paste `$WINGRC_DATABASE_URL` in directly.
+- `--format=custom` (not plain SQL), matching `cli.py`'s own
+  `_preflight_backup` convention for `reset-dev`: `pg_restore`-loadable, so
+  a bad migration can be recovered by loading into a scratch database and
+  selectively restoring rows, not just a destructive wholesale restore
+  over the live database.
+- The destination is `/backups` inside the backend container, which maps
+  to the `backend_backups` named volume — it survives the container
+  recreate this same deploy is about to do.
+- **Verify the dump, don't just trust exit code 0.** A failed connection
+  can still leave a zero-byte file on disk before erroring. Confirm both:
+  ```bash
+  docker exec <backend-container> ls -la /backups/
+  docker exec <backend-container> pg_restore --list /backups/<file>.dump | head -20
+  ```
+  A real dump lists real TOC entries (tables, functions, schemas) — an
+  empty or truncated file, or a `pg_restore` error, means the backup
+  didn't work and you do not have a safety net yet.
+
+### 7b. Record before-state for anything a migration will touch
+
+If the migration modifies data (not just schema), capture a query result
+you can diff against after, not just "run it and see." For `0039` this
+was `product.is_published` and every `org_product` row's `(org, product,
+status)` — the exact two things the migration could get wrong, and the
+exact two things a tenant would notice first.
+
+### 7c. Deploy
+
+```bash
+cd ~/dev/wingrc
+git pull --ff-only
+docker compose build backend nginx   # nginx bundles the frontend build — rebuild it whenever frontend/ changed, not just backend/
+docker compose up -d backend nginx   # migrations run automatically via backend's `alembic upgrade head && exec uvicorn ...` startup command
+```
+
+`db` and `minio` are untouched by an application-code deploy — only
+`backend` and `nginx` need to be recreated. Confirm exactly which
+migrations ran from the logs, by revision id, rather than trusting
+"migrations applied" as a summary:
+
+```bash
+docker logs <backend-container> 2>&1 | grep -A1 'Running upgrade'
+```
+
+Then confirm the container reports healthy (`docker ps`) before verifying
+anything else — an unhealthy backend makes every subsequent check
+meaningless.
+
+### 7d. Verify
+
+- Re-run the §7b before-queries and diff the output — don't eyeball it.
+- Exercise the specific tenant-facing path the migration was written to
+  protect, not just "the app loads." For `0039` that meant confirming a
+  product's read paths (library list, tenant activation list) still
+  resolve correctly against real data.
+- If a real user login is needed for the check (not just a read-only
+  DB/endpoint verification) and you don't hold that credential, ask rather
+  than creating or resetting an account on a live deployment to get past
+  it — that's an account-modifying action on production, not a deploy
+  step.
+
+### 7e. If a data-modifying migration did the wrong thing
+
+Stop. Do not patch forward with another migration written under pressure.
+Restore the `pre-deploy-*.dump` from 7a, report exactly what the migration
+did versus what was expected, and wait for a decision before touching it
+again. A half-corrected table is worse than a restored one.
+
 ## Follow-ups not covered by this baseline
 
 - **HSTS** — commented out in `deploy/nginx/nginx.conf`. Enable once this
