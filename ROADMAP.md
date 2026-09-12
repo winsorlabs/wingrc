@@ -437,6 +437,16 @@ natural_key semantics retroactively would re-key every existing
 connection UI) and D.2 (connector writing `scope_entity`), plus two pieces
 of infrastructure this codebase does not have yet — see Prerequisites.
 
+**Amended 2026-09-12: both infrastructure prerequisites below shipped.**
+Outbound email (`backend/app/email_service.py` + the generic SMTP
+connector) and a job scheduler (`backend/app/scheduler.py` — a separate
+`worker` container, Postgres advisory locks, no broker) both landed —
+see `docs/roadmap.md`'s Done entries for the full writeup of each,
+including their own bench-stack verification. D.3 itself remains not
+started; this amendment only removes the two infrastructure blockers, not
+the manual-sync-first sequencing note in Scheduling below, which still
+applies as originally written.
+
 **What:** Daily Liongard sync of devices and users. Anything new lands in a
 pending state rather than silently joining the boundary; the org's Security
 Officer and IT/MSP contact are notified; they open an approval page showing

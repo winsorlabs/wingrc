@@ -1609,6 +1609,92 @@ Items without a status are planned but not yet started.
     with a thin, already-shared (`IntegrationsPanel`) UI surface, not new
     interactive UI, unlike G.7's own live-browser check.
 
+- **Job scheduler (D.3 prerequisite #2 of 2 — outbound email above is #1)**
+  — `backend/app/scheduler.py`: a Postgres-backed job registry and runner,
+  no broker, driven by session-level advisory locks
+  (`pg_try_advisory_lock`). Recommended and built as a **separate `worker`
+  container** (docker-compose.yml) running the same image as `backend`
+  with a different command (`wingrc worker`) — not in-process
+  (APScheduler was considered and rejected outright: it reintroduces the
+  exact event-loop-starvation incident this deployment already suffered
+  once, at concurrency 50, requiring a manual restart) and not a
+  broker-based queue (Celery/RQ/Arq — a real new-infrastructure cost for
+  an MSP self-hosting via plain Docker Compose that a Postgres-only design
+  avoids). `run_due_jobs()` is the one scheduling decision both `wingrc
+  worker`'s loop and a new one-shot `wingrc jobs-run-due` call — the
+  latter exists specifically so an operator can point host cron at it
+  instead of running the extra container, with zero behavioral difference
+  from the two paths. Omitting the worker (or not running cron) leaves
+  the API fully functional and scheduled jobs simply not happening, shown
+  honestly (not silently) on the new Administration → Scheduled Jobs
+  panel.
+  - **`job_run` is a compliance record, not just plumbing** — one
+    append-only row per execution attempt (job name, scheduled/started/
+    finished times, outcome, error on failure, a small JSON result
+    summary), following the same never-rewritten discipline as
+    `audit_log`/`sprs_snapshot` elsewhere in this codebase. Deliberately a
+    separate table from `audit_log`, not a new action type in it:
+    `audit_log` records actor-initiated compliance mutations, and a cron
+    tick has no actor; a future job that changes something audit-worthy
+    still writes its own ordinary `audit_log` row for that change.
+  - **Correctness properties, each with an explicit decision (see
+    scheduler.py's own module docstring for the full reasoning):**
+    no-double-runs via a dedicated `NullPool` connection holding the
+    advisory lock (two workers/a mid-job restart can never both
+    succeed); crash recovery via Postgres's own release-lock-on-
+    disconnect plus a lazy per-job orphan reconciliation the moment the
+    *next* run acquires that job's lock (no heartbeat, no timestamp-
+    expiry guess); overlap policy is skip-don't-queue (a still-running
+    job's next tick just skips); schedules are fixed UTC `timedelta`
+    intervals, deliberately no "3am local" cron-expression support yet
+    (no job needs one — D.3's daily sync will, and should add that
+    against a real requirement, not speculatively here).
+  - **RLS**: `job_run` itself carries no `org_id` (deployment-wide, like
+    `integration_connection`). The one registered job
+    (`expire_stale_invites` — sweeps `invite_token_hash`/
+    `invite_expires_at` for already-expired tokens; hygiene, not a
+    security fix, since `auth.find_user_for_invite()` already rejects an
+    expired token at redemption time) is a genuinely cross-org operation,
+    so it goes through a new `SECURITY DEFINER` function
+    (`auth.expire_stale_invites()`, migration 0042) matching
+    `auth.msp_role_users()`/`auth.all_users_directory()`'s exact existing
+    precedent — never a blanket bypass. A future *per-org* job (D.3's
+    Liongard sync, most likely) must instead loop over orgs and `SET
+    LOCAL app.current_org` per iteration, exactly like a request handler;
+    documented as the decision, not built, since nothing needs it yet.
+  - **Verified 2026-09-12 on wl-util-1, live, this run:** an isolated
+    `docker compose -p wingrc_job_scheduler` project (fresh clone,
+    separate network/volumes, the live `wingrc` project on that box never
+    touched) — **924/924 backend tests** (up from the outbound-email
+    slice's 908; the 16 new tests cover concurrent-attempt locking via
+    two real racing connections, a simulated killed-mid-job orphan
+    reconciled on next acquisition, overlap-skip via `run_due_jobs()`
+    itself, and `auth.expire_stale_invites()` working correctly under
+    `wingrc_app` with no broader grant), `ruff check .` clean, and
+    frontend `npm test` (**85/85** vitest, 13 files) plus `tsc -b`/
+    `vite build` clean. One real bug surfaced only at this stage: the
+    `worker` service inherited `backend`'s image-baked HTTP healthcheck
+    (`:8000/health`), which `wingrc worker` doesn't serve, so Compose
+    reported it permanently "unhealthy" regardless of whether it was
+    actually working — fixed with `healthcheck: disable: true` and
+    re-verified. **The starvation regression itself was measured live,
+    not assumed**: with `db`/`minio`/`backend`/`worker` all running for
+    real, a concurrency-50 load test against `backend`'s own `/health`
+    (matching the original incident's own reproduction concurrency)
+    measured p99=80ms/zero errors across 8450 requests with the worker
+    idle, then p99=53ms/zero errors across 8650 requests while the worker
+    was made to block for 15 seconds straight (a plain `time.sleep`, not
+    even a real job) — no measurable difference, confirming the
+    separate-container design actually delivers the property it was
+    chosen for, rather than merely arguing for it.
+  - **Deliberately left open, so the gap is recorded rather than assumed
+    solved:** no manual "run now," no enable/disable — both are their own
+    slice with their own authorization questions, per this slice's own
+    explicit scope boundary. No local-time/cron-expression scheduling.
+    Only one job exists; the scheduler mechanism itself is otherwise
+    unexercised by anything beyond that one low-risk hygiene sweep until
+    D.3 actually adds a second job.
+
 ---
 
 ## Planned
@@ -1735,6 +1821,6 @@ Document library (N)
   section, "D.2 — Liongard device/user pull into scope_entity" entry.
   Datto RMM was not built (Liongard only); a Datto connector, if wanted
   later, is a fresh item, not a reopening of this one.
-- **Asset & user onboarding approval workflow** — daily Liongard sync; new devices/users land pending, notify the org's `security_officer` and `it_admin` contacts, approval page shows a baseline checklist (DUO/Evo, FenixPyre, RoboShadow, RocketCyber…) evaluated from Liongard metrics, Security Officer + IT formally accept the asset into the environment. Specified in root `ROADMAP.md` **D.3**. Added 2026-09-08 (Jarrod). Depends on D.1 + D.2 and on **two things that don't exist in this codebase yet**: outbound email (verified 2026-09-08 — no `smtplib`, SMTP config, or mailer module anywhere under `backend/`) and any job scheduler for the daily run. Also needs a `pending_approval` state on `domain.py:EntityStatus` (today only `active`/`decommissioned`). Hard constraint recorded in D.3: email notifies, but approval requires an authenticated session — no one-click approve links in email.
+- **Asset & user onboarding approval workflow** — daily Liongard sync; new devices/users land pending, notify the org's `security_officer` and `it_admin` contacts, approval page shows a baseline checklist (DUO/Evo, FenixPyre, RoboShadow, RocketCyber…) evaluated from Liongard metrics, Security Officer + IT formally accept the asset into the environment. Specified in root `ROADMAP.md` **D.3**. Added 2026-09-08 (Jarrod). Depends on D.1 + D.2 and, as of 2026-09-08, on **two things that don't exist in this codebase yet**: outbound email and any job scheduler for the daily run. **Both shipped 2026-09-12** — see this file's own Done entries ("Outbound email" and "Job scheduler") — so D.3 is now actionable; neither prerequisite is a blocker anymore. Still needs a `pending_approval` state on `domain.py:EntityStatus` (today only `active`/`decommissioned`), and D.3 itself is not built here — the job scheduler slice explicitly excluded any job that writes `scope_entity`/`control_state`; a scheduled job may produce a dry-run for review, never apply one unattended, so D.3's daily sync must still route through the existing dry-run → review → apply path, not bypass it via the scheduler. Hard constraint recorded in D.3: email notifies, but approval requires an authenticated session — no one-click approve links in email.
 - **Evidence download hardening** — replace presigned direct-to-MinIO download URLs with the backend streaming evidence bytes itself. Presigned URLs are bearer-token style: anyone with the link can download until it expires, with no per-request re-check of session/auth state. Worth revisiting given the investment already made in session/MFA/lockout hardening (item I, now shipped — see Done) — that hardening doesn't currently extend to the download path. Surfaced while proxying MinIO behind nginx for item O. **Verified 2026-09-07: still open** — `storage.py` still defines `presigned_url()` on every storage backend, and `routers/evidence.py` still calls it at 4 call sites (`download_url=storage.presigned_url(...)` for both single-evidence and task-collection responses). Nothing streams bytes through the backend yet.
 - **Frontend build determinism** — generate and commit `frontend/package-lock.json` (none is committed — one has been observed untracked on wl-util-1 from a local `npm install`, but that's not what this item is about), then switch `deploy/nginx/Dockerfile` from `npm install` to `npm ci` for reproducible builds. Low priority, not blocking anything currently in flight. **Verified 2026-09-07: still open** — `git ls-files frontend/package-lock.json` returns nothing (not committed), `deploy/nginx/Dockerfile` still runs `npm install`, not `npm ci`.
