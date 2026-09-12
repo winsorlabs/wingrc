@@ -121,6 +121,18 @@ services:
       backend:
         condition: service_healthy
     environment: *backend-env
+    # This image's own Dockerfile bakes in an HTTP HEALTHCHECK (it hits
+    # backend's :8000/health) -- correct for the `backend` service, wrong
+    # here: `wingrc worker` serves no HTTP at all, so that inherited check
+    # would fail forever and show this container permanently "unhealthy"
+    # for a reason that has nothing to do with whether it's actually
+    # working (confirmed live during bench verification -- see this
+    # slice's own writeup). Disabled outright rather than replaced with a
+    # process-liveness check: `docker compose ps`'s plain "Up" status
+    # already answers "is the container running," and this service has no
+    # HTTP endpoint of its own to probe instead.
+    healthcheck:
+      disable: true
     volumes:
       - ./backend:/app
     command: wingrc worker
