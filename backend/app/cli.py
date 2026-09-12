@@ -843,6 +843,71 @@ def rotate_credential_keys_cmd(
         session.close()
 
 
+@app.command(name="jobs-run-due")
+def jobs_run_due_cmd() -> None:
+    """Run whatever registered scheduled jobs (scheduler.py) are due right
+    now, then exit. This is the host-cron fallback path: an operator who'd
+    rather not run the dedicated `worker` service (docker-compose.yml) can
+    point cron at this instead --
+
+        */1 * * * * docker compose exec -T backend wingrc jobs-run-due
+
+    -- every minute is a reasonable interval regardless of any individual
+    job's own, since a job that isn't due yet is a no-op call. This calls
+    the exact same scheduler.run_due_jobs() the `worker` command's loop
+    calls; there is only ever one implementation of "what's due."
+    """
+    from .scheduler import run_due_jobs
+
+    for outcome in run_due_jobs():
+        typer.echo(outcome)
+
+
+@app.command()
+def worker(
+    poll_interval: int = typer.Option(
+        60, help="Seconds between checks for due jobs"
+    ),
+) -> None:
+    """Long-running loop for the dedicated `worker` service
+    (docker-compose.yml): check scheduler.py's job registry every
+    poll_interval seconds and run whatever is due. This is the whole
+    scheduler mechanism's other half of jobs-run-due -- see that
+    command's docstring; both call the identical run_due_jobs().
+
+    Handles SIGTERM/SIGINT by finishing the current poll_interval sleep
+    (or an in-flight run_due_jobs() call, which is never interrupted
+    mid-job) and then exiting cleanly, rather than leaving `docker compose
+    down`/`stop` to wait out its full timeout and SIGKILL this process --
+    a job itself is never interrupted by this signal handling; only the
+    sleep between polls is cut short.
+    """
+    import signal
+    import time
+
+    from .scheduler import run_due_jobs
+
+    stopping = False
+
+    def _request_stop(signum, frame) -> None:
+        nonlocal stopping
+        stopping = True
+
+    signal.signal(signal.SIGTERM, _request_stop)
+    signal.signal(signal.SIGINT, _request_stop)
+
+    typer.echo(f"wingrc worker starting (poll_interval={poll_interval}s)")
+    while not stopping:
+        for outcome in run_due_jobs():
+            if outcome["outcome"] != "not_due":
+                typer.echo(outcome)
+        for _ in range(poll_interval):
+            if stopping:
+                break
+            time.sleep(1)
+    typer.echo("wingrc worker stopping")
+
+
 @app.command()
 def views() -> None:
     """List the available CMMC list views."""
