@@ -120,6 +120,22 @@ export function canSeeIntegrations(role: string | null | undefined): boolean {
 // "fix" that without a decision from Jarrod.
 export const TOOLS_LIBRARY_ROLES = new Set(["msp_admin", "consultant_admin"]);
 
+// Matches routers/integrations.py's gate exactly -- the SMTP connector
+// (outbound email, D.3's prerequisite) is registered in the same
+// deployment-wide connector REGISTRY and reaches the API through the
+// identical /integrations/* endpoints as Liongard, just filtered to a
+// different Administration section by `kind`. Deliberately its own named
+// constant rather than reusing INTEGRATIONS_ROLES even though the set is
+// identical today, per this file's own opening comment -- kept
+// consistent with Integrations by explicit instruction (see the email
+// slice's own writeup), not left to coincidence the way TOOLS_LIBRARY_ROLES
+// already documents that risk for itself.
+export const EMAIL_ROLES = new Set(["msp_admin", "consultant_admin"]);
+
+export function canSeeEmail(role: string | null | undefined): boolean {
+  return !!role && EMAIL_ROLES.has(role);
+}
+
 export function canSeeToolsLibrary(role: string | null | undefined): boolean {
   return !!role && TOOLS_LIBRARY_ROLES.has(role);
 }

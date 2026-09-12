@@ -23,9 +23,15 @@ function formatDateTime(iso: string): string {
 
 interface Props {
   canWrite: boolean;
+  // Which Administration section is rendering this instance -- Integrations
+  // (data-source connectors, e.g. Liongard) vs. Email (notification
+  // connectors, e.g. SMTP). Same generic component either way; nothing
+  // here is connector-specific. Defaults to "data_source" so existing
+  // callers (the Integrations section) don't need to change.
+  kind?: string;
 }
 
-export function IntegrationsPanel({ canWrite }: Props) {
+export function IntegrationsPanel({ canWrite, kind = "data_source" }: Props) {
   const [connectors, setConnectors] = useState<IntegrationConnector[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -40,14 +46,15 @@ export function IntegrationsPanel({ canWrite }: Props) {
 
   useEffect(() => {
     load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind]);
 
   function load() {
     setLoading(true);
     setError(null);
     api
       .listIntegrations()
-      .then(setConnectors)
+      .then((all) => setConnectors(all.filter((c) => c.kind === kind)))
       .catch(() => setError("Could not load integrations"))
       .finally(() => setLoading(false));
   }
@@ -130,20 +137,23 @@ export function IntegrationsPanel({ canWrite }: Props) {
 
   return (
     <div className="integrations-panel">
-      {/* Credentials are deployment-wide (one Liongard account per MSP
-          instance) but a sync is per-org: configuring a credential here
-          does not by itself pull anything into any org's scope graph.
-          Each org still needs its own Liongard Environment mapped, from
-          that org's Scope → Assets screen ("Sync from Liongard") --
-          LiongardSyncWizard.tsx. Stated here because this screen and that
-          one are no longer adjacent in the nav (this moved to the
-          deployment-tier Administration area; the mapping/sync stays
-          org-scoped on purpose — see AdminArea.tsx's own comment). */}
-      <div className="field-hint" style={{ marginBottom: "1rem" }}>
-        Configuring a credential here doesn't sync anything by itself — each org still needs
-        its Liongard Environment mapped from that org's Scope → Assets screen ("Sync from
-        Liongard").
-      </div>
+      {/* Liongard-specific -- only true for the data_source view. Credentials
+          are deployment-wide (one Liongard account per MSP instance) but a
+          sync is per-org: configuring a credential here does not by itself
+          pull anything into any org's scope graph. Each org still needs its
+          own Liongard Environment mapped, from that org's Scope → Assets
+          screen ("Sync from Liongard") -- LiongardSyncWizard.tsx. Stated
+          here because this screen and that one are no longer adjacent in
+          the nav (this moved to the deployment-tier Administration area;
+          the mapping/sync stays org-scoped on purpose — see AdminArea.tsx's
+          own comment). */}
+      {kind === "data_source" && (
+        <div className="field-hint" style={{ marginBottom: "1rem" }}>
+          Configuring a credential here doesn't sync anything by itself — each org still needs
+          its Liongard Environment mapped from that org's Scope → Assets screen ("Sync from
+          Liongard").
+        </div>
+      )}
 
       {error && <div className="form-error">{error}</div>}
 
@@ -235,7 +245,10 @@ export function IntegrationsPanel({ canWrite }: Props) {
               {saveError && <div className="form-error">{saveError}</div>}
               {editing.config_fields.map((f) => (
                 <div className="form-field" key={f}>
-                  <label>{fieldLabel(f)} <span className="required">*</span></label>
+                  <label>
+                    {fieldLabel(f)}{" "}
+                    {!editing.optional_fields.includes(f) && <span className="required">*</span>}
+                  </label>
                   <input
                     type="text"
                     value={formValues[f] ?? ""}
@@ -245,11 +258,20 @@ export function IntegrationsPanel({ canWrite }: Props) {
               ))}
               {editing.credential_fields.map((f) => (
                 <div className="form-field" key={f}>
-                  <label>{fieldLabel(f)} <span className="required">*</span></label>
+                  <label>
+                    {fieldLabel(f)}{" "}
+                    {!editing.optional_fields.includes(f) && <span className="required">*</span>}
+                  </label>
                   <input
                     type="password"
                     autoComplete="off"
-                    placeholder={editing.configured ? "Leave filled in to replace" : undefined}
+                    placeholder={
+                      editing.configured
+                        ? "Leave filled in to replace"
+                        : editing.optional_fields.includes(f)
+                          ? "Leave blank if not needed"
+                          : undefined
+                    }
                     value={formValues[f] ?? ""}
                     onChange={(e) => setFormValues((prev) => ({ ...prev, [f]: e.target.value }))}
                   />

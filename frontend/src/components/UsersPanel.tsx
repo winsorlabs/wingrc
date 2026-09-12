@@ -62,7 +62,7 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
   const [confirmResetPasswordId, setConfirmResetPasswordId] = useState<string | null>(null);
   const [resettingPassword, setResettingPassword] = useState(false);
   const [resetPasswordResult, setResetPasswordResult] = useState<
-    { userId: string; token: string; expiresAt: string } | null
+    { userId: string; token: string; expiresAt: string; emailSent: boolean; emailError: string | null } | null
   >(null);
   const [resetPasswordCopied, setResetPasswordCopied] = useState(false);
 
@@ -234,7 +234,13 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
     setError(null);
     try {
       const result = await api.resetUserPassword(orgId, userId);
-      setResetPasswordResult({ userId, token: result.reset_token, expiresAt: result.expires_at });
+      setResetPasswordResult({
+        userId,
+        token: result.reset_token,
+        expiresAt: result.expires_at,
+        emailSent: result.email_sent,
+        emailError: result.email_error,
+      });
       setResetPasswordCopied(false);
       setConfirmResetPasswordId(null);
     } catch (e) {
@@ -404,6 +410,14 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
                         <>
                           {resetPasswordResult?.userId === u.id ? (
                             <div className="reset-password-result">
+                              {resetPasswordResult.emailSent ? (
+                                <div className="field-hint">✓ Emailed to {u.email}.</div>
+                              ) : (
+                                <div className="form-error">
+                                  Email not sent ({resetPasswordResult.emailError}) — deliver the
+                                  token below by hand.
+                                </div>
+                              )}
                               <div className="token-warning">
                                 This is the only time this reset token will be shown. Copy
                                 it now and deliver it to {u.email} out of band. It expires{" "}
@@ -576,6 +590,14 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
             {invitedResult ? (
               <>
                 <div className="drawer-body">
+                  {invitedResult.email_sent ? (
+                    <div className="field-hint">✓ Emailed to {invitedResult.email}.</div>
+                  ) : (
+                    <div className="form-error">
+                      Email not sent ({invitedResult.email_error}) — deliver the token below
+                      by hand.
+                    </div>
+                  )}
                   <div className="token-warning">
                     This is the only time this invite token will be shown. Copy it
                     now and deliver it to {invitedResult.email} out of band — it

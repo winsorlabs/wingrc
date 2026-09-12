@@ -20,7 +20,7 @@ import { SideNav } from "./components/SideNav";
 import { SystemDescriptionForm } from "./components/SystemDescriptionForm";
 import { UsersPanel } from "./components/UsersPanel";
 import { useAuth } from "./hooks/useAuth";
-import { canSeeApiTokens, canSeeAuditLog, canSeeIntegrations, canSeeToolsLibrary, canSeeUserDirectory, canSeeUsers } from "./lib/roles";
+import { canSeeApiTokens, canSeeAuditLog, canSeeEmail, canSeeIntegrations, canSeeToolsLibrary, canSeeUserDirectory, canSeeUsers } from "./lib/roles";
 import type { Assessment, OnboardingStatus, Org } from "./types";
 
 // "admin" is the deployment-tier area (Integrations today; G.9/G.11 land
@@ -58,7 +58,24 @@ export function App() {
   const focusNonceRef = useRef(0);
   const [securityTab, setSecurityTab] = useState<SecurityTab>("users");
   const [onboardingStatus, setOnboardingStatus] = useState<OnboardingStatus | null>(null);
-  const [preAuthScreen, setPreAuthScreen] = useState<PreAuthScreen>("login");
+  // An invite/reset email (email_service.py) links here as
+  // `?invite_token=<token>` rather than making the recipient copy-paste a
+  // bare token out of the email body -- picked up once at initial mount
+  // (there's no router to watch the URL live, matching this file's own
+  // screen-state-machine pattern) and immediately stripped from the
+  // visible URL/history via replaceState below, since it's a credential.
+  const [preAuthScreen, setPreAuthScreen] = useState<PreAuthScreen>(() =>
+    new URLSearchParams(window.location.search).has("invite_token") ? "accept-invite" : "login"
+  );
+  const [initialInviteToken] = useState<string>(
+    () => new URLSearchParams(window.location.search).get("invite_token") ?? ""
+  );
+  useEffect(() => {
+    if (initialInviteToken) {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function loadOnboardingStatus(orgId: string) {
     api.getOnboardingStatus(orgId).then(setOnboardingStatus).catch(() => {});
@@ -114,13 +131,17 @@ export function App() {
   // works today (the breadcrumb's org-name link); from there the
   // Administration button is visible again.
   // Or'd across every deployment-tier admin capability (Integrations,
-  // Tools/G.9, Users/G.11) rather than checking one and assuming the
-  // others -- those are separate authorization axes (lib/roles.ts's own
-  // opening comment), and Users in particular admits a strictly narrower
-  // role set (msp_admin only, not consultant_admin) than the other two.
+  // Email, Tools/G.9, Users/G.11) rather than checking one and assuming
+  // the others -- those are separate authorization axes (lib/roles.ts's
+  // own opening comment), and Users in particular admits a strictly
+  // narrower role set (msp_admin only, not consultant_admin) than the
+  // other three.
   const showAdminButton =
     screen === "orgs" &&
-    (canSeeIntegrations(user?.role) || canSeeToolsLibrary(user?.role) || canSeeUserDirectory(user?.role));
+    (canSeeIntegrations(user?.role) ||
+      canSeeEmail(user?.role) ||
+      canSeeToolsLibrary(user?.role) ||
+      canSeeUserDirectory(user?.role));
 
   if (isLoading) return <div className="app-loading">Loading…</div>;
   if (!user) {
@@ -129,6 +150,7 @@ export function App() {
         <InviteAcceptPage
           onAuthenticated={refresh}
           onCancel={() => setPreAuthScreen("login")}
+          initialToken={initialInviteToken}
         />
       )
       : (

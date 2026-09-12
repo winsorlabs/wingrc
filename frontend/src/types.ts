@@ -463,11 +463,19 @@ export interface InvitedUser {
   is_active: boolean;
   invite_token: string;
   invite_expires_at: string;
+  // Whether email_service.py actually sent this. invite_token is always
+  // present regardless -- manual delivery must keep working when email
+  // isn't configured or the send fails (see routers/users.py's own
+  // comment). email_error is set only when email_sent is false.
+  email_sent: boolean;
+  email_error: string | null;
 }
 
 export interface PasswordResetIssued {
   reset_token: string;
   expires_at: string;
+  email_sent: boolean;
+  email_error: string | null;
 }
 
 // ── Scope / Assets (G.5) — mirrors backend/app/routers/scope.py's schemas ──
@@ -652,6 +660,14 @@ export interface IntegrationConnector {
   help_text: string;
   config_fields: string[];
   credential_fields: string[];
+  // "data_source" (feeds compliance scope, e.g. Liongard) or
+  // "notification" (outbound comms, e.g. SMTP) -- which Administration
+  // section (Integrations vs. Email) this connector's card renders under.
+  kind: string;
+  // config_fields/credential_fields entries that may be submitted blank
+  // (e.g. SMTP's username/password for an unauthenticated relay) -- skip
+  // the "required" marker on these in the credential form.
+  optional_fields: string[];
 }
 
 // ── Deployment-wide user directory (ADR 0009 M.7/M.8, G.11) — mirrors

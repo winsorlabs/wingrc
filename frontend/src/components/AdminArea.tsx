@@ -5,6 +5,18 @@ import { SideNavCategory, SideNavItem, SideNavRoot } from "./SideNavKit";
 import { ToolsLibraryPanel } from "./ToolsLibraryPanel";
 import { UserDirectoryPanel } from "./UserDirectoryPanel";
 
+// Email (SMTP, D.3's outbound-email prerequisite) is structurally a
+// connector -- same ConnectorSpec/IntegrationConnection shape, same
+// /integrations/* endpoints -- but not a data source the way Liongard is:
+// it carries no compliance content by design (email_service.py's own
+// docstring) and configures an outbound comms channel instead of feeding
+// scope. Listing it under "Integrations" next to Liongard would read
+// oddly (a reader scanning that section for "what feeds compliance data"
+// would trip over a connector that feeds nothing). Given its own section
+// instead, backed by the exact same IntegrationsPanel component filtered
+// to `kind="notification"` -- one generic component, two mount points,
+// not two panels to keep in sync.
+
 // Deployment-tier administration -- distinct from an org's own Settings
 // (OrgProfileForm etc.) and from a user's own account settings
 // (AccountSettings). Reachable from OrgPicker (the pre-org screen), not
@@ -31,7 +43,7 @@ import { UserDirectoryPanel } from "./UserDirectoryPanel";
 // for the full reasoning. That's why this section, alone of the three,
 // needs the caller's role passed in to decide whether to render its nav
 // entry at all.
-type AdminSection = "integrations" | "tools" | "users";
+type AdminSection = "integrations" | "email" | "tools" | "users";
 
 interface Props {
   canWrite: boolean;
@@ -51,6 +63,11 @@ export function AdminArea({ canWrite, currentUserRole }: Props) {
           </SideNavItem>
         </SideNavCategory>
         <SideNavCategory>
+          <SideNavItem active={section === "email"} onClick={() => setSection("email")}>
+            Email
+          </SideNavItem>
+        </SideNavCategory>
+        <SideNavCategory>
           <SideNavItem active={section === "tools"} onClick={() => setSection("tools")}>
             Tools
           </SideNavItem>
@@ -65,7 +82,8 @@ export function AdminArea({ canWrite, currentUserRole }: Props) {
       </SideNavRoot>
 
       <div className="workspace-content">
-        {section === "integrations" && <IntegrationsPanel canWrite={canWrite} />}
+        {section === "integrations" && <IntegrationsPanel canWrite={canWrite} kind="data_source" />}
+        {section === "email" && <IntegrationsPanel canWrite={canWrite} kind="notification" />}
         {section === "tools" && <ToolsLibraryPanel />}
         {section === "users" && showUsers && <UserDirectoryPanel />}
       </div>

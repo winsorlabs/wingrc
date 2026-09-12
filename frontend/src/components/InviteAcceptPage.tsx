@@ -8,11 +8,16 @@ type Step = "form" | "mfa_verify" | "enrolling";
 interface Props {
   onAuthenticated: () => void;
   onCancel: () => void;
+  // Pre-filled from an invite/reset email's link (App.tsx picks
+  // `?invite_token=` off the URL once at mount) -- still just a starting
+  // value in an editable field, not auto-submitted, so the recipient
+  // still deliberately enters their password.
+  initialToken?: string;
 }
 
-export function InviteAcceptPage({ onAuthenticated, onCancel }: Props) {
+export function InviteAcceptPage({ onAuthenticated, onCancel, initialToken = "" }: Props) {
   const [step, setStep] = useState<Step>("form");
-  const [token, setToken] = useState("");
+  const [token, setToken] = useState(initialToken);
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
