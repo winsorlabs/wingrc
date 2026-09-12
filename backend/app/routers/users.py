@@ -18,13 +18,24 @@ now consultant_admin too) can already list who's on the engagement —
 found via a real bench-stack test failure, not assumed. Only the
 mutating actions below are msp_admin-gated.
 
-POST /orgs/{org_id}/users            — invite a user (returns raw invite token)
+POST /orgs/{org_id}/users            — invite a user (returns raw invite token;
+                                        also attempts an email -- see
+                                        email_sent/email_error below)
 GET  /orgs/{org_id}/users            — list users (no role gate — see above)
 PATCH /orgs/{org_id}/users/{user_id} — update role / is_active
 POST /orgs/{org_id}/users/{user_id}/reset-mfa — admin MFA reset
 DELETE /orgs/{org_id}/users/{user_id} — deactivate
 POST /orgs/{org_id}/users/{user_id}/unlock — clear lockout state (I.5)
-POST /orgs/{org_id}/users/{user_id}/reset-password — issue a one-time reset token (I.5)
+POST /orgs/{org_id}/users/{user_id}/reset-password — issue a one-time reset token (I.5);
+                                        also attempts an email, same as invite
+
+Both invite and reset-password ALWAYS return the raw token
+(invite_token/reset_token) regardless of whether email sent -- manual,
+out-of-band delivery must keep working when SMTP isn't configured or a
+send fails, never depend on it. `email_sent`/`email_error` on both
+responses tell the admin which happened, so they know whether to still
+deliver the token by hand. See _try_send_token_email and
+email_service.py's own module docstring.
 POST /orgs/{org_id}/users/{user_id}/delete — permanent hard-delete (ADR 0006, zero-history only)
 POST /orgs/{org_id}/users/{user_id}/anonymize — scrub PII, keep row + audit trail (ADR 0006)
 POST /orgs/{org_id}/users/api        — create an API user (service account) + its first token
@@ -50,6 +61,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.orm import Session
 
+from .. import email_service
 from ..audit import log_event
 from ..auth import (
     _ROLE_RANK,
@@ -60,6 +72,7 @@ from ..auth import (
     require_write,
     revoke_user_sessions,
 )
+from ..config import get_settings
 from ..db import get_session
 from ..models import ApiToken, AuditLog, OrgMembership, User
 from ..org_membership import _grant, provision_new_user_memberships
@@ -95,6 +108,73 @@ class InviteUserIn(BaseModel):
     role: str
     login_method: str = "local"
     contact_id: uuid.UUID | None = None
+
+
+_EMAIL_COPY = {
+    "user_invite": (
+        "You've been invited to WinGRC",
+        "You've been invited to join WinGRC.\n\n"
+        "Set up your account: {link}\n\n"
+        "This link expires in {ttl} hours.\n\n"
+        "If you weren't expecting this invitation, you can ignore this email.\n",
+    ),
+    "password_reset": (
+        "Reset your WinGRC password",
+        "A password reset was requested for your WinGRC account.\n\n"
+        "Reset your password: {link}\n\n"
+        "This link expires in {ttl} hours.\n\n"
+        "If you didn't request this, contact your administrator.\n",
+    ),
+}
+
+
+def _try_send_token_email(
+    db: Session,
+    *,
+    to: str,
+    token: str,
+    template: str,
+    org_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> tuple[bool, str | None]:
+    """Best-effort send for an invite/password-reset token. Never raises --
+    the caller must always keep returning the raw token regardless of what
+    this returns (§4's fallback contract: manual delivery must keep
+    working when email isn't configured, and the caller already has the
+    token in scope either way).
+
+    Content rule (email_service.py's own docstring, restated because this
+    is the one place in the codebase that actually builds a message body):
+    no compliance content, ever -- this email only ever says "something
+    needs your attention, sign in to WinGRC" plus a link. The subject
+    lines above are static and carry no per-user or per-org detail.
+
+    Returns (sent, reason) -- reason is a short admin-facing string
+    whenever sent is False, whether because SMTP isn't configured, the
+    public URL isn't configured (so a compliant link can't be built at
+    all), or the send itself failed.
+    """
+    public_url = (get_settings().public_url or "").strip()
+    if not public_url:
+        return False, "Email link cannot be built: WINGRC_PUBLIC_URL is not configured."
+
+    link = f"{public_url.rstrip('/')}/?invite_token={token}"
+    subject, body_template = _EMAIL_COPY[template]
+    body = body_template.format(link=link, ttl=_INVITE_TTL_HOURS)
+
+    result = email_service.send(db, to=to, subject=subject, body=body, template=template)
+
+    log_event(
+        db,
+        org_id=org_id,
+        action="email.send",
+        entity_type="user",
+        entity_id=user_id,
+        after_value={"to": to, "template": template, "sent": result.sent},
+        context={"error": result.error} if not result.sent else None,
+    )
+    db.commit()
+    return result.sent, result.error
 
 
 @router.post("/users", status_code=201)
@@ -152,6 +232,15 @@ def invite_user(
     )
     db.commit()
 
+    # Best-effort: the invite exists and is fully usable via the returned
+    # token regardless of what happens here (§4's fallback contract) --
+    # email is a convenience on top of the manual-delivery path, never a
+    # dependency of it.
+    email_sent, email_error = _try_send_token_email(
+        db, to=user.email, token=raw_token, template="user_invite",
+        org_id=org_id, user_id=user.id,
+    )
+
     return {
         "id": str(user.id),
         "email": user.email,
@@ -161,6 +250,8 @@ def invite_user(
         "is_active": user.is_active,
         "invite_token": raw_token,  # shown once — admin emails this to the user
         "invite_expires_at": user.invite_expires_at.isoformat(),
+        "email_sent": email_sent,
+        "email_error": email_error,
     }
 
 
@@ -659,9 +750,17 @@ def reset_user_password(
         actor_type=actor_type_for(current_user),
     )
     db.commit()
+
+    email_sent, email_error = _try_send_token_email(
+        db, to=user.email, token=raw_token, template="password_reset",
+        org_id=org_id, user_id=user.id,
+    )
+
     return {
         "reset_token": raw_token,  # shown once — admin delivers this out of band
         "expires_at": user.invite_expires_at.isoformat(),
+        "email_sent": email_sent,
+        "email_error": email_error,
     }
 
 

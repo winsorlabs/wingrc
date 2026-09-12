@@ -104,6 +104,23 @@ Scoped to meaningful compliance mutations (signal, not firehose):
                                  logged-then-blocked if it would revoke
                                  the actor's own membership or the last
                                  msp_admin membership in that org.
+  email.send                     — an outbound notification email was
+                                 attempted (routers/users.py's invite/
+                                 password-reset call sites, via
+                                 email_service.send()). after_value
+                                 carries {to, template, sent} -- template
+                                 is a short machine name ("user_invite",
+                                 "password_reset"), never the subject or
+                                 body. context carries {error: ...} on
+                                 failure only. NEVER the token, the raw
+                                 message body, or the SMTP credential --
+                                 see email_service.py's own module
+                                 docstring for the content rule this
+                                 event exists to stay inside of. Not
+                                 logged at all when WINGRC_PUBLIC_URL
+                                 isn't configured (no link could be built,
+                                 so nothing was attempted -- see
+                                 routers/users.py's _try_send_token_email).
 
 NOT logged (noise):
   _seed_control_states() bulk insert on assessment creation

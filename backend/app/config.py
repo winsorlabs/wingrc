@@ -15,6 +15,16 @@ class Settings(BaseSettings):
     app_name: str = "WinGRC"
     environment: str = "development"
 
+    # The URL a browser uses to reach this deployment -- the backend has no
+    # other way to know it (nginx terminates the real hostname; there's no
+    # request in scope when building an invite/reset email). Only consumed
+    # by routers/users.py to build the link in those two emails
+    # (email_service.py itself is link-agnostic). Unset means invite/reset
+    # emails fall back to the token-only response the admin already
+    # delivers by hand today -- see routers/users.py's own comment -- since
+    # a link-less email would violate the "link, not a bare token" rule.
+    public_url: str | None = None
+
     # SQLAlchemy connection pool, sized deliberately rather than left at
     # SQLAlchemy's own defaults (pool_size=5, max_overflow=10 -> 15 total,
     # unmodified since this app's first commit). Every sync endpoint/
