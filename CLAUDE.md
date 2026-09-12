@@ -116,6 +116,10 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   FastAPI router files (see `backend/pyproject.toml`).
 - Work on branches, small commits. Push after every commit — dev server is a
   separate Linux box that must `git pull` first.
+- When marking any slice done, grep `CLAUDE.md`, `ROADMAP.md`,
+  `docs/roadmap.md`, and the relevant `PLAN-*.md` for that slice's own
+  name/number and update every hit, not just the file you're actively
+  editing.
 
 ### Key file locations
 
@@ -304,43 +308,19 @@ stubs in other test files inherit the default and are unaffected.
 
 ---
 
-## Data model snapshot (accurate as of migration 0017 — not maintained
-since; the schema has grown substantially — `OrgMembership`,
-`DeploymentSettings`, `IntegrationConnection`, `OrgLiongardEnvironment`,
-`ProductDocument`, `User`/`UserSession`/`ApiToken`/`PasswordHistory`/
-`MfaBackupCode`, `SprsSnapshot`, among others, none shown below. Read
-`backend/app/models.py` directly for the current, complete schema; treat
-this diagram as an orientation sketch of the core assessment spine, not
-an inventory)
+## Data model
 
-```
-Organization
-  └─ SystemDescription (1:1, UNIQUE org_id)
-  └─ Contact → ContactDocumentationRole (roles)
-  └─ ScopeEntity (scope graph)
-  └─ OrgProduct → Product → BaselineControl → BaselineEvidenceSpec
-  └─ Assessment
-       └─ ControlState (per-objective; FK → AssessmentObjective)
-            └─ ControlStateHistory (audit trail)
-            └─ EvidenceStateLink → Evidence (file or reference)
-            └─ EvidenceTaskStateLink → EvidenceTask
-            └─ RaciAssignment → Contact
-            └─ ImplementationStatement (body, status, grounded_in JSONB)
-  └─ Finding → PoamItem
-  └─ AuditLog
-
-Framework → Control → AssessmentObjective
-Product → BaselineControl → BaselineEvidenceSpec
-```
-
-`ControlState.status` values: `not_met | partial | pending_evidence |
-needs_review | met | inherited | not_applicable`
-
-`ControlState.responsibility` values: `customer_owns | provider_satisfies |
-shared | inherited`
-
-SPRS rollup: worst-objective-wins per control. Non-passing statuses:
-`not_met`, `partial`, `pending_evidence`, `needs_review`.
+A hand-maintained schema copy drifts by construction — this file held a
+table inventory frozen at migration 0017 for weeks while ~15 tables were
+added, and `roles.ts`'s own header admits the same failure mode for its
+mirrored role constants. Not repeating it here: **`backend/app/models.py`
+is the schema**; `backend/app/migrations/versions/` is its history. The
+relationships and enum values a reader needs are already covered where
+they're used — "The five layers" above for how the pieces fit together,
+"Hard rules" for the status/responsibility semantics that actually matter
+(`pending_evidence`→`met`, `customer_owns` vs `provider_satisfies`,
+`platform_only` exclusion), and the "Assessment engine" section above for
+the SPRS rollup rule.
 
 ---
 
