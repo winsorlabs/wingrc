@@ -336,7 +336,7 @@ async def upload_evidence(
 
     # SHA-256 per DoD-CIO-00008 CMMC artifact hashing requirement.  Algorithm is
     # CMVP-approved; the FIPS-validated crypto boundary (UBI 9 / BoringCrypto,
-    # see docs/fips.md) is roadmap item #2 — FIPS deployment profile — and is
+    # see docs/fips.md) is roadmap item #3 — FIPS deployment profile — and is
     # not yet deployed.  Do not read this as FIPS-compliant today.
     file_sha256 = hashlib.sha256(data).hexdigest()
 

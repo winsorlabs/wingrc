@@ -458,7 +458,7 @@ def list_products_for_assessment(
     # G.9: is_published is the deliberate publish/unpublish gate on the
     # baseline library -- an unpublished product (imported but not yet
     # reviewed and exposed) must not appear in any tenant's Tools panel.
-    # See migration 0038 for why every product seeded before this filter
+    # See migration 0039 for why every product seeded before this filter
     # existed is deliberately backfilled to is_published=True rather than
     # left False (which would otherwise silently empty every tenant's
     # already-active tool list the moment this filter shipped).

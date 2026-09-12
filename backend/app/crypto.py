@@ -1,6 +1,6 @@
 """Symmetric encryption for third-party credentials stored at rest.
 
-WinGRC is self-hosted (see CLAUDE.md's item-D rationale, and ROADMAP.md D.1):
+WinGRC is self-hosted (see CLAUDE.md's item 8 (D.1), and root ROADMAP.md's item D / D.1):
 the MSP runs its own Postgres, so an encrypted-at-rest Liongard key sitting
 in it is the MSP holding its own credential, in the same box that already
 holds its clients' CUI scoping data — not WinGRC-the-vendor holding a

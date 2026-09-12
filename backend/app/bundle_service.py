@@ -318,10 +318,11 @@ class ScopeEntitySnap:
 
 @dataclass
 class CrmRowSnap:
-    """One row of the Customer Responsibility Matrix (CRM) — the deferred
-    CRM roadmap item (CLAUDE.md roadmap item 4's own note: "renders from
-    raci_assignment + contact"), unblocked now that RACI data exists
-    (G.7). control/objective down the side, RACI role across.
+    """One row of the Customer Responsibility Matrix (CRM) — part of the
+    bundle deliverables CLAUDE.md's five-layers section names (Layer 5:
+    "POA&M, CRM, and the SPRS score"), rendered from `raci_assignment` +
+    `contact`, unblocked now that RACI data exists (G.7). control/objective
+    down the side, RACI role across.
 
     Derived from ControlSnap/ObjectiveSnap — both already fully populated
     by the time snapshot_bundle() builds this — not requeried. There is no
