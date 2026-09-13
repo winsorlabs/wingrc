@@ -1740,3 +1740,132 @@ class JobRun(Base):
             "status IN ('running', 'succeeded', 'failed')", name="ck_job_run_status"
         ),
     )
+
+
+class SprsSubmission(Base):
+    """Record of a human action in SPRS (the DoD's own scoring system) --
+    what was actually FILED, never to be confused with what
+    `assessment.sprs_score`/`sprs_snapshot` say WinGRC *computed*. Three
+    distinct facts, kept in three distinct places: what WinGRC computed
+    (`sprs_snapshot`), what was filed with SPRS (this table), and an
+    assessment being complete in WinGRC (`Assessment.status`).
+    Completing an assessment (status -> 'submitted',
+    engine.py:complete_assessment) never creates a row here -- it only
+    prompts a human to, since finishing an assessment in WinGRC files
+    nothing with the DoD; the customer still logs into SPRS separately.
+
+    Org-scoped, NOT assessment-scoped: assessment_id is nullable because
+    the first submission is typically captured at onboarding, before any
+    assessment exists in this system at all (a customer's prior SPRS
+    score from a spreadsheet). Populated only when a submission follows
+    a completion here.
+
+    `score` is a plain value, never a live reference to
+    `assessment.sprs_score`/`sprs_snapshot` -- it records what was
+    actually filed. A later recompute of the live score must never
+    retroactively change what this row claims was submitted to the DoD,
+    and the onboarding case's score may not correspond to anything this
+    app would ever calculate (it came from a spreadsheet, possibly under
+    a different scoring methodology or scope boundary).
+
+    Append-only, same discipline as `sprs_snapshot`/`audit_log`: once
+    inserted, `score`/`submitted_date`/`submitted_by_*`/`note` are never
+    updated -- "the score we filed last March" must not become editable.
+    A correction is a NEW row, not an edit. `voided_at`/`voided_reason`
+    are the one exception, and a narrow one: a single one-way annotation
+    (NULL -> set, never changed again, never unset) marking a row as
+    superseded by a later correction -- it says "this row is no longer
+    authoritative," it does not change what the row claims was filed.
+    The "current" submission for the reminder clock and for display is
+    the most recent (`submitted_date` desc, `created_at` desc as
+    tiebreak) row with `voided_at IS NULL`.
+
+    Contact deletion must not destroy this record -- checked against the
+    contact-lifecycle precedent (docs/roadmap.md's RACI copy-forward
+    entry) before reusing its FK shape rather than assuming it fits:
+    `RaciAssignment.contact_id` is `ON DELETE CASCADE`, correct there
+    because RACI is a live "who is responsible now" fact that should
+    disappear with the person. A submission record is the opposite --
+    "who filed this in March 2026" must remain true and readable forever,
+    including after that person leaves and their `contact` row is
+    hard-deleted (contact has no soft-delete; see that same roadmap
+    entry). So `submitted_by_contact_id` is `ON DELETE SET NULL` (matching
+    `User.contact_id`'s existing precedent, not RaciAssignment's), and the
+    submitter's name/email are denormalized into `submitted_by_name`/
+    `submitted_by_email` at write time -- the same "store a value, not a
+    live reference" principle this table already applies to `score`,
+    applied to identity instead of score. The row stays fully meaningful
+    after the contact is gone; only the live link (for e.g. clicking
+    through to the contact's current record) goes stale.
+    """
+
+    __tablename__ = "sprs_submission"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    # Nullable: populated only when this submission follows a completion
+    # in this system (engine.py:complete_assessment's prompt flow) --
+    # onboarding-captured history predates any assessment here.
+    assessment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("assessment.id"), nullable=True, index=True
+    )
+    score: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    submitted_date: Mapped[date] = mapped_column(Date, nullable=False)
+    submitted_by_contact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contact.id", ondelete="SET NULL"), nullable=True
+    )
+    # Denormalized submitter identity -- survives the contact row being
+    # hard-deleted. See class docstring.
+    submitted_by_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    submitted_by_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Who/when this row was RECORDED IN WINGRC -- distinct from
+    # submitted_by_*/submitted_date, which describe the SPRS filing
+    # itself and may have been entered by an MSP engineer on the
+    # customer's behalf, well after the fact (the onboarding case).
+    created_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    # One-way annotation only -- see class docstring. NULL means current/
+    # authoritative (subject to the "most recent wins" rule above); once
+    # set, never cleared or re-set.
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    voided_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class SprsReminderLog(Base):
+    """One row per annual-reminder email actually sent for one org's
+    current SPRS submission -- the idempotency record scheduler.py's
+    sprs_annual_reminder job checks before sending, so a due reminder
+    fires exactly once per submission's anniversary rather than every
+    tick after the due date passes. A new submission (a new row, new id)
+    makes the org eligible for a fresh reminder on its own new
+    anniversary -- this table is keyed to the submission it fired for,
+    not to the org alone, so that reset happens automatically.
+
+    Deployment-internal bookkeeping, not a user-facing record -- no
+    audit_log entry, no UI. Never updated after insert.
+    """
+
+    __tablename__ = "sprs_reminder_log"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    submission_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sprs_submission.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+    )
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
