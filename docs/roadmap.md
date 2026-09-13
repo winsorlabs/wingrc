@@ -2112,13 +2112,27 @@ Items without a status are planned but not yet started.
     proof is a test message landing in an inbox you control. Added to
     item O's (docs.wingrc.us) planned-content list as item 4, alongside
     the credential-encryption-key-custody content already queued there.
-  - **Verification: pending bench run** — this entry is updated with
-    real numbers once the isolated bench-stack verification (backend
-    pytest, ruff, frontend vitest/`tsc -b`/`vite build`, and a direct
-    check that a config saved under the old `tuple[str, ...]` shape still
-    loads correctly under the new descriptors) actually runs, per this
-    codebase's own convention of never asserting a test count that wasn't
-    obtained by running it.
+  - **Verified 2026-09-14, bench (wl-util-1):** an isolated
+    `docker compose -p wingrc_integrations_email` project (fresh clone,
+    separate network/volumes, the live `wingrc` project — including
+    Jarrod's real, working SMTP2GO credential — never touched or
+    re-entered) — **1002/1002 backend tests** (11 new: six on
+    `connectors/smtp.py`'s send-message path directly — no test_input
+    unchanged, a real send accepted with the honest "check the inbox"
+    wording, sender/recipient rejection reported distinctly from a
+    connection failure — plus five at the router level covering
+    recipient passthrough, the pre-existing no-body call shape staying
+    intact, and audit-log content), `ruff check .` clean, frontend
+    **108/108** vitest (16 files, 9 new: control-type rendering for both
+    connectors, the port-suggestion applying only when blank and never
+    overwriting an existing value, the recipient field present for SMTP
+    and absent for Liongard, never prefilled, and cleared after every
+    test run regardless of outcome) plus `tsc -b`/`vite build` clean. The
+    old-shape-config compatibility claim above was checked directly, not
+    assumed: a row constructed exactly as one written before this change
+    would have been (plain `{field_name: value}` JSON, credential
+    encrypted the same way) loads and displays correctly through the new
+    `_out()`/`ConfigFieldOut` path with no re-entry and no migration.
 
 ---
 
