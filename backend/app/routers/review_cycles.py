@@ -175,9 +175,16 @@ def get_cycle(
         raise HTTPException(status_code=404, detail="Review cycle not found")
 
     # Mark viewed if the caller is a reviewer on this cycle -- a no-op
-    # otherwise (see review_cycles.record_view's own docstring).
+    # otherwise (see review_cycles.record_view's own docstring). Deliberately
+    # NOT committed here: app.current_org is set via set_config(..., true)
+    # (transaction-LOCAL scope, per require_org_access()'s own docstring) --
+    # a commit mid-request ends that transaction and Postgres discards the
+    # GUC with it, so every RLS-scoped query after a mid-handler commit would
+    # silently see org_id as NULL and match nothing. One commit at the end
+    # of the request, after every read, matches every other router in this
+    # codebase and is exactly what tests/conftest.py's _app_session wrapper
+    # (RESET app.current_org after commit) exists to catch.
     review_cycles.record_view(db, org_id=org_id, cycle_id=cycle_id, user_id=current_user.id)
-    db.commit()
 
     items = db.scalars(
         select(ReviewCycleItem).where(ReviewCycleItem.cycle_id == cycle_id)
@@ -192,6 +199,7 @@ def get_cycle(
                 ReviewCycleFlag.cycle_item_id.in_([i.id for i in items])
             )
         ).all()
+    db.commit()
 
     return ReviewCycleDetailOut(
         **_cycle_out(cycle).model_dump(),

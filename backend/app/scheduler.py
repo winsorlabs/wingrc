@@ -384,17 +384,24 @@ def _review_cycle_sweep(session: Session) -> dict:
                     {"rid": r.id},
                 ).all()
             }
-            number = review_cycles.due_reminder_number(r, now=now, already_sent=already)
-            if number is None:
-                continue
-            result = email_service.send(
-                session, to=r.reviewer_email, subject=_REVIEW_REMINDER_SUBJECT,
-                body=_REVIEW_REMINDER_BODY.format(link=link), template="review_cycle_reminder",
-            )
-            if result.sent:
+            # Catch up on every reminder due by now in this one tick, not
+            # just the next in sequence -- a reviewer 15 days overdue with
+            # zero prior reminders is due for both #1 and #2 right now, and
+            # due_reminder_number only ever reports one number per call.
+            while True:
+                number = review_cycles.due_reminder_number(r, now=now, already_sent=already)
+                if number is None:
+                    break
+                result = email_service.send(
+                    session, to=r.reviewer_email, subject=_REVIEW_REMINDER_SUBJECT,
+                    body=_REVIEW_REMINDER_BODY.format(link=link), template="review_cycle_reminder",
+                )
+                if not result.sent:
+                    break
                 review_cycles.record_reminder_sent(
                     session, cycle_id=cycle_id, reviewer_id=r.id, reminder_number=number
                 )
+                already.add(number)
                 reminders_sent += 1
         session.commit()
 

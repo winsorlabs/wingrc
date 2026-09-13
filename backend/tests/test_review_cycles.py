@@ -83,7 +83,21 @@ def client(db_session, storage, fake_msp_admin):
 
 
 def _client_as(db_session, storage, user, *, org_id):
-    _grant(db_session, user, org_id=org_id)
+    # _seed_customer_poc already grants membership itself (needed so
+    # auth.org_reviewer_candidates() finds it as a reviewer regardless of
+    # whether a TestClient is ever built for that user) -- guard against a
+    # second, duplicate grant here for that case, while still granting
+    # fresh for a user (e.g. a genuine cross-org outsider) that wasn't
+    # pre-seeded with one.
+    from app.models import OrgMembership
+
+    existing = db_session.scalars(
+        select(OrgMembership).where(
+            OrgMembership.user_id == user.id, OrgMembership.org_id == org_id
+        )
+    ).first()
+    if existing is None:
+        _grant(db_session, user, org_id=org_id)
     app.dependency_overrides[get_session] = _app_session(db_session)
     app.dependency_overrides[get_storage_client] = lambda: storage
     app.dependency_overrides[get_current_user] = _authed(db_session, user)
