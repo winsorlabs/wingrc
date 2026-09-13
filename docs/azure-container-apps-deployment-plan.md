@@ -3,11 +3,27 @@
 Second deployment path for WinGRC, alongside the Ubuntu/on-prem path in
 `docs/deployment.md` and `wl-util-1-worked-example-deployment.md`. Same
 Docker images, no application code changes required *except* one item
-flagged below that needs verification. Confirmed directly in a real Azure
-Government subscription: Container Apps is available there. Two other
-pieces (PostgreSQL Flexible Server, Container Apps managed certificates)
-were not independently confirmed for Azure Government — verify both
-directly in the portal before relying on this plan for a real deployment.
+flagged below that needs verification.
+
+**Azure Government specifically: see
+[`azure-government-hosting-feasibility.md`](azure-government-hosting-feasibility.md)
+(2026-09-14) before relying on this plan for a Gov deployment.** That
+research supersedes this file's "confirmed directly in a real Azure
+Government subscription: Container Apps is available there" claim below
+— current evidence (Microsoft's own Government GA roadmap, its
+compliance-scope table, and a live Microsoft GitHub issue thread as
+recently as 2026-06-16) points at Container Apps being **preview-only
+and IL2-authorized** in Azure Government, not production-ready GA. It
+also resolves the PostgreSQL-version question this file flags as
+unconfirmed (not a blocker — see that doc), and covers several things
+this file doesn't: Blob Storage's actual implementation status (not yet
+built), Key Vault, egress (including a March 2026 platform-wide default-
+outbound-access change this file predates), cost structure, and the
+AI-tooling access-constraint question a Government deployment raises.
+Two other pieces (PostgreSQL Flexible Server, Container Apps managed
+certificates) were not independently confirmed for Azure Government in
+this file — verify both directly in the portal before relying on this
+plan for a real deployment, or read the Gov-specific doc above first.
 
 **Status: this is an architecture plan, not a validated walkthrough.**
 Unlike the Ubuntu doc, none of this has been run end-to-end yet. Exact

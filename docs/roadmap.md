@@ -2134,6 +2134,73 @@ Items without a status are planned but not yet started.
     encrypted the same way) loads and displays correctly through the new
     `_out()`/`ConfigFieldOut` path with no re-entry and no migration.
 
+- **Azure Government hosting feasibility research** (2026-09-14) —
+  `docs/azure-government-hosting-feasibility.md`, prompted by production
+  needing to split from wl-util-1 (the periodic-review workflow means
+  real client contacts will soon create real evidence records, and that
+  can't live on a box that deploys unreleased code and carries
+  `reset-dev`) and Jarrod wanting Azure Government specifically for that
+  production instance. Research and documentation only — no Azure
+  resources, credentials, or code. Explicitly **not** a compliance
+  requirement — [ADR 0005](adr/0005-deployment-topology-per-msp-not-shared-saas.md)
+  and `cloud-hosting-options.md` both already concluded WinGRC's own
+  data doesn't formally require it; this is a business choice for
+  defense-sector client expectations, stated plainly in the doc so it
+  doesn't get misread later as a compliance claim.
+  - **The two potential blockers, resolved.** PostgreSQL: Flexible
+    Server is fully authorized in Azure Government through DoD IL5WI per
+    Microsoft's own compliance-scope table (confirmed 2026-08-18) and
+    the Gov GA roadmap (confirmed 2026-09-03) — not a blocker. A direct
+    grep of the schema/migrations found nothing requiring PostgreSQL 18
+    specifically (`gen_random_uuid()`, the only version-sensitive call
+    in use, only needs 13+; `pgvector` is mentioned in `CLAUDE.md`'s
+    stack summary but has zero actual uses in the codebase), so even a
+    Gov version lag costs nothing. **Container Apps, by contrast, is a
+    real, current gap**, not a stale caveat: absent entirely from the
+    2026-09-03 Gov GA roadmap, authorized only through DoD IL2 on the
+    compliance table (PostgreSQL reaches IL5WI on the same table), and
+    reported still Public Preview / US Gov Virginia-only as of a
+    2026-06-16 Microsoft GitHub thread with an unanswered open support
+    case. This directly supersedes `azure-container-apps-deployment-
+    plan.md`'s "confirmed directly in a real Azure Government
+    subscription" claim — that plan doc now cross-references the new
+    research and recommends plain VMs/App Service (both fully GA through
+    IL5/IL6) as the Gov fallback if Container Apps' status doesn't firm
+    up before a real deployment.
+  - **A platform-wide finding that isn't Gov-specific but affects this
+    plan regardless:** Azure retired default outbound internet access
+    for newly-created VNets on 2026-03-31 (already past) — any new
+    deployment, commercial or Gov, now needs explicit egress (a NAT
+    Gateway or equivalent) just to reach Liongard or SMTP2GO at all. The
+    existing Container Apps plan predates this and doesn't budget for
+    it.
+  - **Confirmed, not assumed:** Blob Storage SAS URLs differ from MinIO
+    presigned URLs only in hostname (`*.usgovcloudapi.net` vs.
+    commercial), not in the bearer-token security property — moving to
+    Blob Storage does **not** close the evidence-download-hardening gap
+    (`docs/roadmap.md`'s own "Evidence download hardening" deferred
+    item), a point the research states should land before or with
+    production going live, not after. Also confirmed: the Azure Blob
+    Storage code path (`backend/app/storage.py`) is **not implemented**
+    today — only `NullStorageClient`/`MinIOClient` exist — contradicting
+    both `cloud-hosting-options.md`'s and the Container Apps plan's
+    "zero code change" framing for that swap.
+  - **Left as an explicit, undecided question for Jarrod, not designed
+    around:** what an AI coding assistant with shell access (today's
+    operating model for wl-util-1) is and isn't allowed to touch once
+    real Azure Government credentials and real client evidence exist —
+    Azure Government's US-person requirement and handling expectations
+    make this a deliberate choice to make before any Gov resource
+    exists, not an assumption to carry forward from how development
+    works today.
+  - **Honest gaps, stated as gaps:** no sourced Gov-vs-commercial cost
+    premium found (pricing calculators render client-side; a real
+    estimate still needs sizing inputs that don't exist yet, same
+    conclusion `cloud-hosting-options.md` already reached); ACR's exact
+    Government hostname suffix and whether Container Apps' managed-
+    certificate feature works in Gov at all were not independently
+    confirmed from primary sources.
+
 ---
 
 ## Planned

@@ -62,13 +62,18 @@ of actual use instead of a 24/7 VM.
   directly against what we just did by hand on wl-util-1 — Container Apps
   handles certificate issuance/renewal itself. The entire manual DNS-01 /
   Certbot dance this session required would not be necessary on this path.
-- **Azure Government availability is unclear as of this research** — search
-  results show an official "Container Apps in Azure Government Cloud" update
-  entry and a Microsoft devblog on new container/compute options in Azure
-  Government, but also an older (April 2024) community thread asking whether
-  it was available yet. This needs a direct, current confirmation from
-  Microsoft's Azure Government service list before relying on it for a
-  Gov-eligible deployment — don't assume either way. ([Azure updates][aca-gov-update], [Azure Gov devblog][azgov-devblog], [MS Q&A][azgov-qa])
+- **Azure Government availability, followed up 2026-09-14** — see
+  [`azure-government-hosting-feasibility.md`](azure-government-hosting-feasibility.md)
+  for the full current-evidence writeup. Short version: still not
+  reliably available. Microsoft's own Azure Government GA roadmap
+  (2026-09-03) doesn't list it at all; the compliance-scope table
+  authorizes it only through DoD IL2 (PostgreSQL, by contrast, reaches
+  IL5WI); and a live Microsoft GitHub thread as recently as 2026-06-16
+  reported it's still Public Preview, US Gov Virginia only, with an open
+  Microsoft support case asking whether it's even production-supported.
+  Treat commercial Azure and Azure Government as needing different
+  compute answers for now — see that doc for the Gov fallback (plain
+  VMs/App Service, both fully GA through IL5/IL6).
 - **Database:** Azure Database for PostgreSQL Flexible Server, Burstable tier —
   cheapest managed Postgres option, genuine PostgreSQL (not just compatible).
 - **Storage:** Azure Blob Storage instead of self-hosted MinIO — WinGRC's
