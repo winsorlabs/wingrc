@@ -1,9 +1,17 @@
 """Assessment API endpoints.
 
-Three endpoints:
   POST /orgs/{org_id}/assessments
       Start a new assessment. Seeds control_state for all framework objectives
       and fires the magic loop for any already-active org_products.
+
+  POST /orgs/{org_id}/assessments/{assessment_id}/complete
+      in_progress -> submitted. A recorded WinGRC milestone only -- never
+      files anything with SPRS and gates no other capability. See
+      engine.py:complete_assessment.
+
+  POST /orgs/{org_id}/assessments/{assessment_id}/reopen
+      submitted -> in_progress, for a completion made in error. See
+      engine.py:reopen_assessment.
 
   POST /orgs/{org_id}/assessments/{assessment_id}/products/{product_id}/activate
       Mark a product in-use and fire the magic loop for this assessment.
@@ -26,9 +34,11 @@ from ..auth import require_org_access, require_write
 from ..db import get_session
 from ..engine import (
     activate_org_product,
+    complete_assessment,
     copy_forward_raci,
     deactivate_org_product,
     recompute_sprs,
+    reopen_assessment,
     start_assessment,
 )
 from ..models import (
@@ -95,6 +105,8 @@ class AssessmentOut(BaseModel):
     assessment_type: str
     status: str
     started_at: datetime
+    submitted_at: datetime | None = None
+    closed_at: datetime | None = None
     sprs_score: int | None = None
     # G.4: derived, not stored — see list_assessments's own note on why.
     # No default: every construction site must set this explicitly (only
@@ -326,6 +338,8 @@ def list_assessments(
             assessment_type=a.assessment_type,
             status=a.status,
             started_at=a.started_at,
+            submitted_at=a.submitted_at,
+            closed_at=a.closed_at,
             sprs_score=a.sprs_score,
             # started_at fallback: an assessment whose control_state rows
             # somehow predate this feature, or (defensively) one with no
@@ -397,10 +411,108 @@ def create_assessment(
         assessment_type=assessment.assessment_type,
         status=assessment.status,
         started_at=assessment.started_at,
+        submitted_at=assessment.submitted_at,
+        closed_at=assessment.closed_at,
         sprs_score=assessment.sprs_score,
         last_activity_at=assessment.started_at,
         raci_copy_forward=RaciCopyForwardOut(**raci_summary),
     )
+
+
+def _assessment_out(session: Session, assessment: Assessment) -> AssessmentOut:
+    last_activity = _last_activity_by_assessment(session, [assessment.id])
+    return AssessmentOut(
+        id=assessment.id,
+        org_id=assessment.org_id,
+        framework_id=assessment.framework_id,
+        name=assessment.name,
+        assessment_type=assessment.assessment_type,
+        status=assessment.status,
+        started_at=assessment.started_at,
+        submitted_at=assessment.submitted_at,
+        closed_at=assessment.closed_at,
+        sprs_score=assessment.sprs_score,
+        last_activity_at=last_activity.get(assessment.id, assessment.started_at),
+    )
+
+
+@router.post("/assessments/{assessment_id}/complete", response_model=AssessmentOut)
+def complete_assessment_endpoint(
+    org_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    session: Session = Depends(get_session),
+) -> AssessmentOut:
+    """Marks this WinGRC assessment cycle complete (in_progress ->
+    submitted). Files nothing with the DoD -- see engine.py:
+    complete_assessment and models.py:SprsSubmission for the distinction
+    this endpoint deliberately does not blur: completion never creates an
+    SprsSubmission row. The frontend prompts the user to record one right
+    after a successful call here (POST /orgs/{org_id}/sprs-submissions),
+    clearly framed as a separate, human-attested action -- that prompt is
+    a UI concern, not something this endpoint drives or depends on.
+
+    Gates nothing: bundle export, evidence upload, and control-state edits
+    all keep working identically before and after this call. Only the
+    status column and this audit entry change.
+    """
+    existing = session.get(Assessment, assessment_id)
+    if existing is None or existing.org_id != org_id:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+
+    try:
+        assessment = complete_assessment(session, org_id=org_id, assessment_id=assessment_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+    log_event(
+        session,
+        org_id=org_id,
+        action="assessment.completed",
+        entity_type="assessment",
+        entity_id=assessment.id,
+        after_value={"status": "submitted", "submitted_at": assessment.submitted_at.isoformat()},
+        context={"via": "api"},
+    )
+    session.commit()
+    return _assessment_out(session, assessment)
+
+
+@router.post("/assessments/{assessment_id}/reopen", response_model=AssessmentOut)
+def reopen_assessment_endpoint(
+    org_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    session: Session = Depends(get_session),
+) -> AssessmentOut:
+    """Reverses a completion made in error (submitted -> in_progress).
+    Never touches any SprsSubmission row -- see engine.py:
+    reopen_assessment. The prior submitted_at is preserved in this audit
+    entry's before_value, not in the (now-cleared) column itself.
+    """
+    existing = session.get(Assessment, assessment_id)
+    if existing is None or existing.org_id != org_id:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    before_submitted_at = existing.submitted_at
+
+    try:
+        assessment = reopen_assessment(session, org_id=org_id, assessment_id=assessment_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+    log_event(
+        session,
+        org_id=org_id,
+        action="assessment.reopened",
+        entity_type="assessment",
+        entity_id=assessment.id,
+        before_value={
+            "status": "submitted",
+            "submitted_at": before_submitted_at.isoformat() if before_submitted_at else None,
+        },
+        after_value={"status": "in_progress"},
+        context={"via": "api"},
+    )
+    session.commit()
+    return _assessment_out(session, assessment)
 
 
 @router.post(

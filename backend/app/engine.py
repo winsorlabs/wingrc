@@ -3,7 +3,7 @@
 Bridges the pure functions in assessment.py with the SQLAlchemy session.
 This is the only module that performs DB writes for assessment operations.
 
-Three entry points:
+Entry points:
   start_assessment   — create an Assessment + seed all objective states,
                        then fire the loop for every already-active product.
   copy_forward_raci  — deliberately separate from start_assessment, not a
@@ -14,13 +14,18 @@ Three entry points:
   activate_org_product — mark a product active and fire the loop for one
                          assessment, updating states, writing history,
                          and seeding evidence tasks.
+  complete_assessment / reopen_assessment — the in_progress <-> submitted
+                       transition. A recorded milestone only — gates no
+                       capability. Never touches locked_at (unimplemented)
+                       or creates an SprsSubmission row (that's a human's
+                       separate, later action — see sprs_submissions.py).
 """
 from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
 from .assessment import (
@@ -247,23 +252,29 @@ def copy_forward_raci(
     objective_key) matching is needed -- objective_id already *is* that
     identity, more directly.
 
-    WHICH PRIOR ASSESSMENT -- decided, and why the obvious-looking
-    alternative doesn't hold here: "most recent completed" (status in
-    submitted/closed) sounds like the safer choice, since an assessment
-    still in_progress could be freshly started and RACI-empty, or
-    genuinely abandoned -- either way a worse source than one actually
-    finished. Checked before choosing: no code path anywhere in this
-    backend ever sets Assessment.status to "submitted" or "closed" --
-    every assessment this system has ever created is permanently
-    in_progress. Filtering to submitted/closed would make copy-forward
-    permanently unreachable, not safer. So: most recent by started_at,
-    status ignored, scoped to org_id + the SAME framework_id as the new
-    assessment (a different framework's objective_ids can never match
-    this assessment's control_state rows anyway -- scoping the query
-    avoids a more-recent-but-incompatible assessment silently shadowing an
-    older same-framework one that would have actually matched). If a real
-    submission workflow ships later, revisit whether it should be
-    preferred over an in-progress one.
+    WHICH PRIOR ASSESSMENT -- revisited now that completion exists
+    (engine.py:complete_assessment, below), and updated: when this was
+    first written, "most recent completed" (status in submitted/closed)
+    would have made copy-forward permanently unreachable, since nothing
+    anywhere ever set Assessment.status to anything but "in_progress" --
+    checked before choosing, not assumed, at the time. That's no longer
+    true. Now: prefer the most recent COMPLETED assessment (status in
+    submitted/closed) on the same framework; only if none exists yet,
+    fall back to the most recent by started_at regardless of status (the
+    original rule, preserved so an org with no completed assessment yet
+    -- including every org that existed before this change -- is no
+    worse off than before). Rationale for preferring completed once one
+    exists: nothing here blocks parallel/experimental assessments (a
+    hard product constraint -- completion gates no capability), so a
+    more-recent-but-still-in-progress assessment could just as easily be
+    a throwaway/testing one as the org's real current cycle; a completed
+    assessment is the stronger signal of "this was the actual prior
+    cycle." Scoped to org_id + the SAME framework_id as the new
+    assessment either way (a different framework's objective_ids can
+    never match this assessment's control_state rows anyway -- scoping
+    the query avoids a more-recent-but-incompatible assessment silently
+    shadowing an older same-framework one that would have actually
+    matched).
 
     FRAMEWORK / CATALOG DRIFT: an objective present in the source
     assessment but absent from the new one's control_state set (framework
@@ -319,7 +330,10 @@ def copy_forward_raci(
             Assessment.framework_id == framework_id,
             Assessment.id != new_assessment_id,
         )
-        .order_by(Assessment.started_at.desc())
+        .order_by(
+            case((Assessment.status.in_(("submitted", "closed")), 0), else_=1),
+            Assessment.started_at.desc(),
+        )
         .limit(1)
     ).first()
 
@@ -394,6 +408,73 @@ def copy_forward_raci(
             else f"No matching RACI assignments to carry from the prior assessment ({source.name})."
         ),
     }
+
+
+def complete_assessment(
+    session: Session, *, org_id: uuid.UUID, assessment_id: uuid.UUID
+) -> Assessment:
+    """The in_progress -> submitted transition ("completing" an
+    assessment, per the product's own vocabulary -- see routers/
+    assessments.py's complete_assessment_endpoint for why "submitted"
+    here means "this WinGRC assessment cycle is complete," never "filed
+    with SPRS," and why those two must never be conflated).
+
+    Stamps submitted_at, nothing else. Does NOT create an SprsSubmission
+    row, does NOT touch locked_at, and does NOT change what any other
+    endpoint permits — completion is a recorded milestone, not a
+    permission gate; every caller of this function must not add one
+    either. locked_at is separate, deliberate, and not implemented yet
+    (see models.py:Assessment / docs/roadmap.md) — auto-locking on
+    completion here would silently narrow what "test bundle export
+    before completion" (an explicit product requirement) actually means.
+
+    Raises ValueError if the assessment doesn't belong to org_id or is
+    not currently in_progress (only forward from in_progress is a
+    "completion" -- an already-submitted assessment must be reopened
+    first, not completed again, so submitted_at is never silently
+    overwritten by a second completion).
+    """
+    assessment = session.get(Assessment, assessment_id)
+    if assessment is None or assessment.org_id != org_id:
+        raise ValueError("Assessment not found")
+    if assessment.status != "in_progress":
+        raise ValueError(f"Cannot complete an assessment with status {assessment.status!r}")
+
+    assessment.status = "submitted"
+    assessment.submitted_at = datetime.now(UTC)
+    session.flush()
+    return assessment
+
+
+def reopen_assessment(
+    session: Session, *, org_id: uuid.UUID, assessment_id: uuid.UUID
+) -> Assessment:
+    """The submitted -> in_progress transition, for a completion made in
+    error. Clears submitted_at (the mutable "current state" column) --
+    the historical fact "this was completed, then reopened" is preserved
+    durably by the caller's audit_log entry (before_value captures the
+    prior submitted_at), not by this column, matching how every other
+    mutable-column-plus-audit-log pair in this codebase works (e.g.
+    patch_user's role_change/activation_change entries).
+
+    Never touches any SprsSubmission row -- a submission recorded after
+    the since-reopened completion remains exactly as filed; reopening
+    the WinGRC-internal milestone cannot retroactively un-file a DoD
+    submission, and must not be implemented as though it could.
+
+    Raises ValueError if the assessment doesn't belong to org_id or is
+    not currently submitted.
+    """
+    assessment = session.get(Assessment, assessment_id)
+    if assessment is None or assessment.org_id != org_id:
+        raise ValueError("Assessment not found")
+    if assessment.status != "submitted":
+        raise ValueError(f"Cannot reopen an assessment with status {assessment.status!r}")
+
+    assessment.status = "in_progress"
+    assessment.submitted_at = None
+    session.flush()
+    return assessment
 
 
 def activate_org_product(

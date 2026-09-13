@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.db import get_session
-from app.engine import copy_forward_raci, start_assessment
+from app.engine import complete_assessment, copy_forward_raci, start_assessment
 from app.main import app
 from app.models import (
     Assessment,
@@ -382,6 +382,51 @@ def test_picks_the_most_recently_started_prior_assessment(db_session: Session):
         select(RaciAssignment).where(RaciAssignment.control_state_id == new_cs.id)
     ).one()
     assert row.contact_id == bob.id, "must carry from the newer assessment, not the older one"
+
+
+def test_prefers_a_completed_assessment_over_a_more_recent_in_progress_one(db_session: Session):
+    """Now that completion exists (engine.py:complete_assessment), an
+    older but COMPLETED assessment must be preferred as copy-forward's
+    source over a more-recently-started one that's still in_progress --
+    the latter could just as easily be a throwaway/testing assessment
+    given completion gates no capability. This directly supersedes
+    test_picks_the_most_recently_started_prior_assessment's outcome for
+    the case that test doesn't cover (neither candidate completed)."""
+    org, fw = _org_and_fw(db_session)
+    _ctrl, objs = _make_control(db_session, fw, control_id="AC.L2-3.1.1")
+    jane = _contact(db_session, org, name="Jane", email="jane@example.com")
+    bob = _contact(db_session, org, name="Bob", email="bob@example.com", affiliation="msp")
+
+    older_completed = start_assessment(db_session, org.id, fw.id, "Older, completed")
+    older_cs = _cs(db_session, older_completed.id, objs["a"].id)
+    db_session.add(
+        RaciAssignment(control_state_id=older_cs.id, contact_id=jane.id, raci_letter="R")
+    )
+    db_session.flush()
+    older_completed.started_at = datetime.now(UTC) - timedelta(days=10)
+    db_session.flush()
+    complete_assessment(db_session, org_id=org.id, assessment_id=older_completed.id)
+
+    newer_in_progress = start_assessment(db_session, org.id, fw.id, "Newer, still in progress")
+    newer_cs = _cs(db_session, newer_in_progress.id, objs["a"].id)
+    db_session.add(
+        RaciAssignment(control_state_id=newer_cs.id, contact_id=bob.id, raci_letter="R")
+    )
+    db_session.flush()
+    newer_in_progress.started_at = datetime.now(UTC)
+    db_session.flush()
+
+    new = start_assessment(db_session, org.id, fw.id, "New")
+    summary = copy_forward_raci(
+        db_session, org_id=org.id, framework_id=fw.id, new_assessment_id=new.id
+    )
+    assert summary["source_assessment_id"] == str(older_completed.id)
+
+    new_cs = _cs(db_session, new.id, objs["a"].id)
+    row = db_session.scalars(
+        select(RaciAssignment).where(RaciAssignment.control_state_id == new_cs.id)
+    ).one()
+    assert row.contact_id == jane.id, "must carry from the completed assessment, not the newer one"
 
 
 def test_prior_assessment_on_a_different_framework_is_ignored(db_session: Session):
