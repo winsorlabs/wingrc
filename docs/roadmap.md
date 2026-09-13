@@ -1808,6 +1808,129 @@ Items without a status are planned but not yet started.
     module docstring, but would not be for anything needing an exact
     calendar date).
 
+- **Periodic review & attestation workflow (D.3's first half — the daily
+  Liongard sync is the second half, still open, see its own Deferred
+  entry for why it was sequenced second)** (2026-09-13) — WinGRC asks the
+  MSP and the client to review the users/devices in scope and records
+  their sign-off as evidence. Not a notification feature: the client's
+  acknowledgement is the artifact itself, an assessor-showable record
+  replacing meetings/minutes Jarrod previously ran by hand.
+  - **Control mapping, derived (not recalled) from the seeded catalog**
+    (`app/seeds/cmmc_l2.yaml`) and cross-checked against `catalog.py`'s
+    pre-existing `AUTHORIZED_USERS`/`AUTHORIZED_DEVICES` `ListView`s (both
+    already `control_ids=("AC.L2-3.1.1",)`, predating this slice):
+    **AC.L2-3.1.1[a]** "Authorized users are identified" and **[c]**
+    "Devices... authorized to connect... are identified" (both
+    `satisfaction_type=document_list`). `[b]` (processes — a third
+    subject type, deliberately out of scope) and `[d]/[e]/[f]`
+    (`type=product` — real-time enforcement, not identification) are not
+    mapped; `CM.L2-3.4.1` was considered and rejected as a broader
+    inventory concept, not specifically "authorized users/devices."
+  - **Auth finding that corrects the originating task's own premise:**
+    `customer_poc` is **not** in `auth.py`'s `_READ_ONLY_ROLES`
+    (`{"c3pao_assessor"}` only) — verified directly, then cross-checked
+    against `docs/PLAN-auth-rbac-completion.md`'s I.2 section, which
+    explicitly preserved `customer_poc` write access when making
+    `c3pao_assessor` read-only. The actual carve-out this feature needed
+    ran the *other* direction: without an extra restriction, the router's
+    standard `require_org_access()` + `require_write()` gate would let a
+    `customer_poc` open cycles and resolve MSP-follow-up flags too.
+    `routers/review_cycles.py` layers a per-route
+    `require_org_access("msp_admin", "msp_engineer", "consultant_admin")`
+    on open/resolve-flag only, mirroring `users.py`'s existing
+    grant/revoke-membership precedent — a narrow carve-out, not a role
+    rethink, so this did not hit the task's stop-and-ask trigger.
+  - **One cycle covers both users and devices**, not two — same control
+    mapping, and matches the real-world "one review meeting" workflow.
+    `ReviewCycleItem` snapshots `scope_entity` (natural_key/category/
+    attributes) at open time, same immutable-snapshot discipline as
+    `BundleSnapshot` — verified directly that a cycle's snapshot does not
+    change when the underlying `scope_entity` rows are later renamed,
+    decommissioned, or added to.
+  - **Non-response is evidence, not silence:** `ReviewCycleReviewer.status`
+    (`requested`/`viewed`/`attested`/`no_response`) plus
+    `ReviewCycleReminderLog` (append-only, `UniqueConstraint(reviewer_id,
+    reminder_number)`) keep the full attempt history. A cycle
+    auto-closes to `completed` the moment every reviewer has attested
+    (inside `attest()`, not waiting for the next scheduler tick); the
+    `review_cycle_sweep` job force-closes to `closed_unattested` at
+    `due_at` (`RESPONSE_WINDOW_DAYS = 21`) regardless, stamping every
+    still-open reviewer `no_response` — never left ambiguous.
+  - **Cadence is per-org, not deployment-wide** — `Organization.
+    review_cadence_months` (default 6, validated 1–60), deliberately
+    contrasted with `config.py`'s `session_idle_minutes` deployment-wide
+    precedent for 3.1.11: review cadence is a contractual fact that
+    varies client to client, not a uniform technical policy. Editable
+    through the existing `PATCH /orgs/{org_id}/profile` endpoint (its
+    generic field-set loop picked it up with no handler change) and
+    snapshotted onto `ReviewCycle.cadence_months` at open time so a later
+    cadence edit never retroactively changes what an already-open cycle's
+    own due date meant. `RESPONSE_WINDOW_DAYS`/`REMINDER_DAYS = (7, 14)`
+    stay fixed operational constants, not per-org.
+  - **Flagging never mutates scope** — a reviewer's "this doesn't look
+    right" creates a `ReviewCycleFlag` for MSP follow-up only;
+    `scope_entity` is asserted byte-for-byte unchanged by a flag in
+    tests. Actually changing scope still goes through the existing
+    dry-run → review → apply path, untouched by this feature.
+  - **New `Evidence.artifact_type = 'attestation'`** (migration 0045) —
+    a genuinely new kind, not squeezed into `document`: system-generated
+    from a structured sign-off event, not a human-uploaded file. Bundle
+    export needed **zero `bundle_service.py` changes** — the closed
+    cycle's evidence links to AC.L2-3.1.1[a]/[c]'s `control_state` rows
+    via the existing `EvidenceStateLink` mechanism, and the bundle's
+    evidence-embedding logic reads `artifact_type` generically with no
+    hardcoded allowlist (confirmed via grep before assuming it worked).
+  - **Reuses `run_due_jobs()`** — two new jobs, `review_cycle_open` and
+    `review_cycle_sweep`, each backed by a SECURITY DEFINER function
+    (migration 0046, same precedent as `auth.msp_role_users()`/
+    `auth.expire_stale_invites()`). Recipients are deliberately **both**
+    MSP staff and client reviewers (`auth.org_reviewer_candidates()`),
+    unlike `sprs_annual_reminder`'s MSP-only set — a review cycle is
+    inherently a two-sided conversation. `consultant_admin` **is**
+    included as an MSP-side reviewer here (unlike the SPRS reminder's
+    exclusion): review cycles are per-org/per-engagement, so a
+    consultant_admin actually granted membership in *this* org is a
+    legitimate participant, unlike a deployment-wide notification. No
+    org/user/device/control detail in any email subject or body, checked
+    directly in tests.
+  - **Two real bugs found only via a live, real-HTTP bench walkthrough**
+    (`§9`'s explicit ask — two orgs, a real `customer_poc` login, TOTP
+    MFA and all, over an actual running uvicorn process, not `TestClient`
+    or calling route functions directly) — neither surfaced by the full
+    automated suite beforehand:
+    1. `get_cycle`'s `db.commit()` ran immediately after `record_view()`,
+       *before* reading items/reviewers/flags. `app.current_org` is set
+       via `set_config(..., true)` (transaction-local, per
+       `require_org_access()`'s own docstring) — a mid-handler commit
+       ends that transaction and Postgres discards the GUC with it, so
+       every RLS-scoped read after it silently saw `org_id IS NULL` and
+       matched nothing. Confirmed live: the `review_cycle_item` row
+       existed (raw owner-role query) while the API returned `items: []`.
+       Fixed by moving the commit to the end of the handler, after every
+       read — exactly the bug class `tests/conftest.py`'s `_app_session`
+       wrapper (`RESET app.current_org` after commit) exists to catch,
+       and a namesake of the `recompute_sprs`/`patch_control_state`
+       autoflush incident this file already records.
+    2. The manual MSP-triggered open (`POST .../review-cycles`) had no
+       guard against a second concurrent open cycle for the same org —
+       only the scheduler's own due-check excluded orgs with one already
+       open. Fixed in `review_cycles.open_cycle()` itself (409, not a
+       fresh cycle) so it holds regardless of which caller opens it.
+  - **Verified 2026-09-13 on wl-util-1, live, this run:** an isolated
+    `docker compose -p wingrc_review_cycles` project (fresh clone,
+    separate network/volumes, the live `wingrc` project on that box never
+    touched) — **986/986 backend tests**, `ruff check .` clean, frontend
+    **97/97** vitest (15 files) plus `tsc -b`/`vite build` clean, and the
+    live two-org/real-`customer_poc` HTTP walkthrough itself (login → TOTP
+    enroll-free verify via a pre-seeded secret → open → cross-org 403s →
+    attest → auto-close → re-verified negative-permission checks) —
+    re-run end to end after both fixes above to confirm.
+  - **Deliberately left open:** the daily Liongard sync (D.3's second
+    half, see its own Deferred entry); a third review subject type
+    (processes) — the schema (`subject_type` CHECK) leaves room to add
+    one later without a redesign, but none is added here per the task's
+    own scope; no UI for re-opening a `closed_unattested` cycle early.
+
 ---
 
 ## Planned
@@ -1934,6 +2057,6 @@ Document library (N)
   section, "D.2 — Liongard device/user pull into scope_entity" entry.
   Datto RMM was not built (Liongard only); a Datto connector, if wanted
   later, is a fresh item, not a reopening of this one.
-- **Asset & user onboarding approval workflow** — daily Liongard sync; new devices/users land pending, notify the org's `security_officer` and `it_admin` contacts, approval page shows a baseline checklist (DUO/Evo, FenixPyre, RoboShadow, RocketCyber…) evaluated from Liongard metrics, Security Officer + IT formally accept the asset into the environment. Specified in root `ROADMAP.md` **D.3**. Added 2026-09-08 (Jarrod). Depends on D.1 + D.2 and, as of 2026-09-08, on **two things that don't exist in this codebase yet**: outbound email and any job scheduler for the daily run. **Both shipped 2026-09-12** — see this file's own Done entries ("Outbound email" and "Job scheduler") — so D.3 is now actionable; neither prerequisite is a blocker anymore. Still needs a `pending_approval` state on `domain.py:EntityStatus` (today only `active`/`decommissioned`), and D.3 itself is not built here — the job scheduler slice explicitly excluded any job that writes `scope_entity`/`control_state`; a scheduled job may produce a dry-run for review, never apply one unattended, so D.3's daily sync must still route through the existing dry-run → review → apply path, not bypass it via the scheduler. Hard constraint recorded in D.3: email notifies, but approval requires an authenticated session — no one-click approve links in email.
+- **Asset & user onboarding approval workflow — daily Liongard sync (D.3's second half only; the periodic review/attestation half shipped 2026-09-13, see this file's own Done entry).** Daily Liongard sync; new devices/users land pending, notify the org's `security_officer` and `it_admin` contacts, approval page shows a baseline checklist (DUO/Evo, FenixPyre, RoboShadow, RocketCyber…) evaluated from Liongard metrics, Security Officer + IT formally accept the asset into the environment. Specified in root `ROADMAP.md` **D.3**. Added 2026-09-08 (Jarrod). Depends on D.1 + D.2 and, as of 2026-09-08, on **two things that don't exist in this codebase yet**: outbound email and any job scheduler for the daily run. **Both shipped 2026-09-12** — see this file's own Done entries ("Outbound email" and "Job scheduler") — so this half is now actionable; neither prerequisite is a blocker anymore. Still needs a `pending_approval` state on `domain.py:EntityStatus` (today only `active`/`decommissioned`), and is not built here — the job scheduler slice explicitly excluded any job that writes `scope_entity`/`control_state`; a scheduled job may produce a dry-run for review, never apply one unattended, so this sync must still route through the existing dry-run → review → apply path, not bypass it via the scheduler. Hard constraint recorded in D.3: email notifies, but approval requires an authenticated session — no one-click approve links in email. Sequenced after the review/attestation half deliberately: the Liongard connector (`connectors/liongard.py`) has only ever been verified against a mock server, never a live tenant, so it's the riskier of the two D.3 halves and was left for a dedicated slice rather than bundled in.
 - **Evidence download hardening** — replace presigned direct-to-MinIO download URLs with the backend streaming evidence bytes itself. Presigned URLs are bearer-token style: anyone with the link can download until it expires, with no per-request re-check of session/auth state. Worth revisiting given the investment already made in session/MFA/lockout hardening (item I, now shipped — see Done) — that hardening doesn't currently extend to the download path. Surfaced while proxying MinIO behind nginx for item O. **Verified 2026-09-07: still open** — `storage.py` still defines `presigned_url()` on every storage backend, and `routers/evidence.py` still calls it at 4 call sites (`download_url=storage.presigned_url(...)` for both single-evidence and task-collection responses). Nothing streams bytes through the backend yet.
 - **Frontend build determinism** — generate and commit `frontend/package-lock.json` (none is committed — one has been observed untracked on wl-util-1 from a local `npm install`, but that's not what this item is about), then switch `deploy/nginx/Dockerfile` from `npm install` to `npm ci` for reproducible builds. Low priority, not blocking anything currently in flight. **Verified 2026-09-07: still open** — `git ls-files frontend/package-lock.json` returns nothing (not committed), `deploy/nginx/Dockerfile` still runs `npm install`, not `npm ci`.

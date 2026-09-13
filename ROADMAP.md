@@ -447,6 +447,22 @@ started; this amendment only removes the two infrastructure blockers, not
 the manual-sync-first sequencing note in Scheduling below, which still
 applies as originally written.
 
+**Amended 2026-09-13: D.3 split into two halves, and the first is done.**
+Everything below in this section (daily Liongard sync, pending-state
+assets, the Liongard-metrics baseline checklist) is D.3's **second**
+half and remains not started, for the reason already given above (the
+Liongard connector is only ever verified against a mock server, never a
+live tenant — the riskier of the two halves). D.3's **first** half —
+periodic MSP + client review and attestation of the users/devices
+already in scope, independent of any connector — shipped 2026-09-13.
+See `docs/roadmap.md`'s Done entry ("Periodic review & attestation
+workflow") for the full writeup: `backend/app/review_cycles.py`,
+`routers/review_cycles.py`, migrations 0045/0046. It reuses this
+section's own "no one-click approval links in email" constraint (below)
+and its `run_due_jobs()` reuse instruction (see Scheduling below), and
+maps to **AC.L2-3.1.1[a]/[c]**, derived from the seeded catalog rather
+than assumed.
+
 **What:** Daily Liongard sync of devices and users. Anything new lands in a
 pending state rather than silently joining the boundary; the org's Security
 Officer and IT/MSP contact are notified; they open an approval page showing

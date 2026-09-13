@@ -451,7 +451,12 @@ reasoning and the open question D.4 tracks for a future *hosted* WinGRC.
 **D.2 ✅ DONE (2026-09-11)** — the actual `scope_entity` pull
 (`importers/liongard.py`), routed through the same dry-run/apply review
 flow the workbook importer uses. See `docs/roadmap.md`'s Done entry for
-the full writeup. D.3 (approval workflow) is not built yet.
+the full writeup. **D.3's first half — periodic review & attestation —
+✅ DONE (2026-09-13)**, `backend/app/review_cycles.py` +
+`routers/review_cycles.py`; see `docs/roadmap.md`'s Done entry. D.3's
+second half, the daily Liongard sync itself, is not built yet — sequenced
+after the review/attestation half since the Liongard connector has only
+ever been verified against a mock server, never a live tenant.
 
 ### 9. Evidence task enhancements
 
