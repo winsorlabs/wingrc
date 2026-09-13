@@ -59,7 +59,11 @@ def client(db_session, fake_msp_admin):
 
 
 def _client_as(db_session, role: str, *, org_id: uuid.UUID | None = None):
-    user = _make_fake_user(role=role)
+    # Distinct email from _make_fake_user()'s default ("test-admin@
+    # example.com") -- callers of this helper grant into the same org an
+    # existing fake_msp_admin already occupies, and User.email is unique
+    # per (home_org_id, email).
+    user = _make_fake_user(role=role, email=f"{role}-{uuid.uuid4().hex[:8]}@example.com")
     if org_id is not None:
         _grant(db_session, user, org_id=org_id)
     app.dependency_overrides[get_session] = _app_session(db_session)

@@ -23,6 +23,7 @@ from __future__ import annotations
 import io
 import uuid
 import zipfile
+from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -209,7 +210,13 @@ def test_reopen_audit_entry_preserves_the_prior_submitted_at(client, db_session,
         )
     ).all()
     assert len(rows) == 1
-    assert rows[0].before_value["submitted_at"] == completed["submitted_at"]
+    # Compare as datetimes, not raw strings: the API response uses
+    # Pydantic's JSON encoding ("...Z"), while the audit row's
+    # before_value was built with Python's own isoformat() ("...+00:00")
+    # -- same instant, different but equally valid ISO 8601 spellings.
+    assert datetime.fromisoformat(rows[0].before_value["submitted_at"]) == datetime.fromisoformat(
+        completed["submitted_at"]
+    )
     assert rows[0].after_value["status"] == "in_progress"
 
 
