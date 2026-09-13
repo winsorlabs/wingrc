@@ -86,6 +86,23 @@ class Organization(Base):
     website: Mapped[str | None] = mapped_column(String(400))
     logo_storage_key: Mapped[str | None] = mapped_column(Text)
 
+    # AC.L2-3.1.1[a]/[c]: how often this org's authorized-users/devices
+    # review cycle (review_cycle, migration 0045) runs. 800-171 leaves
+    # "periodically" org-defined -- same pattern as config.py's
+    # session_idle_minutes for 3.1.11: must stay configurable, and the
+    # configured value must appear in the SSP (the review_cycle evidence
+    # document states it explicitly; see routers/review_cycles.py).
+    # Per-org, not a deployment-wide Settings field like
+    # session_idle_minutes -- unlike a session timeout (one technical
+    # policy for the whole deployment), review cadence is a contractual
+    # fact that genuinely differs client to client. 6 months (twice
+    # yearly) is the default absent a configured value -- not mandated by
+    # 800-171, chosen as a defensible common cadence for access
+    # recertification; the org can set any positive value.
+    review_cadence_months: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default=text("6")
+    )
+
 
 class SystemDescription(Base):
     """SSP Section 1 narrative for an org's information system.
@@ -1869,3 +1886,239 @@ class SprsReminderLog(Base):
     sent_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+# ---------------------------------------------------------------------------
+# Periodic review & attestation (D.3's first half -- ROADMAP.md D.3; the
+# daily Liongard sync is the second half, deliberately not built here).
+#
+# The point of this feature: an assessor-showable record that the MSP and
+# the client periodically reviewed the org's authorized users and devices
+# and signed off -- replacing a meeting Jarrod currently schedules and
+# minutes by hand. That bar means every table below exists to answer,
+# durably: who approved, when, and exactly what they were shown -- and to
+# prove that hasn't drifted since. Same "immutable snapshot" discipline as
+# BundleSnapshot/bundle_service.py: a cycle's item list is copied at open
+# time, never re-derived from live scope_entity rows afterward.
+#
+# Non-response is itself evidence (see ReviewCycleReviewer/
+# ReviewCycleReminderLog) -- a cycle nobody answers still closes into a
+# durable record of who was asked, when reminders went out, and who never
+# responded. That may be the single most valuable output of this feature:
+# it is the thing Jarrod currently has nothing for.
+#
+# Attesting confirms the list; it never mutates scope. See
+# ReviewCycleFlag -- a reviewer who thinks an item is wrong produces a
+# flag for MSP follow-up, never an automatic scope_entity change. Actually
+# changing scope still goes through the existing reconcile()/dry-run/apply
+# path, unmodified and untouched by anything in this feature.
+# ---------------------------------------------------------------------------
+
+
+class ReviewCycle(Base):
+    """One periodic review-and-attestation cycle for one org's authorized
+    users and devices -- both subject types in a single cycle (not two),
+    because they map to the same control (AC.L2-3.1.1: [a] users
+    identified, [c] devices identified -- see routers/review_cycles.py's
+    own docstring for how that mapping was derived, not recalled) and
+    because a single combined sign-off matches the real workflow this
+    replaces: one review meeting covering the whole authorized-entity
+    list, not two separate ones. `subject_type` lives on ReviewCycleItem,
+    not here, specifically so a third subject type is addable later
+    without a new cycle concept -- not built now, no third type exists.
+
+    Append-only once opened, like `audit_log`/`sprs_snapshot`: a cycle is
+    never edited after the fact. status only ever moves forward
+    (open -> completed | closed_unattested), and a correction is a new
+    cycle, not a reopened or rewritten old one.
+
+    cadence_months is a COPY of Organization.review_cadence_months at
+    the moment this cycle opened -- not a live read -- so a later cadence
+    change doesn't retroactively change what this cycle's own due_at meant
+    when reviewers were asked to respond by it.
+    """
+
+    __tablename__ = "review_cycle"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('open', 'completed', 'closed_unattested')",
+            name="ck_review_cycle_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    opened_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'open'"))
+    cadence_months: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    # 'scheduler' for an auto-opened cycle, or a user id string for one an
+    # MSP staff member opened manually (POST /orgs/{org_id}/review-cycles).
+    opened_by: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ReviewCycleItem(Base):
+    """One entity as it looked at the moment its cycle opened -- the
+    immutable snapshot §0/§2 require. attributes/natural_key/
+    scope_category are a COPY of the source scope_entity row, taken once
+    at insert and never updated. scope_entity_id is a nullable, ON DELETE
+    SET NULL provenance pointer for traceability only -- rendering the
+    approval page or any evidence output from this table must read the
+    copied columns here, never join through to the live scope_entity row.
+    """
+
+    __tablename__ = "review_cycle_item"
+    __table_args__ = (
+        CheckConstraint("subject_type IN ('user', 'device')", name="ck_review_cycle_item_subject"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    cycle_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("review_cycle.id", ondelete="CASCADE"), index=True
+    )
+    # Denormalized for RLS, matching sprs_snapshot/finding's precedent.
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    subject_type: Mapped[str] = mapped_column(String(10), nullable=False)
+    scope_entity_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("scope_entity.id", ondelete="SET NULL"), nullable=True
+    )
+    natural_key: Mapped[str] = mapped_column(String(400), nullable=False)
+    scope_category: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    attributes: Mapped[dict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ReviewCycleReviewer(Base):
+    """One person asked to review one cycle, and -- once status='attested'
+    -- their attestation record: who, when, and any comment. `user_id` is
+    `ON DELETE SET NULL` (matching `SprsSubmission.submitted_by_contact_id`'s
+    precedent from the same session) with `reviewer_name`/`reviewer_email`
+    denormalized at request time, so the record of who was asked and who
+    attested survives that user account later being anonymized or
+    hard-deleted (ADR 0006).
+
+    status is the per-reviewer state machine: requested -> viewed (first
+    GET of the cycle by this reviewer) -> attested (POST attest). A
+    reviewer who never attests before the cycle closes is left at
+    'requested' or 'viewed' -- NOT silently deleted or hidden; see
+    engine-level close logic, which stamps every still-open reviewer row
+    to 'no_response' at close time rather than leaving an ambiguous
+    partial state. That 'no_response' set, together with
+    ReviewCycleReminderLog, is the non-response evidence §3 calls the
+    most valuable part of this feature.
+    """
+
+    __tablename__ = "review_cycle_reviewer"
+    __table_args__ = (
+        CheckConstraint("reviewer_side IN ('msp', 'client')", name="ck_review_cycle_reviewer_side"),
+        CheckConstraint(
+            "status IN ('requested', 'viewed', 'attested', 'no_response')",
+            name="ck_review_cycle_reviewer_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    cycle_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("review_cycle.id", ondelete="CASCADE"), index=True
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewer_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    reviewer_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    reviewer_side: Mapped[str] = mapped_column(String(10), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'requested'")
+    )
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ReviewCycleReminderLog(Base):
+    """Idempotency record for reminder emails -- one row per (reviewer,
+    reminder number) actually sent, so scheduler.py's review_cycle_
+    reminders job never re-sends the same reminder on a later tick.
+    Mirrors sprs_reminder_log's exact shape/reasoning from the prior
+    slice, keyed one level finer (per reviewer, not just per cycle) since
+    each reviewer on a cycle gets their own reminder schedule based on
+    their own response state.
+    """
+
+    __tablename__ = "review_cycle_reminder_log"
+    __table_args__ = (
+        UniqueConstraint("reviewer_id", "reminder_number", name="uq_review_cycle_reminder"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    cycle_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("review_cycle.id", ondelete="CASCADE"), index=True
+    )
+    reviewer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("review_cycle_reviewer.id", ondelete="CASCADE"), index=True
+    )
+    reminder_number: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ReviewCycleFlag(Base):
+    """A reviewer's "this doesn't look right" on one item -- MSP
+    follow-up, never a scope mutation (§4's hard boundary: approving
+    attests, it does not change scope; the same is true in the other
+    direction -- disputing an item doesn't change scope either, only
+    routes it for a human to actually reconcile through the existing
+    dry-run -> review -> apply path). v1 is a flag with a reason and a
+    resolution note -- not a ticket queue, not an automatic change
+    request.
+    """
+
+    __tablename__ = "review_cycle_flag"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    cycle_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("review_cycle_item.id", ondelete="CASCADE"), index=True
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    flagged_by_reviewer_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("review_cycle_reviewer.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    flagged_by_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_note: Mapped[str | None] = mapped_column(Text, nullable=True)
