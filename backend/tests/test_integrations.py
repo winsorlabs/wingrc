@@ -65,7 +65,7 @@ def _stub_liongard_test_connection(monkeypatch):
         "result": ConnectorTestResult(ok=True, message="Connected — 3 environment(s) visible.")
     }
 
-    def _fake(config, credential):
+    def _fake(config, credential, test_input=None):
         return state["result"]
 
     # ConnectorSpec is a frozen dataclass (deliberately -- see connectors/
@@ -73,6 +73,35 @@ def _stub_liongard_test_connection(monkeypatch):
     # than mutating a field in place.
     monkeypatch.setitem(
         REGISTRY, "liongard", dataclasses.replace(REGISTRY["liongard"], test_connection=_fake)
+    )
+    return state
+
+
+_SMTP_CRED_BODY = {
+    "config": {
+        "host": "mail.example.com", "port": "2525", "encryption_mode": "starttls",
+        "from_address": "noreply@example.com", "from_name": "WinGRC",
+    },
+    "credential": {"username": "smtpuser", "password": "s3cr3t-smtp-pass"},
+}
+
+
+@pytest.fixture(autouse=True)
+def _stub_smtp_test_connection(monkeypatch):
+    """Same shape as the Liongard stub above, but also records the
+    test_input each call received, so router-level tests can assert the
+    recipient was actually passed through rather than silently dropped."""
+    state = {
+        "result": ConnectorTestResult(ok=True, message="Connected to mail.example.com:2525."),
+        "calls": [],
+    }
+
+    def _fake(config, credential, test_input=None):
+        state["calls"].append(test_input)
+        return state["result"]
+
+    monkeypatch.setitem(
+        REGISTRY, "smtp", dataclasses.replace(REGISTRY["smtp"], test_connection=_fake)
     )
     return state
 
@@ -178,6 +207,90 @@ def test_test_connection_surfaces_real_failure_message(
 def test_test_connection_without_credential_rejected(admin_client):
     r = admin_client.post("/integrations/liongard/test")
     assert r.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# test_input passthrough (2026-09-14) -- SMTP: a real test-message
+# recipient. Router-level: connectors/smtp.py's own send-message behavior
+# is covered by test_smtp_connector.py; this covers that the router
+# actually passes the recipient through and audit-logs it, and that the
+# pre-existing "no body at all" call shape (every test above) still works
+# unchanged now that the endpoint accepts an optional body.
+# ---------------------------------------------------------------------------
+
+
+def test_test_connection_with_no_body_behaves_as_before(admin_client, _stub_smtp_test_connection):
+    """The exact call shape every test above already uses
+    (`client.post(".../test")`, no body) must keep working now that the
+    endpoint accepts an optional JSON body -- this is the regression this
+    slice must not cause."""
+    admin_client.put("/integrations/smtp/credential", json=_SMTP_CRED_BODY)
+    r = admin_client.post("/integrations/smtp/test")
+    assert r.status_code == 200
+    assert _stub_smtp_test_connection["calls"] == [None]
+
+
+def test_test_connection_passes_recipient_through(admin_client, _stub_smtp_test_connection):
+    admin_client.put("/integrations/smtp/credential", json=_SMTP_CRED_BODY)
+    r = admin_client.post("/integrations/smtp/test", json={"test_input": "ops@example.com"})
+    assert r.status_code == 200
+    assert _stub_smtp_test_connection["calls"] == ["ops@example.com"]
+
+
+def test_test_connection_recipient_rejected_reports_distinctly(
+    admin_client, _stub_smtp_test_connection
+):
+    admin_client.put("/integrations/smtp/credential", json=_SMTP_CRED_BODY)
+    _stub_smtp_test_connection["result"] = ConnectorTestResult(
+        ok=False,
+        message=(
+            "mail.example.com rejected the from-address 'noreply@example.com' "
+            "(SMTP 550): sender domain not verified. This usually means the "
+            "sending domain isn't verified with the provider (SPF/DKIM)."
+        ),
+    )
+    r = admin_client.post("/integrations/smtp/test", json={"test_input": "ops@example.com"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["last_test_ok"] is False
+    assert "from-address" in body["last_test_error"]
+    assert "SPF/DKIM" in body["last_test_error"]
+
+
+def test_test_send_writes_audit_event_with_recipient(admin_client, db_session):
+    admin_client.put("/integrations/smtp/credential", json=_SMTP_CRED_BODY)
+    admin_client.post("/integrations/smtp/test", json={"test_input": "ops@example.com"})
+    entry = db_session.scalars(
+        select(AuditLog).where(
+            AuditLog.action == "integration_connection.test",
+            AuditLog.entity_type == "integration_connection",
+        )
+    ).first()
+    assert entry is not None
+    assert entry.after_value["test_recipient"] == "ops@example.com"
+    assert entry.after_value["connector_key"] == "smtp"
+    assert entry.after_value["ok"] is True
+    # Actor is stamped automatically from the authenticated request, same
+    # as every other event this router writes -- not "system".
+    assert entry.actor is not None
+    assert entry.actor != "system"
+
+
+def test_connect_only_test_does_not_record_a_recipient_in_audit_log(admin_client, db_session):
+    """A plain connect-only test (no test_input) must not gain a
+    test_recipient key at all -- not None, not missing-but-implied,
+    genuinely absent, so a log reader can't mistake it for "sent to
+    nobody" versus "wasn't a send.\""""
+    admin_client.put("/integrations/smtp/credential", json=_SMTP_CRED_BODY)
+    admin_client.post("/integrations/smtp/test")
+    entry = db_session.scalars(
+        select(AuditLog).where(
+            AuditLog.action == "integration_connection.test",
+            AuditLog.entity_type == "integration_connection",
+        )
+    ).first()
+    assert entry is not None
+    assert "test_recipient" not in entry.after_value
 
 
 def test_test_connection_never_echoes_credential(admin_client):

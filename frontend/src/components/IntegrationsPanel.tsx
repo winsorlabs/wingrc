@@ -1,12 +1,20 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { IntegrationConnector } from "../types";
+import type { ConfigField, IntegrationConnector } from "../types";
 
 // D.1: credential entry + test-connection only. No sync history / "Sync
 // now" here on purpose -- there's nothing to sync until D.2 builds the
 // actual data pull. Structured so a second connector (Datto RMM, etc.,
 // see ROADMAP.md item D's priority order) is just another row from
 // api.listIntegrations() -- nothing here is Liongard-specific.
+//
+// Config fields render by ConfigField.type (2026-09-14) instead of a
+// bare text input for everything -- added after Jarrod's live SMTP2GO
+// setup: `encryption_mode: tls` reads as "yes, encrypt this" and was
+// wrong for the port in use, and a text box next to a paragraph of
+// help_text nobody was reading when they typed the value in didn't stop
+// that. Credential fields are untouched -- always secret, always a
+// password input, so there was never a second type to distinguish there.
 
 const _ACRONYMS = new Set(["id", "url"]);
 
@@ -44,6 +52,13 @@ export function IntegrationsPanel({ canWrite, kind = "data_source" }: Props) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  // Per-connector test-message recipient. Deliberately its own state, not
+  // seeded from anything (never c.config.from_address, never a previous
+  // test's value) -- cleared in handleTest's `finally` after every run,
+  // success or failure, so a recipient is never remembered between tests
+  // and a click can never send mail by accident.
+  const [testRecipient, setTestRecipient] = useState<Record<string, string>>({});
+
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -61,7 +76,7 @@ export function IntegrationsPanel({ canWrite, kind = "data_source" }: Props) {
 
   function openEdit(c: IntegrationConnector) {
     const initial: Record<string, string> = {};
-    for (const f of c.config_fields) initial[f] = c.config[f] ?? "";
+    for (const f of c.config_fields) initial[f.name] = c.config[f.name] ?? "";
     for (const f of c.credential_fields) initial[f] = "";
     setFormValues(initial);
     setSaveError(null);
@@ -74,12 +89,31 @@ export function IntegrationsPanel({ canWrite, kind = "data_source" }: Props) {
     setSaveError(null);
   }
 
+  // Picking a select option may SUGGEST a value for another field (e.g.
+  // encryption_mode="starttls" suggesting port="587") -- applied only
+  // when that other field is still blank, so an existing/typed value is
+  // never clobbered. See ConfigFieldOption.suggests's own doc comment.
+  function handleConfigFieldChange(f: ConfigField, value: string) {
+    setFormValues((prev) => {
+      const next = { ...prev, [f.name]: value };
+      if (f.type === "select") {
+        const chosen = f.options.find((o) => o.value === value);
+        if (chosen) {
+          for (const [targetField, suggestedValue] of Object.entries(chosen.suggests)) {
+            if (!(next[targetField] ?? "").trim()) next[targetField] = suggestedValue;
+          }
+        }
+      }
+      return next;
+    });
+  }
+
   async function handleSave(c: IntegrationConnector) {
     setSaving(true);
     setSaveError(null);
     try {
       const config: Record<string, string> = {};
-      for (const f of c.config_fields) config[f] = (formValues[f] ?? "").trim();
+      for (const f of c.config_fields) config[f.name] = (formValues[f.name] ?? "").trim();
       const credential: Record<string, string> = {};
       for (const f of c.credential_fields) credential[f] = (formValues[f] ?? "").trim();
 
@@ -96,12 +130,16 @@ export function IntegrationsPanel({ canWrite, kind = "data_source" }: Props) {
   async function handleTest(connectorKey: string) {
     setTestingKey(connectorKey);
     try {
-      const updated = await api.testIntegrationConnection(connectorKey);
+      const recipient = testRecipient[connectorKey]?.trim() || undefined;
+      const updated = await api.testIntegrationConnection(connectorKey, recipient);
       setConnectors((prev) => prev.map((row) => (row.connector_key === connectorKey ? updated : row)));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not run test connection");
     } finally {
       setTestingKey(null);
+      // Never remembered between tests, regardless of outcome -- a
+      // recipient must be re-entered deliberately every time.
+      setTestRecipient((prev) => ({ ...prev, [connectorKey]: "" }));
     }
   }
 
@@ -170,6 +208,18 @@ export function IntegrationsPanel({ canWrite, kind = "data_source" }: Props) {
                   <button className="btn-ghost btn-sm" onClick={() => openEdit(c)}>
                     {c.configured ? "Edit credential" : "Configure"}
                   </button>
+                  {c.configured && c.test_input_label && (
+                    <input
+                      type="text"
+                      className="integration-test-input"
+                      placeholder={c.test_input_label}
+                      aria-label={c.test_input_label}
+                      value={testRecipient[c.connector_key] ?? ""}
+                      onChange={(e) =>
+                        setTestRecipient((prev) => ({ ...prev, [c.connector_key]: e.target.value }))
+                      }
+                    />
+                  )}
                   {c.configured && (
                     <button
                       className="btn-ghost btn-sm"
@@ -243,19 +293,49 @@ export function IntegrationsPanel({ canWrite, kind = "data_source" }: Props) {
             <div className="drawer-body">
               <div className="field-hint">{editing.help_text}</div>
               {saveError && <div className="form-error">{saveError}</div>}
-              {editing.config_fields.map((f) => (
-                <div className="form-field" key={f}>
-                  <label>
-                    {fieldLabel(f)}{" "}
-                    {!editing.optional_fields.includes(f) && <span className="required">*</span>}
-                  </label>
-                  <input
-                    type="text"
-                    value={formValues[f] ?? ""}
-                    onChange={(e) => setFormValues((prev) => ({ ...prev, [f]: e.target.value }))}
-                  />
-                </div>
-              ))}
+              {editing.config_fields.map((f) =>
+                f.type === "boolean" ? (
+                  <div className="form-field" key={f.name}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={formValues[f.name] === "true"}
+                        onChange={(e) => handleConfigFieldChange(f, e.target.checked ? "true" : "false")}
+                      />{" "}
+                      {f.label}
+                    </label>
+                    {f.help_text && <div className="field-hint">{f.help_text}</div>}
+                  </div>
+                ) : (
+                  <div className="form-field" key={f.name}>
+                    <label>
+                      {f.label} {f.required && <span className="required">*</span>}
+                    </label>
+                    {f.type === "select" ? (
+                      <select
+                        value={formValues[f.name] ?? ""}
+                        onChange={(e) => handleConfigFieldChange(f, e.target.value)}
+                      >
+                        <option value="" disabled>
+                          Select…
+                        </option>
+                        {f.options.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type={f.type === "number" ? "number" : "text"}
+                        value={formValues[f.name] ?? ""}
+                        onChange={(e) => handleConfigFieldChange(f, e.target.value)}
+                      />
+                    )}
+                    {f.help_text && <div className="field-hint">{f.help_text}</div>}
+                  </div>
+                )
+              )}
               {editing.credential_fields.map((f) => (
                 <div className="form-field" key={f}>
                   <label>

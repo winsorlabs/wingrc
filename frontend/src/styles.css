@@ -1382,6 +1382,7 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .integration-card-detail { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; font-size: 0.8rem; color: #64748b; }
 .integration-detail-item { white-space: nowrap; }
 .integration-test-error { margin-top: 0; }
+.integration-test-input { width: 220px; padding: 0.3rem 0.5rem; font-size: 0.85rem; }
 
 /* ── Reset-password one-time token (inline, per-row — see UsersPanel) ────── */
 .reset-password-result {

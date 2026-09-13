@@ -726,8 +726,15 @@ export const api = {
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   },
 
-  testIntegrationConnection: (connectorKey: string) =>
-    req<IntegrationConnector>(`/integrations/${connectorKey}/test`, { method: "POST" }),
+  // testInput (SMTP: a recipient address) is optional and, unlike
+  // config/credential fields, is never persisted anywhere -- the caller
+  // (IntegrationsPanel.tsx) is responsible for never prefilling or
+  // remembering it between test runs.
+  testIntegrationConnection: (connectorKey: string, testInput?: string) =>
+    req<IntegrationConnector>(`/integrations/${connectorKey}/test`, {
+      method: "POST",
+      body: JSON.stringify({ test_input: testInput || null }),
+    }),
 
   // ── Tools library (G.9) — deployment-wide, not org-scoped; msp_admin /
   // consultant_admin only (backend/app/routers/admin_products.py). Never

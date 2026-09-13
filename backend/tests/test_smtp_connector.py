@@ -113,10 +113,12 @@ class _Server:
         self.controller.stop()
 
 
-def _start_plain_server(*, require_auth: bool = False, auth_require_tls: bool = False) -> _Server:
+def _start_plain_server(
+    *, require_auth: bool = False, auth_require_tls: bool = False, handler=None
+) -> _Server:
     port = _free_port()
     controller = Controller(
-        Sink(),
+        handler if handler is not None else Sink(),
         hostname="127.0.0.1",
         port=port,
         authenticator=_authenticator if require_auth else None,
@@ -140,6 +142,21 @@ def _start_starttls_server(tls_cert, *, require_auth: bool = False) -> _Server:
     )
     controller.start()
     return _Server(controller, port)
+
+
+class _RejectSenderHandler:
+    """Simulates a provider rejecting MAIL FROM -- the SPF/DKIM-
+    unverified-sending-domain case docs/email-setup.md warns about."""
+
+    async def handle_MAIL(self, server, session, envelope, address, mail_options):
+        return "550 5.7.1 Sender domain not verified"
+
+
+class _RejectRecipientHandler:
+    """Simulates a provider rejecting RCPT TO for the given address."""
+
+    async def handle_RCPT(self, server, session, envelope, address, rcpt_options):
+        return "550 5.1.1 No such recipient"
 
 
 def _start_implicit_tls_server(tls_cert, *, require_auth: bool = False) -> _Server:
@@ -288,6 +305,102 @@ def test_connection_refused_reports_specifically():
     result = smtp._test_connection(_config("127.0.0.1", port, "none"), {})
     assert not result.ok
     assert "connect" in result.message.lower()
+
+
+# ---------------------------------------------------------------------------
+# test_input: sending a real test message (2026-09-14, requested after
+# Jarrod's live SMTP2GO setup -- connect-only testing already caught the
+# STARTTLS/implicit-TLS mismatch; this proves delivery, not just the
+# handshake).
+# ---------------------------------------------------------------------------
+
+
+def test_no_test_input_behaves_exactly_as_before():
+    """The regression this feature must not cause: omitting test_input
+    (the default, and every pre-2026-09-14 call site) must still just
+    connect + quit, no message sent, no mention of a recipient."""
+    server = _start_plain_server()
+    try:
+        result = smtp._test_connection(_config("127.0.0.1", server.port, "none"), {})
+        assert result.ok, result.message
+        assert "test message" not in result.message.lower()
+    finally:
+        server.stop()
+
+
+def test_test_input_sends_real_message_and_reports_accepted_not_delivered():
+    server = _start_plain_server()
+    try:
+        result = smtp._test_connection(
+            _config("127.0.0.1", server.port, "none"), {}, "recipient@example.com"
+        )
+        assert result.ok, result.message
+        assert "recipient@example.com" in result.message
+        # Honest wording: accepted for delivery, not confirmed delivered.
+        assert "accepted" in result.message.lower()
+        assert "sent successfully" not in result.message.lower()
+        assert "check the inbox" in result.message.lower()
+    finally:
+        server.stop()
+
+
+def test_test_input_blank_string_behaves_as_no_input():
+    """A blank/whitespace test_input (the router normalizes this too, but
+    the connector itself must not treat "" as a recipient) must not
+    attempt a send."""
+    server = _start_plain_server()
+    try:
+        result = smtp._test_connection(_config("127.0.0.1", server.port, "none"), {}, "   ")
+        assert result.ok, result.message
+        assert "test message" not in result.message.lower()
+    finally:
+        server.stop()
+
+
+def test_sender_refused_reports_distinctly_from_connection_failure():
+    """The case the task calls "the most valuable thing this feature can
+    surface": authentication succeeds, but the provider rejects the
+    from-address -- typically an unverified sending domain (SPF/DKIM),
+    not a bad host/port/credential."""
+    server = _start_plain_server(handler=_RejectSenderHandler())
+    try:
+        result = smtp._test_connection(
+            _config("127.0.0.1", server.port, "none"), {}, "recipient@example.com"
+        )
+        assert not result.ok
+        assert "rejected the from-address" in result.message
+        assert "SPF/DKIM" in result.message or "verified" in result.message.lower()
+    finally:
+        server.stop()
+
+
+def test_recipient_refused_reports_distinctly():
+    server = _start_plain_server(handler=_RejectRecipientHandler())
+    try:
+        result = smtp._test_connection(
+            _config("127.0.0.1", server.port, "none"), {}, "nobody@example.com"
+        )
+        assert not result.ok
+        assert "rejected the recipient" in result.message
+        assert "nobody@example.com" in result.message
+    finally:
+        server.stop()
+
+
+def test_send_failure_does_not_report_as_connection_failure():
+    """A rejected send must never be reported as "could not connect" or
+    similar connect-failure wording -- it's a fundamentally different
+    operator problem (per the task's own instruction)."""
+    server = _start_plain_server(handler=_RejectSenderHandler())
+    try:
+        result = smtp._test_connection(
+            _config("127.0.0.1", server.port, "none"), {}, "recipient@example.com"
+        )
+        assert not result.ok
+        assert "could not connect" not in result.message.lower()
+        assert "timed out" not in result.message.lower()
+    finally:
+        server.stop()
 
 
 # ---------------------------------------------------------------------------

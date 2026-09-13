@@ -55,7 +55,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
-from . import ConnectorSpec, ConnectorTestResult
+from . import ConfigField, ConnectorSpec, ConnectorTestResult
 
 _TIMEOUT_SECONDS = 20
 _DEFAULT_PAGE_SIZE = 100
@@ -65,7 +65,12 @@ _DEFAULT_PAGE_SIZE = 100
 _MAX_PAGES = 200
 
 
-def _test_connection(config: dict, credential: dict) -> ConnectorTestResult:
+def _test_connection(
+    config: dict, credential: dict, test_input: str | None = None
+) -> ConnectorTestResult:
+    # test_input: unused -- this connector's test takes no per-invocation
+    # input (there's nothing to "send" to test), see connectors/__init__.py's
+    # TestConnectionFn docstring for why the parameter exists at all.
     instance_url = str(config.get("instance_url") or "").strip().rstrip("/")
     access_key_id = str(credential.get("access_key_id") or "")
     access_key_secret = str(credential.get("access_key_secret") or "")
@@ -316,7 +321,18 @@ def pull_identities(config: dict, credential: dict, environment_id: int) -> list
 CONNECTOR = ConnectorSpec(
     key="liongard",
     name="Liongard",
-    config_fields=("instance_url",),
+    # Migrated to the ConfigField descriptor shape (2026-09-14) alongside
+    # SMTP -- see connectors/__init__.py's module docstring for why. A
+    # single required text field renders identically to the old
+    # name-only tuple; this is a shape migration, not a redesign.
+    config_fields=(
+        ConfigField(
+            name="instance_url",
+            label="Instance URL",
+            help_text="The subdomain your team uses to sign in, e.g. "
+            "https://myinstance.app.liongard.com.",
+        ),
+    ),
     credential_fields=("access_key_id", "access_key_secret"),
     hint_field="access_key_secret",
     test_connection=_test_connection,

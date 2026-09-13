@@ -748,6 +748,32 @@ export interface ProductPublishState {
   is_published: boolean;
 }
 
+// Mirrors backend/app/connectors/__init__.py's ConfigFieldOption. Field
+// name -> value to pre-fill when this option is picked, but ONLY if that
+// field is currently blank -- a suggestion, never an overwrite (see
+// IntegrationsPanel.tsx's own handling).
+export interface ConfigFieldOption {
+  value: string;
+  label: string;
+  suggests: Record<string, string>;
+}
+
+// Mirrors backend/app/connectors/__init__.py's ConfigField -- a config
+// field carries enough for the form to render itself (2026-09-14, after
+// a live SMTP2GO misconfiguration where `encryption_mode: tls` read as
+// "yes, encrypt this" but was wrong for the port in use: the field was a
+// bare text input, so nothing in the form explained the three modes even
+// though help_text did, in a paragraph nobody was looking at when they
+// typed the value in).
+export interface ConfigField {
+  name: string;
+  label: string;
+  type: "text" | "number" | "select" | "boolean";
+  help_text: string | null;
+  required: boolean;
+  options: ConfigFieldOption[];
+}
+
 // ── Integrations (D.1) — mirrors backend/app/routers/integrations.py's
 // IntegrationOut field-for-field. Deployment-wide, not org-scoped -- see
 // that router's own module docstring for why (Liongard's API key is scoped
@@ -764,16 +790,22 @@ export interface IntegrationConnector {
   last_test_ok: boolean | null;
   last_test_error: string | null;
   help_text: string;
-  config_fields: string[];
+  config_fields: ConfigField[];
   credential_fields: string[];
   // "data_source" (feeds compliance scope, e.g. Liongard) or
   // "notification" (outbound comms, e.g. SMTP) -- which Administration
   // section (Integrations vs. Email) this connector's card renders under.
   kind: string;
-  // config_fields/credential_fields entries that may be submitted blank
-  // (e.g. SMTP's username/password for an unauthenticated relay) -- skip
-  // the "required" marker on these in the credential form.
+  // credential_fields entries that may be submitted blank (e.g. SMTP's
+  // username/password for an unauthenticated relay) -- skip the
+  // "required" marker on these in the credential form. Config fields
+  // carry their own `required` on ConfigField instead.
   optional_fields: string[];
+  // null: this connector's test takes no extra input (Liongard) -- show
+  // only "Test connection". A label: show one optional text field with
+  // this label before running the test (e.g. SMTP's "Send a test
+  // message to (optional)"), never prefilled or remembered between runs.
+  test_input_label: string | null;
 }
 
 // ── Deployment-wide user directory (ADR 0009 M.7/M.8, G.11) — mirrors

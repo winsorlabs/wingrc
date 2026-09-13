@@ -1531,11 +1531,14 @@ Items without a status are planned but not yet started.
   use) publishes 2525/8025 fallbacks; certificate verification defaults
   on, with an explicit, honestly-named `verify_cert` opt-out for a
   self-signed internal relay. Test-connection genuinely exercises
-  connect/EHLO/TLS-upgrade/AUTH and reports which step failed, but does
-  not send a real message — see `connectors/smtp.py`'s own docstring for
-  why (no per-connector "send to" parameter in the generic test-connection
-  interface, and repeated test-connection clicks shouldn't spam an inbox).
-  Sending itself is one boundary, `backend/app/email_service.py`, called
+  connect/EHLO/TLS-upgrade/AUTH and reports which step failed. **As of
+  2026-09-14 it can also send one real, optional test message** (see
+  this file's own "Outbound email — verified against a real provider"
+  entry below) — the claim in this paragraph that it "does not send a
+  real message" describes this slice as originally shipped, not the
+  current behavior; left here rather than rewritten so the sequence of
+  what changed and why stays legible. Sending itself is one boundary,
+  `backend/app/email_service.py`, called
   synchronously from the two existing token-issuing call sites
   (`routers/users.py`'s `invite_user`/`reset_user_password`) — deliberately
   not fire-and-forget; see that module's docstring for the honest
@@ -1590,6 +1593,13 @@ Items without a status are planned but not yet started.
     this session** (no test credentials were supplied) — this is a
     fake-server-only result, not end-to-end proof against SMTP2GO or any
     other real provider, same caveat D.1's own Liongard check named.
+    **Superseded 2026-09-13 — this caveat is now out of date; recorded
+    here rather than deleted so what was and wasn't verified, and when,
+    stays legible.** Jarrod configured SMTP2GO against the real service on
+    wl-util-1 and it now works — see this file's own "Outbound email —
+    verified against a real provider" Done entry below for the full
+    writeup, including the encryption-mode/port bug that config attempt
+    found and the field-descriptor/test-send fix it prompted.
     **Verified 2026-09-12 on wl-util-1, live, this run:** an isolated
     `docker compose -p wingrc_outbound_email` project (fresh clone under
     `~/bench/outbound-email`, its own network/volumes, no host ports
@@ -2025,6 +2035,91 @@ Items without a status are planned but not yet started.
     confirmed directly in Postgres, not just inferred from migration
     source.
 
+- **Outbound email — verified against a real provider (SMTP2GO,
+  2026-09-13), plus config fields made self-describing and
+  test-connection gained an optional real send** (2026-09-14) — the
+  outbound-email slice's own caveat ("no real SMTP provider was
+  exercised") is now out of date; see that Done entry's own superseded
+  note above rather than duplicating it here. What this closes: Jarrod
+  configured SMTP2GO for real, hit a genuine bug, and it's fixed now, not
+  just documented as a known gap.
+  - **What actually happened:** `encryption_mode: tls` against SMTP2GO's
+    port 2525 failed immediately with `[SSL: WRONG_VERSION_NUMBER] wrong
+    version number` — port 2525 is SMTP2GO's STARTTLS alternate
+    (plaintext-then-upgrade), not implicit TLS. Switching to
+    `encryption_mode: starttls` fixed it immediately. The error message
+    itself was diagnosable in one line (this codebase's connect/TLS/AUTH
+    error discipline, tested in `test_smtp_connector.py`, worked exactly
+    as designed) — the **form** was the defect: `encryption_mode` was a
+    bare text input, so nothing explained the three modes at the moment
+    the choice was made, even though `help_text` already did, in a
+    paragraph above the fields nobody was reading when they typed the
+    value in.
+  - **Fix, Part 1 — `ConnectorSpec.config_fields` generalized** from
+    `tuple[str, ...]` (names only) to `tuple[ConfigField, ...]`
+    (`connectors/__init__.py`): a label, a type
+    (text/number/select/boolean), options with human labels for selects,
+    optional help text, and required-ness. Deliberately a small,
+    closed generalization, not a form framework — no validation rules,
+    no conditional visibility. `encryption_mode` is now a labeled select
+    naming what each mode does and its typical port(s) ("STARTTLS —
+    upgrade after connecting (ports 587, 2525, 8025)", etc.);
+    `verify_cert` is now a checkbox, not a text field someone could type
+    `"false"` into. Port stays free-form text on purpose — SMTP2GO's own
+    alternate ports are exactly why a port dropdown would recreate this
+    same bug in a different field. Picking an encryption mode
+    **suggests** the matching standard port via
+    `ConfigFieldOption.suggests` (a field-name → value map, applied only
+    when the target field is still blank) — never overwrites an existing
+    value, so someone deliberately on a nonstandard port keeps it.
+    Liongard migrated to the same descriptor shape with no behavior
+    change (one required text field renders identically to the old
+    name-only tuple) — the registry contract ("add a module + one
+    registry entry," router/screen untouched) holds for both connectors.
+  - **Fix, Part 2 — test-connection can send a real message.**
+    `TestConnectionFn` gained one optional, keyword-defaulted
+    `test_input: str | None` parameter (SMTP: a recipient address;
+    Liongard: unused, ignored, its test still takes no input) — a small,
+    general extension, not an SMTP-shaped one. With no recipient, the
+    connect-only behavior is byte-for-byte unchanged (existing tests
+    caught this immediately if it wasn't). With one, `connectors/smtp.py`
+    sends a trivially simple message (no compliance content, no tokens,
+    no functional links) and reports outcomes deliberately distinctly: a
+    `MAIL FROM`/`RCPT TO`/DATA rejection (`SmtpSendError`) is reported as
+    a different operator problem from a connection or auth failure — most
+    often an unverified sending domain (SPF/DKIM), which the task called
+    "the most valuable thing this feature can surface," and which
+    `docs/email-setup.md` covers in depth. Success is reported as
+    **"accepted by the provider — check the inbox to confirm delivery,"**
+    never "sent successfully" — a `250` is proof of acceptance, not
+    delivery. The recipient is never defaulted, prefilled (not even from
+    the configured From Address), or remembered between test runs — a
+    test click must never send mail by accident — and every test send
+    (recipient non-blank) is audit-logged (`integration_connection.test`,
+    `after_value.test_recipient` added only when a send was attempted;
+    actor stamped automatically like every other event in this router).
+  - **`docs/email-setup.md`** (new) — encryption-mode/port guidance
+    leading with the `WRONG_VERSION_NUMBER` error text verbatim so it's
+    findable by search, a generic-domain SMTP2GO worked example (never
+    Jarrod's real sending address), `WINGRC_PUBLIC_URL` documented
+    immediately next to the SMTP settings (wl-util-1 hit this
+    independently, before SMTP was even configured — see the periodic-
+    review-workflow entries above for that finding), credential-storage
+    cross-reference to `.env.example`'s key-custody guidance, and —
+    flagged as the part most likely to be missed — that a passing
+    connection test never proves deliverability; SPF/DKIM domain
+    verification is a separate, provider-side step, and the only real
+    proof is a test message landing in an inbox you control. Added to
+    item O's (docs.wingrc.us) planned-content list as item 4, alongside
+    the credential-encryption-key-custody content already queued there.
+  - **Verification: pending bench run** — this entry is updated with
+    real numbers once the isolated bench-stack verification (backend
+    pytest, ruff, frontend vitest/`tsc -b`/`vite build`, and a direct
+    check that a config saved under the old `tuple[str, ...]` shape still
+    loads correctly under the new descriptors) actually runs, per this
+    codebase's own convention of never asserting a test count that wasn't
+    obtained by running it.
+
 ---
 
 ## Planned
@@ -2073,8 +2168,9 @@ Independent initiative — does not block or get blocked by other roadmap items;
    - **Store the whole value including the label** (`label:key`), not just the base64 material — each encrypted row records which label encrypted it.
    - **Rotation exists and is proven**: `wingrc rotate-credential-keys` (dry-run by default, pre-flight `pg_dump`, whole-run fail-closed). Document the ordering, because that is where rotations go wrong: add the new key alongside the old → verify decryption → rotate → verify the new label everywhere → only then remove the old key. Reference the worked rehearsal from 2026-09-11.
    - **When to rotate**: on suspected exposure (the 2026-09-11 rotation was triggered by a key appearing in a chat transcript), on operator turnover, or periodically by the operator's own policy.
+4. **Email setup (outbound SMTP)**, added 2026-09-14 after Jarrod's live SMTP2GO configuration against the real service (see this file's own Done entry, "Outbound email — verified against a real provider"). Encryption-mode/port guidance (STARTTLS vs. implicit TLS vs. none, and why the port must match), a SMTP2GO worked example, the `WINGRC_PUBLIC_URL` requirement documented next to the SMTP settings rather than separately, where the credential lives (cross-referencing item 3 above), and the deliverability caveat (a passing connection test does not prove mail arrives — SPF/DKIM domain verification is a separate, provider-side step).
 
-Item 1's source content is written and validated: `docs/wl-util-1-worked-example-deployment.md` is the real, worked hardening/HTTPS session this item calls for. The hosting-cost/GovCloud-necessity research referenced above under **Hosting** is also written and validated: `docs/cloud-hosting-options.md`. Both are ready to seed their respective docs.wingrc.us pages whenever the Docusaurus build happens — the site itself is still unbuilt; only the source content for these two planned pages exists so far.
+Item 1's source content is written and validated: `docs/wl-util-1-worked-example-deployment.md` is the real, worked hardening/HTTPS session this item calls for. The hosting-cost/GovCloud-necessity research referenced above under **Hosting** is also written and validated: `docs/cloud-hosting-options.md`. Item 4's source content is also written and validated: `docs/email-setup.md`. All three are ready to seed their respective docs.wingrc.us pages whenever the Docusaurus build happens — the site itself is still unbuilt; only the source content for these planned pages exists so far.
 
 ---
 

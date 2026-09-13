@@ -4,7 +4,9 @@ only; the data pull itself is D.2/D.3, not built here).
 GET    /integrations                              Every registered connector + its state
 PUT    /integrations/{connector_key}/credential    Set/replace a connector's credential
 DELETE /integrations/{connector_key}/credential    Clear a connector's credential
-POST   /integrations/{connector_key}/test          Test the stored credential live
+POST   /integrations/{connector_key}/test          Test the stored credential live (optional
+                                                    body: {"test_input": ...} -- for SMTP,
+                                                    a recipient to send one real test message to)
 
 Deployment-wide, not org-scoped (see models.py's IntegrationConnection
 docstring for why — Liongard's own tenancy model is one API key per MSP
@@ -61,6 +63,24 @@ router = APIRouter(
 # ---------------------------------------------------------------------------
 
 
+class ConfigFieldOptionOut(BaseModel):
+    value: str
+    label: str
+    # Field name -> value to pre-fill when this option is chosen, but
+    # only if that field is currently blank. See connectors/__init__.py's
+    # ConfigFieldOption docstring -- suggestion, never overwrite.
+    suggests: dict[str, str] = {}
+
+
+class ConfigFieldOut(BaseModel):
+    name: str
+    label: str
+    type: str
+    help_text: str | None
+    required: bool
+    options: list[ConfigFieldOptionOut] = []
+
+
 class IntegrationOut(BaseModel):
     connector_key: str
     name: str
@@ -71,18 +91,32 @@ class IntegrationOut(BaseModel):
     last_test_ok: bool | None
     last_test_error: str | None
     help_text: str
-    config_fields: list[str]
+    config_fields: list[ConfigFieldOut]
     credential_fields: list[str]
     kind: str
-    # config_fields/credential_fields entries that may be submitted blank
-    # (e.g. SMTP's username/password for an unauthenticated relay) — the
-    # frontend uses this to skip the "required" marker on those fields.
+    # credential_fields entries that may be submitted blank (e.g. SMTP's
+    # username/password for an unauthenticated relay) — the frontend uses
+    # this to skip the "required" marker on those. Config fields carry
+    # their own `required` on ConfigFieldOut instead.
     optional_fields: list[str]
+    # None: this connector's test takes no extra input (Liongard) and the
+    # screen shows only "Test connection". A label: the screen shows one
+    # optional text field with this label before running the test (e.g.
+    # SMTP's "Send a test message to (optional)").
+    test_input_label: str | None
 
 
 class IntegrationCredentialIn(BaseModel):
     config: dict[str, str] = {}
     credential: dict[str, str] = {}
+
+
+class TestConnectionIn(BaseModel):
+    # Never defaulted/prefilled/remembered by the frontend -- see
+    # routers/integrations.py's test_connection docstring below and
+    # IntegrationsPanel.tsx's own handling. Optional: with no value, the
+    # test behaves exactly as it did before this field existed.
+    test_input: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -114,10 +148,21 @@ def _out(spec: ConnectorSpec, row: IntegrationConnection | None) -> IntegrationO
         last_test_ok=row.last_test_ok if row else None,
         last_test_error=row.last_test_error if row else None,
         help_text=spec.help_text,
-        config_fields=list(spec.config_fields),
+        config_fields=[
+            ConfigFieldOut(
+                name=f.name, label=f.label, type=f.type, help_text=f.help_text,
+                required=f.required,
+                options=[
+                    ConfigFieldOptionOut(value=o.value, label=o.label, suggests=o.suggests)
+                    for o in f.options
+                ],
+            )
+            for f in spec.config_fields
+        ],
         credential_fields=list(spec.credential_fields),
         kind=spec.kind,
         optional_fields=sorted(spec.optional_fields),
+        test_input_label=spec.test_input_label,
     )
 
 
@@ -140,9 +185,15 @@ def set_credential(
 ) -> IntegrationOut:
     spec = _get_spec(connector_key)
 
+    # Boolean fields (e.g. verify_cert) are never "missing" -- a checkbox
+    # is always well-defined (blank means its safe default), so there is
+    # nothing to require-check the way a text field has. Every other
+    # config field's required-ness now lives on ConfigField.required
+    # instead of the old name-only optional_fields set (see
+    # connectors/__init__.py's module docstring).
     missing = [
-        f for f in spec.config_fields
-        if f not in spec.optional_fields and not body.config.get(f, "").strip()
+        f.name for f in spec.config_fields
+        if f.type != "boolean" and f.required and not body.config.get(f.name, "").strip()
     ]
     missing += [
         f for f in spec.credential_fields
@@ -153,7 +204,8 @@ def set_credential(
             status_code=400, detail=f"Missing required field(s): {', '.join(missing)}"
         )
 
-    # .get(f, "") rather than bare indexing: an optional_fields entry may be
+    config_field_names = [f.name for f in spec.config_fields]
+    # .get(f, "") rather than bare indexing: an optional/blank field may be
     # absent from the request body entirely (not just blank), and the
     # missing-field check above deliberately doesn't require it to be present.
     credential_payload = json.dumps({f: body.credential.get(f, "") for f in spec.credential_fields})
@@ -174,7 +226,7 @@ def set_credential(
         row = IntegrationConnection(connector_key=connector_key)
         session.add(row)
 
-    row.config = {f: body.config.get(f, "") for f in spec.config_fields}
+    row.config = {f: body.config.get(f, "") for f in config_field_names}
     row.encrypted_credential = ciphertext
     row.credential_key_version = key_version
     row.credential_hint = hint
@@ -231,8 +283,21 @@ def delete_credential(connector_key: str, session: Session = Depends(get_session
 
 
 @router.post("/{connector_key}/test", response_model=IntegrationOut)
-def test_connection(connector_key: str, session: Session = Depends(get_session)) -> IntegrationOut:
+def test_connection(
+    connector_key: str,
+    body: TestConnectionIn | None = None,
+    session: Session = Depends(get_session),
+) -> IntegrationOut:
+    """test_input (SMTP: a recipient address) is entirely optional and,
+    when present, is passed straight through to the connector's own
+    test_connection -- for SMTP this sends one real, trivial test
+    message. Never defaulted or inferred here; the frontend is
+    responsible for never prefilling or remembering it either (see
+    IntegrationsPanel.tsx) -- a test click must not send mail by
+    accident. Every test send (test_input non-blank) is audit-logged
+    with the recipient; a plain connect-only test is logged as before."""
     spec = _get_spec(connector_key)
+    test_input = ((body.test_input or "").strip() or None) if body else None
     row = _get_row(session, connector_key)
     if row is None or row.encrypted_credential is None:
         raise HTTPException(
@@ -262,23 +327,35 @@ def test_connection(connector_key: str, session: Session = Depends(get_session))
         session.refresh(row)
         return _out(spec, row)
 
-    result = spec.test_connection(row.config or {}, credential)
+    result = spec.test_connection(row.config or {}, credential, test_input)
     row.last_tested_at = datetime.now(UTC)
     row.last_test_ok = result.ok
     row.last_test_error = None if result.ok else result.message
     session.flush()
 
+    after_value: dict = {"connector_key": connector_key, "ok": result.ok}
+    if test_input:
+        # A test send is a mail-sending action against an operator-
+        # supplied address, not just a read-only connectivity check --
+        # audit-log the recipient explicitly (actor is stamped
+        # automatically by log_event from the authenticated request's
+        # ContextVar, same as every other event here). Never the message
+        # body/subject -- there's nothing sensitive in them, but this
+        # stays consistent with "credential never in a log line" either way.
+        after_value["test_recipient"] = test_input
     log_event(
         session,
         org_id=None,
         action="integration_connection.test",
         entity_type="integration_connection",
         entity_id=row.id,
-        # ok only -- result.message on failure is Liongard's own HTTP-status
-        # text (see connectors/liongard.py), never the credential, but is
-        # still left out of the audit log to keep it to signal, matching
-        # this module's "credential never in a log line" rule with margin.
-        after_value={"connector_key": connector_key, "ok": result.ok},
+        # ok (and test_recipient, if a send was attempted) only --
+        # result.message on failure is Liongard's/SMTP's own status text
+        # (see connectors/liongard.py, connectors/smtp.py), never the
+        # credential, but is still left out of the audit log to keep it
+        # to signal, matching this module's "credential never in a log
+        # line" rule with margin.
+        after_value=after_value,
         context={"via": "api"},
     )
     session.commit()
