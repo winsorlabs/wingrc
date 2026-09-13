@@ -471,16 +471,26 @@ def record_notification_result(
     trace on the reviewer row, and close_cycle had nothing to distinguish
     "asked, didn't answer" from "never asked."
 
-    notified_at is set once, on the first successful send, and never
-    cleared by a later failure -- it answers "were they ever reached,"
-    which must stay true even if a subsequent reminder fails.
+    notified_at is set ONLY the first time (guarded by `is None` below)
+    and never touched again by a later success -- it answers "when were
+    they first reached," which due_reminder_number's own reminder clock
+    runs from. Setting it on every success (an earlier version of this
+    function did) is a real bug caught on bench: a successful reminder
+    send would push notified_at forward to "now," collapsing the day-7/
+    day-14 window back to zero and breaking the very next
+    due_reminder_number call in the same sweep tick's catch-up loop
+    (test_second_reminder_sent_at_day_14 caught this directly). Never
+    cleared by a later failure either -- it must stay true that they were
+    once reached even if a subsequent reminder fails.
+
     notification_error always reflects the most recent attempt (cleared
     to NULL on success) -- callers that want the *reason* care about the
     current state, not a full history; ReviewCycleReminderLog already
     provides the append-only send history for successful reminders.
     """
     if sent:
-        reviewer.notified_at = datetime.now(UTC)
+        if reviewer.notified_at is None:
+            reviewer.notified_at = datetime.now(UTC)
         reviewer.notification_error = None
     else:
         reviewer.notification_error = error
