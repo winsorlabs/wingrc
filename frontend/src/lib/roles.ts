@@ -171,6 +171,24 @@ export function canSeeScheduledJobs(role: string | null | undefined): boolean {
   return !!role && SCHEDULED_JOBS_ROLES.has(role);
 }
 
+// Matches routers/review_cycles.py's per-route
+// require_org_access("msp_admin", "msp_engineer", "consultant_admin") on
+// open/resolve-flag ONLY -- read/attest/flag stay open to every org
+// member, including customer_poc (the client's acknowledgement IS the
+// artifact this feature produces). This constant/gate is deliberately
+// narrower than that: it controls just the MSP-side management actions
+// (Open a cycle now / Resolve flag), never whether the screen itself is
+// reachable -- unlike every other *_ROLES constant in this file, which
+// each gate an entire nav section. customer_poc reaching the Periodic
+// Review screen at all is intentional, not an oversight to fix later.
+export const REVIEW_CYCLE_MANAGE_ROLES = new Set([
+  "msp_admin", "msp_engineer", "consultant_admin",
+]);
+
+export function canManageReviewCycles(role: string | null | undefined): boolean {
+  return !!role && REVIEW_CYCLE_MANAGE_ROLES.has(role);
+}
+
 // Whether the Security nav *category* itself should render at all — hiding
 // an empty category is a nav-shell-specific concern the old per-tab-only
 // gating never had to answer (OrgSettings always showed something, since

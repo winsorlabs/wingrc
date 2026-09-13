@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
@@ -115,6 +115,10 @@ class OrgProfileOut(BaseModel):
     website: str | None = None
     logo_storage_key: str | None = None
     logo_url: str | None = None  # presigned; not on the model, computed per-request
+    # AC.L2-3.1.1[a]/[c]: how often this org's periodic user/device review
+    # runs (review_cycle, migration 0045/0046) -- see Organization's own
+    # model docstring for the per-org-not-deployment-wide reasoning.
+    review_cadence_months: int
 
 
 class OrgProfilePatch(BaseModel):
@@ -131,6 +135,7 @@ class OrgProfilePatch(BaseModel):
     phone_primary: str | None = None
     phone_secondary: str | None = None
     website: str | None = None
+    review_cadence_months: int | None = Field(default=None, ge=1, le=60)
 
 
 class SystemDescriptionIn(BaseModel):

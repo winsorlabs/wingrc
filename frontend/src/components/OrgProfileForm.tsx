@@ -34,6 +34,7 @@ export function OrgProfileForm({ orgId, canWrite, onSaved }: Props) {
         phone_primary: p.phone_primary ?? "",
         phone_secondary: p.phone_secondary ?? "",
         website: p.website ?? "",
+        review_cadence_months: p.review_cadence_months.toString(),
       });
     }).catch(() => setError("Could not load profile"));
   }, [orgId]);
@@ -62,6 +63,7 @@ export function OrgProfileForm({ orgId, canWrite, onSaved }: Props) {
         phone_primary: form.phone_primary || null,
         phone_secondary: form.phone_secondary || null,
         website: form.website || null,
+        review_cadence_months: parseInt(form.review_cadence_months, 10) || 6,
       });
       setSaved(true);
       onSaved?.();
@@ -163,6 +165,23 @@ export function OrgProfileForm({ orgId, canWrite, onSaved }: Props) {
       <div className="form-field">
         <label>Website</label>
         <input type="text" value={form.website} onChange={(e) => set("website", e.target.value)} placeholder="https://…" />
+      </div>
+
+      <div className="form-section-heading">Compliance</div>
+      <div className="form-field">
+        <label>Periodic User/Device Review Cadence (months)</label>
+        <input
+          type="number"
+          value={form.review_cadence_months}
+          onChange={(e) => set("review_cadence_months", e.target.value)}
+          min={1}
+          max={60}
+        />
+        <div className="field-hint">
+          How often WinGRC opens a new periodic review of authorized users and
+          devices (AC.L2-3.1.1[a]/[c]) for this org. 800-171 leaves this
+          org-defined -- this value is what appears in the SSP.
+        </div>
       </div>
 
       <div className="form-section-heading">Logo</div>

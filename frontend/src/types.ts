@@ -72,6 +72,63 @@ export interface SprsSubmission {
   voided_reason: string | null;
 }
 
+// Mirrors backend/app/routers/review_cycles.py -- the periodic review &
+// attestation workflow (D.3's first half). A cycle's items/reviewers are
+// an immutable snapshot taken at open time; see models.py:ReviewCycle's
+// own docstring.
+export interface ReviewCycle {
+  id: string;
+  org_id: string;
+  opened_at: string;
+  due_at: string;
+  closed_at: string | null;
+  status: "open" | "completed" | "closed_unattested";
+  cadence_months: number;
+  opened_by: string;
+}
+
+export interface ReviewCycleItem {
+  id: string;
+  subject_type: "user" | "device";
+  natural_key: string;
+  scope_category: string | null;
+  attributes: Record<string, unknown>;
+}
+
+export interface ReviewCycleReviewer {
+  id: string;
+  // null if the reviewer's user account was later anonymized/hard-
+  // deleted -- reviewer_name/reviewer_email stay populated regardless
+  // (denormalized at request time). Used client-side only to render
+  // "is this me" (the Attest button); never the identity of record for
+  // the attestation itself.
+  user_id: string | null;
+  reviewer_name: string;
+  reviewer_email: string;
+  reviewer_side: "msp" | "client";
+  status: "requested" | "viewed" | "attested" | "no_response";
+  requested_at: string;
+  viewed_at: string | null;
+  attested_at: string | null;
+  comment: string | null;
+}
+
+export interface ReviewCycleFlag {
+  id: string;
+  cycle_item_id: string;
+  flagged_by_name: string;
+  reason: string;
+  created_at: string;
+  resolved_at: string | null;
+  resolved_note: string | null;
+}
+
+export interface ReviewCycleDetail extends ReviewCycle {
+  items: ReviewCycleItem[];
+  reviewers: ReviewCycleReviewer[];
+  flags: ReviewCycleFlag[];
+}
+
 export interface ControlStateRow {
   id: string;
   objective_id: string;
@@ -188,6 +245,10 @@ export interface OrgProfile {
   website: string | null;
   logo_storage_key: string | null;
   logo_url: string | null;
+  // AC.L2-3.1.1[a]/[c]: how often this org's periodic user/device review
+  // runs (Scope -> Periodic Review). Per-org, not deployment-wide --
+  // different clients, different contracts.
+  review_cadence_months: number;
 }
 
 export interface StorageLocation {

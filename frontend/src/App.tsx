@@ -14,6 +14,7 @@ import { OrgDashboard } from "./components/OrgDashboard";
 import { OrgPicker } from "./components/OrgPicker";
 import { OrgProfileForm } from "./components/OrgProfileForm";
 import { ProductsPanel } from "./components/ProductsPanel";
+import { ReviewCyclesPanel } from "./components/ReviewCyclesPanel";
 import { RolesPanel } from "./components/RolesPanel";
 import type { AssessmentsTab, NavCategory, ScopeTab, SecurityTab, SystemDescriptionSection } from "./components/SideNav";
 import { SideNav } from "./components/SideNav";
@@ -302,6 +303,13 @@ export function App() {
               )}
               {scopeTab === "sprs" && (
                 <SprsSubmissionsPanel orgId={org.id} canWrite={canWrite} />
+              )}
+              {scopeTab === "review-cycles" && (
+                <ReviewCyclesPanel
+                  orgId={org.id}
+                  currentUserId={user.id}
+                  currentUserRole={user.role}
+                />
               )}
             </div>
           )}

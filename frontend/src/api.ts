@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, IntegrationConnector, InvitedUser, LiongardEnvironmentMapping, LiongardEnvironmentOption, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, ProductLibraryItem, ProductPublishState, ProductRow, RaciAssignmentRow, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UserDirectoryEntry, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, IntegrationConnector, InvitedUser, LiongardEnvironmentMapping, LiongardEnvironmentOption, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, ProductLibraryItem, ProductPublishState, ProductRow, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UserDirectoryEntry, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -841,6 +841,37 @@ export const api = {
     req<SprsSubmission>(`/orgs/${orgId}/sprs-submissions/${submissionId}/void`, {
       method: "POST",
       body: JSON.stringify({ reason }),
+    }),
+
+  // ── Periodic review & attestation (D.3's first half) — org-scoped
+  // (backend/app/routers/review_cycles.py). Read/attest/flag are open to
+  // any org member (including customer_poc -- the client's
+  // acknowledgement IS the artifact); open/resolveReviewFlag are MSP-side
+  // only, enforced server-side (see that router's own docstring). ──────
+  listReviewCycles: (orgId: string) => req<ReviewCycle[]>(`/orgs/${orgId}/review-cycles`),
+
+  getReviewCycle: (orgId: string, cycleId: string) =>
+    req<ReviewCycleDetail>(`/orgs/${orgId}/review-cycles/${cycleId}`),
+
+  openReviewCycle: (orgId: string) =>
+    req<ReviewCycle>(`/orgs/${orgId}/review-cycles`, { method: "POST" }),
+
+  attestReviewCycle: (orgId: string, cycleId: string, comment?: string) =>
+    req<ReviewCycleReviewer>(`/orgs/${orgId}/review-cycles/${cycleId}/attest`, {
+      method: "POST",
+      body: JSON.stringify({ comment: comment ?? null }),
+    }),
+
+  flagReviewCycleItem: (orgId: string, cycleId: string, itemId: string, reason: string) =>
+    req<ReviewCycleFlag>(`/orgs/${orgId}/review-cycles/${cycleId}/items/${itemId}/flag`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+
+  resolveReviewCycleFlag: (orgId: string, cycleId: string, flagId: string, note: string) =>
+    req<ReviewCycleFlag>(`/orgs/${orgId}/review-cycles/${cycleId}/flags/${flagId}/resolve`, {
+      method: "POST",
+      body: JSON.stringify({ note }),
     }),
 
   // ── Scheduled jobs (job scheduler, D.3's second infrastructure
