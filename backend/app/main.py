@@ -30,6 +30,7 @@ from .routers import (
     objectives,
     orgs,
     raci,
+    review_cycles,
     scheduled_jobs,
     scope,
     sprs_submissions,
@@ -77,6 +78,7 @@ app.include_router(admin_products.router)
 app.include_router(admin_users.router)
 app.include_router(scheduled_jobs.router)
 app.include_router(sprs_submissions.router)
+app.include_router(review_cycles.router)
 
 
 @app.get("/health")
