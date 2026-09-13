@@ -51,23 +51,32 @@ def _public_url(monkeypatch):
     get_settings.cache_clear()
 
 
+class _SentEmails(list):
+    """A plain list has no __dict__, so it can't carry the extra
+    `.results` queue below -- subclassing is the simplest way to keep
+    every existing `len(sent_emails)`/`sent_emails[0]`/`.clear()` call
+    site working unchanged while adding it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        # Queue of results to return, in order, before falling back to
+        # sent=True -- lets a test simulate a specific failure (e.g. a
+        # provider rejection) on a chosen attempt without affecting
+        # every other call in the same test.
+        self.results: list[EmailSendResult] = []
+
+
 @pytest.fixture
 def sent_emails(monkeypatch):
-    calls: list[tuple[str, str, str]] = []
-    # Queue of results to return, in order, before falling back to
-    # sent=True -- lets a test simulate a specific failure (e.g. a
-    # provider rejection) on a chosen attempt without affecting every
-    # other call in the same test.
-    results: list[EmailSendResult] = []
+    calls = _SentEmails()
 
     def _fake_send(session, *, to, subject, body, template):
         calls.append((to, subject, body))
-        if results:
-            return results.pop(0)
+        if calls.results:
+            return calls.results.pop(0)
         return EmailSendResult(sent=True)
 
     monkeypatch.setattr(scheduler.email_service, "send", _fake_send)
-    calls.results = results  # type: ignore[attr-defined]
     return calls
 
 
