@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.connectors import REGISTRY, ConnectorTestResult
-from app.crypto import decrypt_credential
+from app.crypto import decrypt_credential, encrypt_credential
 from app.db import get_session
 from app.main import app
 from app.models import AuditLog, IntegrationConnection
@@ -217,6 +217,48 @@ def test_test_connection_without_credential_rejected(admin_client):
 # pre-existing "no body at all" call shape (every test above) still works
 # unchanged now that the endpoint accepts an optional body.
 # ---------------------------------------------------------------------------
+
+
+def test_existing_config_saved_under_old_shape_still_loads(admin_client, db_session):
+    """The stored `config` JSON was always a plain {field_name: value}
+    dict -- ConfigField only changes how the *schema* is described to the
+    frontend, never the storage format. This directly proves a row
+    written before this change (as Jarrod's real SMTP2GO credential on
+    wl-util-1 was) still reads back correctly and needs no re-entry."""
+    import json
+
+    ciphertext, key_version = encrypt_credential(
+        json.dumps({"username": "smtpuser", "password": "s3cr3t-smtp-pass"})
+    )
+    row = IntegrationConnection(
+        connector_key="smtp",
+        config={
+            "host": "mail.smtp2go.com", "port": "2525", "encryption_mode": "starttls",
+            "from_address": "noreply@example.com", "from_name": "WinGRC", "verify_cert": "true",
+        },
+        encrypted_credential=ciphertext,
+        credential_key_version=key_version,
+        credential_hint="pass"[-4:],
+    )
+    db_session.add(row)
+    db_session.commit()
+
+    r = admin_client.get("/integrations")
+    assert r.status_code == 200
+    smtp = next(x for x in r.json() if x["connector_key"] == "smtp")
+    assert smtp["configured"] is True
+    assert smtp["config"]["host"] == "mail.smtp2go.com"
+    assert smtp["config"]["encryption_mode"] == "starttls"
+    assert smtp["credential_hint"] == "pass"[-4:]
+    # The password itself was never re-entered -- it still decrypts to
+    # exactly what was stored under the old code.
+    decrypted = json.loads(decrypt_credential(row.encrypted_credential))
+    assert decrypted == {"username": "smtpuser", "password": "s3cr3t-smtp-pass"}
+    # And the new descriptor metadata is present alongside the untouched
+    # stored values -- both shapes coexist correctly.
+    encryption_field = next(f for f in smtp["config_fields"] if f["name"] == "encryption_mode")
+    assert encryption_field["type"] == "select"
+    assert any(o["value"] == "starttls" for o in encryption_field["options"])
 
 
 def test_test_connection_with_no_body_behaves_as_before(admin_client, _stub_smtp_test_connection):
