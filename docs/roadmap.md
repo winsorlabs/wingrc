@@ -1695,6 +1695,119 @@ Items without a status are planned but not yet started.
     unexercised by anything beyond that one low-risk hygiene sweep until
     D.3 actually adds a second job.
 
+- **SPRS submission record-keeping + assessment completion** (2026-09-13)
+  — two coupled features built together because the annual-reminder
+  clock in the second depends on the record kept by the first.
+  `sprs_submission` (migration 0043) is the record of what was actually
+  **filed with SPRS** — a human action in a DoD system this app cannot
+  observe — kept strictly separate from two other, easily-conflated
+  facts: `sprs_snapshot` (what WinGRC **computed**) and
+  `Assessment.status` (whether the WinGRC assessment cycle is
+  **complete**). Org-scoped, not assessment-scoped (`assessment_id`
+  nullable — the first submission is typically captured at onboarding,
+  before any assessment exists); append-only like `sprs_snapshot`
+  (`voided_at`/`voided_reason` are a one-way annotation, never an edit
+  to what a row claims was filed — a correction is a new row); the score
+  is stored as a value, never a live reference, so a later recompute can
+  never retroactively change what was claimed submitted.
+  - **Completing an assessment creates no submission row, ever.**
+    `engine.py:complete_assessment` (the `in_progress` → `submitted`
+    transition `Assessment.status`'s CHECK constraint declared but
+    nothing wrote — verified with a full grep before building, per the
+    task's explicit instruction, and confirmed clean) only stamps
+    `submitted_at` and prompts the frontend to offer recording a
+    submission — clearly framed as "when you file this in SPRS, come
+    back and record it," never as something already done, and
+    dismissible. `closed`/`closed_at` stay unimplemented: nothing in
+    this codebase defines what "closed" means distinct from
+    "submitted," and implementing a state nobody needs just because the
+    CHECK constraint names it would be guessing, not building. Asserted
+    explicitly in tests, not just implied — this is the central
+    invariant the whole design rests on.
+  - **Completion gates nothing** — bundle export, evidence upload, and
+    control-state edits all keep working identically before and after,
+    per Jarrod's explicit instruction that people may want to test-export
+    or partially work a bundle before completion. `locked_at` is left
+    unwritten on purpose; auto-locking on completion would violate that
+    constraint. **Still unimplemented, tracked here so the next reader
+    doesn't assume completion locks:** locking is a separate, deliberate
+    action with its own design, not built in this slice.
+  - **Contact deletion does not destroy the submission record** —
+    checked against the contact-lifecycle precedent this file's own RACI
+    copy-forward entry already worked out (`RaciAssignment.contact_id`
+    is `ON DELETE CASCADE`, correct there since RACI is a live
+    "who's responsible now" fact) before reusing its shape, and
+    deliberately NOT reusing it: `submitted_by_contact_id` is
+    `ON DELETE SET NULL` instead (matching `User.contact_id`'s existing
+    precedent), with the submitter's name/email denormalized into the
+    row at write time so "who filed this" survives the contact being
+    hard-deleted.
+  - **Copy-forward's "which prior assessment" query is updated** now
+    that completion exists (see this file's own RACI copy-forward
+    entry, which explicitly flagged this as worth revisiting once a real
+    completion concept shipped): prefers the most recently *completed*
+    assessment on the same framework, falling back to most-recent-by-
+    started_at only when none is completed yet, since nothing here
+    blocks parallel/experimental assessments and a more-recent
+    in_progress one could as easily be a throwaway as the real prior
+    cycle.
+  - **`sprs_annual_reminder`** (scheduler.py) is the scheduler's first
+    job with actual product meaning. Clock starts at the **attested
+    submission date only** — enforced by construction, since the
+    SECURITY DEFINER due-check query only ever considers orgs with a
+    non-voided submission on file at all; an org with none has no clock,
+    full stop. Single 12-month reminder (CMMC's actual annual SPRS
+    re-submission cadence), not a 60/30/7-day ramp — erring toward
+    fewer notifications. Idempotent, keyed to the submission (a new
+    submission resets the clock automatically), and content-rule-clean:
+    no org name, no score, in neither subject nor body, and exactly one
+    email per recipient per tick regardless of how many orgs are due.
+  - **Recipient decision, flagged rather than picked broadly, per the
+    task's explicit instruction:** reminders default to MSP staff only
+    (every active `msp_admin`/`msp_engineer`, deployment-wide, via a new
+    `auth.msp_staff_emails()`). **Open question for Jarrod:** whether an
+    annual-submission reminder should ever reach a customer contact at
+    the client org — emailing a client's own POC from the MSP's domain
+    about their own compliance deadline is a different product decision
+    than notifying MSP staff, and hasn't been made. Do not widen this
+    recipient set without that decision.
+  - **Surfaced in three places:** a new Scope → SPRS Submissions tab
+    (record/void, current + full history — also reused unmodified as
+    `OnboardingWizard`'s new optional 4th step, and deliberately **not**
+    counted toward onboarding completeness, matching the task's own
+    lean — "we have never filed" is a legitimate state for a first-time
+    assessment, not an incomplete one); a dashboard widget (current
+    score/date/submitter, fetched via its own call since this is
+    org-scoped data on an otherwise assessment-scoped dashboard
+    endpoint, same reasoning the existing Recent-Activity widget already
+    established); and the assessor bundle export (captured into
+    `BundleSnapshot` at export time like everything else — a bundle is a
+    point-in-time snapshot, so a later correction/void must never
+    retroactively change what an already-generated bundle claims the
+    filing history was).
+  - **Verified 2026-09-13 on wl-util-1, live, this run:** an isolated
+    `docker compose -p wingrc_sprs_completion` project (fresh clone,
+    separate network/volumes, the live `wingrc` project on that box
+    never touched) — **964/964 backend tests**, `ruff check .` clean,
+    frontend `npm test` (**91/91** vitest, 14 files) plus `tsc -b`/
+    `vite build` clean. Three real bugs surfaced only at this stage, not
+    locally, fixed and re-verified in place: a duplicate-email fixture
+    collision in a new RBAC test (`_client_as` reused
+    `_make_fake_user()`'s default email inside an org that already had
+    a user at that address), a datetime-string-format mismatch in a
+    reopen-audit-entry assertion (Pydantic's `...Z` vs. Python's
+    `isoformat()`'s `...+00:00` for the same instant), and a frontend
+    test fixture missing `Contact.created_at`.
+  - **Deliberately left open, so the gap is recorded rather than assumed
+    solved:** no UI for voiding-with-full-workflow beyond the basic
+    reason-and-confirm dialog built here; `locked_at`/assessment locking
+    (noted above); the MSP-vs-customer-contact reminder-recipient
+    question (noted above); no local-time/cron scheduling for the
+    reminder (a daily due-check against a 12-month SQL condition is a
+    fine substitute for an annual reminder, per scheduler.py's own
+    module docstring, but would not be for anything needing an exact
+    calendar date).
+
 ---
 
 ## Planned
