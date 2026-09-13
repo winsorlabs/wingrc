@@ -18,7 +18,14 @@ interface Props {
 
 function statusBadgeClass(status: string): string {
   if (status === "attested" || status === "completed") return "status-active";
-  if (status === "no_response" || status === "closed_unattested") return "status-warning";
+  if (
+    status === "no_response" ||
+    status === "closed_unattested" ||
+    status === "not_notified" ||
+    status === "closed_undeliverable"
+  ) {
+    return "status-warning";
+  }
   return "status-inactive";
 }
 
@@ -183,6 +190,7 @@ function ReviewCycleDetailView({ orgId, detail, currentUserId, canManage, onBack
   }
 
   const canAttest = detail.status === "open" && myReviewer && myReviewer.status !== "attested";
+  const unreached = detail.reviewers.filter((r) => r.notified_at === null);
 
   return (
     <div className="review-cycle-detail">
@@ -193,6 +201,19 @@ function ReviewCycleDetailView({ orgId, detail, currentUserId, canManage, onBack
         {" "}&middot; Due {new Date(detail.due_at).toLocaleDateString()}
         {" "}&middot; Cadence: every {detail.cadence_months} month(s)
       </p>
+
+      {unreached.length > 0 && (
+        <div className="form-error">
+          {detail.status === "closed_undeliverable"
+            ? `This cycle closed without reaching anyone -- ${unreached.length} of ${detail.reviewers.length} reviewer(s) were never notified. No review was actually attempted.`
+            : `${unreached.length} of ${detail.reviewers.length} reviewer(s) have not been notified yet. Check that email is configured (SMTP credential + public URL) -- WinGRC will keep retrying, or a reviewer can sign in and attest manually.`}
+          {unreached[0]?.notification_error && (
+            <div style={{ marginTop: "0.25rem", fontSize: "0.85em" }}>
+              Most recent error: {unreached[0].notification_error}
+            </div>
+          )}
+        </div>
+      )}
 
       {canAttest && (
         <div className="card">
@@ -249,7 +270,7 @@ function ReviewCycleDetailView({ orgId, detail, currentUserId, canManage, onBack
       <div className="table-scroll">
         <table className="contacts-table">
           <thead>
-            <tr><th>Name</th><th>Side</th><th>Status</th><th>Attested</th><th>Comment</th></tr>
+            <tr><th>Name</th><th>Side</th><th>Status</th><th>Notified</th><th>Attested</th><th>Comment</th></tr>
           </thead>
           <tbody>
             {detail.reviewers.map((r) => (
@@ -257,6 +278,9 @@ function ReviewCycleDetailView({ orgId, detail, currentUserId, canManage, onBack
                 <td>{r.reviewer_name}</td>
                 <td>{r.reviewer_side}</td>
                 <td><span className={`status-badge ${statusBadgeClass(r.status)}`}>{r.status}</span></td>
+                <td title={r.notification_error ?? undefined}>
+                  {r.notified_at ? new Date(r.notified_at).toLocaleString() : r.notification_error ? "Failed" : ""}
+                </td>
                 <td>{r.attested_at ? new Date(r.attested_at).toLocaleString() : ""}</td>
                 <td>{r.comment ?? ""}</td>
               </tr>

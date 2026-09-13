@@ -311,6 +311,8 @@ def _render_attestation_html(
         f"<tr><td>{_esc(r.reviewer_name)}</td><td>{_esc(r.reviewer_email)}</td>"
         f"<td>{_esc(r.reviewer_side)}</td><td>{_esc(r.status)}</td>"
         f"<td>{r.requested_at.isoformat()}</td>"
+        f"<td>{r.notified_at.isoformat() if r.notified_at else ''}</td>"
+        f"<td>{_esc(r.notification_error)}</td>"
         f"<td>{r.attested_at.isoformat() if r.attested_at else ''}</td>"
         f"<td>{_esc(r.comment)}</td></tr>"
         for r in reviewers
@@ -319,6 +321,9 @@ def _render_attestation_html(
         "completed": "All reviewers attested.",
         "closed_unattested": "Cycle closed at its due date without full attestation "
         "-- see reviewer status below for who did and did not respond.",
+        "closed_undeliverable": "Cycle closed at its due date -- no reviewer could be "
+        "notified (see the Notification error column below), so no review was "
+        "actually attempted.",
     }.get(cycle.status, cycle.status)
     return (
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
@@ -335,7 +340,8 @@ def _render_attestation_html(
         f"<table><tr><th>Type</th><th>Identifier</th><th>Category</th></tr>{item_rows}</table>"
         "<h2>Reviewers</h2>"
         "<table><tr><th>Name</th><th>Email</th><th>Side</th><th>Status</th>"
-        f"<th>Requested</th><th>Attested</th><th>Comment</th></tr>{reviewer_rows}</table>"
+        "<th>Requested</th><th>Notified</th><th>Notification error</th>"
+        f"<th>Attested</th><th>Comment</th></tr>{reviewer_rows}</table>"
         "</body></html>"
     )
 
@@ -377,14 +383,32 @@ def _mapped_control_states(session: Session, *, org_id: uuid.UUID) -> list[Contr
 def close_cycle(
     session: Session, storage: StorageClient, *, cycle: ReviewCycle, status: str
 ) -> Evidence:
-    """Closes a cycle (status: 'completed' or 'closed_unattested'),
-    stamps every still-`requested`/`viewed` reviewer to `no_response`
-    (the non-response-as-evidence record §3 calls the most valuable part
-    of this feature -- never left ambiguous, never silently dropped),
-    and produces the Evidence row: an HTML document, kind='file',
-    artifact_type='attestation' (see migration 0045 for why this needed
-    a new type), linked to AC.L2-3.1.1[a]/[c]'s control_state rows on
-    every currently in_progress assessment for this org.
+    """Closes a cycle (status: 'completed', 'closed_unattested', or
+    'closed_undeliverable' -- see below), stamps every still-`requested`/
+    `viewed` reviewer to `no_response` if they were ever actually
+    notified, or `not_notified` if not (the non-response-as-evidence
+    record §3 calls the most valuable part of this feature -- never left
+    ambiguous, never silently dropped, and -- since a live bug on
+    wl-util-1 (2026-09-13) -- never a false claim that someone failed to
+    respond to a request nobody ever sent them), and produces the
+    Evidence row: an HTML document, kind='file', artifact_type=
+    'attestation' (see migration 0045 for why this needed a new type),
+    linked to AC.L2-3.1.1[a]/[c]'s control_state rows on every currently
+    in_progress assessment for this org.
+
+    If the caller passes status='closed_unattested' but NO reviewer was
+    ever successfully notified (every notified_at is still NULL), the
+    status is upgraded to 'closed_undeliverable' instead -- 'closed
+    without full attestation' implies a review was attempted and people
+    simply didn't answer, which isn't true when nobody could be reached
+    at all (no SMTP credential, no WINGRC_PUBLIC_URL, or every send
+    failed). A cycle with a mix -- some reviewers reached, some not --
+    stays 'closed_unattested': a review genuinely was attempted, just not
+    delivered to everyone, and that distinction is already fully captured
+    per-reviewer by no_response vs. not_notified. status='completed'
+    (full attestation) is never touched by this -- if every reviewer
+    attested, a review plainly did happen regardless of how they each
+    learned about it.
     """
     now = datetime.now(UTC)
     reviewers = list(
@@ -392,7 +416,10 @@ def close_cycle(
     )
     for r in reviewers:
         if r.status in ("requested", "viewed"):
-            r.status = "no_response"
+            r.status = "no_response" if r.notified_at is not None else "not_notified"
+
+    if status == "closed_unattested" and all(r.notified_at is None for r in reviewers):
+        status = "closed_undeliverable"
 
     items = list(
         session.scalars(select(ReviewCycleItem).where(ReviewCycleItem.cycle_id == cycle.id))
@@ -435,15 +462,52 @@ def close_cycle(
 # ---------------------------------------------------------------------------
 
 
+def record_notification_result(
+    session: Session, *, reviewer: ReviewCycleReviewer, sent: bool, error: str | None
+) -> None:
+    """Persists the outcome of one notification attempt (initial request
+    or reminder) for one reviewer -- the fix for the wl-util-1 bug: this
+    used to not exist at all, so a failed or never-attempted send left no
+    trace on the reviewer row, and close_cycle had nothing to distinguish
+    "asked, didn't answer" from "never asked."
+
+    notified_at is set once, on the first successful send, and never
+    cleared by a later failure -- it answers "were they ever reached,"
+    which must stay true even if a subsequent reminder fails.
+    notification_error always reflects the most recent attempt (cleared
+    to NULL on success) -- callers that want the *reason* care about the
+    current state, not a full history; ReviewCycleReminderLog already
+    provides the append-only send history for successful reminders.
+    """
+    if sent:
+        reviewer.notified_at = datetime.now(UTC)
+        reviewer.notification_error = None
+    else:
+        reviewer.notification_error = error
+    session.flush()
+
+
 def due_reminder_number(
     reviewer: ReviewCycleReviewer, *, now: datetime, already_sent: set[int]
 ) -> int | None:
     """Which reminder (1 or 2) is due for this reviewer right now, or
     None. Only relevant for a reviewer still requested/viewed -- an
-    attested reviewer needs no reminder."""
-    if reviewer.status in ("attested",):
+    attested reviewer needs no reminder.
+
+    A reviewer never yet successfully notified (notified_at is None) is
+    never due for a *reminder* -- reminding someone of a message they
+    never got makes no sense, and scheduler.py's sweep instead retries
+    the *initial* notification for them on every tick, independent of
+    this function. The reminder clock itself runs from notified_at, not
+    requested_at: if the first notification was delayed (SMTP configured
+    only after the cycle had been open a while), a reminder timed from
+    the original request moment could fire immediately after the very
+    first message ever reached them, which would read as nonsensical --
+    day_at_which_they_were_actually_told is the honest zero point.
+    """
+    if reviewer.status in ("attested",) or reviewer.notified_at is None:
         return None
-    elapsed_days = (now - reviewer.requested_at).days
+    elapsed_days = (now - reviewer.notified_at).days
     for number, threshold in enumerate(REMINDER_DAYS, start=1):
         if elapsed_days >= threshold and number not in already_sent:
             return number

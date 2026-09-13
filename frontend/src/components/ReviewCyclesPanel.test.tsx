@@ -51,6 +51,7 @@ function makeDetail(overrides: Partial<ReviewCycleDetail> = {}): ReviewCycleDeta
         id: "r1", user_id: "u1", reviewer_name: "Jane Filer", reviewer_email: "jane@example.com",
         reviewer_side: "client", status: "requested", requested_at: "2026-09-01T00:00:00Z",
         viewed_at: null, attested_at: null, comment: null,
+        notified_at: "2026-09-01T00:05:00Z", notification_error: null,
       },
     ],
     flags: [],
@@ -112,6 +113,7 @@ describe("ReviewCyclesPanel — detail & attest", () => {
       id: "r1", user_id: "u1", reviewer_name: "Jane Filer", reviewer_email: "jane@example.com",
       reviewer_side: "client", status: "attested", requested_at: "2026-09-01T00:00:00Z",
       viewed_at: "2026-09-01T00:00:00Z", attested_at: "2026-09-02T00:00:00Z", comment: null,
+      notified_at: "2026-09-01T00:05:00Z", notification_error: null,
     });
 
     render(<ReviewCyclesPanel orgId="org1" currentUserId="u1" currentUserRole="customer_poc" />);
@@ -138,6 +140,7 @@ describe("ReviewCyclesPanel — detail & attest", () => {
             id: "r1", user_id: "u1", reviewer_name: "Jane Filer", reviewer_email: "jane@example.com",
             reviewer_side: "client", status: "attested", requested_at: "2026-09-01T00:00:00Z",
             viewed_at: "2026-09-01T00:00:00Z", attested_at: "2026-09-02T00:00:00Z", comment: null,
+            notified_at: "2026-09-01T00:05:00Z", notification_error: null,
           },
         ],
       })
@@ -149,5 +152,56 @@ describe("ReviewCyclesPanel — detail & attest", () => {
 
     await screen.findByText("jane.doe");
     expect(screen.queryByRole("button", { name: "I have reviewed this list" })).toBeNull();
+  });
+
+  it("shows a prominent warning when a reviewer was never notified", async () => {
+    vi.mocked(api.listReviewCycles).mockResolvedValue([makeCycle()]);
+    vi.mocked(api.getReviewCycle).mockResolvedValue(
+      makeDetail({
+        reviewers: [
+          {
+            id: "r1", user_id: "u1", reviewer_name: "Jane Filer", reviewer_email: "jane@example.com",
+            reviewer_side: "client", status: "requested", requested_at: "2026-09-01T00:00:00Z",
+            viewed_at: null, attested_at: null, comment: null,
+            notified_at: null, notification_error: "WINGRC_PUBLIC_URL is not configured.",
+          },
+        ],
+      })
+    );
+
+    render(<ReviewCyclesPanel orgId="org1" currentUserId="u1" currentUserRole="msp_admin" />);
+    await screen.findByText("open");
+    fireEvent.click(screen.getByText("open"));
+
+    await screen.findByText("jane.doe");
+    expect(screen.getByText(/have not been notified yet/)).toBeTruthy();
+    expect(screen.getByText(/WINGRC_PUBLIC_URL is not configured\./)).toBeTruthy();
+  });
+
+  it("labels a cycle that closed with nobody ever reached as undeliverable, not no_response", async () => {
+    vi.mocked(api.listReviewCycles).mockResolvedValue([
+      makeCycle({ status: "closed_undeliverable" }),
+    ]);
+    vi.mocked(api.getReviewCycle).mockResolvedValue(
+      makeDetail({
+        status: "closed_undeliverable",
+        reviewers: [
+          {
+            id: "r1", user_id: "u1", reviewer_name: "Jane Filer", reviewer_email: "jane@example.com",
+            reviewer_side: "client", status: "not_notified", requested_at: "2026-09-01T00:00:00Z",
+            viewed_at: null, attested_at: null, comment: null,
+            notified_at: null, notification_error: "Email is not configured for this deployment.",
+          },
+        ],
+      })
+    );
+
+    render(<ReviewCyclesPanel orgId="org1" currentUserId="u1" currentUserRole="msp_admin" />);
+    await screen.findByText("closed_undeliverable");
+    fireEvent.click(screen.getByText("closed_undeliverable"));
+
+    await screen.findByText("jane.doe");
+    expect(screen.getByText(/closed without reaching anyone/)).toBeTruthy();
+    expect(screen.getByText("not_notified")).toBeTruthy();
   });
 });

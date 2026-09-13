@@ -82,7 +82,13 @@ export interface ReviewCycle {
   opened_at: string;
   due_at: string;
   closed_at: string | null;
-  status: "open" | "completed" | "closed_unattested";
+  // closed_undeliverable: no reviewer was ever successfully notified (no
+  // SMTP credential, no WINGRC_PUBLIC_URL, or every send failed) --
+  // distinct from closed_unattested, which implies a review WAS
+  // attempted and at least one reviewer just didn't answer. Added after
+  // a live bug (wl-util-1, 2026-09-13) that asserted named reviewers
+  // failed to respond to a request nobody ever sent them.
+  status: "open" | "completed" | "closed_unattested" | "closed_undeliverable";
   cadence_months: number;
   opened_by: string;
 }
@@ -106,11 +112,20 @@ export interface ReviewCycleReviewer {
   reviewer_name: string;
   reviewer_email: string;
   reviewer_side: "msp" | "client";
-  status: "requested" | "viewed" | "attested" | "no_response";
+  // not_notified: the cycle closed (or is still open) without this
+  // reviewer ever being successfully reached -- distinct from
+  // no_response, which means they WERE notified and simply didn't
+  // answer. See notified_at/notification_error below.
+  status: "requested" | "viewed" | "attested" | "no_response" | "not_notified";
   requested_at: string;
   viewed_at: string | null;
   attested_at: string | null;
   comment: string | null;
+  // null until the first successful notification, and never cleared by
+  // a later failure. notification_error is the most recent attempt's
+  // admin-facing reason when it failed, cleared to null on success.
+  notified_at: string | null;
+  notification_error: string | null;
 }
 
 export interface ReviewCycleFlag {

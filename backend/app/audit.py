@@ -97,12 +97,25 @@ Scoped to meaningful compliance mutations (signal, not firehose):
                                  themselves, an append-only snapshot this
                                  entry points at rather than duplicates.
   review_cycle.closed_unattested — a cycle's due_at passed with at least
-                                 one reviewer never attesting
-                                 (scheduler.py's review_cycle_sweep job).
-                                 actor is "system" -- this is itself the
+                                 one reviewer never attesting, but at
+                                 least one reviewer was actually
+                                 notified at some point (scheduler.py's
+                                 review_cycle_sweep job). actor is
+                                 "system" -- this is itself the
                                  non-response evidence record §3 of this
                                  slice's design calls the most valuable
                                  part of the feature.
+  review_cycle.closed_undeliverable — a cycle's due_at passed and NO
+                                 reviewer was ever successfully notified
+                                 (no SMTP credential, no
+                                 WINGRC_PUBLIC_URL, or every send
+                                 failed) -- added after a live bug on
+                                 wl-util-1 (2026-09-13) where this case
+                                 was indistinguishable from
+                                 closed_unattested and asserted named
+                                 reviewers failed to respond to a
+                                 request nobody ever sent. See
+                                 review_cycles.close_cycle.
   review_cycle.flag           — a reviewer flagged one item for MSP
                                  follow-up. Never a scope_entity mutation
                                  -- see models.py:ReviewCycleFlag.

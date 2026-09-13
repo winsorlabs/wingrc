@@ -81,6 +81,14 @@ class ReviewCycleReviewerOut(BaseModel):
     viewed_at: datetime | None
     attested_at: datetime | None
     comment: str | None
+    # None until the first successful notification, and never cleared by
+    # a later failure -- "were they ever reached." notification_error is
+    # the most recent attempt's reason when it failed (unconfigured vs.
+    # provider rejection are different operator problems), cleared to
+    # None on success. Added after the wl-util-1 false-no_response bug --
+    # see models.py:ReviewCycleReviewer's own docstring.
+    notified_at: datetime | None
+    notification_error: str | None
 
 
 class ReviewCycleFlagOut(BaseModel):
@@ -217,6 +225,7 @@ def get_cycle(
                 reviewer_email=r.reviewer_email,
                 reviewer_side=r.reviewer_side, status=r.status, requested_at=r.requested_at,
                 viewed_at=r.viewed_at, attested_at=r.attested_at, comment=r.comment,
+                notified_at=r.notified_at, notification_error=r.notification_error,
             )
             for r in reviewers
         ],
@@ -262,6 +271,7 @@ def attest_cycle(
         reviewer_side=reviewer.reviewer_side, status=reviewer.status,
         requested_at=reviewer.requested_at, viewed_at=reviewer.viewed_at,
         attested_at=reviewer.attested_at, comment=reviewer.comment,
+        notified_at=reviewer.notified_at, notification_error=reviewer.notification_error,
     )
 
 

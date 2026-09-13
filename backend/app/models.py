@@ -1912,6 +1912,18 @@ class SprsReminderLog(Base):
 # flag for MSP follow-up, never an automatic scope_entity change. Actually
 # changing scope still goes through the existing reconcile()/dry-run/apply
 # path, unmodified and untouched by anything in this feature.
+#
+# "Non-response is evidence" only holds if the request was actually
+# delivered -- a real bug on the first live deployment (wl-util-1,
+# 2026-09-13, a cycle opened with no SMTP credential and no
+# WINGRC_PUBLIC_URL configured) proved that wrong: every reviewer closed
+# as 'no_response', asserting two named people failed to respond to a
+# request that was never sent. ReviewCycleReviewer.notified_at/
+# notification_error now track delivery per reviewer (see that class's
+# own docstring), and close_cycle distinguishes 'no_response' (asked,
+# didn't answer) from 'not_notified' (never successfully asked) --
+# and, at the cycle level, 'closed_unattested' (a review was attempted)
+# from 'closed_undeliverable' (nobody could be reached at all).
 # ---------------------------------------------------------------------------
 
 
@@ -1929,8 +1941,19 @@ class ReviewCycle(Base):
 
     Append-only once opened, like `audit_log`/`sprs_snapshot`: a cycle is
     never edited after the fact. status only ever moves forward
-    (open -> completed | closed_unattested), and a correction is a new
-    cycle, not a reopened or rewritten old one.
+    (open -> completed | closed_unattested | closed_undeliverable), and a
+    correction is a new cycle, not a reopened or rewritten old one.
+
+    closed_undeliverable: distinct from closed_unattested. Added after a
+    live bug (wl-util-1, 2026-09-13): closed_unattested's own wording
+    ("closed without full attestation") implies a review was attempted
+    and reviewers simply didn't answer -- true when at least one reviewer
+    was ever successfully notified, false when NONE were (e.g. no SMTP
+    credential and no WINGRC_PUBLIC_URL configured on the deployment). A
+    cycle where nobody could be reached had no review attempt to fail to
+    complete, so it gets its own honest terminal status rather than
+    reusing wording that asserts the opposite. See
+    review_cycles.close_cycle.
 
     cadence_months is a COPY of Organization.review_cadence_months at
     the moment this cycle opened -- not a live read -- so a later cadence
@@ -1941,7 +1964,7 @@ class ReviewCycle(Base):
     __tablename__ = "review_cycle"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('open', 'completed', 'closed_unattested')",
+            "status IN ('open', 'completed', 'closed_unattested', 'closed_undeliverable')",
             name="ck_review_cycle_status",
         ),
     )
@@ -2018,17 +2041,33 @@ class ReviewCycleReviewer(Base):
     reviewer who never attests before the cycle closes is left at
     'requested' or 'viewed' -- NOT silently deleted or hidden; see
     engine-level close logic, which stamps every still-open reviewer row
-    to 'no_response' at close time rather than leaving an ambiguous
-    partial state. That 'no_response' set, together with
-    ReviewCycleReminderLog, is the non-response evidence §3 calls the
-    most valuable part of this feature.
+    to 'no_response' (if ever actually notified) or 'not_notified' (if
+    not) at close time rather than leaving an ambiguous partial state.
+    That non-response set, together with ReviewCycleReminderLog, is the
+    non-response evidence §3 calls the most valuable part of this
+    feature.
+
+    notified_at / notification_error: delivery tracking, added after a
+    live-deployment bug (wl-util-1, 2026-09-13) where a cycle with no
+    SMTP credential and no WINGRC_PUBLIC_URL configured still closed both
+    of its reviewers as 'no_response' -- an assertion that two named
+    people failed to respond to a request that was never delivered.
+    `email_service.send()` already returns a result the caller previously
+    discarded (review_cycle_open) or consulted only for reminder-log
+    idempotency, never persisted (review_cycle_sweep). notified_at is set
+    the first time a notification to this reviewer succeeds and is never
+    cleared afterward -- it answers "were they ever actually reached,"
+    not "was the most recent attempt successful." notification_error
+    holds the most recent failure's admin-facing reason (unconfigured vs.
+    provider rejection are different operator problems) and is cleared to
+    NULL once notified_at is set. See scheduler.py's _notify_reviewer.
     """
 
     __tablename__ = "review_cycle_reviewer"
     __table_args__ = (
         CheckConstraint("reviewer_side IN ('msp', 'client')", name="ck_review_cycle_reviewer_side"),
         CheckConstraint(
-            "status IN ('requested', 'viewed', 'attested', 'no_response')",
+            "status IN ('requested', 'viewed', 'attested', 'no_response', 'not_notified')",
             name="ck_review_cycle_reviewer_status",
         ),
     )
@@ -2057,6 +2096,8 @@ class ReviewCycleReviewer(Base):
     viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     attested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    notification_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ReviewCycleReminderLog(Base):

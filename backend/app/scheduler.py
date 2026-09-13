@@ -267,9 +267,52 @@ _REVIEW_REMINDER_BODY = (
 )
 
 
-def _review_link() -> str:
+def _review_link_or_error() -> tuple[str | None, str | None]:
+    """Returns (link, None) if a real sign-in link can be built, or
+    (None, error) if it can't -- mirrors routers/users.py's
+    _try_send_token_email, which already refuses to send an invite with
+    no real link rather than substituting a placeholder.
+
+    Before the wl-util-1 fix, the review-cycle jobs did NOT apply this
+    same gate: a missing WINGRC_PUBLIC_URL silently produced a body like
+    "sign in to review: the WinGRC application" and the send still went
+    ahead (and, if SMTP happened to be configured, would have reported
+    success) -- a link-less "notification" isn't actionable and must not
+    count as one. This is one of the two independent ways delivery can
+    fail here; the other is email_service.send() itself (no SMTP
+    credential, or the provider rejecting the message) -- both now flow
+    through the same _notify_reviewer path below so a fix for one can't
+    accidentally leave the other still producing a false record.
+    """
     public_url = (get_settings().public_url or "").strip()
-    return public_url.rstrip("/") if public_url else "the WinGRC application"
+    if not public_url:
+        return None, "Email link cannot be built: WINGRC_PUBLIC_URL is not configured."
+    return public_url.rstrip("/"), None
+
+
+def _notify_reviewer(
+    session: Session, reviewer: ReviewCycleReviewer, *,
+    subject: str, body_template: str, template: str,
+) -> bool:
+    """Attempts one notification (initial request or reminder) to one
+    reviewer, and persists the outcome via
+    review_cycles.record_notification_result regardless of which of the
+    two failure modes it hits. Returns whether it actually sent.
+    """
+    link, link_error = _review_link_or_error()
+    if link is None:
+        review_cycles.record_notification_result(
+            session, reviewer=reviewer, sent=False, error=link_error
+        )
+        return False
+    result = email_service.send(
+        session, to=reviewer.reviewer_email, subject=subject,
+        body=body_template.format(link=link), template=template,
+    )
+    review_cycles.record_notification_result(
+        session, reviewer=reviewer, sent=result.sent, error=result.error
+    )
+    return result.sent
 
 
 def _review_cycle_open(session: Session) -> dict:
@@ -281,6 +324,14 @@ def _review_cycle_open(session: Session) -> dict:
     IS the artifact this feature produces, so they must be in the loop).
     The email itself carries no list, no item detail -- see
     email_service.py's content rule and review_cycles.py's own docstring.
+
+    Opens the cycle even when notification is known to be undeliverable
+    (no SMTP configured, no WINGRC_PUBLIC_URL) rather than skipping it --
+    see review_cycles.py's module docstring for the reasoning: a
+    deployment that silently never opens a due cycle gives its operator
+    no signal anything is wrong, where a visibly 'not_notified'/
+    'closed_undeliverable' record (once due) is something they can act
+    on -- configure email, or review and attest manually.
     """
     due = session.execute(
         text("SELECT org_id, cadence_months FROM auth.orgs_due_for_review_cycle_open()")
@@ -288,7 +339,6 @@ def _review_cycle_open(session: Session) -> dict:
     if not due:
         return {"cycles_opened": 0}
 
-    link = _review_link()
     opened = 0
     for org_id, _cadence in due:
         # set_config(..., true), not "SET LOCAL app.current_org = :org_id"
@@ -309,9 +359,9 @@ def _review_cycle_open(session: Session) -> dict:
             context={"via": "scheduler"}, actor="system", actor_type="system",
         )
         for r in reviewers:
-            email_service.send(
-                session, to=r.reviewer_email, subject=_REVIEW_REQUEST_SUBJECT,
-                body=_REVIEW_REQUEST_BODY.format(link=link), template="review_cycle_request",
+            _notify_reviewer(
+                session, r, subject=_REVIEW_REQUEST_SUBJECT, body_template=_REVIEW_REQUEST_BODY,
+                template="review_cycle_request",
             )
         session.commit()
         opened += 1
@@ -319,26 +369,36 @@ def _review_cycle_open(session: Session) -> dict:
 
 
 def _review_cycle_sweep(session: Session) -> dict:
-    """Daily sweep of every 'open' cycle: sends due reminders (idempotent
-    per reviewer per reminder number, review_cycle_reminder_log) and
-    force-closes any cycle whose due_at has passed as
-    'closed_unattested' -- the non-response record §3 of the design task
-    calls the most valuable part of this feature. A cycle that reaches
-    full attestation before its due_at is closed immediately by
-    review_cycles.attest() itself, not by this job -- this job only ever
-    sees cycles still open because at least one reviewer hasn't responded
-    yet.
+    """Daily sweep of every 'open' cycle: retries the initial
+    notification for any reviewer never yet successfully notified, sends
+    due reminders to reviewers who were (idempotent per reviewer per
+    reminder number, review_cycle_reminder_log), and force-closes any
+    cycle whose due_at has passed -- as 'closed_unattested' if at least
+    one reviewer was ever reached, or 'closed_undeliverable' if none was
+    (review_cycles.close_cycle decides which; see its own docstring). A
+    cycle that reaches full attestation before its due_at is closed
+    immediately by review_cycles.attest() itself, not by this job -- this
+    job only ever sees cycles still open because at least one reviewer
+    hasn't responded yet.
+
+    The retry-every-tick behavior for never-notified reviewers applies to
+    EVERY open cycle this sweep sees, not just ones opened this tick --
+    this is what closes the gap for a cycle that opened while
+    undeliverable and later becomes reachable (e.g. an operator finally
+    configures SMTP): the very next sweep, before or up to the due date,
+    notices notified_at is still NULL and tries again, with no separate
+    "catch up an old cycle" path needed.
     """
     open_cycles = session.execute(
         text("SELECT cycle_id, org_id FROM auth.review_cycles_due_for_sweep()")
     ).all()
     if not open_cycles:
-        return {"reminders_sent": 0, "cycles_closed": 0}
+        return {"reminders_sent": 0, "notifications_sent": 0, "cycles_closed": 0}
 
     storage = get_storage_client()
-    link = _review_link()
     now = datetime.now(UTC)
     reminders_sent = 0
+    notifications_sent = 0
     cycles_closed = 0
 
     for cycle_id, org_id in open_cycles:
@@ -362,10 +422,11 @@ def _review_cycle_sweep(session: Session) -> dict:
         if now >= cycle.due_at:
             review_cycles.close_cycle(session, storage, cycle=cycle, status="closed_unattested")
             log_event(
-                session, org_id=org_id, action="review_cycle.closed_unattested",
+                session, org_id=org_id, action=f"review_cycle.{cycle.status}",
                 entity_type="review_cycle", entity_id=cycle_id,
                 after_value={
-                    "no_response": sum(1 for r in reviewers if r.status != "attested"),
+                    "no_response": sum(1 for r in reviewers if r.status == "no_response"),
+                    "not_notified": sum(1 for r in reviewers if r.status == "not_notified"),
                 },
                 context={"via": "scheduler"}, actor="system", actor_type="system",
             )
@@ -374,6 +435,18 @@ def _review_cycle_sweep(session: Session) -> dict:
             continue
 
         for r in reviewers:
+            if r.notified_at is None:
+                # Never yet reached -- retry the *initial* notification on
+                # every tick until it succeeds, independent of the day-7/
+                # day-14 reminder schedule below (which only makes sense
+                # once someone has actually been told once).
+                if _notify_reviewer(
+                    session, r, subject=_REVIEW_REQUEST_SUBJECT,
+                    body_template=_REVIEW_REQUEST_BODY, template="review_cycle_request",
+                ):
+                    notifications_sent += 1
+                continue
+
             already = {
                 row[0]
                 for row in session.execute(
@@ -392,11 +465,11 @@ def _review_cycle_sweep(session: Session) -> dict:
                 number = review_cycles.due_reminder_number(r, now=now, already_sent=already)
                 if number is None:
                     break
-                result = email_service.send(
-                    session, to=r.reviewer_email, subject=_REVIEW_REMINDER_SUBJECT,
-                    body=_REVIEW_REMINDER_BODY.format(link=link), template="review_cycle_reminder",
+                sent = _notify_reviewer(
+                    session, r, subject=_REVIEW_REMINDER_SUBJECT,
+                    body_template=_REVIEW_REMINDER_BODY, template="review_cycle_reminder",
                 )
-                if not result.sent:
+                if not sent:
                     break
                 review_cycles.record_reminder_sent(
                     session, cycle_id=cycle_id, reviewer_id=r.id, reminder_number=number
@@ -405,7 +478,11 @@ def _review_cycle_sweep(session: Session) -> dict:
                 reminders_sent += 1
         session.commit()
 
-    return {"reminders_sent": reminders_sent, "cycles_closed": cycles_closed}
+    return {
+        "reminders_sent": reminders_sent,
+        "notifications_sent": notifications_sent,
+        "cycles_closed": cycles_closed,
+    }
 
 
 JOB_REGISTRY: dict[str, JobSpec] = {
