@@ -291,7 +291,16 @@ def _review_cycle_open(session: Session) -> dict:
     link = _review_link()
     opened = 0
     for org_id, _cadence in due:
-        session.execute(text("SET LOCAL app.current_org = :org_id"), {"org_id": str(org_id)})
+        # set_config(..., true), not "SET LOCAL app.current_org = :org_id"
+        # -- SET/SET LOCAL doesn't accept bind parameters at all in
+        # Postgres (a real syntax error, caught live on the bench stack,
+        # not a style preference); set_config is the parameterized
+        # equivalent require_org_access() itself already documents and
+        # prefers for exactly this reason.
+        session.execute(
+            text("SELECT set_config('app.current_org', :org_id, true)"),
+            {"org_id": str(org_id)},
+        )
         cycle, reviewers = review_cycles.open_cycle(session, org_id=org_id, opened_by="scheduler")
         log_event(
             session, org_id=org_id, action="review_cycle.open", entity_type="review_cycle",
@@ -333,7 +342,16 @@ def _review_cycle_sweep(session: Session) -> dict:
     cycles_closed = 0
 
     for cycle_id, org_id in open_cycles:
-        session.execute(text("SET LOCAL app.current_org = :org_id"), {"org_id": str(org_id)})
+        # set_config(..., true), not "SET LOCAL app.current_org = :org_id"
+        # -- SET/SET LOCAL doesn't accept bind parameters at all in
+        # Postgres (a real syntax error, caught live on the bench stack,
+        # not a style preference); set_config is the parameterized
+        # equivalent require_org_access() itself already documents and
+        # prefers for exactly this reason.
+        session.execute(
+            text("SELECT set_config('app.current_org', :org_id, true)"),
+            {"org_id": str(org_id)},
+        )
         cycle = session.get(ReviewCycle, cycle_id)
         reviewers = list(
             session.scalars(
