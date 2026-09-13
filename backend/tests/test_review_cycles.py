@@ -209,6 +209,21 @@ def test_open_cycle_includes_msp_and_client_reviewers(client, db_session, fake_m
     assert sides[poc.email] == "client"
 
 
+def test_cannot_open_a_second_cycle_while_one_is_open(client, db_session, fake_msp_admin):
+    # Found live on bench (§9's HTTP walkthrough): the manual MSP-triggered
+    # open had no guard against a second concurrent open cycle for the same
+    # org, unlike the scheduler's own due-check.
+    d = _seed_org_with_catalog(db_session, fake_msp_admin)
+    r1 = client.post(_open_url(d["org"].id))
+    assert r1.status_code == 201, r1.text
+
+    r2 = client.post(_open_url(d["org"].id))
+    assert r2.status_code == 409, r2.text
+
+    rows = client.get(_open_url(d["org"].id)).json()
+    assert len(rows) == 1
+
+
 # ---------------------------------------------------------------------------
 # Central invariant: the snapshot never changes after the fact
 # ---------------------------------------------------------------------------

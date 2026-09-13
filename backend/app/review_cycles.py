@@ -133,11 +133,26 @@ def open_cycle(
     scheduler job) owns emailing, matching this codebase's established
     split (engine.py doesn't call log_event; the router does).
 
+    Raises if a cycle is already 'open' for this org -- found live on
+    bench (§9's HTTP walkthrough): the scheduler's own due-check already
+    excludes orgs with an open cycle, but the MSP-triggered manual open
+    (routers/review_cycles.py's POST) had no equivalent guard, so an admin
+    could fragment reviewer assignment across several concurrent open
+    cycles for the same org. One open cycle per org at a time, enforced
+    here (not just at the scheduler's discovery query) so it holds
+    regardless of which caller opens the cycle.
+
     opened_by is 'scheduler' or a user id string (manual open).
     """
     org = session.get(Organization, org_id)
     if org is None:
         raise ReviewCycleError("Organization not found")
+
+    existing_open = session.scalars(
+        select(ReviewCycle).where(ReviewCycle.org_id == org_id, ReviewCycle.status == "open")
+    ).first()
+    if existing_open is not None:
+        raise ReviewCycleError("A review cycle is already open for this organization")
 
     now = datetime.now(UTC)
     cycle = ReviewCycle(

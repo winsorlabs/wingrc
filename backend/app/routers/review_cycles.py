@@ -141,7 +141,8 @@ def open_cycle(
             db, org_id=org_id, opened_by=str(current_user.id)
         )
     except review_cycles.ReviewCycleError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        status = 404 if "not found" in str(e).lower() else 409
+        raise HTTPException(status_code=status, detail=str(e)) from e
 
     log_event(
         db, org_id=org_id, action="review_cycle.open", entity_type="review_cycle",
