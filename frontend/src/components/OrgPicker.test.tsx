@@ -61,6 +61,8 @@ function makeAssessment(overrides: Partial<Assessment> = {}): Assessment {
     assessment_type: "self",
     status: "in_progress",
     started_at: "2026-01-01T00:00:00Z",
+    submitted_at: null,
+    closed_at: null,
     sprs_score: 100,
     last_activity_at: "2026-01-01T00:00:00Z",
     ...overrides,

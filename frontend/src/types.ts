@@ -34,12 +34,42 @@ export interface Assessment {
   assessment_type: string;
   status: string;
   started_at: string;
+  // "submitted" means this WinGRC assessment cycle is complete -- NEVER
+  // that it was filed with SPRS. See SprsSubmission below for that,
+  // genuinely separate, fact.
+  submitted_at: string | null;
+  closed_at: string | null;
   sprs_score: number | null;
   // G.4: derived at read time (MAX of control_state/implementation_statement
   // updated_at for this assessment) — see backend/app/routers/assessments.py's
   // _last_activity_by_assessment for why this isn't a stored column.
   last_activity_at: string;
   raci_copy_forward?: RaciCopyForwardSummary | null;
+}
+
+// Mirrors backend/app/routers/sprs_submissions.py's SprsSubmissionOut --
+// what was actually filed with SPRS, never to be confused with
+// Assessment.sprs_score/status above (what WinGRC computed / whether the
+// WinGRC assessment is complete). Org-scoped, not assessment-scoped.
+export interface SprsSubmission {
+  id: string;
+  org_id: string;
+  assessment_id: string | null;
+  score: number;
+  submitted_date: string;
+  submitted_by_contact_id: string | null;
+  // Denormalized at record time -- stays correct even after the contact
+  // is deleted (contact has no soft-delete in this codebase).
+  submitted_by_name: string;
+  submitted_by_email: string | null;
+  note: string | null;
+  created_by: string | null;
+  created_at: string;
+  // One-way: null means current/authoritative. Never becomes null again
+  // once set. The row itself (score/submitted_date/etc.) is never edited
+  // by a void -- only this annotation changes.
+  voided_at: string | null;
+  voided_reason: string | null;
 }
 
 export interface ControlStateRow {

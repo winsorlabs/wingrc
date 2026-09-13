@@ -20,7 +20,7 @@ export type NavCategory =
   | "tools"
   | "library"
   | "security";
-export type ScopeTab = "profile" | "system" | "contacts" | "assets";
+export type ScopeTab = "profile" | "system" | "contacts" | "assets" | "sprs";
 // RACI is assessment-scoped data (docs/PLAN-gui-restructure.md G.7's
 // 2026-09-09 move note) — "board" is the existing per-control assessment
 // view, "roles" is the Roles/RACI matrix, both live under Assessments now.
@@ -96,6 +96,13 @@ export function SideNav({
             </SideNavSubitem>
             <SideNavSubitem active={scopeTab === "assets"} onClick={() => onSelectScopeTab("assets")}>
               Assets
+            </SideNavSubitem>
+            {/* No completion indicator here, unlike the three above --
+                "we have never filed with SPRS" is a legitimate state
+                (a first-time assessment), not an incomplete one; see
+                SprsSubmissionsPanel's own docstring. */}
+            <SideNavSubitem active={scopeTab === "sprs"} onClick={() => onSelectScopeTab("sprs")}>
+              SPRS Submissions
             </SideNavSubitem>
             {/* G.6: no separate pages — the diagrams live inside the System
                 Description editor. These entries route there and ask it to

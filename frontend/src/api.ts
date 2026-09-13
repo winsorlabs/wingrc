@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, IntegrationConnector, InvitedUser, LiongardEnvironmentMapping, LiongardEnvironmentOption, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, ProductLibraryItem, ProductPublishState, ProductRow, RaciAssignmentRow, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, StatementRow, StepUpIn, SystemDescriptionData, UserDirectoryEntry, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, IntegrationConnector, InvitedUser, LiongardEnvironmentMapping, LiongardEnvironmentOption, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, ProductLibraryItem, ProductPublishState, ProductRow, RaciAssignmentRow, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UserDirectoryEntry, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -185,6 +185,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ framework_id: frameworkId, name }),
     }),
+
+  // in_progress -> submitted. A recorded WinGRC milestone only -- never
+  // files anything with SPRS, gates no other capability. See
+  // backend/app/engine.py:complete_assessment.
+  completeAssessment: (orgId: string, assessmentId: string) =>
+    req<Assessment>(`/orgs/${orgId}/assessments/${assessmentId}/complete`, { method: "POST" }),
+
+  // submitted -> in_progress, for a completion made in error.
+  reopenAssessment: (orgId: string, assessmentId: string) =>
+    req<Assessment>(`/orgs/${orgId}/assessments/${assessmentId}/reopen`, { method: "POST" }),
 
   getControlStates: (orgId: string, assessmentId: string) =>
     req<ControlStateRow[]>(
@@ -800,6 +810,38 @@ export const api = {
   listUserDirectory: () => req<UserDirectoryEntry[]>("/admin/users"),
 
   getMspOrg: () => req<MspOrg | null>("/admin/users/msp-org"),
+
+  // ── SPRS submissions (what was actually FILED with SPRS, never to be
+  // confused with an assessment's computed sprs_score/status above) —
+  // org-scoped, not assessment-scoped (backend/app/routers/
+  // sprs_submissions.py). Any org member with write access may record
+  // one; read is open to every org member including read-only roles. ──
+  getCurrentSprsSubmission: (orgId: string) =>
+    req<SprsSubmission | null>(`/orgs/${orgId}/sprs-submissions/current`),
+
+  listSprsSubmissions: (orgId: string) =>
+    req<SprsSubmission[]>(`/orgs/${orgId}/sprs-submissions`),
+
+  recordSprsSubmission: (
+    orgId: string,
+    data: {
+      score: number;
+      submitted_date: string;
+      submitted_by_contact_id: string;
+      note?: string;
+      assessment_id?: string;
+    }
+  ) =>
+    req<SprsSubmission>(`/orgs/${orgId}/sprs-submissions`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  voidSprsSubmission: (orgId: string, submissionId: string, reason: string) =>
+    req<SprsSubmission>(`/orgs/${orgId}/sprs-submissions/${submissionId}/void`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
 
   // ── Scheduled jobs (job scheduler, D.3's second infrastructure
   // prerequisite) — deployment-wide, not org-scoped; msp_admin only

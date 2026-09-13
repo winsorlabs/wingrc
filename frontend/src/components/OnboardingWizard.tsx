@@ -3,14 +3,23 @@ import { api } from "../api";
 import type { OnboardingStatus } from "../types";
 import { ContactsPanel } from "./ContactsPanel";
 import { OrgProfileForm } from "./OrgProfileForm";
+import { SprsSubmissionsPanel } from "./SprsSubmissionsPanel";
 import { SystemDescriptionForm } from "./SystemDescriptionForm";
 
-type Step = 0 | 1 | 2;
+type Step = 0 | 1 | 2 | 3;
 
 const STEPS = [
   { label: "Org Profile", key: "profile" as const },
   { label: "System Description", key: "system_description" as const },
   { label: "Personnel & Contacts", key: "personnel" as const },
+  // Deliberately not counted toward completeness (stepComplete/allComplete
+  // below never look at this step) -- "we have never filed with SPRS" is
+  // a normal, legitimate state (a first-time assessment), and treating it
+  // as an incomplete step would nag correctly-configured orgs forever.
+  // Entirely skippable, and recordable later from Scope -> SPRS
+  // Submissions -- this step is a convenience for the common case where
+  // it's already known at onboarding, not a requirement.
+  { label: "Prior SPRS Submission (optional)", key: "sprs" as const },
 ];
 
 interface Props {
@@ -35,7 +44,8 @@ export function OnboardingWizard({ orgId, orgName, onClose }: Props) {
     if (!status) return false;
     if (s === 0) return status.profile.complete;
     if (s === 1) return status.system_description.complete;
-    return status.personnel.complete;
+    if (s === 2) return status.personnel.complete;
+    return false; // step 3 (SPRS) is never tracked as complete/incomplete
   }
 
   const allComplete = status && status.profile.complete && status.system_description.complete && status.personnel.complete;
@@ -75,6 +85,7 @@ export function OnboardingWizard({ orgId, orgName, onClose }: Props) {
           {step === 0 && <OrgProfileForm orgId={orgId} canWrite={true} onSaved={loadStatus} />}
           {step === 1 && <SystemDescriptionForm orgId={orgId} canWrite={true} onSaved={loadStatus} />}
           {step === 2 && <ContactsPanel orgId={orgId} canWrite={true} onChanged={loadStatus} />}
+          {step === 3 && <SprsSubmissionsPanel orgId={orgId} canWrite={true} />}
         </div>
 
         <div className="wizard-footer">
@@ -91,7 +102,7 @@ export function OnboardingWizard({ orgId, orgName, onClose }: Props) {
               ← Back
             </button>
           )}
-          {step < 2 ? (
+          {step < 3 ? (
             <button className="btn-primary" onClick={() => setStep((step + 1) as Step)}>
               Continue →
             </button>

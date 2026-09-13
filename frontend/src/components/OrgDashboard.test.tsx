@@ -24,6 +24,11 @@ vi.mock("../api", () => ({
     getAssessments: vi.fn(),
     getDashboard: vi.fn(),
     listAuditLog: vi.fn(),
+    // Org-scoped, fetched unconditionally by SprsSubmissionCard on every
+    // render -- defaulted here (not per-test) so the many existing tests
+    // that don't care about this widget don't all need updating just to
+    // avoid an unmocked-call rejection.
+    getCurrentSprsSubmission: vi.fn().mockResolvedValue(null),
   },
 }));
 
@@ -36,6 +41,8 @@ function makeAssessment(overrides: Partial<Assessment> = {}): Assessment {
     assessment_type: "self",
     status: "in_progress",
     started_at: "2026-01-01T00:00:00Z",
+    submitted_at: null,
+    closed_at: null,
     sprs_score: 100,
     last_activity_at: "2026-01-01T00:00:00Z",
     ...overrides,

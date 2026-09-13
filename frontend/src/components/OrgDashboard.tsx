@@ -14,6 +14,7 @@ import type {
   RaciBucket,
   RaciLoadWidgetData,
   ReviewQueueItem,
+  SprsSubmission,
   SprsWidgetData,
   StatementProgress,
 } from "../types";
@@ -147,6 +148,7 @@ export function OrgDashboard({ orgId, assessmentId, currentUserRole, onSwitchAss
         <RaciLoadSplitCard load={data.raci_load} />
         <RaciLoadByContactCard load={data.raci_load} />
         <PoamSummaryCard summary={data.poam_summary} />
+        <SprsSubmissionCard orgId={orgId} />
         {canSeeAuditLog(currentUserRole) && <RecentActivityCard orgId={orgId} />}
       </div>
     </div>
@@ -506,6 +508,42 @@ function PoamSummaryCard({ summary }: { summary: PoamSummary }) {
         <li><span>Completed</span><span>{summary.completed}</span></li>
         <li><span>Cancelled</span><span>{summary.cancelled}</span></li>
       </ul>
+    </div>
+  );
+}
+
+// Org-scoped, not assessment-scoped -- fetched via its own call rather
+// than folded into the one assessment-scoped dashboard GET, same
+// reasoning RecentActivityCard below already established (a widget with
+// a genuinely different scope from the other nine gets its own fetch,
+// not a forced fit into the shared round-trip). What was actually FILED
+// with SPRS, never to be confused with the SprsCard above (WinGRC's
+// computed score).
+function SprsSubmissionCard({ orgId }: { orgId: string }) {
+  const [submission, setSubmission] = useState<SprsSubmission | null | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getCurrentSprsSubmission(orgId)
+      .then(setSubmission)
+      .catch((e: Error) => setError(e.message));
+  }, [orgId]);
+
+  return (
+    <div className="card">
+      <h2>SPRS Submission</h2>
+      {error && <div className="error-msg">{error}</div>}
+      {submission === undefined && !error && <div className="loading">Loading…</div>}
+      {submission === null && (
+        <div className="empty">No SPRS submission on file yet.</div>
+      )}
+      {submission && (
+        <ul className="stat-list">
+          <li><span>Score</span><span>{submission.score}</span></li>
+          <li><span>Filed</span><span>{submission.submitted_date}</span></li>
+          <li><span>Submitted by</span><span>{submission.submitted_by_name}</span></li>
+        </ul>
+      )}
     </div>
   );
 }

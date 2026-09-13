@@ -17,6 +17,7 @@ import { ProductsPanel } from "./components/ProductsPanel";
 import { RolesPanel } from "./components/RolesPanel";
 import type { AssessmentsTab, NavCategory, ScopeTab, SecurityTab, SystemDescriptionSection } from "./components/SideNav";
 import { SideNav } from "./components/SideNav";
+import { SprsSubmissionsPanel } from "./components/SprsSubmissionsPanel";
 import { SystemDescriptionForm } from "./components/SystemDescriptionForm";
 import { UsersPanel } from "./components/UsersPanel";
 import { useAuth } from "./hooks/useAuth";
@@ -298,6 +299,9 @@ export function App() {
               )}
               {scopeTab === "assets" && (
                 <AssetsPanel orgId={org.id} canWrite={canWrite} />
+              )}
+              {scopeTab === "sprs" && (
+                <SprsSubmissionsPanel orgId={org.id} canWrite={canWrite} />
               )}
             </div>
           )}

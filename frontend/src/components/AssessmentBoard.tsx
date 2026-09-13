@@ -119,6 +119,44 @@ export function AssessmentBoard({ org, assessment, canWrite, currentUserRole }: 
   const [generatingBundle, setGeneratingBundle] = useState(false);
   const [bundleError, setBundleError] = useState<string | null>(null);
 
+  // Local override of status/submitted_at after Complete/Reopen -- same
+  // "optimistic local update" pattern handleStatusChange already uses
+  // for control-state rows, so a status change is reflected immediately
+  // without waiting on the parent (App.tsx) to re-fetch the assessment
+  // list. Seeded from the prop; only ever changed by this component's
+  // own complete/reopen actions.
+  const [status, setStatus] = useState(assessment.status);
+  const [transitioning, setTransitioning] = useState(false);
+  const [transitionError, setTransitionError] = useState<string | null>(null);
+  const [showSubmissionPrompt, setShowSubmissionPrompt] = useState(false);
+
+  async function handleComplete() {
+    setTransitioning(true);
+    setTransitionError(null);
+    try {
+      const updated = await api.completeAssessment(org.id, assessment.id);
+      setStatus(updated.status);
+      setShowSubmissionPrompt(true);
+    } catch (err: unknown) {
+      setTransitionError((err as Error).message);
+    } finally {
+      setTransitioning(false);
+    }
+  }
+
+  async function handleReopen() {
+    setTransitioning(true);
+    setTransitionError(null);
+    try {
+      const updated = await api.reopenAssessment(org.id, assessment.id);
+      setStatus(updated.status);
+    } catch (err: unknown) {
+      setTransitionError((err as Error).message);
+    } finally {
+      setTransitioning(false);
+    }
+  }
+
   useEffect(() => {
     setLoading(true);
     api
@@ -196,7 +234,7 @@ export function AssessmentBoard({ org, assessment, canWrite, currentUserRole }: 
           <div>
             <div className="board-title">{assessment.name}</div>
             <div className="board-meta">
-              {org.name} · {assessment.status} · SPRS: {sprs}
+              {org.name} · {status} · SPRS: {sprs}
             </div>
           </div>
           <div className="board-topbar-right">
@@ -211,11 +249,27 @@ export function AssessmentBoard({ org, assessment, canWrite, currentUserRole }: 
             <button className="btn-ghost btn-sm" onClick={() => setShowTasks(true)}>
               Tasks
             </button>
+            {/* Gates nothing -- a recorded milestone only. Every action in
+                this board keeps working identically regardless of status;
+                see engine.py:complete_assessment's own docstring. */}
+            {canWrite && status === "in_progress" && (
+              <button className="btn-primary btn-sm" onClick={handleComplete} disabled={transitioning}>
+                {transitioning ? "Completing…" : "Complete Assessment"}
+              </button>
+            )}
+            {canWrite && status === "submitted" && (
+              <button className="btn-ghost btn-sm" onClick={handleReopen} disabled={transitioning}>
+                {transitioning ? "Reopening…" : "Reopen"}
+              </button>
+            )}
           </div>
         </div>
 
         {bundleError && (
           <div className="error-msg">Bundle export failed: {bundleError}</div>
+        )}
+        {transitionError && (
+          <div className="error-msg">{transitionError}</div>
         )}
 
         {/* ── Tier summary ── */}
@@ -361,6 +415,37 @@ export function AssessmentBoard({ org, assessment, canWrite, currentUserRole }: 
           onSave={handleStatementSave}
           onEvidenceChanged={handleEvidenceChanged}
         />
+      )}
+
+      {showSubmissionPrompt && (
+        <div className="drawer-overlay" onClick={() => setShowSubmissionPrompt(false)}>
+          <div className="drawer" onClick={(e) => e.stopPropagation()}>
+            <div className="drawer-header">
+              <h3>Assessment completed</h3>
+              <button
+                className="drawer-close"
+                onClick={() => setShowSubmissionPrompt(false)}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="drawer-body">
+              <p>
+                This marks the WinGRC assessment cycle complete -- it does not file
+                anything with SPRS. When you file this in SPRS, come back and
+                record it under <strong>Scope → SPRS Submissions</strong>. You can
+                do this any time; nothing here is time-sensitive.
+              </p>
+            </div>
+            <div className="drawer-footer">
+              <div style={{ flex: 1 }} />
+              <button className="btn-primary" onClick={() => setShowSubmissionPrompt(false)}>
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );
