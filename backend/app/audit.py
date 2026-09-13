@@ -82,6 +82,31 @@ Scoped to meaningful compliance mutations (signal, not firehose):
                                  SprsSubmission's own docstring; after_value
                                  carries only the reason, since the row
                                  itself already carries everything else.
+  review_cycle.open           — a periodic user/device review cycle
+                                 opened (routers/review_cycles.py /
+                                 scheduler.py's review_cycle_open job).
+                                 actor is a user id for a manual open, or
+                                 "system" for a scheduler-opened one --
+                                 the cycle itself is the durable
+                                 compliance artifact regardless of which
+                                 triggered it, so both get logged.
+  review_cycle.attest         — one reviewer's attestation was recorded.
+                                 after_value carries reviewer_id/side
+                                 only, never the item list -- that's
+                                 durably on the review_cycle_item rows
+                                 themselves, an append-only snapshot this
+                                 entry points at rather than duplicates.
+  review_cycle.closed_unattested — a cycle's due_at passed with at least
+                                 one reviewer never attesting
+                                 (scheduler.py's review_cycle_sweep job).
+                                 actor is "system" -- this is itself the
+                                 non-response evidence record §3 of this
+                                 slice's design calls the most valuable
+                                 part of the feature.
+  review_cycle.flag           — a reviewer flagged one item for MSP
+                                 follow-up. Never a scope_entity mutation
+                                 -- see models.py:ReviewCycleFlag.
+  review_cycle.flag_resolved  — an MSP-side reviewer resolved a flag.
   liongard_environment.set    — an org's WinGRC-org-to-Liongard-Environment
                                  mapping was created or changed
                                  (routers/scope.py, D.2). before/after carry
@@ -150,14 +175,22 @@ Scoped to meaningful compliance mutations (signal, not firehose):
                                  so nothing was attempted -- see
                                  routers/users.py's _try_send_token_email).
                                  Exactly these two call sites use this
-                                 action -- scheduler.py's sprs_annual_
-                                 reminder job (a third email_service.send()
-                                 caller, added after this action existed)
-                                 deliberately does NOT log here: a cron
-                                 tick has no actor, matching this module's
-                                 own actor-initiated-mutations scope (see
-                                 "NOT logged" below); job_run's own result
-                                 field is that job's durable record instead.
+                                 action -- every scheduler.py job that
+                                 calls email_service.send() (sprs_annual_
+                                 reminder, review_cycle_open, review_
+                                 cycle_sweep) deliberately does NOT log
+                                 here: a cron tick has no actor, matching
+                                 this module's own actor-initiated-
+                                 mutations scope (see "NOT logged"
+                                 below); job_run's own result field is
+                                 that job's durable record instead. Note
+                                 review_cycle.open/closed_unattested
+                                 (above) ARE logged for those same jobs --
+                                 the *email send* isn't logged, but the
+                                 *cycle opening/closing* it accompanies
+                                 is, because the cycle is the primary
+                                 compliance artifact and the email is
+                                 incidental to it.
 
 NOT logged (noise):
   _seed_control_states() bulk insert on assessment creation

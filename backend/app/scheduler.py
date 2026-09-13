@@ -134,10 +134,12 @@ from sqlalchemy import create_engine, select, text, update
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
-from . import email_service
+from . import email_service, review_cycles
+from .audit import log_event
 from .config import get_settings
 from .db import SessionLocal
-from .models import JobRun
+from .models import JobRun, ReviewCycle, ReviewCycleReviewer
+from .storage import get_storage_client
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +255,134 @@ def _sprs_annual_reminder(session: Session) -> dict:
     return {"orgs_due": len(due), "recipients_emailed": sent_count, "email_sent": True}
 
 
+_REVIEW_REQUEST_SUBJECT = "Review needed: authorized users & devices"
+_REVIEW_REQUEST_BODY = (
+    "A periodic review of authorized users and devices is awaiting your "
+    "review in WinGRC.\n\nSign in to review: {link}\n"
+)
+_REVIEW_REMINDER_SUBJECT = "Reminder: review needed in WinGRC"
+_REVIEW_REMINDER_BODY = (
+    "This is a reminder that a periodic review is still awaiting your "
+    "attention in WinGRC.\n\nSign in to review: {link}\n"
+)
+
+
+def _review_link() -> str:
+    public_url = (get_settings().public_url or "").strip()
+    return public_url.rstrip("/") if public_url else "the WinGRC application"
+
+
+def _review_cycle_open(session: Session) -> dict:
+    """Opens a due review cycle for every org whose cadence has elapsed
+    (auth.orgs_due_for_review_cycle_open(), migration 0046) and emails
+    every snapshotted reviewer -- MSP AND client side both, per the
+    design task's explicit recipient decision (unlike
+    sprs_annual_reminder, which is MSP-only: the client's acknowledgement
+    IS the artifact this feature produces, so they must be in the loop).
+    The email itself carries no list, no item detail -- see
+    email_service.py's content rule and review_cycles.py's own docstring.
+    """
+    due = session.execute(
+        text("SELECT org_id, cadence_months FROM auth.orgs_due_for_review_cycle_open()")
+    ).all()
+    if not due:
+        return {"cycles_opened": 0}
+
+    link = _review_link()
+    opened = 0
+    for org_id, _cadence in due:
+        session.execute(text("SET LOCAL app.current_org = :org_id"), {"org_id": str(org_id)})
+        cycle, reviewers = review_cycles.open_cycle(session, org_id=org_id, opened_by="scheduler")
+        log_event(
+            session, org_id=org_id, action="review_cycle.open", entity_type="review_cycle",
+            entity_id=cycle.id,
+            after_value={"reviewer_count": len(reviewers), "due_at": cycle.due_at.isoformat()},
+            context={"via": "scheduler"}, actor="system", actor_type="system",
+        )
+        for r in reviewers:
+            email_service.send(
+                session, to=r.reviewer_email, subject=_REVIEW_REQUEST_SUBJECT,
+                body=_REVIEW_REQUEST_BODY.format(link=link), template="review_cycle_request",
+            )
+        session.commit()
+        opened += 1
+    return {"cycles_opened": opened}
+
+
+def _review_cycle_sweep(session: Session) -> dict:
+    """Daily sweep of every 'open' cycle: sends due reminders (idempotent
+    per reviewer per reminder number, review_cycle_reminder_log) and
+    force-closes any cycle whose due_at has passed as
+    'closed_unattested' -- the non-response record §3 of the design task
+    calls the most valuable part of this feature. A cycle that reaches
+    full attestation before its due_at is closed immediately by
+    review_cycles.attest() itself, not by this job -- this job only ever
+    sees cycles still open because at least one reviewer hasn't responded
+    yet.
+    """
+    open_cycles = session.execute(
+        text("SELECT cycle_id, org_id FROM auth.review_cycles_due_for_sweep()")
+    ).all()
+    if not open_cycles:
+        return {"reminders_sent": 0, "cycles_closed": 0}
+
+    storage = get_storage_client()
+    link = _review_link()
+    now = datetime.now(UTC)
+    reminders_sent = 0
+    cycles_closed = 0
+
+    for cycle_id, org_id in open_cycles:
+        session.execute(text("SET LOCAL app.current_org = :org_id"), {"org_id": str(org_id)})
+        cycle = session.get(ReviewCycle, cycle_id)
+        reviewers = list(
+            session.scalars(
+                select(ReviewCycleReviewer).where(ReviewCycleReviewer.cycle_id == cycle_id)
+            )
+        )
+
+        if now >= cycle.due_at:
+            review_cycles.close_cycle(session, storage, cycle=cycle, status="closed_unattested")
+            log_event(
+                session, org_id=org_id, action="review_cycle.closed_unattested",
+                entity_type="review_cycle", entity_id=cycle_id,
+                after_value={
+                    "no_response": sum(1 for r in reviewers if r.status != "attested"),
+                },
+                context={"via": "scheduler"}, actor="system", actor_type="system",
+            )
+            session.commit()
+            cycles_closed += 1
+            continue
+
+        for r in reviewers:
+            already = {
+                row[0]
+                for row in session.execute(
+                    text(
+                        "SELECT reminder_number FROM review_cycle_reminder_log "
+                        "WHERE reviewer_id = :rid"
+                    ),
+                    {"rid": r.id},
+                ).all()
+            }
+            number = review_cycles.due_reminder_number(r, now=now, already_sent=already)
+            if number is None:
+                continue
+            result = email_service.send(
+                session, to=r.reviewer_email, subject=_REVIEW_REMINDER_SUBJECT,
+                body=_REVIEW_REMINDER_BODY.format(link=link), template="review_cycle_reminder",
+            )
+            if result.sent:
+                review_cycles.record_reminder_sent(
+                    session, cycle_id=cycle_id, reviewer_id=r.id, reminder_number=number
+                )
+                reminders_sent += 1
+        session.commit()
+
+    return {"reminders_sent": reminders_sent, "cycles_closed": cycles_closed}
+
+
 JOB_REGISTRY: dict[str, JobSpec] = {
     spec.name: spec
     for spec in (
@@ -260,6 +390,21 @@ JOB_REGISTRY: dict[str, JobSpec] = {
             name="expire_stale_invites",
             interval=timedelta(hours=1),
             run=_expire_stale_invites,
+        ),
+        JobSpec(
+            name="review_cycle_open",
+            # Opening is a cadence check (a due-check against each org's
+            # own review_cadence_months, in months), so daily is plenty
+            # granular -- see module docstring's Timezone section for why
+            # a daily due-check substitutes for "fire on the exact
+            # anniversary" here.
+            interval=timedelta(hours=24),
+            run=_review_cycle_open,
+        ),
+        JobSpec(
+            name="review_cycle_sweep",
+            interval=timedelta(hours=24),
+            run=_review_cycle_sweep,
         ),
         JobSpec(
             name="sprs_annual_reminder",
