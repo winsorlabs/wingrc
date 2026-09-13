@@ -11,9 +11,13 @@ audit boundary. A tool whose job is protecting CUI must not leak
 CUI-adjacent detail through its own notifications — that would be a
 self-inflicted finding in the exact domain the product exists to serve.
 This module has no way to enforce that on a caller's `subject`/`body`
-strings; every call site is reviewed for it instead (see
-routers/users.py's invite/reset call sites for the only two that exist
-today — this is a hard rule for anyone adding a third).
+strings; every call site is reviewed for it instead. Three exist today:
+routers/users.py's invite/reset (the original two), and scheduler.py's
+sprs_annual_reminder job (the first call site added since this rule was
+written) — its email names no org, no score, no due date, just "an
+annual SPRS submission is coming due, sign in to WinGRC," identical
+regardless of which or how many orgs are actually due. Anyone adding a
+fourth must hold the same line.
 
 **Fails clearly and safely when email is not configured.** A fresh
 deployment has no SMTP set up, and most of this app works fine without

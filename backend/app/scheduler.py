@@ -72,20 +72,31 @@ timestamp-expiry guess about how long is "too long."
 **Overlap policy: skip, don't queue.** If a job is still running when its
 next tick comes due, `pg_try_advisory_lock` simply fails for that tick and
 the caller moves on (`outcome: "skipped_running_elsewhere"`) -- no
-retry-in-place, no pile-up. For the one job this slice ships (see below),
+retry-in-place, no pile-up. For both jobs registered as of this writing,
 skipping a tick has no consequence beyond a slightly later effective
-sweep. A slice that adds a job where a skipped tick is NOT harmless should
-say so explicitly when it's added.
+run: `expire_stale_invites` just sweeps a little later, and
+`sprs_annual_reminder`'s own idempotency (migration 0044 -- keyed to the
+submission, not the tick) means a skipped daily due-check simply gets
+picked up on the very next one, never a lost or duplicated reminder. A
+future job where a skipped tick is NOT harmless should say so explicitly
+when it's added.
 
 **Timezone: UTC, fixed intervals, no local-time schedules -- yet.**
 `JobSpec.interval` is a plain `timedelta` measured against `job_run.
 created_at` (a `timestamptz`, always UTC internally). There is
-deliberately no "run at 3am local" concept in this slice: the one
-registered job doesn't need one, and getting that right (storing an IANA
-zone name, not a raw UTC offset, so DST doesn't silently walk the run
-time) is real design work that has no job to justify it yet. D.3's daily
-Liongard sync will likely want exactly that; add it there, against a real
-requirement, not speculatively here.
+deliberately no "run at 3am local" / cron-expression concept in this
+slice: `sprs_annual_reminder`'s interval is `timedelta(hours=24)` (a
+JobSpec-level "check daily"), not "fire on the anniversary" -- the actual
+12-month business cadence lives in migration 0044's SQL as a due-check
+condition evaluated on every daily tick, which is a fine substitute for
+"fire once a year, on the day" for a reminder (a day's slop either side
+of the true anniversary is immaterial) but would NOT be for something
+needing an exact local calendar date. Neither registered job needs true
+cron scheduling, and getting that right (storing an IANA zone name, not
+a raw UTC offset, so DST doesn't silently walk the run time) is real
+design work that has no job to justify it yet. D.3's daily Liongard sync
+will likely want exactly that; add it there, against a real requirement,
+not speculatively here.
 
 **RLS.** `job_run` itself is deployment-wide, like
 `integration_connection`/`deployment_settings` -- no org_id, no RLS (see
@@ -93,8 +104,10 @@ models.py:JobRun). The harder question is what a job's own *body* may do.
 The rule: a job that needs to act across every org in one operation goes
 through a purpose-built `SECURITY DEFINER` function, exactly like
 `auth.msp_role_users()`/`auth.all_users_directory()` -- see
-`auth.expire_stale_invites()` (migration 0042) for this slice's own
-example. A future job that needs *per-org* scoped work (D.3's Liongard
+`auth.expire_stale_invites()` (migration 0042) and
+`auth.orgs_due_for_sprs_reminder()`/`auth.mark_sprs_reminder_sent()`/
+`auth.msp_staff_emails()` (migration 0044) for this codebase's running
+set of examples. A future job that needs *per-org* scoped work (D.3's Liongard
 sync, most likely) must instead loop over orgs and issue `SET LOCAL
 app.current_org = ...` before each org's portion, exactly like a request
 handler does -- never a blanket bypass, and never `BYPASSRLS` granted to
@@ -121,6 +134,7 @@ from sqlalchemy import create_engine, select, text, update
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
+from . import email_service
 from .config import get_settings
 from .db import SessionLocal
 from .models import JobRun
@@ -153,6 +167,92 @@ def _expire_stale_invites(session: Session) -> dict:
     return {"expired_count": count}
 
 
+_SPRS_REMINDER_SUBJECT = "An annual SPRS submission is coming due"
+_SPRS_REMINDER_BODY = (
+    "An annual SPRS submission is coming due for one or more organizations "
+    "you manage in WinGRC.\n\n"
+    "Sign in to WinGRC to review: {link}\n"
+)
+
+
+def _sprs_annual_reminder(session: Session) -> dict:
+    """The first scheduler job with actual product meaning (expire_stale_
+    invites above is a hygiene proof). Checks daily whether any org's
+    current SPRS submission has passed its 12-month anniversary with no
+    reminder sent yet for that submission -- see migration 0044's
+    auth.orgs_due_for_sprs_reminder() for the due-check and idempotency
+    query itself, and models.py:SprsReminderLog for why idempotency is
+    keyed to the submission, not the org (a new submission resets the
+    clock automatically).
+
+    Clock starts at the ATTESTED SUBMISSION DATE ONLY -- an org with no
+    sprs_submission row has no clock, full stop; this function never
+    substitutes an onboarding date, an assessment start date, or any
+    other proxy. That's enforced by construction: the SECURITY DEFINER
+    query only ever considers orgs that have a submission at all.
+
+    Content rule (email_service.py's own docstring, restated because this
+    is the first call site added since it was written): the email names
+    no org, no score, no due date -- the exact same body regardless of
+    how many orgs are due, or which ones. If two or ten orgs are all due
+    on the same day, this still sends exactly one email per recipient,
+    not one per org -- multiplying by org count would be exactly the
+    "cries wolf" pattern this slice's own cadence decision (a single
+    12-month reminder, not a 60/30/7-day ramp) is trying to avoid.
+
+    Recipients default to MSP staff only (every active msp_admin/
+    msp_engineer, deployment-wide, via auth.msp_staff_emails() --
+    consultant_admin excluded, matching auth.msp_role_users()'s existing
+    role set). Whether a customer contact at the client org should ever
+    receive this is an open product question Jarrod has not decided --
+    see docs/roadmap.md's entry for this slice. Do not widen this without
+    that decision.
+
+    Never raises on a send failure (matching email_service.send()'s own
+    contract) -- an unconfigured or failing SMTP setup must not crash the
+    job or the daily due-check; it just means no reminder gets marked
+    sent, so the same orgs are retried on tomorrow's tick. A due org's
+    reminder is marked sent only if at least one recipient email actually
+    went out; if every recipient send fails, nothing is marked and every
+    due org is retried tomorrow.
+    """
+    due = session.execute(
+        text("SELECT org_id, submission_id FROM auth.orgs_due_for_sprs_reminder()")
+    ).all()
+    if not due:
+        return {"orgs_due": 0, "recipients_emailed": 0, "email_sent": False}
+
+    recipients = [
+        r[0] for r in session.execute(text("SELECT email FROM auth.msp_staff_emails()")).all()
+    ]
+    if not recipients:
+        return {"orgs_due": len(due), "recipients_emailed": 0, "email_sent": False}
+
+    public_url = (get_settings().public_url or "").strip()
+    link = public_url.rstrip("/") if public_url else "the WinGRC application"
+    body = _SPRS_REMINDER_BODY.format(link=link)
+
+    sent_count = 0
+    for email in recipients:
+        result = email_service.send(
+            session, to=email, subject=_SPRS_REMINDER_SUBJECT, body=body,
+            template="sprs_annual_reminder",
+        )
+        if result.sent:
+            sent_count += 1
+
+    if sent_count == 0:
+        return {"orgs_due": len(due), "recipients_emailed": 0, "email_sent": False}
+
+    for org_id, submission_id in due:
+        session.execute(
+            text("SELECT auth.mark_sprs_reminder_sent(:org_id, :submission_id)"),
+            {"org_id": org_id, "submission_id": submission_id},
+        )
+    session.commit()
+    return {"orgs_due": len(due), "recipients_emailed": sent_count, "email_sent": True}
+
+
 JOB_REGISTRY: dict[str, JobSpec] = {
     spec.name: spec
     for spec in (
@@ -160,6 +260,17 @@ JOB_REGISTRY: dict[str, JobSpec] = {
             name="expire_stale_invites",
             interval=timedelta(hours=1),
             run=_expire_stale_invites,
+        ),
+        JobSpec(
+            name="sprs_annual_reminder",
+            # Fixed UTC intervals are the only schedule type this
+            # scheduler supports today (see module docstring's Timezone
+            # section) -- fine for a yearly business cadence, but that
+            # means "check daily whether anything is due," not "fire on
+            # the anniversary." The 12-month business rule itself lives
+            # in migration 0044's SQL, not here.
+            interval=timedelta(hours=24),
+            run=_sprs_annual_reminder,
         ),
     )
 }

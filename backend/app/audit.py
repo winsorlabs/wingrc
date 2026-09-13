@@ -54,6 +54,34 @@ Scoped to meaningful compliance mutations (signal, not firehose):
                                  per assessment creation, not one per
                                  assignment carried — after_value carries
                                  the source assessment id and counts only.
+  assessment.completed        — in_progress -> submitted
+                                 (engine.py:complete_assessment). A
+                                 recorded WinGRC milestone only -- never
+                                 implies an SprsSubmission row exists; see
+                                 sprs_submission.record below, a genuinely
+                                 separate, optional, human-attested event.
+  assessment.reopened         — submitted -> in_progress, reversing a
+                                 completion made in error
+                                 (engine.py:reopen_assessment). before_value
+                                 carries the prior submitted_at -- the
+                                 mutable Assessment.submitted_at column
+                                 itself is cleared, so this entry is the
+                                 durable record that the completion
+                                 happened at all.
+  sprs_submission.record      — a human-attested SPRS filing was recorded
+                                 (routers/sprs_submissions.py). after_value
+                                 carries score/submitted_date/
+                                 submitted_by_name/assessment_id -- never a
+                                 second copy of anything already durably
+                                 stored on the row itself, this is a
+                                 pointer into that append-only history, not
+                                 a replacement for reading it.
+  sprs_submission.void        — an sprs_submission row was marked
+                                 superseded/incorrect. The row is never
+                                 deleted or edited -- see models.py:
+                                 SprsSubmission's own docstring; after_value
+                                 carries only the reason, since the row
+                                 itself already carries everything else.
   liongard_environment.set    — an org's WinGRC-org-to-Liongard-Environment
                                  mapping was created or changed
                                  (routers/scope.py, D.2). before/after carry
@@ -121,6 +149,15 @@ Scoped to meaningful compliance mutations (signal, not firehose):
                                  isn't configured (no link could be built,
                                  so nothing was attempted -- see
                                  routers/users.py's _try_send_token_email).
+                                 Exactly these two call sites use this
+                                 action -- scheduler.py's sprs_annual_
+                                 reminder job (a third email_service.send()
+                                 caller, added after this action existed)
+                                 deliberately does NOT log here: a cron
+                                 tick has no actor, matching this module's
+                                 own actor-initiated-mutations scope (see
+                                 "NOT logged" below); job_run's own result
+                                 field is that job's durable record instead.
 
 NOT logged (noise):
   _seed_control_states() bulk insert on assessment creation
