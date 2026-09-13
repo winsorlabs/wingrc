@@ -1931,6 +1931,100 @@ Items without a status are planned but not yet started.
     one later without a redesign, but none is added here per the task's
     own scope; no UI for re-opening a `closed_unattested` cycle early.
 
+- **Fix: a review cycle could record `no_response` for a reviewer who was
+  never notified** (2026-09-14) — found by **a live deployment, not a
+  test**: wl-util-1 opened a real cycle for Acme MSP with no SMTP
+  credential and no `WINGRC_PUBLIC_URL` configured, and the fully
+  automated suite (986 tests, including the live two-org HTTP walkthrough
+  above) never caught that its two reviewers would close as
+  `no_response` at the due date — asserting two named people failed to
+  respond to a request neither could have received. Same class of
+  violation this file already holds the line on elsewhere (assessment
+  completion creating no `sprs_submission` row): the system must never
+  assert a human action occurred. Worth recording as its own data point —
+  this is now the **second** review-cycle correctness bug this feature
+  needed a live box to surface, after the `get_cycle` mid-handler-commit
+  bug above; the automated suite, however thorough, keeps missing the
+  same category (real infrastructure absence/failure) that only a real
+  deployment exercises.
+  - **Root cause**: `email_service.send()`'s result was discarded
+    entirely at cycle-open time and consulted only for reminder-log
+    idempotency at sweep time — never persisted anywhere a reviewer's
+    delivery outcome could be read back. `close_cycle` had no way to
+    distinguish "asked, didn't answer" from "never asked."
+  - **Fix**: `ReviewCycleReviewer` gains `notified_at`/`notification_error`
+    (migration 0047, additive only — NULL is already the correct value
+    for every pre-existing row, no backfill needed or performed).
+    `close_cycle` now stamps a still-open reviewer `no_response` only if
+    `notified_at` is set, else the new `not_notified` terminal status;
+    if **no** reviewer on the cycle was ever notified, the cycle's own
+    close status is upgraded from `closed_unattested` to a new
+    `closed_undeliverable` — that wording no longer claims a review was
+    attempted when none could be. A cycle with a genuine mix (one
+    reviewer reached, one not) stays `closed_unattested`, since a review
+    plainly was attempted; only the fully-unreachable case gets the new
+    status. Two independent failure modes existed and both had to be
+    fixed together, per the task's own instruction not to fix one and
+    leave the other producing the same false record: a missing
+    `WINGRC_PUBLIC_URL` (previously silently substituted a placeholder
+    link like "the WinGRC application" and still counted as sent) now
+    gates exactly like `routers/users.py`'s pre-existing invite-email
+    precedent, and an `email_service.send()` failure — both unified
+    behind one new `scheduler._notify_reviewer` path.
+  - **The live-box gap explicitly closed**: `review_cycle_sweep` now
+    retries the *initial* notification for any never-yet-reached reviewer
+    on **every** tick, on any open cycle regardless of when it was
+    opened — not just cycles opened in that same tick. This means the
+    exact cycle sitting open on wl-util-1 right now needs no special
+    handling: once SMTP/`WINGRC_PUBLIC_URL` are configured, the very next
+    daily sweep notifies its two reviewers automatically. Reminder timing
+    (`due_reminder_number`) now runs from `notified_at` instead of
+    `requested_at`, since timing a reminder from a request that was never
+    delivered doesn't make sense — a real behavior change, caught by a
+    bug of its own (below).
+  - **A second bug, caught on bench mid-fix**: the first version of
+    `record_notification_result` set `notified_at` on *every* successful
+    send, not just the first. A successful reminder send therefore pushed
+    the day-7/day-14 window forward to "now," which
+    `test_second_reminder_sent_at_day_14` (already in the suite,
+    unmodified) immediately caught: only 1 of 2 expected reminders fired
+    in one tick, because the loop's second `due_reminder_number` call saw
+    a freshly-reset clock. Fixed by only setting `notified_at` when it
+    was previously `None`. A smaller test-fixture bug (`sent_emails`
+    needed a `.results` queue attribute a plain `list` can't carry — no
+    `__dict__`) was also caught the same way, before ever reaching bench
+    pytest.
+  - **The revision id itself was too long** — `0047_review_cycle_
+    notification_tracking` (40 chars) exceeds `alembic_version.
+    version_num`'s 32-char column width, caught by the existing
+    `test_migrations.py::test_revision_ids_fit_alembic_version_column`
+    locally before ever reaching bench. Renamed to
+    `0047_review_cycle_notify`.
+  - **The live cycle on wl-util-1 (`b327e64c`, Acme MSP) was
+    deliberately left untouched** — not deleted (a legitimate record of a
+    correctly-opened cycle) and not data-migrated (its reviewers'
+    `notified_at`/`notification_error` are `NULL` under the new columns,
+    which is already the true state: neither was ever successfully
+    notified). Recommendation, not yet acted on: if SMTP is configured
+    before its 2026-10-04 due date, the next daily sweep will notify both
+    reviewers automatically per the fix above, and the cycle becomes an
+    ordinary one; if the due date passes first, it will now correctly
+    close `closed_undeliverable` with both reviewers `not_notified`,
+    instead of the false `no_response` it would have recorded before this
+    fix. This deploy decision is Jarrod's, not made here.
+  - **Verified 2026-09-14 on wl-util-1, bench:** an isolated
+    `docker compose -p wingrc_review_cycle_notify` project (fresh clone,
+    separate network/volumes, the live `wingrc` project on that box never
+    touched, and the live cycle above never read or written by this
+    verification) — **990/990 backend tests** (4 new: undeliverable
+    close, mixed-outcome close, distinguishable error messages, and the
+    later-notified-once-reachable scenario matching the live box), `ruff
+    check .` clean, frontend **99/99** vitest (15 files, 2 new tests) plus
+    `tsc -b`/`vite build` clean. Migration 0047 confirmed applying
+    cleanly from `0046` and the widened CHECK constraints/new columns
+    confirmed directly in Postgres, not just inferred from migration
+    source.
+
 ---
 
 ## Planned
