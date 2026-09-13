@@ -32,6 +32,7 @@ from .routers import (
     raci,
     scheduled_jobs,
     scope,
+    sprs_submissions,
 )
 from .routers import auth as auth_router
 from .routers import users as users_router
@@ -75,6 +76,7 @@ app.include_router(objectives.router)
 app.include_router(admin_products.router)
 app.include_router(admin_users.router)
 app.include_router(scheduled_jobs.router)
+app.include_router(sprs_submissions.router)
 
 
 @app.get("/health")

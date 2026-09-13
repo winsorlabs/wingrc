@@ -49,6 +49,7 @@ from .models import (
     Organization,
     RaciAssignment,
     ScopeEntity,
+    SprsSubmission,
     SystemDescription,
 )
 from .storage import StorageClient
@@ -254,6 +255,23 @@ class RaciSnap:
 
 
 @dataclass
+class SprsSubmissionSnap:
+    """One row of the org's SPRS filing history -- what was actually
+    submitted to the DoD, distinct from `BundleSnapshot.sprs_score`
+    (what WinGRC computed). Captured into the snapshot at export time
+    like everything else in this dataclass set, never re-queried at
+    render time -- a bundle is a point-in-time record, and a later
+    correction/void must not retroactively change what an already-
+    generated bundle claims the filing history was."""
+
+    score: int
+    submitted_date: str
+    submitted_by_name: str
+    note: str | None
+    voided: bool
+
+
+@dataclass
 class ObjectiveSnap:
     objective_key: str
     objective_text: str
@@ -357,6 +375,7 @@ class BundleSnapshot:
     findings: list[FindingSnap]
     scope_entities: list[ScopeEntitySnap] = field(default_factory=list)
     crm_rows: list[CrmRowSnap] = field(default_factory=list)
+    sprs_submissions: list[SprsSubmissionSnap] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -1008,6 +1027,24 @@ def snapshot_bundle(
         for fr in finding_rows
     ]
 
+    # --- SPRS submission history (what was FILED, never to be confused
+    # with sprs_score above, which is what WinGRC computed) ---
+    submission_rows = session.scalars(
+        select(SprsSubmission)
+        .where(SprsSubmission.org_id == org_id)
+        .order_by(SprsSubmission.submitted_date.desc(), SprsSubmission.created_at.desc())
+    ).all()
+    sprs_submissions = [
+        SprsSubmissionSnap(
+            score=s.score,
+            submitted_date=s.submitted_date.isoformat(),
+            submitted_by_name=s.submitted_by_name,
+            note=s.note,
+            voided=s.voided_at is not None,
+        )
+        for s in submission_rows
+    ]
+
     # Stamp generated_at after all data is collected
     generated_at = datetime.now(UTC)
 
@@ -1027,6 +1064,7 @@ def snapshot_bundle(
         findings=findings,
         scope_entities=scope_entities,
         crm_rows=crm_rows,
+        sprs_submissions=sprs_submissions,
     )
 
 
@@ -1849,12 +1887,32 @@ def _render_scoring(snapshot: BundleSnapshot) -> str:
     total_deduction = 110 - snapshot.sprs_score
     score_color = "#166534" if snapshot.sprs_score >= 0 else "#991b1b"
 
+    filing_rows = "".join(
+        f"<tr><td>{_esc(s.submitted_date)}</td>"
+        f"<td>{s.score}</td>"
+        f"<td>{_esc(s.submitted_by_name)}</td>"
+        f"<td>{_esc(s.note) if s.note else ''}</td>"
+        f"<td>{'Voided' if s.voided else 'Current' if i == 0 else ''}</td></tr>"
+        for i, s in enumerate(snapshot.sprs_submissions)
+    )
+    filing_table = (
+        "<table><tr><th>Filed</th><th>Score</th><th>Submitted By</th>"
+        "<th>Note</th><th></th></tr>"
+        f"{filing_rows}</table>"
+    ) if filing_rows else '<p class="no-stmt">No SPRS submission on file for this org.</p>'
+
     body = (
         f"{_stamp(snapshot)}"
         "<h1>SPRS Scoring Summary</h1>"
+        "<h2>WinGRC-Computed Score</h2>"
         f"<p><span class='score-big' style='color:{score_color}'>{snapshot.sprs_score}</span>"
         f"&nbsp;<span style='color:#6b7280'>/ 110</span></p>"
         f"<p>Starting score: 110 &nbsp;&mdash;&nbsp; Total deduction: {total_deduction}</p>"
+        "<h2>SPRS Filing History</h2>"
+        "<p style='color:#6b7280'>What was actually submitted to SPRS -- a "
+        "human action this system records but cannot itself perform, "
+        "distinct from the computed score above.</p>"
+        f"{filing_table}"
         "<h2>Deducted Controls</h2>"
         f"{deduction_table}"
         "<h2>Status by Control Family</h2>"
