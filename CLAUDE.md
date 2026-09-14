@@ -140,6 +140,7 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
 | `docs/roadmap.md` | Full roadmap detail behind the "Roadmap — priority order" section below |
 | `docs/PLAN-auth-rbac-completion.md` | Auth/RBAC completion plan (slices I.1–I.9) — read before touching auth |
 | `docs/wl-util-1-worked-example-deployment.md` | Worked-example hardening + HTTPS (Certbot/DNSimple DNS-01) walkthrough on a real box |
+| `docs/bench-stack-verification.md` | How to verify a slice on an isolated wl-util-1 Docker Compose project before merging to `main` — the `claude` account/key, isolation rules, run steps. Read before claiming a slice is verified |
 | `docs/azure-container-apps-deployment-plan.md` | Draft Azure Container Apps deployment plan — architecture only, not yet executed |
 | `docs/pdf_ssp_template_spec.md` | Design spec for the consolidated PDF SSP export — not built yet |
 | `docs/cloud-hosting-options.md` | Cloud hosting cost / GovCloud-necessity research for docs.wingrc.us |

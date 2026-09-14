@@ -254,6 +254,7 @@ def _seed_real_user_with_evidence(db_session, storage, *, is_active: bool = True
         storage_key=storage_key,
         mime_type="image/png",
         file_size_bytes=len(storage.files[storage_key]),
+        collected_at=datetime.now(UTC),
     )
     db_session.add(ev)
     db_session.flush()
@@ -420,6 +421,7 @@ def test_download_cross_org_evidence_id_unreachable(client, db_session, fake_msp
         storage_key=f"{other['org'].id}/evidence/leaked/leaked.png",
         mime_type="image/png",
         file_size_bytes=10,
+        collected_at=datetime.now(UTC),
     )
     db_session.add(other_ev)
     db_session.flush()
