@@ -134,7 +134,7 @@ def _client_as(db_session, user):
 
 def test_customer_poc_gets_403_on_list(client, db_session, fake_msp_admin):
     org = _ready_org(client, db_session, fake_msp_admin)
-    poc = _make_fake_user(role="customer_poc")
+    poc = _make_fake_user(role="customer_poc", email="poc@example.com")
     _grant(db_session, poc, org_id=org.id, role="customer_poc")
     poc_client = _client_as(db_session, poc)
     r = poc_client.get(f"/orgs/{org.id}/contacts/import/liongard")
@@ -143,7 +143,7 @@ def test_customer_poc_gets_403_on_list(client, db_session, fake_msp_admin):
 
 def test_customer_poc_gets_403_on_import(client, db_session, fake_msp_admin):
     org = _ready_org(client, db_session, fake_msp_admin)
-    poc = _make_fake_user(role="customer_poc")
+    poc = _make_fake_user(role="customer_poc", email="poc@example.com")
     _grant(db_session, poc, org_id=org.id, role="customer_poc")
     poc_client = _client_as(db_session, poc)
     r = poc_client.post(
@@ -159,7 +159,7 @@ def test_msp_engineer_gets_403(client, db_session, fake_msp_admin):
     bulk-adjacent, external-system-sourced path.
     """
     org = _ready_org(client, db_session, fake_msp_admin)
-    engineer = _make_fake_user(role="msp_engineer")
+    engineer = _make_fake_user(role="msp_engineer", email="engineer@example.com")
     _grant(db_session, engineer, org_id=org.id, role="msp_engineer")
     eng_client = _client_as(db_session, engineer)
     r = eng_client.get(f"/orgs/{org.id}/contacts/import/liongard")
@@ -168,7 +168,7 @@ def test_msp_engineer_gets_403(client, db_session, fake_msp_admin):
 
 def test_consultant_admin_can_list(client, db_session, fake_msp_admin):
     org = _ready_org(client, db_session, fake_msp_admin)
-    consultant = _make_fake_user(role="consultant_admin")
+    consultant = _make_fake_user(role="consultant_admin", email="consultant@example.com")
     _grant(db_session, consultant, org_id=org.id, role="consultant_admin")
     consultant_client = _client_as(db_session, consultant)
     r = consultant_client.get(f"/orgs/{org.id}/contacts/import/liongard")
