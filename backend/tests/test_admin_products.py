@@ -582,13 +582,23 @@ def _fake_pdf_bytes() -> bytes:
 
 def test_ingest_from_documents_requires_ai_provider_configured(admin_client, db_session):
     """ai_provider='none' (the untouched default in tests) must degrade
-    cleanly through this endpoint too -- a specific 422, never a 500."""
+    cleanly through this endpoint too -- a specific 422, never a 500.
+
+    extract_text() is patched here even though this test is "about" the
+    missing AI provider: ingest_document() extracts text from every
+    document BEFORE it ever consults the provider, so a real PDF parse
+    would run first regardless -- caught live during bench verification
+    (2026-09-14), where this test 500'd on real pypdf output for
+    _fake_pdf_bytes()'s not-actually-a-PDF content once the ai extras
+    were actually installed in the image for the first time.
+    """
     _seed_framework_and_control(db_session)
-    r = admin_client.post(
-        "/admin/products/import/from-documents",
-        files={"files": ("crm.pdf", _fake_pdf_bytes(), "application/pdf")},
-        data={"product_key": "ingested-tool-noai"},
-    )
+    with patch("app.importers.document.extract_text", return_value="stub text"):
+        r = admin_client.post(
+            "/admin/products/import/from-documents",
+            files={"files": ("crm.pdf", _fake_pdf_bytes(), "application/pdf")},
+            data={"product_key": "ingested-tool-noai"},
+        )
     assert r.status_code == 422
     assert "No AI provider configured" in r.json()["detail"]
 
