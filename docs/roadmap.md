@@ -1214,6 +1214,127 @@ Items without a status are planned but not yet started.
     on a re-sync.
   - D.3 (approval workflow, scheduling) remains not built, per the task's
     explicit scope boundary.
+  - **Fix: the real API rejects every v2 inventory query with HTTP 400,
+    found live against Jarrod's actual WinsorLabs tenant (2026-09-15) —
+    the first time this connector had ever been run against real
+    Liongard, not a mock.** `_paginate()`'s request body never included
+    `Sorting`, which Liongard's real validator requires — not documented
+    anywhere published; discovered from the 400 response's own
+    `ValidationErrors` body, which also enumerates the full valid
+    `SortBy` list per endpoint (now `DEVICE_PROFILES_SORT_BY`/
+    `IDENTITIES_SORT_BY` constants in `connectors/liongard.py`, re-derive
+    the same way — a deliberately-invalid `SortBy` — if Liongard ever
+    adds fields rather than guessing). **This was never just a validator
+    to satisfy: `_paginate()` walks `Data.Pagination.HasMoreRows` across
+    requests, and without a deterministic sort, page boundaries aren't
+    stable while the underlying set is being read — a row can shift
+    between pages and get silently skipped or duplicated, which is
+    exactly the MISSING-in-the-diff failure this function's own docstring
+    says it exists to prevent.** Both endpoints now sort by `ID` — not
+    `Hostname` (the device-side field that reads more naturally): a
+    hostname can be blank or duplicated (a re-imaged machine, a template
+    clone), which would reintroduce the exact instability being fixed.
+    `ID` is in both enums, is Liongard's own per-record identifier
+    (a UUID string in every row observed), and is the only field either
+    enum guarantees is both present and unique — nothing else in either
+    list carries that guarantee from the API itself.
+  - **Mock-fidelity gap, closed, recorded as a pattern —**
+    `test_liongard_connector.py`'s fake `urlopen` accepted any request
+    body at all; it validated the connector against itself, which is why
+    the missing-`Sorting` bug shipped with 24/24 of that file's tests
+    green. Fixed: every v2-query fake now routes through
+    `_validate_query_body()`, which rejects a missing/invalid `Sorting`
+    the same way Liongard's real API does (real 400 body shape, through
+    the connector's own `_call()` `HTTPError` branch — proving the
+    *handling*, not just the *validator*), and — audited further per the
+    same question, not assumed clean — also now checks `Environment` and
+    `Filters`, both **also** required live (confirmed: omitting either
+    400s with "Expected number"/"Expected Array" respectively) and also
+    previously unvalidated in the mock, though neither was a live bug
+    since the connector already sent both unconditionally. `Pagination`
+    is confirmed NOT required (omitting it returns 200 live) and is
+    deliberately left unchecked. **This is the second time a gap has
+    surfaced only under real conditions** (the first: the scheme-less-
+    instance-URL 500, same file, one day earlier) **— a pattern in how
+    this connector gets verified, not two unrelated incidents.** Both
+    were invisible to every local/mock-based test that existed at the
+    time; both were only found once a real credential against a real
+    tenant became available. `test_liongard_sync_api.py`'s own mock
+    (monkeypatches `pull_device_profiles`/`pull_identities` at the
+    function level, never touching HTTP) was checked too and found not
+    to have the same gap — it never claimed to validate Liongard's wire
+    contract in the first place, a different, correctly-scoped kind of
+    test.
+  - **The `liongard_mock_server.py` this entry's own verification section
+    below names was never committed to this repo — checked via `git log
+    --all`, zero hits at any point in history.** It was a real, genuine
+    stdlib-`http.server` run for that one session, but nothing about it
+    persisted for a later session to re-run, inspect, or extend — a mock
+    that leaves no durable artifact is only as strong as the one session
+    that ran it, which is a second, related fidelity risk beyond "does it
+    validate the real contract": *can anyone check what it validated,
+    later.* `test_liongard_connector.py`'s fakes, by contrast, are
+    committed, versioned, and now fixed in place — closing this gap too
+    was part of the same 2026-09-15 pass, not a separate task.
+  - **Verified against the real WinsorLabs tenant (2026-09-15), read-only
+    throughout — no scope_entity write, no apply, live stack never
+    touched (verification ran via the connector's own functions directly,
+    against the real API, from an authenticated Python session, not
+    through the deployed HTTP endpoint, which still runs the pre-fix
+    code — see "Deploy" below):**
+    - **Devices: real multi-page pagination, genuinely exercised.** 168
+      device rows across 2 pages (100 + 68 at the connector's own default
+      page size) — 168 unique `ID`s pulled, zero duplicates, zero gaps,
+      matching Liongard's own reported `TotalRows` exactly. This is the
+      actual bug class §2 above describes, proven against real paginated
+      data, not asserted from the fix's design alone.
+    - **Identities: single page for this tenant (29 rows, under the
+      100-row page size) — multi-page pagination for this specific
+      endpoint remains unexercised against real data.** Said plainly
+      rather than implied proven: the identical code path is exercised by
+      the devices pull above and by this file's own mocked pagination
+      tests, but a real multi-page identities pull has not itself been
+      observed.
+    - **Every one of WinsorLabs' 197 real records (168 devices + 29
+      identities) is `InventoryState="Discovery"` — zero are
+      `"Inventory"` (Liongard-confirmed) today.** Confirmed by checking
+      the actual distribution, not assumed from a spot check. This
+      connector correctly pulls and keeps only `"Inventory"` rows (this
+      module's own hard rule), so a real dry-run against this tenant
+      right now would import zero new devices or identities — not a code
+      defect, a fact about the current state of Jarrod's real Liongard
+      tenant's own confirmation workflow, reported because it directly
+      determines what a dry-run against this tenant would show.
+    - **The dry-run diff itself is not meaningful yet, for a reason
+      unrelated to this fix: "Acme MSP"'s current `scope_entity` rows are
+      still the CMMC-catalog demo/sample dataset** (`ASSET-0001`,
+      `authorized-entities.example.xlsx`, "Ada Lovelace" et al. —
+      confirmed by querying `source`/`source_ref` on the actual rows),
+      **not real WinsorLabs data**, despite this org being the one mapped
+      to the real WinsorLabs Environment for this round of testing.
+      Running `reconcile()` (unmodified, pre-existing, source-agnostic by
+      design — it diffs by `(type, natural_key)` across the whole scope
+      graph, matching the workbook importer's own dry-run behavior) with
+      zero real incoming records against those 13 demo rows correctly
+      reports `{"new": 0, "changed": 0, "missing": 13, "unchanged": 0}`
+      — technically correct given the inputs, but an artifact of
+      demo-vs-real data mismatch layered on top of the zero-Inventory-
+      confirmed-records fact above, not a compliance-relevant result to
+      act on. A genuinely meaningful WinsorLabs dry-run needs either real
+      WinsorLabs scope data in this org, or Liongard's own confirmation
+      workflow to actually run for this tenant first — neither is this
+      session's decision to make.
+  - **Deploy: not done this pass, deliberately separate from landing on
+    `main`, per the standing bench-verify-before-merge rule.** The live
+    box's `backend`/`worker` containers still run the pre-fix image (same
+    one the 2026-09-14 scheme-fix deploy rebuilt) — the verification
+    above ran against the real Liongard API directly from an
+    authenticated script, not through the deployed endpoint, specifically
+    so this fix's own live-tenant proof wouldn't require deploying first.
+    Jarrod needs a normal rebuild-and-redeploy (`docker compose build
+    backend worker nginx && docker compose up -d backend worker nginx`,
+    same shape as the 2026-09-14 deploy, `docs/deployment.md` §7) before
+    retrying the sync himself through the UI.
 - **Move Integrations to deployment-tier Administration, out of org nav**
   (2026-09-11) — closes a real bug D.1's own frontend introduced:
   `routers/integrations.py` carries no `org_id` on any route and
