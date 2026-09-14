@@ -653,6 +653,16 @@ export interface LiongardEnvironmentMapping {
   liongard_environment_id: number;
   liongard_environment_name: string | null;
   updated_at: string | null;
+  // Count of this org's scope_entity rows with source="liongard" -- shown
+  // as part of the unmap confirmation. See backend/app/routers/scope.py's
+  // LiongardEnvironmentMappingOut docstring.
+  liongard_sourced_scope_count: number;
+}
+
+export interface LiongardUnmapResult {
+  liongard_environment_id: number;
+  liongard_environment_name: string | null;
+  orphaned_scope_entity_count: number;
 }
 
 // ── Liongard identities -> contacts import — selection-based (never a bulk

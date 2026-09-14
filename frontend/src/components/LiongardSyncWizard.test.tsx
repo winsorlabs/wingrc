@@ -17,6 +17,7 @@ vi.mock("../api", () => ({
     getLiongardEnvironmentMapping: vi.fn(),
     listLiongardEnvironments: vi.fn(),
     setLiongardEnvironmentMapping: vi.fn(),
+    unmapLiongardEnvironment: vi.fn(),
     liongardSyncDryRun: vi.fn(),
     applyWorkbookImport: vi.fn(),
   },
@@ -32,6 +33,7 @@ function makeMapping(overrides: Partial<LiongardEnvironmentMapping> = {}): Liong
     liongard_environment_id: 8815,
     liongard_environment_name: "Acme Corp",
     updated_at: "2026-09-11T00:00:00Z",
+    liongard_sourced_scope_count: 0,
     ...overrides,
   };
 }
@@ -186,5 +188,73 @@ describe("LiongardSyncWizard — mapped, sync + apply", () => {
     fireEvent.click(screen.getByRole("button", { name: /Sync Now/ }));
 
     await screen.findByText(/promote them from Discovery to Inventory/);
+  });
+});
+
+describe("LiongardSyncWizard — unmap", () => {
+  it("confirms before unmapping and surfaces the orphaned scope count on success", async () => {
+    vi.mocked(api.getLiongardEnvironmentMapping).mockResolvedValue(
+      makeMapping({ liongard_sourced_scope_count: 3 })
+    );
+    vi.mocked(api.unmapLiongardEnvironment).mockResolvedValue({
+      liongard_environment_id: 8815,
+      liongard_environment_name: "Acme Corp",
+      orphaned_scope_entity_count: 3,
+    });
+
+    render(<LiongardSyncWizard orgId="org1" onClose={vi.fn()} onApplied={vi.fn()} />);
+    await screen.findByText(/Mapped to Liongard Environment/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Unmap" }));
+    await screen.findByText(/3 scope entities already imported from it will remain in scope/);
+
+    fireEvent.click(screen.getByRole("button", { name: /Yes, unmap/ }));
+
+    await waitFor(() => expect(api.unmapLiongardEnvironment).toHaveBeenCalledWith("org1"));
+    await screen.findByText(/isn't mapped to a Liongard Environment yet/);
+    expect(
+      screen.getByText(/3 scope entities previously imported from it remain in scope, now managed manually/)
+    ).toBeTruthy();
+  });
+
+  it("cancelling the confirm leaves the mapping untouched", async () => {
+    vi.mocked(api.getLiongardEnvironmentMapping).mockResolvedValue(makeMapping());
+
+    render(<LiongardSyncWizard orgId="org1" onClose={vi.fn()} onApplied={vi.fn()} />);
+    await screen.findByText(/Mapped to Liongard Environment/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Unmap" }));
+    await screen.findByText(/Unmap this Environment/);
+    fireEvent.click(screen.getByRole("button", { name: "Keep mapped" }));
+
+    expect(screen.queryByText(/Unmap this Environment/)).toBeNull();
+    expect(api.unmapLiongardEnvironment).not.toHaveBeenCalled();
+    expect(screen.getByText(/Mapped to Liongard Environment/)).toBeTruthy();
+  });
+
+  it("a zero-count unmap says plainly that nothing was left behind", async () => {
+    vi.mocked(api.getLiongardEnvironmentMapping).mockResolvedValue(
+      makeMapping({ liongard_sourced_scope_count: 0 })
+    );
+
+    render(<LiongardSyncWizard orgId="org1" onClose={vi.fn()} onApplied={vi.fn()} />);
+    await screen.findByText(/Mapped to Liongard Environment/);
+    fireEvent.click(screen.getByRole("button", { name: "Unmap" }));
+
+    await screen.findByText(/No scope entities have been imported from it yet/);
+  });
+
+  it("surfaces a real unmap error rather than failing silently", async () => {
+    vi.mocked(api.getLiongardEnvironmentMapping).mockResolvedValue(makeMapping());
+    vi.mocked(api.unmapLiongardEnvironment).mockRejectedValue(new Error("This org has no Liongard Environment mapping to remove."));
+
+    render(<LiongardSyncWizard orgId="org1" onClose={vi.fn()} onApplied={vi.fn()} />);
+    await screen.findByText(/Mapped to Liongard Environment/);
+    fireEvent.click(screen.getByRole("button", { name: "Unmap" }));
+    fireEvent.click(screen.getByRole("button", { name: /Yes, unmap/ }));
+
+    await screen.findByText("This org has no Liongard Environment mapping to remove.");
+    // Still mapped -- an error must not silently drop the mapping from state.
+    expect(screen.getByText(/Mapped to Liongard Environment/)).toBeTruthy();
   });
 });

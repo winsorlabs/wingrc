@@ -1680,6 +1680,21 @@ class OrgLiongardEnvironment(Base):
     the mapping is (re)set via connectors/liongard.py:list_environments()
     -- never the source of truth, which is liongard_environment_id plus
     Liongard's own Environment record.
+
+    liongard_environment_id is ALSO unique (migration 0050) -- decided
+    2026-09-16: a Liongard Environment already represents one client's
+    infrastructure, so two WinGRC orgs sharing one would silently pull the
+    same devices/identities into two separate scope graphs, i.e. one
+    client's environment leaking into another org's CUI-boundary
+    denominator. In a compliance tool that's a worse failure mode than in
+    a general asset-management tool, so this is enforced, not left
+    permissive on the chance some legitimate sharing case exists -- none
+    was found. routers/scope.py's PUT endpoint checks this before the DB
+    does, for a real error message; the DB constraint is the backstop.
+    **The migration itself is written defensively** (checks for existing
+    collisions before adding the constraint, skips it and logs rather than
+    failing the deploy if any are found) -- see that migration's own
+    docstring for why, and its result on THIS deploy specifically.
     """
 
     __tablename__ = "org_liongard_environment"
@@ -1688,6 +1703,11 @@ class OrgLiongardEnvironment(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     org_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), unique=True, index=True)
+    # NOT declared as unique=True at the column level -- migration 0050
+    # adds the DB constraint conditionally (see its own docstring), so a
+    # column-level unique=True here would claim a guarantee the schema
+    # might not actually be enforcing on a given deployment. The intent is
+    # still recorded here, in prose, for anyone reading the model.
     liongard_environment_id: Mapped[int] = mapped_column(Integer, nullable=False)
     liongard_environment_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

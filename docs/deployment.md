@@ -187,8 +187,22 @@ exact two things a tenant would notice first.
 cd ~/dev/wingrc
 git pull --ff-only
 docker compose build backend worker nginx   # nginx bundles the frontend build — rebuild it whenever frontend/ changed, not just backend/
-docker compose up -d backend worker nginx   # migrations run automatically via backend's `alembic upgrade head && exec uvicorn ...` startup command
+docker compose up -d --no-deps backend worker nginx   # migrations run automatically via backend's `alembic upgrade head && exec uvicorn ...` startup command
 ```
+
+**`--no-deps` is not optional.** Without it, a 2026-09-16 deploy naming
+only `backend worker nginx` also recreated `db` and `minio` — undesired
+and unexplained for `db` specifically (part of the cause is known for
+`minio`: it interpolates `MINIO_SERVER_URL` from the host `.env`, which
+Compose may treat as a config change; `db` has no such env-interpolated
+setting and recreated anyway). Harmless that time only because both
+reattached to their existing named volumes (`wingrc_db_data`/
+`wingrc_minio_data` — verify this with `docker volume ls` if it happens
+again, and confirm real data survived with a direct query before treating
+it as fine) — but recreating the database container on a box holding real
+client data must never happen as a side effect of an application-code
+deploy. `--no-deps` tells Compose to touch only the services actually
+named, full stop, regardless of what it thinks changed.
 
 `db` and `minio` are untouched by an application-code deploy — only
 `backend`, `worker`, and `nginx` need to be recreated. **`worker` runs the

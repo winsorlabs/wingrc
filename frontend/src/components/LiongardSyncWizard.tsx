@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { DryRunResult, LiongardEnvironmentMapping, LiongardEnvironmentOption, ScopeChange } from "../types";
+import type { DryRunResult, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardUnmapResult, ScopeChange } from "../types";
 import { ScopeChangeDiffTable } from "./ScopeChangeDiffTable";
 
 // D.2: pull devices + users from this org's mapped Liongard Environment.
@@ -26,6 +26,11 @@ export function LiongardSyncWizard({ orgId, onClose, onApplied }: Props) {
   const [selectedEnvId, setSelectedEnvId] = useState<number | "">("");
   const [savingMapping, setSavingMapping] = useState(false);
 
+  const [confirmUnmap, setConfirmUnmap] = useState(false);
+  const [unmapping, setUnmapping] = useState(false);
+  const [unmapError, setUnmapError] = useState<string | null>(null);
+  const [justUnmapped, setJustUnmapped] = useState<LiongardUnmapResult | null>(null);
+
   const [dryRun, setDryRun] = useState<DryRunResult | null>(null);
   const [excluded, setExcluded] = useState<Set<number>>(new Set());
   const [syncing, setSyncing] = useState(false);
@@ -47,6 +52,7 @@ export function LiongardSyncWizard({ orgId, onClose, onApplied }: Props) {
   function startPickingEnvironment() {
     setPickingEnvironment(true);
     setMappingError(null);
+    setJustUnmapped(null);
     if (environments) return;
     setEnvironmentsLoading(true);
     api
@@ -54,6 +60,25 @@ export function LiongardSyncWizard({ orgId, onClose, onApplied }: Props) {
       .then(setEnvironments)
       .catch((e) => setMappingError(e instanceof Error ? e.message : "Could not load environments"))
       .finally(() => setEnvironmentsLoading(false));
+  }
+
+  async function handleUnmap() {
+    setUnmapping(true);
+    setUnmapError(null);
+    try {
+      const result = await api.unmapLiongardEnvironment(orgId);
+      setMapping(null);
+      setConfirmUnmap(false);
+      setJustUnmapped(result);
+      // An unmap invalidates any diff already pulled from the now-removed
+      // Environment -- same reasoning as a re-map in saveMapping() below.
+      setDryRun(null);
+      setExcluded(new Set());
+    } catch (e) {
+      setUnmapError(e instanceof Error ? e.message : "Could not unmap this Environment");
+    } finally {
+      setUnmapping(false);
+    }
   }
 
   async function saveMapping() {
@@ -142,6 +167,14 @@ export function LiongardSyncWizard({ orgId, onClose, onApplied }: Props) {
               ? "This org isn't mapped to a Liongard Environment yet."
               : "Choose a different Liongard Environment for this org."}
           </div>
+          {justUnmapped && (
+            <div className="field-hint">
+              Unmapped {justUnmapped.liongard_environment_name ?? `Environment ${justUnmapped.liongard_environment_id}`}.{" "}
+              {justUnmapped.orphaned_scope_entity_count > 0
+                ? `${justUnmapped.orphaned_scope_entity_count} scope entities previously imported from it remain in scope, now managed manually.`
+                : "No previously-synced scope entities existed to leave behind."}
+            </div>
+          )}
           {mappingError && <div className="form-error">{mappingError}</div>}
           {!environments && !environmentsLoading && (
             <button className="btn-ghost btn-sm" onClick={startPickingEnvironment}>
@@ -178,8 +211,30 @@ export function LiongardSyncWizard({ orgId, onClose, onApplied }: Props) {
           Mapped to Liongard Environment <strong>{mapping.liongard_environment_name}</strong>.{" "}
           <button className="btn-ghost btn-xs" onClick={startPickingEnvironment}>
             Change
-          </button>
+          </button>{" "}
+          {!confirmUnmap && (
+            <button className="btn-ghost btn-xs btn-destructive" onClick={() => setConfirmUnmap(true)}>
+              Unmap
+            </button>
+          )}
         </div>
+        {confirmUnmap && (
+          <div className="delete-confirm">
+            <span>
+              Unmap this Environment?{" "}
+              {mapping.liongard_sourced_scope_count > 0
+                ? `${mapping.liongard_sourced_scope_count} scope entities already imported from it will remain in scope, now managed manually.`
+                : "No scope entities have been imported from it yet."}
+            </span>
+            <button className="btn-danger btn-sm" onClick={handleUnmap} disabled={unmapping}>
+              {unmapping ? "Unmapping…" : "Yes, unmap"}
+            </button>
+            <button className="btn-ghost btn-sm" onClick={() => setConfirmUnmap(false)} disabled={unmapping}>
+              Keep mapped
+            </button>
+          </div>
+        )}
+        {unmapError && <div className="form-error">{unmapError}</div>}
         {error && <div className="form-error">{error}</div>}
 
         {!dryRun ? (

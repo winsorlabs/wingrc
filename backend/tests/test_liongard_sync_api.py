@@ -212,6 +212,193 @@ def test_set_mapping_writes_audit_event(client, db_session, fake_msp_admin):
     assert entry.after_value["liongard_environment_id"] == 8815
 
 
+def test_get_mapping_includes_liongard_sourced_scope_count(client, db_session, fake_msp_admin):
+    org = _org(db_session, fake_msp_admin)
+    _set_credential(client)
+    client.put(
+        f"/orgs/{org.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    r = client.get(f"/orgs/{org.id}/integrations/liongard/environment")
+    assert r.json()["liongard_sourced_scope_count"] == 0
+
+    db_session.add(
+        ScopeEntity(
+            org_id=org.id,
+            entity_type="device",
+            natural_key=f"SN-{uuid.uuid4().hex[:6]}",
+            source="liongard",
+            source_ref="liongard:environment=8815 (Acme Corp):pulled_at=now",
+        )
+    )
+    db_session.commit()
+
+    r2 = client.get(f"/orgs/{org.id}/integrations/liongard/environment")
+    assert r2.json()["liongard_sourced_scope_count"] == 1
+
+
+def test_set_mapping_to_an_environment_another_org_already_holds_409s(
+    client, db_session, fake_msp_admin
+):
+    """One environment -> at most one org (2026-09-16 decision, migration
+    0050): claiming an environment another org already holds must fail
+    with a real error naming that org, not silently double-map.
+    """
+    org_a = _org(db_session, fake_msp_admin)
+    org_b = _org(db_session, fake_msp_admin)
+    _set_credential(client)
+    r1 = client.put(
+        f"/orgs/{org_a.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    assert r1.status_code == 200
+
+    r2 = client.put(
+        f"/orgs/{org_b.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    assert r2.status_code == 409
+    assert org_a.name in r2.text
+
+    # org_b must not have been mapped despite the conflict.
+    rows = db_session.scalars(
+        select(OrgLiongardEnvironment).where(OrgLiongardEnvironment.org_id == org_b.id)
+    ).all()
+    assert rows == []
+
+
+def test_set_mapping_to_the_same_environment_it_already_holds_is_not_a_conflict(
+    client, db_session, fake_msp_admin
+):
+    """Re-PUTting the same (org, environment) pair -- a no-op re-save --
+    must not trip the "another org already holds it" check against itself.
+    """
+    org = _org(db_session, fake_msp_admin)
+    _set_credential(client)
+    client.put(
+        f"/orgs/{org.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    r = client.put(
+        f"/orgs/{org.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    assert r.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Environment unmap
+# ---------------------------------------------------------------------------
+
+
+def test_unmap_without_a_mapping_404s(client, db_session, fake_msp_admin):
+    org = _org(db_session, fake_msp_admin)
+    r = client.delete(f"/orgs/{org.id}/integrations/liongard/environment")
+    assert r.status_code == 404
+
+
+def test_unmap_removes_the_mapping_and_reports_zero_orphaned_rows(
+    client, db_session, fake_msp_admin
+):
+    org = _org(db_session, fake_msp_admin)
+    _set_credential(client)
+    client.put(
+        f"/orgs/{org.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    r = client.delete(f"/orgs/{org.id}/integrations/liongard/environment")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["liongard_environment_id"] == 8815
+    assert body["orphaned_scope_entity_count"] == 0
+
+    r2 = client.get(f"/orgs/{org.id}/integrations/liongard/environment")
+    assert r2.json() is None
+
+    rows = db_session.scalars(
+        select(OrgLiongardEnvironment).where(OrgLiongardEnvironment.org_id == org.id)
+    ).all()
+    assert rows == []
+
+
+def test_unmap_reports_orphaned_scope_entities_without_deleting_them(
+    client, db_session, fake_msp_admin
+):
+    """The §1b orphan question: unmapping must never delete Liongard-
+    sourced scope_entity rows as a side effect -- they become
+    manually-owned entities, the count is surfaced, not the data.
+    """
+    org = _org(db_session, fake_msp_admin)
+    _set_credential(client)
+    client.put(
+        f"/orgs/{org.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    entity = ScopeEntity(
+        org_id=org.id,
+        entity_type="device",
+        natural_key="SN-orphan-test",
+        source="liongard",
+        source_ref="liongard:environment=8815 (Acme Corp):pulled_at=now",
+    )
+    db_session.add(entity)
+    db_session.commit()
+
+    r = client.delete(f"/orgs/{org.id}/integrations/liongard/environment")
+    assert r.status_code == 200
+    assert r.json()["orphaned_scope_entity_count"] == 1
+
+    row = db_session.get(ScopeEntity, entity.id)
+    assert row is not None
+    assert row.source == "liongard"
+    assert row.natural_key == "SN-orphan-test"
+
+
+def test_unmap_writes_audit_event_with_orphan_count(client, db_session, fake_msp_admin):
+    org = _org(db_session, fake_msp_admin)
+    _set_credential(client)
+    client.put(
+        f"/orgs/{org.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    client.delete(f"/orgs/{org.id}/integrations/liongard/environment")
+
+    entry = db_session.scalars(
+        select(AuditLog).where(AuditLog.action == "liongard_environment.unmap")
+    ).first()
+    assert entry is not None
+    assert entry.before_value["liongard_environment_id"] == 8815
+    assert entry.context["orphaned_scope_entity_count"] == 0
+
+
+def test_unmap_then_remap_to_the_now_free_environment_succeeds(client, db_session, fake_msp_admin):
+    """The exact scenario this whole slice exists for: one org unmaps an
+    environment, then a different org can claim it.
+    """
+    org_a = _org(db_session, fake_msp_admin)
+    org_b = _org(db_session, fake_msp_admin)
+    _set_credential(client)
+    client.put(
+        f"/orgs/{org_a.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    conflict = client.put(
+        f"/orgs/{org_b.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    assert conflict.status_code == 409
+
+    unmap = client.delete(f"/orgs/{org_a.id}/integrations/liongard/environment")
+    assert unmap.status_code == 200
+
+    remap = client.put(
+        f"/orgs/{org_b.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    assert remap.status_code == 200
+    assert remap.json()["liongard_environment_id"] == 8815
+
+
 def test_remapping_updates_existing_row_not_duplicating(client, db_session, fake_msp_admin):
     org = _org(db_session, fake_msp_admin)
     _set_credential(client)

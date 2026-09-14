@@ -13,7 +13,16 @@ Endpoints:
   GET    /orgs/{org_id}/integrations/liongard/environments   Available Liongard Environments
   GET    /orgs/{org_id}/integrations/liongard/environment    This org's Environment mapping
   PUT    /orgs/{org_id}/integrations/liongard/environment    Set the mapping
+  DELETE /orgs/{org_id}/integrations/liongard/environment    Unmap (2026-09-16)
   POST   /orgs/{org_id}/integrations/liongard/sync/dry-run   Pull + reconcile, no writes
+
+One Liongard Environment maps to at most one org (2026-09-16 -- migration
+0050, PUT's own duplicate check below): a Liongard Environment already
+represents one client's infrastructure, so two orgs sharing one would
+silently pull the same devices/identities into two separate scope graphs.
+See OrgLiongardEnvironment's own docstring in models.py and migration
+0050's for the full reasoning, including why that migration adds the DB
+constraint defensively rather than unconditionally.
 
 D.2: the Liongard device/user pull reuses this exact dry-run -> apply shape
 (see the section at the bottom of this file) -- its dry-run endpoint builds
@@ -52,7 +61,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from .. import repo
@@ -670,6 +679,19 @@ class LiongardEnvironmentMappingOut(BaseModel):
     liongard_environment_id: int
     liongard_environment_name: str | None
     updated_at: datetime | None
+    # Count of this org's scope_entity rows with source="liongard" -- shown
+    # by the frontend as part of the unmap confirmation (never as part of
+    # setting/changing a mapping, where it isn't relevant). Computed fresh
+    # on every read rather than cached, since it's cheap and the whole
+    # point is an accurate number at the moment someone is deciding whether
+    # to unmap.
+    liongard_sourced_scope_count: int = 0
+
+
+class LiongardUnmapOut(BaseModel):
+    liongard_environment_id: int
+    liongard_environment_name: str | None
+    orphaned_scope_entity_count: int
 
 
 def get_liongard_credential(session: Session) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -713,6 +735,35 @@ def get_liongard_mapping(session: Session, org_id: uuid.UUID) -> OrgLiongardEnvi
     ).first()
 
 
+def _count_liongard_sourced_scope(session: Session, org_id: uuid.UUID) -> int:
+    return (
+        session.scalars(
+            select(func.count())
+            .select_from(ScopeEntity)
+            .where(ScopeEntity.org_id == org_id, ScopeEntity.source == Source.LIONGARD.value)
+        ).one()
+    )
+
+
+def _other_org_holding_environment(
+    session: Session, environment_id: int, org_id: uuid.UUID
+) -> str | None:
+    """Name of an org other than `org_id` currently mapped to
+    `environment_id`, or None -- migration 0050's own
+    auth.liongard_environment_holder(), the only way to see this across
+    RLS (org_liongard_environment is scoped to app.current_org, which is
+    this request's own org, not the one that might already hold it).
+    """
+    rows = session.execute(
+        text("SELECT org_id, org_name FROM auth.liongard_environment_holder(:env_id)"),
+        {"env_id": environment_id},
+    ).all()
+    for other_org_id, other_org_name in rows:
+        if other_org_id != org_id:
+            return other_org_name
+    return None
+
+
 @router.get(
     "/{org_id}/integrations/liongard/environments",
     response_model=list[LiongardEnvironmentOption],
@@ -749,6 +800,7 @@ def get_liongard_environment_mapping(
         liongard_environment_id=row.liongard_environment_id,
         liongard_environment_name=row.liongard_environment_name,
         updated_at=row.updated_at,
+        liongard_sourced_scope_count=_count_liongard_sourced_scope(session, org_id),
     )
 
 
@@ -780,6 +832,25 @@ def set_liongard_environment_mapping(
             detail=(
                 f"Environment id {body.liongard_environment_id} was not found for this "
                 "Liongard account."
+            ),
+        )
+
+    # One environment maps to at most one org (2026-09-16 decision -- see
+    # models.py's OrgLiongardEnvironment docstring and migration 0050):
+    # a Liongard Environment already represents one client's
+    # infrastructure, so two orgs sharing one would silently pull the same
+    # devices/identities into two separate scope graphs -- a compliance-
+    # boundary leak, not just an inconvenience. Checked here, before the
+    # write, for a real error naming the other org; the DB constraint
+    # (when present -- see that migration's own defensive design) is the
+    # backstop, not the primary signal.
+    holder = _other_org_holding_environment(session, body.liongard_environment_id, org_id)
+    if holder is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Environment {match.name!r} (id {match.id}) is already mapped to "
+                f"{holder!r} -- unmap it there first."
             ),
         )
 
@@ -823,6 +894,12 @@ def set_liongard_environment_mapping(
         after_value={"liongard_environment_id": match.id, "liongard_environment_name": match.name},
         context={"via": "api", "created": is_new},
     )
+    # Computed before commit, not after -- app.current_org (this request's
+    # RLS context) is a SET LOCAL value cleared the moment commit() returns,
+    # so a query issued afterward would see zero rows under RLS regardless
+    # of actual data, same failure mode this function's own surrounding
+    # comment already documents for a post-commit refresh().
+    scope_count = _count_liongard_sourced_scope(session, org_id)
     session.commit()
     # No session.refresh() here, deliberately -- OrgLiongardEnvironment is
     # RLS-protected (unlike IntegrationConnection, whose own set/test
@@ -838,6 +915,65 @@ def set_liongard_environment_mapping(
         liongard_environment_id=row.liongard_environment_id,
         liongard_environment_name=row.liongard_environment_name,
         updated_at=row.updated_at,
+        liongard_sourced_scope_count=scope_count,
+    )
+
+
+@router.delete(
+    "/{org_id}/integrations/liongard/environment",
+    response_model=LiongardUnmapOut,
+)
+def delete_liongard_environment_mapping(
+    org_id: uuid.UUID, session: Session = Depends(get_session)
+) -> LiongardUnmapOut:
+    """Unmap this org from its Liongard Environment -- the gap this was
+    added to close: an org could be re-pointed at a different Environment
+    (PUT) but never fully unmapped. Same role gate as PUT/GET (router-level
+    require_org_access() + require_write()), audit-logged like every other
+    mapping change.
+
+    Never deletes scope_entity rows sourced from this mapping (checked
+    before building this: every Liongard sync run so far has been dry-run
+    only, so there are none live today, but the design doesn't assume that
+    stays true). A Liongard-sourced scope_entity row has no FK to
+    org_liongard_environment at all -- unmapping is purely a row delete
+    here, and any prior scope_entity rows simply become manually-owned
+    entities from this point on (source stays "liongard" as a provenance
+    record of where they originally came from; nothing about them changes).
+    That count is returned so the caller can report it, not silently drop
+    it.
+    """
+    row = get_liongard_mapping(session, org_id)
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="This org has no Liongard Environment mapping to remove.",
+        )
+
+    scope_count = _count_liongard_sourced_scope(session, org_id)
+    before = {
+        "liongard_environment_id": row.liongard_environment_id,
+        "liongard_environment_name": row.liongard_environment_name,
+    }
+    unmapped_id = row.liongard_environment_id
+    unmapped_name = row.liongard_environment_name
+
+    session.delete(row)
+    log_event(
+        session,
+        org_id=org_id,
+        action="liongard_environment.unmap",
+        entity_type="org_liongard_environment",
+        entity_id=row.id,
+        before_value=before,
+        context={"via": "api", "orphaned_scope_entity_count": scope_count},
+    )
+    session.commit()
+
+    return LiongardUnmapOut(
+        liongard_environment_id=unmapped_id,
+        liongard_environment_name=unmapped_name,
+        orphaned_scope_entity_count=scope_count,
     )
 
 
