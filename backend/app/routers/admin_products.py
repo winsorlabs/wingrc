@@ -773,6 +773,13 @@ def download_document(
     session: Session = Depends(get_session),
     storage: StorageClient = Depends(get_storage_client),
 ) -> RedirectResponse:
+    # Deliberately NOT moved to the streamed-download pattern
+    # routers/evidence.py uses for Evidence rows (docs/roadmap.md's
+    # evidence-download-hardening entry) -- ProductDocument is
+    # deployment-wide vendor baseline documentation (msp_admin/
+    # consultant_admin only), not customer CUI evidence, and a genuinely
+    # different model/router. Flagged there as a follow-up for the same
+    # bearer-URL property, not silently left inconsistent.
     doc = session.get(ProductDocument, document_id)
     if doc is None or doc.product_id != product_id:
         raise HTTPException(status_code=404, detail="Document not found")

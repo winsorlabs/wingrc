@@ -36,7 +36,7 @@ from ..models import (
     SystemDescription,
 )
 from ..org_membership import provision_new_org_memberships
-from ..storage import StorageClient, download_filename, get_storage_client
+from ..storage import StorageClient, download_filename, evidence_download_path, get_storage_client
 from ..svg_sanitize import SvgSanitizeError, sanitize_svg
 from .evidence import _verify_magic_bytes
 
@@ -245,25 +245,31 @@ def _build_profile_out(org: Organization, storage: StorageClient | None) -> OrgP
 
 
 def _diagram_url(
-    session: Session, storage: StorageClient, evidence_id: uuid.UUID | None
+    session: Session, org_id: uuid.UUID, evidence_id: uuid.UUID | None
 ) -> str | None:
+    """Network/data-flow diagrams are Evidence rows (kind='file') like any
+    other evidence -- a leaked link discloses the CUI network boundary, so
+    this streams through the same authenticated backend route regular
+    evidence downloads use (evidence_download_path), not a presigned
+    storage URL. No storage call here at all: existence is confirmed from
+    the DB row alone, the actual bytes are fetched per-request by
+    routers/evidence.py:download_evidence when the <img> tag resolves this
+    URL.
+    """
     if evidence_id is None:
         return None
     ev = session.get(Evidence, evidence_id)
     if ev is None or ev.kind != "file" or not ev.storage_key:
         return None
-    ext = os.path.splitext(ev.storage_key)[1]
-    return storage.presigned_url(
-        ev.storage_key, download_filename=download_filename(ev.title, ext)
-    )
+    return evidence_download_path(org_id, ev.id)
 
 
 def _build_system_description_out(
-    sd: SystemDescription, session: Session, storage: StorageClient
+    sd: SystemDescription, session: Session, org_id: uuid.UUID
 ) -> SystemDescriptionOut:
     out = SystemDescriptionOut.model_validate(sd)
-    out.network_diagram_url = _diagram_url(session, storage, sd.network_diagram_evidence_id)
-    out.data_flow_diagram_url = _diagram_url(session, storage, sd.data_flow_diagram_evidence_id)
+    out.network_diagram_url = _diagram_url(session, org_id, sd.network_diagram_evidence_id)
+    out.data_flow_diagram_url = _diagram_url(session, org_id, sd.data_flow_diagram_evidence_id)
     return out
 
 
@@ -486,7 +492,6 @@ async def upload_logo(
 def get_system_description(
     org_id: uuid.UUID,
     session: Session = Depends(get_session),
-    storage: StorageClient = Depends(get_storage_client),
 ) -> SystemDescriptionOut:
     _get_org(session, org_id)
     sd = session.scalars(
@@ -494,7 +499,7 @@ def get_system_description(
     ).first()
     if sd is None:
         raise HTTPException(status_code=404, detail="System description not yet created")
-    return _build_system_description_out(sd, session, storage)
+    return _build_system_description_out(sd, session, org_id)
 
 
 @router.put(
@@ -506,7 +511,6 @@ def upsert_system_description(
     org_id: uuid.UUID,
     body: SystemDescriptionIn,
     session: Session = Depends(get_session),
-    storage: StorageClient = Depends(get_storage_client),
 ) -> SystemDescriptionOut:
     _get_org(session, org_id)
     sd = session.scalars(
@@ -538,7 +542,7 @@ def upsert_system_description(
     )
     session.commit()
     session.refresh(sd)
-    return _build_system_description_out(sd, session, storage)
+    return _build_system_description_out(sd, session, org_id)
 
 
 # ---------------------------------------------------------------------------
@@ -665,9 +669,7 @@ async def _upload_diagram(
 
     return DiagramUploadOut(
         evidence_id=ev.id,
-        url=storage.presigned_url(
-            storage_key, download_filename=download_filename(slot["title"], ext)
-        ),
+        url=evidence_download_path(org_id, ev.id),
         mime_type=mime,
     )
 
