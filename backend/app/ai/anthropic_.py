@@ -32,3 +32,7 @@ class AnthropicProvider(AIProvider):
             messages=[{"role": "user", "content": user}],
         )
         return msg.content[0].text
+
+    @property
+    def identity(self) -> str:
+        return f"anthropic:{self._model}"

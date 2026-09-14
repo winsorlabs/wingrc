@@ -8,6 +8,11 @@ from .base import AIProvider
 class NullProvider(AIProvider):
     def complete(self, system: str, user: str, *, max_tokens: int = 8192) -> str:
         raise RuntimeError(
-            "No AI provider configured. Set WINGRC_AI_PROVIDER to 'anthropic' "
-            "and supply ANTHROPIC_API_KEY, or configure 'azure_openai' / 'local'."
+            "No AI provider configured. Set WINGRC_AI_PROVIDER=anthropic and "
+            "supply ANTHROPIC_API_KEY. (Azure OpenAI / local-model support is "
+            "planned but not implemented yet.)"
         )
+
+    @property
+    def identity(self) -> str:
+        return "none"

@@ -37,6 +37,29 @@ from ..baseline import (
     ProductMeta,
 )
 
+# ~4 chars/token is a conservative rule of thumb for English prose and table
+# text. This caps combined input at roughly 150k tokens, leaving headroom
+# under a 200k-token context window for the system prompt and the model's
+# own reasoning -- comfortably above any CRM/baseline pair seen so far, but
+# a real backstop against an oversized upload silently truncating context
+# rather than failing with a clear message.
+_MAX_INPUT_CHARS = 600_000
+
+# Output cap for this call specifically -- a comprehensive CRM covering many
+# controls can plausibly exceed the AIProvider default (8192, sized for
+# shorter completions like practitioner-notes generation). This is a
+# parameter change only; the extraction prompt itself is untouched.
+_INGEST_MAX_TOKENS = 16384
+
+
+class DocumentIngestError(Exception):
+    """Raised for any expected failure in the ingestion pipeline -- an
+    oversized document, an unconfigured AI provider, or a response that
+    doesn't parse as the expected JSON shape. Callers (the admin-upload
+    router) should catch this specifically and surface it as a clear 4xx,
+    never a raw 500.
+    """
+
 # ---------------------------------------------------------------------------
 # Classification prompt
 # ---------------------------------------------------------------------------
@@ -174,7 +197,24 @@ def _strip_fences(text: str) -> str:
 
 
 def _parse_ai_json(raw: str) -> dict[str, Any]:
-    return json.loads(_strip_fences(raw))
+    cleaned = _strip_fences(raw)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        # The most common real-world cause is truncation: the model hit
+        # max_tokens mid-object. Say so rather than surfacing a bare
+        # "Expecting ',' delimiter" a reviewer can't act on.
+        looks_truncated = not cleaned.rstrip().endswith("}")
+        hint = (
+            " The response looks truncated -- consider whether the source "
+            "documents are unusually large or dense; the model may have "
+            "run out of output budget mid-response."
+            if looks_truncated
+            else ""
+        )
+        raise DocumentIngestError(
+            f"AI provider returned a response that isn't valid JSON: {exc}.{hint}"
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +240,7 @@ def _apply_evidence_minimization(entry: ControlEntry) -> ControlEntry:
             evidence=[],
             note=entry.note,
             scope_note=entry.scope_note,
+            coverage_basis=entry.coverage_basis,
         )
     return ControlEntry(
         control=entry.control,
@@ -211,6 +252,7 @@ def _apply_evidence_minimization(entry: ControlEntry) -> ControlEntry:
         evidence=entry.evidence,
         note=entry.note,
         scope_note=entry.scope_note,
+        coverage_basis=entry.coverage_basis,
     )
 
 
@@ -280,6 +322,14 @@ def ingest_document(
         doc_texts.append(f"=== Source: {p.name} ===\n{extract_text(p)}")
 
     combined = "\n\n".join(doc_texts)
+    if len(combined) > _MAX_INPUT_CHARS:
+        raise DocumentIngestError(
+            f"Combined document text ({len(combined):,} characters) exceeds the "
+            f"{_MAX_INPUT_CHARS:,}-character ingestion limit. Split the upload "
+            "into smaller documents or trim to the sections that describe "
+            "control coverage."
+        )
+
     if len(paths) > 1:
         user_msg = (
             "Two documents are provided. Cross-reference them: the baseline "
@@ -290,23 +340,39 @@ def ingest_document(
     else:
         user_msg = combined
 
-    raw_json = ai_provider.complete(_SYSTEM_PROMPT, user_msg)
+    try:
+        raw_json = ai_provider.complete(
+            _SYSTEM_PROMPT, user_msg, max_tokens=_INGEST_MAX_TOKENS
+        )
+    except DocumentIngestError:
+        raise
+    except RuntimeError as exc:
+        # NullProvider (ai_provider="none") and provider-init failures raise
+        # a plain RuntimeError -- normalize to DocumentIngestError so callers
+        # only need to catch one exception type from this pipeline.
+        raise DocumentIngestError(str(exc)) from exc
+
     data = _parse_ai_json(raw_json)
 
-    p_data = data["product"]
-    product = ProductMeta(
-        key=product_key,
-        name=p_data.get("name", product_key),
-        provider=p_data.get("provider", ""),
-        category=category,
-        asset_type=asset_type,
-        framework=framework,
-        role=p_data.get("role", "").strip(),
-        assumed_config=list(p_data.get("assumed_config", [])),
-        source_docs=source_docs,
-    )
+    try:
+        p_data = data["product"]
+        product = ProductMeta(
+            key=product_key,
+            name=p_data.get("name", product_key),
+            provider=p_data.get("provider", ""),
+            category=category,
+            asset_type=asset_type,
+            framework=framework,
+            role=p_data.get("role", "").strip(),
+            assumed_config=list(p_data.get("assumed_config", [])),
+            source_docs=source_docs,
+        )
+        controls = [_parse_control(c) for c in data.get("controls", [])]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise DocumentIngestError(
+            f"AI provider's JSON did not match the expected shape: {exc}"
+        ) from exc
 
-    controls = [_parse_control(c) for c in data.get("controls", [])]
     entry = BaselineEntry(product=product, controls=controls)
     entry.summary = entry.compute_summary()
     return entry
