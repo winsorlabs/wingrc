@@ -1335,6 +1335,135 @@ Items without a status are planned but not yet started.
     backend worker nginx && docker compose up -d backend worker nginx`,
     same shape as the 2026-09-14 deploy, `docs/deployment.md` §7) before
     retrying the sync himself through the UI.
+
+- **Inventory-state filter made visible, plus the deploy this entry's own
+  "not done this pass" note above left outstanding** (2026-09-15).
+
+  **Decision (Jarrod): the Inventory-only filter stays, permanently, as a
+  deliberate product choice — no Discovery-candidate toggle.** Liongard's
+  Discovery→Inventory promotion is a human confirmation step performed
+  inside Liongard itself; WinGRC treats that confirmation as authoritative
+  rather than re-running its own review on top of it. The alternative
+  (surfacing Discovery rows as WinGRC-side review candidates) was
+  considered and rejected — it would duplicate a confirmation step that
+  already has an owner, and blur "confirmed in the source tool" with
+  "confirmed in WinGRC" into one ambiguous status. Recorded in
+  `connectors/liongard.py`'s own module docstring so this isn't
+  re-litigated from scratch later.
+
+  **The problem this decision creates, fixed:** on a real tenant, the
+  filter can legitimately zero out an entire pull (WinsorLabs: 197/197
+  Discovery, 0 Inventory, as this entry's own verification section above
+  already found) — and an empty pull and an empty "already matches"
+  reconcile diff looked identical, with nothing distinguishing "nothing
+  found," "found plenty, none confirmed yet," and "confirmed and already
+  matches scope." `pull_device_profiles()`/`pull_identities()`
+  (`connectors/liongard.py`) now return `InventoryPull` (the filtered
+  records plus the pre-filter `total_count`) instead of a bare list;
+  `routers/scope.py`'s dry-run turns that into `DryRunOut.pull_status`,
+  one entry per entity type (devices, identities) with a plain-language,
+  actionable message — naming the remedy ("promote them from Discovery to
+  Inventory in Liongard") specifically when records exist but none
+  survived the filter, rather than reporting an unexplained zero.
+  `LiongardSyncWizard.tsx` renders these in place of the old flat "No
+  changes detected" line, which was the exact ambiguity this closes.
+  Tests: `test_liongard_connector.py` (found-but-all-Discovery case
+  against `InventoryPull.total_count`), `test_liongard_sync_api.py` (all
+  three message cases through the real HTTP dry-run response, plus the
+  existing new-changes/no-writes/warnings coverage updated for the new
+  return shape), `LiongardSyncWizard.test.tsx` (the no-op-vs-all-Discovery
+  distinction rendered). 1054 backend tests, ruff, `tsc -b`, `vitest run`
+  (116/116), `vite build` all clean on an isolated wl-util-1 bench stack.
+
+  **Deployed** (closing the "not done this pass" note above) — backup
+  taken first (`pre-deploy-liongard-inventory-visibility-*.dump`, 442 TOC
+  entries, verified via `pg_restore --list`), then `docker compose build
+  backend worker nginx && docker compose up -d backend worker nginx` per
+  `docs/deployment.md` §7c. This deploy also picked up the two prior
+  commits that had never actually reached the live box despite being on
+  `main` (the scheme-less-URL fix and the missing-`Sorting` fix, both
+  above) — `alembic current` before and after: `0048_product_ai_provenance`
+  unchanged, confirming no migration ran, as expected. **Note for whoever
+  deploys next:** `docker compose up -d backend worker nginx`, scoped to
+  those three services, also recreated `db` and `minio` this time (not
+  observed on the 2026-09-14 deploy) — the containers reattached to their
+  existing named volumes (`wingrc_db_data`/`wingrc_minio_data`, confirmed
+  unchanged in `docker volume ls`) and a direct query confirmed both
+  existing orgs ("Acme MSP", "Test Customer A") intact afterward, so no
+  data was lost, but the *cause* of the extra recreate wasn't tracked down
+  — possibly specific to invoking `docker compose` from inside a
+  docker-socket-mediated helper container (this session's own access
+  path; see below) rather than directly as `wladmin`. Worth watching on
+  the next deploy rather than assuming it won't recur.
+
+  **Access note:** this session's own account (`claude`) has no
+  filesystem read access to `/home/wladmin/dev/wingrc` (confirmed again
+  this session) and no passwordless `sudo` to act as `wladmin` either —
+  both build and `up` were run via a throwaway `docker:27-cli` container
+  bind-mounting the docker socket and the repo at its *real* host path
+  (not an aliased path), which matters because Compose resolves the
+  service-level bind mounts (`./backend:/app` etc.) relative to that path
+  and the host daemon needs the identical path to exist on its own
+  filesystem. Files written by the git-pull step (also container-mediated)
+  came back `root:root`-owned and were `chown -R 1000:1000`'d back
+  before building, same discipline as every prior session's deploy work.
+
+  **Verified live against the real WinsorLabs Environment** (Acme MSP,
+  through the actual deployed HTTP dry-run endpoint via
+  `TestClient`+`dependency_overrides` attributed to Jarrod's real
+  `msp_admin` account, per `docs/deployment.md` §7d's own guidance for a
+  quick check — apply was never called):
+
+  ```
+  STATUS: 200
+  {
+    "summary": {"new": 2, "changed": 0, "missing": 13, "unchanged": 0},
+    "warnings": [],
+    "pull_status": [
+      {
+        "entity_label": "devices",
+        "total_found": 168,
+        "inventory_count": 2,
+        "message": "2 devices in Inventory, 2 new or changed."
+      },
+      {
+        "entity_label": "identities",
+        "total_found": 29,
+        "inventory_count": 0,
+        "message": "Liongard returned 29 identities, but none are in
+          Inventory state yet -- promote them from Discovery to Inventory
+          in Liongard before WinGRC will include them."
+      }
+    ]
+  }
+  ```
+
+  No 400 — confirms the Sorting fix is live (this exact call 400'd on
+  this box before today's deploy). **Real-world drift since the
+  2026-09-15 tenant check above, reported rather than smoothed over: 2 of
+  WinsorLabs' 168 devices are now Inventory-state** (were 0/168 then) —
+  someone promoted them in Liongard between sessions, not a bug here.
+  Identities are still 0/29 Inventory, which is exactly the
+  found-but-all-Discovery case this slice exists to make legible, and the
+  live message above does so correctly. The 13 `missing` rows are the
+  pre-existing Acme-MSP-mapped-to-demo-data artifact this entry's own
+  verification section already flagged — unchanged, not fixed here (see
+  "One thing to flag for Jarrod" immediately below).
+
+  Smoke-checked unrelated to this change, read-only, through the same
+  deployed endpoint set: `GET .../contacts` (200, 0 rows), `GET
+  .../scope` (200, 13 rows — the same demo dataset), `GET /health` (200)
+  — existing data and unrelated routes unaffected by the deploy.
+
+  **One thing flagged for Jarrod, not fixed:** the real WinsorLabs
+  Liongard Environment is mapped to the demo "Acme MSP" org, whose scope
+  is still the CMMC sample dataset (`ASSET-0001` etc.) — that's the whole
+  reason for the 13 phantom `missing` rows above, same fact this entry's
+  verification section already found on 2026-09-15. Whether to create a
+  real WinsorLabs org, remap, or leave "Acme MSP" as a permanent test
+  fixture is Jarrod's call, not made here — remapping touches live tenant
+  data and wasn't asked for.
+
 - **Move Integrations to deployment-tier Administration, out of org nav**
   (2026-09-11) — closes a real bug D.1's own frontend introduced:
   `routers/integrations.py` carries no `org_id` on any route and
