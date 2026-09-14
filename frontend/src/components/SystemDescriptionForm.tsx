@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { api, assetUrl } from "../api";
 import type { SystemDescriptionSection } from "./SideNav";
 import type { ExternalConnection, StorageLocation, SystemDescriptionData } from "../types";
 
@@ -322,7 +322,7 @@ export function SystemDescriptionForm({ orgId, canWrite, onSaved, focusSection }
       ) : (
         <div className="logo-upload-area">
           {data.network_diagram_url
-            ? <img src={data.network_diagram_url} alt="Network diagram" className="diagram-preview" />
+            ? <img src={assetUrl(data.network_diagram_url) ?? undefined} alt="Network diagram" className="diagram-preview" />
             : <div className="diagram-placeholder">No diagram uploaded</div>}
           <div>
             <button
@@ -355,7 +355,7 @@ export function SystemDescriptionForm({ orgId, canWrite, onSaved, focusSection }
       ) : (
         <div className="logo-upload-area">
           {data.data_flow_diagram_url
-            ? <img src={data.data_flow_diagram_url} alt="Data flow diagram" className="diagram-preview" />
+            ? <img src={assetUrl(data.data_flow_diagram_url) ?? undefined} alt="Data flow diagram" className="diagram-preview" />
             : <div className="diagram-placeholder">No diagram uploaded</div>}
           <div>
             <button

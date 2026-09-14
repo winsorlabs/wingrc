@@ -2,6 +2,18 @@ import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, BaselineImportPre
 
 const BASE = "/api";
 
+// The backend has no idea it's mounted behind /api (that's an nginx/Vite-
+// dev-proxy detail, see vite.config.ts's proxy rewrite and deploy/nginx's
+// location block) -- so backend-constructed app-relative paths (Evidence.
+// download_url, system-description diagram urls) come back WITHOUT it.
+// Wrap every such value through this before using it as an href/src.
+// Presigned storage URLs (org logo) are absolute and pass through
+// unchanged -- only ever a bare "/..." path needs the prefix.
+export function assetUrl(path: string | null): string | null {
+  if (path === null) return null;
+  return path.startsWith("/") ? `${BASE}${path}` : path;
+}
+
 // Carries the HTTP status alongside the server's detail message so callers
 // can branch on it (e.g. UsersPanel distinguishing "blocked, offer
 // anonymize" (409) from any other failure) without re-parsing the message.

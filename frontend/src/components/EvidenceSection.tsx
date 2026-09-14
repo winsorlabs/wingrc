@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { api, assetUrl } from "../api";
 import type { EvidenceRow } from "../types";
 
 const ARTIFACT_LABELS: Record<string, string> = {
@@ -187,7 +187,7 @@ export function EvidenceSection({ orgId, assessmentId, controlStateId, canWrite,
                 {ev.download_url && (
                   <a
                     className="ev-download"
-                    href={ev.download_url}
+                    href={assetUrl(ev.download_url) ?? undefined}
                     target="_blank"
                     rel="noreferrer"
                     title="Download"
