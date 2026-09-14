@@ -56,6 +56,8 @@ function makeDetail(overrides: Partial<ProductDetail> = {}): ProductDetail {
     assumed_config: ["24/7 SOC monitoring enabled"],
     is_published: true,
     source_docs: ["RocketCyber_SIEM_and_SOC_Baseline.docx"],
+    ai_generated_at: null,
+    ai_generated_model: null,
     baseline_controls: [
       {
         control_id: "3.14.6",
@@ -122,6 +124,34 @@ describe("ToolsLibraryPanel — detail", () => {
     await screen.findByText("Acme Corp");
     expect(screen.getByText("3.14.6")).toBeTruthy();
     expect(screen.getByText(/Excluded from magic-loop activation/)).toBeTruthy();
+  });
+
+  it("shows the permanent AI-generation caveat when ai_generated_at is set", async () => {
+    vi.mocked(api.listToolsLibrary).mockResolvedValue([makeLibraryItem()]);
+    vi.mocked(api.getToolDetail).mockResolvedValue(
+      makeDetail({ ai_generated_at: "2026-09-13T00:00:00Z", ai_generated_model: "anthropic:claude-sonnet-4-6" })
+    );
+    vi.mocked(api.getToolFootprint).mockResolvedValue([]);
+
+    render(<ToolsLibraryPanel />);
+    await screen.findByText("RocketCyber");
+    fireEvent.click(screen.getByText("RocketCyber"));
+
+    await screen.findByText(/AI-generated baseline mapping/);
+    expect(screen.getByText(/anthropic:claude-sonnet-4-6/)).toBeTruthy();
+  });
+
+  it("shows no AI-generation caveat for a hand-authored baseline", async () => {
+    vi.mocked(api.listToolsLibrary).mockResolvedValue([makeLibraryItem()]);
+    vi.mocked(api.getToolDetail).mockResolvedValue(makeDetail());
+    vi.mocked(api.getToolFootprint).mockResolvedValue([]);
+
+    render(<ToolsLibraryPanel />);
+    await screen.findByText("RocketCyber");
+    fireEvent.click(screen.getByText("RocketCyber"));
+
+    await screen.findByText("3.14.6");
+    expect(screen.queryByText(/AI-generated baseline mapping/)).toBeNull();
   });
 
   it("publishing an unpublished product flips its badge without affecting other rows", async () => {

@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, IntegrationConnector, InvitedUser, LiongardEnvironmentMapping, LiongardEnvironmentOption, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, ProductLibraryItem, ProductPublishState, ProductRow, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UserDirectoryEntry, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, IntegrationConnector, InvitedUser, LiongardEnvironmentMapping, LiongardEnvironmentOption, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, ProductLibraryItem, ProductPublishState, ProductRow, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UserDirectoryEntry, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -777,6 +777,26 @@ export const api = {
       throw new Error(msg);
     }
     return r.json() as Promise<BaselineImportResult>;
+  },
+
+  // Runs the document-ingestion engine and returns an editable draft YAML
+  // plus a dry-run preview over it -- writes nothing. The reviewer edits
+  // the YAML (coverage_basis in particular -- the pipeline always leaves
+  // it unset), re-checks via dryRunBaselineImport, then applies via
+  // applyBaselineImport exactly like a hand-authored file.
+  ingestBaselineFromDocuments: async (
+    files: File[],
+    productKey: string
+  ): Promise<DocumentIngestResult> => {
+    const form = new FormData();
+    for (const f of files) form.append("files", f);
+    form.append("product_key", productKey);
+    const r = await fetch(`${BASE}/admin/products/import/from-documents`, { method: "POST", body: form });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<DocumentIngestResult>;
   },
 
   listToolDocuments: (productId: string) =>

@@ -706,6 +706,11 @@ export interface ProductDetail {
   // authored from. A ProductDocumentItem upload references one of these
   // (source_docs_ref); it never replaces the string itself.
   source_docs: string[];
+  // Permanent AI-generation provenance -- non-null forever once an
+  // ingestion sets them, never cleared by a later hand-edited re-import.
+  // null means hand-authored.
+  ai_generated_at: string | null;
+  ai_generated_model: string | null;
   baseline_controls: BaselineControlItem[];
   documents: ProductDocumentItem[];
 }
@@ -746,6 +751,14 @@ export interface BaselineImportResult {
 export interface ProductPublishState {
   id: string;
   is_published: boolean;
+}
+
+export interface DocumentIngestResult {
+  // Editable draft -- the reviewer fills in coverage_basis (and anything
+  // else) before re-checking via the existing dry-run endpoint, same as a
+  // hand-authored file.
+  yaml: string;
+  preview: BaselineImportPreview;
 }
 
 // Mirrors backend/app/connectors/__init__.py's ConfigFieldOption. Field

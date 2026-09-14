@@ -14,6 +14,8 @@ vi.mock("../api", () => ({
   api: {
     dryRunBaselineImport: vi.fn(),
     applyBaselineImport: vi.fn(),
+    ingestBaselineFromDocuments: vi.fn(),
+    uploadToolDocument: vi.fn(),
   },
 }));
 
@@ -90,5 +92,75 @@ describe("ToolImportWizard — valid re-import with active tenants", () => {
 
     await waitFor(() => expect(api.applyBaselineImport).toHaveBeenCalled());
     await screen.findByText(/Imported 1 baseline control/);
+  });
+});
+
+describe("ToolImportWizard — generate from vendor documents", () => {
+  it("generates an editable draft, flags missing coverage_basis, and re-checks after edit", async () => {
+    vi.mocked(api.ingestBaselineFromDocuments).mockResolvedValue({
+      yaml: "product:\n  key: newtool\ncontrols:\n  - control: AC.L2-3.1.1\n",
+      preview: makePreview({
+        problems: ["controls[0].coverage_basis must be explicitly set to one of ..."],
+        product_is_new: true,
+        product_key: "newtool",
+        product_name: "New Tool",
+        control_changes: [],
+      }),
+    });
+
+    render(<ToolImportWizard onClose={vi.fn()} onApplied={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Generate from vendor documents/ }));
+
+    fireEvent.change(screen.getByLabelText(/Product key/), { target: { value: "newtool" } });
+    const fileInput = document.querySelector("input[type=file]")!;
+    const doc = new File(["fake pdf"], "crm.pdf", { type: "application/pdf" });
+    fireEvent.change(fileInput, { target: { files: [doc] } });
+
+    fireEvent.click(screen.getByRole("button", { name: /Generate Baseline/ }));
+
+    await waitFor(() => expect(api.ingestBaselineFromDocuments).toHaveBeenCalledWith([doc], "newtool"));
+    await screen.findByText(/coverage_basis must be explicitly set/);
+    expect(screen.getByRole("button", { name: /Apply Import/ })).toHaveProperty("disabled", true);
+
+    // Reviewer edits the draft to add coverage_basis, then re-checks.
+    vi.mocked(api.dryRunBaselineImport).mockResolvedValue(
+      makePreview({ product_is_new: true, product_key: "newtool", product_name: "New Tool" })
+    );
+    const textarea = screen.getByRole("textbox", { name: /Generated baseline/ });
+    fireEvent.change(textarea, {
+      target: { value: "product:\n  key: newtool\ncontrols:\n  - control: AC.L2-3.1.1\n    coverage_basis: customer_system\n" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Re-check/ }));
+
+    await waitFor(() => expect(api.dryRunBaselineImport).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: /Apply Import/ })).toHaveProperty("disabled", false);
+  });
+
+  it("attaches the original source documents as ProductDocuments after apply", async () => {
+    vi.mocked(api.ingestBaselineFromDocuments).mockResolvedValue({
+      yaml: "product:\n  key: newtool\ncontrols: []\n",
+      preview: makePreview({ product_is_new: true, product_key: "newtool", control_changes: [] }),
+    });
+    vi.mocked(api.applyBaselineImport).mockResolvedValue({
+      product_id: "p-new",
+      product_key: "newtool",
+      baseline_controls: 0,
+      evidence_specs: 0,
+    });
+
+    render(<ToolImportWizard onClose={vi.fn()} onApplied={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Generate from vendor documents/ }));
+    fireEvent.change(screen.getByLabelText(/Product key/), { target: { value: "newtool" } });
+    const doc = new File(["fake pdf"], "crm.pdf", { type: "application/pdf" });
+    fireEvent.change(document.querySelector("input[type=file]")!, { target: { files: [doc] } });
+    fireEvent.click(screen.getByRole("button", { name: /Generate Baseline/ }));
+
+    await waitFor(() => expect(api.ingestBaselineFromDocuments).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: /Apply Import/ }));
+
+    await waitFor(() => expect(api.applyBaselineImport).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(api.uploadToolDocument).toHaveBeenCalledWith("p-new", doc, { title: "crm.pdf", kind: "other" })
+    );
   });
 });

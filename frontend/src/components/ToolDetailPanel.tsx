@@ -8,6 +8,10 @@ import type { ProductDetail, ProductDocumentItem, ProductFootprintRow } from "..
 
 const _DOCUMENT_KINDS = ["crm", "baseline_doc", "kb_export", "other"];
 
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString();
+}
+
 function formatBytes(n: number | null): string {
   if (n === null) return "";
   if (n < 1024) return `${n} B`;
@@ -115,6 +119,21 @@ export function ToolDetailPanel({ productId, onBack, onChanged }: Props) {
           </button>
         </div>
       </div>
+
+      {detail.ai_generated_at && (
+        <div className="drawer-ai-caveat">
+          <strong>AI-generated baseline mapping — not vendor-authoritative content.</strong>{" "}
+          Drafted by an AI model from uploaded vendor documents and reviewed by a human before
+          publishing. It may contain errors, omissions, or misclassified responsibility splits.
+          Verify against the source documents before relying on it.
+          <div className="drawer-guidance-meta">
+            <span className="drawer-guidance-meta-item">
+              Generated {formatDate(detail.ai_generated_at)}
+              {detail.ai_generated_model ? ` by ${detail.ai_generated_model}` : ""}.
+            </span>
+          </div>
+        </div>
+      )}
 
       {detail.assumed_config.length > 0 && (
         <div className="field-hint">
