@@ -3111,6 +3111,125 @@ Items without a status are planned but not yet started.
      end-to-end in the bench-verify pass above (the mechanism itself
      isn't in question, only which org gets to hold 5912).
 
+     **Update, this session (2026-09-17):** Jarrod resolved this himself
+     between sessions — Winsorlabs is now mapped to env 5912 with 2
+     applied devices (`created_at` 2026-09-14 20:15, confirmed by direct
+     query), so the Test Customer A collision was cleared without this
+     session's involvement. Not investigated further here since it wasn't
+     this session's task; noted because the device-display-name slice
+     immediately below was verified against these same 2 real, already-
+     applied rows.
+
+- **Device display name (Alias → Hostname → natural key), plus
+  last_login_user surfaced** (2026-09-17) — Jarrod's report: after a sync,
+  devices showed their serial number as the name. Root cause, confirmed
+  by reading the code before designing anything: **there was no display-
+  name concept anywhere in this codebase.** `AssetsPanel.tsx` and
+  `ScopeChangeDiffTable.tsx` both rendered `natural_key` in the Name
+  column, and `_device_natural_key()` prefers `SerialNumber`
+  (deliberately — see below). Not Liongard-specific: workbook-imported
+  and manually-added assets had exactly the same display problem, just
+  less visible since their natural keys are usually already
+  human-readable (asset tags, product names).
+
+  **The natural key was explicitly NOT changed to Hostname.** Hostnames
+  get renamed and machines get reimaged; serials don't. Keying reconcile
+  on Hostname would turn a rename into a MISSING+NEW pair — an asset
+  silently leaving and re-entering the audit boundary because someone
+  renamed a laptop. Identity and label are kept separate instead.
+
+  **Where display_name lives — decided and justified:** a canonical
+  attribute (`DeviceSoftwareAttributes` in `routers/scope.py`), not a
+  `scope_entity` column. Less invasive (no migration), and consistent
+  with every other display-ish field already living there (`make_oem`,
+  `model`, `asset_tag`) rather than a special case. Applied uniformly, not
+  Liongard-special-cased: the frontend fallback
+  (`frontend/src/lib/assetDisplay.ts`) reads `attributes.display_name`
+  for *any* entity, falling back to `natural_key` — Liongard is simply the
+  only writer that populates it automatically today. A manual "Display
+  Name" field was also added to `AssetDrawer.tsx` so workbook/manually-
+  entered assets can get one too, not just Liongard-synced devices — not
+  explicitly required by the task's verification list, but directly
+  serves the "apply uniformly" instruction at near-zero cost.
+
+  **Resolution order: Alias → Hostname → natural_key** — an Alias is a
+  human naming the device *inside Liongard*, deliberately, the strongest
+  "what people actually call this" signal this source can offer.
+  Confirmed against two real WinsorLabs Inventory-state device records
+  before writing any code (2026-09-17): one had an Alias ("Jarrods
+  Desktop"), one didn't (falls back to Hostname, "WL-LT26"). Never blank —
+  falls back to the natural key itself as the final resort, matching
+  current behavior exactly when nothing better exists.
+
+  **`LastLoginUser` promoted to a canonical `last_login_user` key**,
+  surfaced in the asset drawer explicitly labeled as an observed login,
+  not an owner. The existing hard rule — `device_profile_to_canonical()`'s
+  own docstring already reasoned this through — stands unchanged and is
+  now tested negatively, not just by omission:
+  `responsible_contact_id` is asserted absent in the same test that
+  asserts `last_login_user` IS populated, so the two can never be
+  silently conflated by a future edit.
+
+  **§3 — a real, pre-existing diff-noise bug, found and reported, not
+  fixed.** `device_profile_to_canonical()`'s `attributes = dict(record)`
+  stores the *entire* raw Liongard record, including fields that change
+  on every pull regardless of whether the device itself changed at all.
+  `reconcile.py:_field_diffs()` compares the full union of
+  `current.attributes`/`incoming.attributes` keys with zero exclusion
+  list. **Reproduced directly, not just reasoned about:** two
+  `CanonicalEntity` pulls of the identical device, differing only in
+  `LastSeenTimelineID`/`LastSeen`/`UpdatedOn`/`AvailableStorage`, reconcile
+  to `change_type="changed"` with exactly those four volatile fields as
+  the diff. Every applied Liongard device will report CHANGED on every
+  subsequent sync, purely from telemetry drift — the same failure class
+  D.2's own MAC-address-ordering fix (`reconcile.py:_comparable()`)
+  already guards against for list-valued attributes, but broader: whole
+  keys, not element order. **Not fixed in this slice** — `reconcile.py` is
+  shared across every source (workbook, manual, Liongard), so a fix needs
+  its own deliberate scope decision. Recommended direction: compare a
+  defined allowlist of meaningful attributes (the canonical vocabulary
+  plus a short list of source fields worth tracking) rather than the raw
+  union of everything — safer than a volatile-fields denylist, since an
+  unrecognized future field then defaults to NOT producing diff noise
+  instead of defaulting to producing it until someone notices. Left as a
+  named, described gap for a dedicated slice.
+
+  Bench-verified on an isolated wl-util-1 stack: ruff clean, **1092/1092**
+  backend tests (4 new importer unit tests for the Alias/Hostname/
+  natural-key fallback chain, 1 new integration test for the real
+  dry-run→apply→DB round trip, 1 strengthened negative test for
+  `responsible_contact_id`), `tsc -b` clean, `vite build` clean,
+  **135/135** vitest (3 new files: `assetDisplay.test.ts`,
+  `AssetsPanel.test.tsx`, `ScopeChangeDiffTable.test.tsx`).
+
+  **Deployed** per `docs/deployment.md` §7 with `--no-deps` (confirmed
+  again this deploy: `db`/`minio` stayed at their prior `CreatedAt`, only
+  `backend`/`worker`/`nginx` recreated). Backup taken and verified
+  (444 TOC entries). No migration — confirmed via `docker logs`
+  (no `Running upgrade` lines), not assumed, since none was expected
+  (this slice only changes Pydantic validation and Python mapping logic,
+  no schema change).
+
+  **Verified live against the real WinsorLabs environment, dry-run only
+  (never applied):**
+  ```
+  "System Serial Number" (WL-DT26): display_name="Jarrods Desktop", last_login_user="jarrod"
+  "PF3Y6K26" (WL-LT26):             display_name="WL-LT26",         last_login_user="WINSORLABS\jarrod.winsor"
+  ```
+  Both reported `change_type="changed"` rather than `"new"` — **investigated,
+  not just accepted:** Winsorlabs already held 2 applied Liongard-sourced
+  `scope_entity` rows from *before* this deploy (`created_at` 2026-09-14
+  20:15 — Jarrod resolved the Test Customer A/environment-5912 collision
+  himself between sessions; see the unmap entry above), and a direct
+  query confirmed those existing rows have neither `display_name` nor
+  `last_login_user` set (written by the pre-this-slice code). "Changed" is
+  therefore correct: newly-recognized attribute keys are a real diff the
+  first time, not noise. A future re-sync after applying this once would
+  report unchanged for these two keys specifically — though the §3
+  telemetry-drift bug documented above would still produce a changed
+  report from unrelated fields, which is exactly why that's flagged as
+  its own open item rather than folded into "fixed."
+
 ---
 
 ## Planned
