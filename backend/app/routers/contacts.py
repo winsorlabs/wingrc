@@ -603,9 +603,14 @@ def list_liongard_identity_candidates(
         mapping.liongard_environment_id, mapping.liongard_environment_name, pulled_at
     )
     try:
+        # .records -- pull_identities() returns InventoryPull (records plus
+        # the pre-filter total_count, see connectors/liongard.py), not a
+        # bare list. This endpoint only needs the already Inventory-state-
+        # filtered records; total_count has no use here since there's no
+        # dry-run-style pull_status to surface for a contact-candidate list.
         identity_records = liongard_connector.pull_identities(
             config, credential, mapping.liongard_environment_id
-        )
+        ).records
     except liongard_connector.LiongardAPIError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
 

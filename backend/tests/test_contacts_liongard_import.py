@@ -88,7 +88,9 @@ def _stub_liongard(monkeypatch):
     monkeypatch.setattr(
         liongard_module,
         "pull_identities",
-        lambda config, credential, environment_id: state["identities"],
+        lambda config, credential, environment_id: liongard_module.InventoryPull(
+            records=state["identities"], total_count=len(state["identities"])
+        ),
     )
     return state
 
