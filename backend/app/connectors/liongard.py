@@ -65,13 +65,38 @@ _DEFAULT_PAGE_SIZE = 100
 _MAX_PAGES = 200
 
 
+def _normalize_instance_url(raw: str) -> str:
+    """Strip whitespace/trailing slash, and default to https:// when no
+    scheme is given -- Liongard is SaaS-only (always HTTPS), and an admin
+    pasting just the subdomain (e.g. "us4.app.liongard.com", not
+    "https://us4.app.liongard.com") is a completely ordinary mistake the
+    config field's own help_text invites without enforcing. Found live on
+    wl-util-1 (2026-09-14): urllib.request.Request() raises a bare
+    ValueError for a scheme-less URL, and that ValueError isn't caught
+    anywhere downstream (not HTTPError, not URLError) -- every caller
+    (_test_connection here, and _call() below, shared by
+    list_environments/pull_device_profiles/pull_identities) turned an
+    ordinary config typo into an uncaught 500 instead of a message naming
+    what to fix. Normalizing here fixes the common case silently -- the
+    result always contains "://" (urllib's own trigger for "unknown url
+    type") once this has run on a non-empty string, so the ValueError
+    guards around urllib.request.Request() in _test_connection() and
+    _call() below are a defensive fallback for any input this function
+    doesn't anticipate, not a path expected to fire in normal use.
+    """
+    url = raw.strip().rstrip("/")
+    if url and "://" not in url:
+        url = f"https://{url}"
+    return url
+
+
 def _test_connection(
     config: dict, credential: dict, test_input: str | None = None
 ) -> ConnectorTestResult:
     # test_input: unused -- this connector's test takes no per-invocation
     # input (there's nothing to "send" to test), see connectors/__init__.py's
     # TestConnectionFn docstring for why the parameter exists at all.
-    instance_url = str(config.get("instance_url") or "").strip().rstrip("/")
+    instance_url = _normalize_instance_url(str(config.get("instance_url") or ""))
     access_key_id = str(credential.get("access_key_id") or "")
     access_key_secret = str(credential.get("access_key_secret") or "")
 
@@ -82,7 +107,17 @@ def _test_connection(
 
     token = base64.b64encode(f"{access_key_id}:{access_key_secret}".encode()).decode()
     url = f"{instance_url}/api/v1/environments/count/"
-    req = urllib.request.Request(url, headers={"X-ROAR-API-KEY": token})
+
+    try:
+        req = urllib.request.Request(url, headers={"X-ROAR-API-KEY": token})
+    except ValueError:
+        return ConnectorTestResult(
+            ok=False,
+            message=(
+                f"{instance_url!r} doesn't look like a valid URL — check the Instance URL "
+                "field (e.g. https://myinstance.app.liongard.com)."
+            ),
+        )
 
     try:
         with urllib.request.urlopen(req, timeout=_TIMEOUT_SECONDS) as resp:  # noqa: S310
@@ -131,7 +166,7 @@ class LiongardEnvironment:
 
 
 def _instance_url(config: dict) -> str:
-    instance_url = str(config.get("instance_url") or "").strip().rstrip("/")
+    instance_url = _normalize_instance_url(str(config.get("instance_url") or ""))
     if not instance_url:
         raise LiongardAPIError("Instance URL is not set.")
     return instance_url
@@ -157,7 +192,14 @@ def _call(url: str, headers: dict[str, str], body: dict | None) -> dict | list:
     req_headers = dict(headers)
     if data is not None:
         req_headers["Content-Type"] = "application/json"
-    request = urllib.request.Request(url, data=data, headers=req_headers)
+
+    try:
+        request = urllib.request.Request(url, data=data, headers=req_headers)
+    except ValueError as e:
+        raise LiongardAPIError(
+            f"{url!r} doesn't look like a valid URL — check the Instance URL field "
+            "(e.g. https://myinstance.app.liongard.com)."
+        ) from e
 
     try:
         with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as resp:  # noqa: S310
