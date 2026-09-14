@@ -24,14 +24,19 @@ import pytest
 
 from app.ai.base import AIProvider
 from app.ai.none_ import NullProvider
+from app.baseline import BaselineEntry as _BaselineEntry
 from app.baseline import (
     CandidateState,
     Classification,
     ControlEntry,
     EvidenceSpec,
+    ProductMeta,
     load_baseline,
+    to_yaml_dict,
 )
 from app.importers.document import (
+    _MAX_INPUT_CHARS,
+    DocumentIngestError,
     _apply_evidence_minimization,
     extract_text,
     ingest_document,
@@ -379,3 +384,173 @@ def test_ingest_pipeline_product_meta_preserved():
 def test_null_provider_raises():
     with pytest.raises(RuntimeError, match="No AI provider configured"):
         NullProvider().complete("sys", "user")
+
+
+# ---------------------------------------------------------------------------
+# coverage_basis: AI-ingested entries never get one -- a reviewer must set
+# it explicitly (see baseline_import.validate()). Round-trips through
+# to_yaml_dict()/load_baseline() when a human has set it.
+# ---------------------------------------------------------------------------
+
+
+def test_ingest_pipeline_never_sets_coverage_basis():
+    """The AI pipeline must leave coverage_basis unset on every entry --
+    baseline_import.validate() is what forces a human to fill it in before
+    apply, per the accepted design decision that nothing in a vendor
+    document reliably distinguishes platform-only from customer-system
+    coverage without a human who knows the deployment.
+    """
+    fake_doc = _fake_docx()
+    with patch("app.importers.document.extract_text", return_value="stub text"):
+        entry = ingest_document(
+            fake_doc,
+            product_key="rocketcyber",
+            ai_provider=_StubAIProvider(),
+        )
+    assert all(c.coverage_basis is None for c in entry.controls)
+
+
+def test_control_entry_coverage_basis_round_trips_through_yaml_dict():
+    entry = _BaselineEntry(
+        product=ProductMeta(
+            key="x", name="X", provider="X", category="ESP",
+            asset_type="SPA", framework="NIST 800-171 Rev 2 / CMMC L2",
+            role="role",
+        ),
+        controls=[
+            ControlEntry(
+                control="AC.L2-3.1.1",
+                classification=Classification.SHARED,
+                candidate_state=CandidateState.PENDING_EVIDENCE,
+                coverage_basis="platform_only",
+            )
+        ],
+    )
+    d = to_yaml_dict(entry)
+    assert d["controls"][0]["coverage_basis"] == "platform_only"
+
+
+def test_control_entry_coverage_basis_omitted_when_unset():
+    entry = _BaselineEntry(
+        product=ProductMeta(
+            key="x", name="X", provider="X", category="ESP",
+            asset_type="SPA", framework="NIST 800-171 Rev 2 / CMMC L2",
+            role="role",
+        ),
+        controls=[
+            ControlEntry(
+                control="AC.L2-3.1.1",
+                classification=Classification.SHARED,
+                candidate_state=CandidateState.PENDING_EVIDENCE,
+            )
+        ],
+    )
+    d = to_yaml_dict(entry)
+    assert "coverage_basis" not in d["controls"][0]
+
+
+# ---------------------------------------------------------------------------
+# Permanent AI-provenance fields on ProductMeta round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_product_meta_ai_provenance_round_trips_through_yaml_dict():
+    entry = _BaselineEntry(
+        product=ProductMeta(
+            key="x", name="X", provider="X", category="ESP",
+            asset_type="SPA", framework="NIST 800-171 Rev 2 / CMMC L2",
+            role="role",
+            ai_generated_at="2026-09-13T00:00:00+00:00",
+            ai_generated_model="anthropic:claude-sonnet-4-6",
+        ),
+        controls=[],
+    )
+    d = to_yaml_dict(entry)
+    assert d["product"]["ai_generated_at"] == "2026-09-13T00:00:00+00:00"
+    assert d["product"]["ai_generated_model"] == "anthropic:claude-sonnet-4-6"
+
+
+def test_product_meta_ai_provenance_omitted_when_unset():
+    entry = _BaselineEntry(
+        product=ProductMeta(
+            key="x", name="X", provider="X", category="ESP",
+            asset_type="SPA", framework="NIST 800-171 Rev 2 / CMMC L2",
+            role="role",
+        ),
+        controls=[],
+    )
+    d = to_yaml_dict(entry)
+    assert "ai_generated_at" not in d["product"]
+    assert "ai_generated_model" not in d["product"]
+
+
+# ---------------------------------------------------------------------------
+# Size guard, max_tokens override, and error normalization
+# ---------------------------------------------------------------------------
+
+
+def test_ingest_document_rejects_oversized_input():
+    fake_doc = _fake_docx()
+    huge = "x" * (_MAX_INPUT_CHARS + 1)
+    with patch("app.importers.document.extract_text", return_value=huge):
+        with pytest.raises(DocumentIngestError, match="exceeds the"):
+            ingest_document(
+                fake_doc,
+                product_key="rocketcyber",
+                ai_provider=_StubAIProvider(),
+            )
+
+
+def test_ingest_document_passes_higher_max_tokens():
+    captured: dict = {}
+
+    class _RecordingProvider(AIProvider):
+        def complete(self, system, user, *, max_tokens=8192):
+            captured["max_tokens"] = max_tokens
+            return _STUB_AI_RESPONSE
+
+    fake_doc = _fake_docx()
+    with patch("app.importers.document.extract_text", return_value="stub text"):
+        ingest_document(
+            fake_doc, product_key="rocketcyber", ai_provider=_RecordingProvider()
+        )
+    assert captured["max_tokens"] > 8192
+
+
+def test_ingest_document_wraps_null_provider_error():
+    """ai_provider='none' must degrade cleanly through this pipeline too --
+    a single DocumentIngestError, not a raw RuntimeError leaking a different
+    shape to callers than every other failure mode in this module.
+    """
+    fake_doc = _fake_docx()
+    with patch("app.importers.document.extract_text", return_value="stub text"):
+        with pytest.raises(DocumentIngestError, match="No AI provider configured"):
+            ingest_document(
+                fake_doc, product_key="rocketcyber", ai_provider=NullProvider()
+            )
+
+
+def test_ingest_document_wraps_malformed_json():
+    class _BadJSONProvider(AIProvider):
+        def complete(self, system, user, *, max_tokens=8192):
+            return "{not valid json"
+
+    fake_doc = _fake_docx()
+    with patch("app.importers.document.extract_text", return_value="stub text"):
+        with pytest.raises(DocumentIngestError, match="isn't valid JSON"):
+            ingest_document(
+                fake_doc, product_key="rocketcyber", ai_provider=_BadJSONProvider()
+            )
+
+
+def test_ingest_document_wraps_wrong_shape_json():
+    class _WrongShapeProvider(AIProvider):
+        def complete(self, system, user, *, max_tokens=8192):
+            return json.dumps({"controls": []})  # missing "product"
+
+    fake_doc = _fake_docx()
+    with patch("app.importers.document.extract_text", return_value="stub text"):
+        with pytest.raises(DocumentIngestError, match="expected shape"):
+            ingest_document(
+                fake_doc, product_key="rocketcyber", ai_provider=_WrongShapeProvider()
+            )

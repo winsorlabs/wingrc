@@ -8,12 +8,15 @@ Run in-container:
 """
 from __future__ import annotations
 
+import json
 import uuid
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from app.ai.base import AIProvider
 from app.auth import get_current_user
 from app.db import get_session
 from app.engine import activate_org_product, start_assessment
@@ -481,6 +484,226 @@ def test_unpublish_hides_from_tenant_without_disturbing_existing_activation(
 
 
 # ---------------------------------------------------------------------------
+# Import: tightened coverage_basis validation (must be explicit for
+# provider_satisfies/shared; still defaulted for customer_owns)
+# ---------------------------------------------------------------------------
+
+
+def test_dry_run_requires_coverage_basis_for_provider_satisfies(admin_client, db_session):
+    seed = _seed_framework_and_control(db_session)
+    yaml_bytes = f"""
+product:
+  key: no-coverage-basis
+  name: Test Product
+  provider: Acme
+  category: ESP
+controls:
+  - control: {seed["ctrl"].control_id}
+    objectives: [a]
+    classification: provider_satisfies
+    evidence:
+      - {{artifact: "Config export", type: export}}
+""".encode()
+    r = admin_client.post(
+        "/admin/products/import/dry-run",
+        files={"file": ("x.yaml", yaml_bytes, "application/x-yaml")},
+    )
+    assert r.status_code == 200
+    problems = r.json()["problems"]
+    assert any(
+        "coverage_basis must be explicitly set" in p for p in problems
+    ), problems
+
+
+def test_dry_run_allows_missing_coverage_basis_for_customer_owns(admin_client, db_session):
+    seed = _seed_framework_and_control(db_session)
+    yaml_bytes = f"""
+product:
+  key: customer-owns-no-basis
+  name: Test Product
+  provider: Acme
+  category: ESP
+controls:
+  - control: {seed["ctrl"].control_id}
+    classification: customer_owns
+    note: "Customer owns this."
+""".encode()
+    r = admin_client.post(
+        "/admin/products/import/dry-run",
+        files={"file": ("x.yaml", yaml_bytes, "application/x-yaml")},
+    )
+    assert r.status_code == 200
+    assert r.json()["problems"] == []
+
+
+# ---------------------------------------------------------------------------
+# Document ingestion -> existing review flow (no second ingest path)
+# ---------------------------------------------------------------------------
+
+
+def _stub_ingest_response(control_id: str) -> str:
+    return json.dumps({
+        "product": {
+            "name": "Ingested Tool",
+            "provider": "Acme",
+            "role": "Does a thing.",
+            "assumed_config": ["Agent deployed"],
+            "source_docs": ["vendor_crm.pdf"],
+        },
+        "controls": [
+            {
+                "control": control_id,
+                "objectives": ["a"],
+                "classification": "provider_satisfies",
+                "provider_contribution": "Does the thing.",
+                "customer_action": "Configure the thing.",
+                "evidence": [{"artifact": "Config export", "type": "export"}],
+                "candidate_state": "pending_evidence",
+            }
+        ],
+    })
+
+
+class _StubIngestProvider(AIProvider):
+    def __init__(self, response: str) -> None:
+        self._response = response
+
+    def complete(self, system, user, *, max_tokens=8192):
+        return self._response
+
+    @property
+    def identity(self) -> str:
+        return "anthropic:stub-model"
+
+
+def _fake_pdf_bytes() -> bytes:
+    return b"%PDF-1.4 fake content for magic-byte check"
+
+
+def test_ingest_from_documents_requires_ai_provider_configured(admin_client, db_session):
+    """ai_provider='none' (the untouched default in tests) must degrade
+    cleanly through this endpoint too -- a specific 422, never a 500."""
+    _seed_framework_and_control(db_session)
+    r = admin_client.post(
+        "/admin/products/import/from-documents",
+        files={"files": ("crm.pdf", _fake_pdf_bytes(), "application/pdf")},
+        data={"product_key": "ingested-tool-noai"},
+    )
+    assert r.status_code == 422
+    assert "No AI provider configured" in r.json()["detail"]
+
+
+def test_ingest_from_documents_returns_yaml_and_preview_needing_coverage_basis(
+    admin_client, db_session
+):
+    seed = _seed_framework_and_control(db_session)
+    stub = _StubIngestProvider(_stub_ingest_response(seed["ctrl"].control_id))
+    with (
+        patch("app.routers.admin_products.get_ai_provider", return_value=stub),
+        patch("app.importers.document.extract_text", return_value="stub text"),
+    ):
+        r = admin_client.post(
+            "/admin/products/import/from-documents",
+            files={"files": ("crm.pdf", _fake_pdf_bytes(), "application/pdf")},
+            data={"product_key": "ingested-tool"},
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert "ingested-tool" in body["yaml"]
+    assert "coverage_basis" not in body["yaml"], (
+        "the ingestion pipeline must never fill this in itself"
+    )
+    assert any("coverage_basis" in p for p in body["preview"]["problems"]), (
+        "a reviewer must be forced to set coverage_basis before this could "
+        "ever be applied -- same validate() gate a hand-authored YAML hits"
+    )
+    assert body["preview"]["product_is_new"] is True
+
+
+def test_ingest_from_documents_apply_lands_unpublished_invisible_with_provenance(
+    admin_client, db_session, fake_msp_admin
+):
+    """End to end: ingest -> reviewer fills in coverage_basis -> apply ->
+    unpublished and invisible to tenants until published, with permanent
+    AI provenance recorded and visible in the tool detail view."""
+    seed = _seed_framework_and_control(db_session)
+    stub = _StubIngestProvider(_stub_ingest_response(seed["ctrl"].control_id))
+    with (
+        patch("app.routers.admin_products.get_ai_provider", return_value=stub),
+        patch("app.importers.document.extract_text", return_value="stub text"),
+    ):
+        r = admin_client.post(
+            "/admin/products/import/from-documents",
+            files={"files": ("crm.pdf", _fake_pdf_bytes(), "application/pdf")},
+            data={"product_key": "ingested-tool-2"},
+        )
+    assert r.status_code == 200
+
+    import yaml as _yaml
+
+    data_dict = _yaml.safe_load(r.json()["yaml"])
+    for c in data_dict["controls"]:
+        c["coverage_basis"] = "customer_system"
+    reviewed_yaml = _yaml.safe_dump(data_dict, sort_keys=False).encode()
+
+    apply_r = admin_client.post(
+        "/admin/products/import/apply",
+        files={"file": ("reviewed.yaml", reviewed_yaml, "application/x-yaml")},
+    )
+    assert apply_r.status_code == 201
+
+    product = db_session.scalars(
+        select(Product).where(Product.key == "ingested-tool-2")
+    ).one()
+    assert product.is_published is False
+    assert product.ai_generated_at is not None
+    assert product.ai_generated_model == "anthropic:stub-model"
+
+    detail = admin_client.get(f"/admin/products/{product.id}").json()
+    assert detail["ai_generated_at"] is not None
+    assert detail["ai_generated_model"] == "anthropic:stub-model"
+
+    # Invisible to a tenant via the real endpoint until published, exactly
+    # like a hand-authored import (baseline_import.py's reset_published).
+    org = Organization(id=fake_msp_admin.org_id, name=f"IngestOrg-{uuid.uuid4().hex[:6]}")
+    db_session.add(org)
+    db_session.flush()
+    _grant(db_session, fake_msp_admin)
+    assessment = start_assessment(
+        db_session, org_id=org.id, framework_id=product.framework_id, name="Ingest Test"
+    )
+    db_session.flush()
+    listed = admin_client.get(
+        f"/orgs/{org.id}/assessments/{assessment.id}/products"
+    ).json()
+    assert listed == []
+
+
+def test_ingest_from_documents_rejects_too_many_files(admin_client, db_session):
+    _seed_framework_and_control(db_session)
+    r = admin_client.post(
+        "/admin/products/import/from-documents",
+        files=[
+            ("files", ("a.pdf", _fake_pdf_bytes(), "application/pdf")),
+            ("files", ("b.pdf", _fake_pdf_bytes(), "application/pdf")),
+            ("files", ("c.pdf", _fake_pdf_bytes(), "application/pdf")),
+        ],
+        data={"product_key": "too-many"},
+    )
+    assert r.status_code == 422
+
+
+def test_ingest_from_documents_rejects_bad_extension(admin_client, db_session):
+    _seed_framework_and_control(db_session)
+    r = admin_client.post(
+        "/admin/products/import/from-documents",
+        files={"files": ("matrix.csv", b"a,b,c", "text/csv")},
+        data={"product_key": "bad-ext"},
+    )
+    assert r.status_code == 415
+
+
+# ---------------------------------------------------------------------------
 # Document attachments
 # ---------------------------------------------------------------------------
 
@@ -539,5 +762,11 @@ def test_customer_poc_gets_403_on_every_endpoint(poc_client, db_session):
     r = poc_client.post(
         "/admin/products/import/dry-run",
         files={"file": ("x.yaml", b"product: {}", "application/x-yaml")},
+    )
+    assert r.status_code == 403
+    r = poc_client.post(
+        "/admin/products/import/from-documents",
+        files={"files": ("x.pdf", b"%PDF-1.4", "application/pdf")},
+        data={"product_key": "x"},
     )
     assert r.status_code == 403
