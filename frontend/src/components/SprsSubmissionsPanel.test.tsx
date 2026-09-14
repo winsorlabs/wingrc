@@ -35,6 +35,8 @@ function makeContact(overrides: Partial<Contact> = {}): Contact {
     role_title: null,
     contract_ref: null,
     notes: null,
+    source: "manual",
+    source_ref: null,
     documentation_roles: [],
     created_at: "2026-01-01T00:00:00Z",
     ...overrides,

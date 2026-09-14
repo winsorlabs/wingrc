@@ -2733,6 +2733,129 @@ Items without a status are planned but not yet started.
     exercises since it mocks the connector at the `ConnectorSpec` level
     for every test).
 
+- **Personnel connector — Liongard identities → contacts import**
+  (2026-09-14) — was tracked in this file's own Deferred section as
+  "Personnel connector — Liongard / M365 → auto-populate contacts;
+  depends on M," with a 2026-09-07 note already flagging "M" as
+  untraceable. **Correction:** neither "M" (root `ROADMAP.md` has no such
+  item; the only "M" in this repo is Multi-org access `M.1`–`M.8`, whose
+  open remainder `M.7`/`M.8` — a deployment-wide user directory — has no
+  real connection to this feature) nor the Sequencing diagram's "Document
+  library (N)" (also checked: no technical dependency either) was ever
+  the actual prerequisite. The real, verifiable dependency was the
+  Liongard connector itself (D.1 credential/test-connection + D.2
+  `pull_identities()`) — already shipped, and (after the scheme-less-URL
+  fix above and a separate same-session fix to a missing required
+  `Sorting` field in `pull_identities()`'s pagination — see this file's
+  D.2 entry) actually returning real identity data.
+
+  **Explicitly NOT a bulk sync.** `pull_identities()` → `scope_entity`
+  (the scope graph, via `identities_to_canonical()`) already existed and
+  is untouched by this slice. `Contact` — what RACI, documentation roles,
+  SPRS submitters, and review-cycle reviewers all point at — is a
+  deliberately separate model (see `Contact`'s own docstring in
+  `models.py`): a person can be in scope without being a contact, and
+  vice versa. An org can have hundreds of Liongard identities and only a
+  handful are compliance contacts, so this never creates one per
+  identity — it lists identities from the org's already-mapped
+  Environment and an `msp_admin`/`consultant_admin` picks which become
+  contacts.
+
+  **§0 blocker, resolved against real data first (WinsorLabs' own mapped
+  Environment had zero Inventory-state identities at the time, so
+  Goodwin-Bradley and Jade — two real, unmapped Environments visible
+  under the same credential — were read, live, read-only, to answer
+  this):** `Email`/`FirstName`/`LastName`/`DisplayName` are reliably
+  present (100% across 24 real Inventory-state identities checked);
+  `Phone` is essentially never populated (0/24); **no job-title-equivalent
+  field exists anywhere in Liongard's identity schema at all** — confirmed
+  by enumerating full real records, not assumed from docs. This directly
+  decided the mapping: `importers/liongard.py:identity_to_contact_fields()`
+  (a new, separate function — never called from anywhere
+  `identity_to_canonical()` is, and never writes `scope_entity`) prefers
+  `DisplayName`, falls back to `FirstName`+`LastName`, then `Email`; phone
+  maps through defensively; `role_title` is always `None` — the import
+  wizard offers it as a plain admin-typed field with zero Liongard
+  prefill, never a silent value.
+
+  **Design, per the task's own explicit requirements:**
+  - `affiliation` is required for every newly-created contact and is
+    never defaulted or guessed from email domain — Liongard knows a user
+    exists, not which party they represent, and a wrong value would
+    quietly corrupt the RACI smart-default logic downstream.
+  - Re-importing an already-matched identity (by normalized email) never
+    duplicates or silently overwrites — the admin explicitly opts each
+    selected field (`name`/`phone` only) into a refresh; an
+    already-matched identity with nothing checked reports `unchanged`
+    and the contact is untouched.
+  - An identity with no email is listed but flagged, never silently
+    dropped and never selectable.
+  - **Fixed a real pre-existing bug found while designing this:**
+    `routers/contacts.py` never normalized email for its dupe/clash
+    checks (case-sensitive compare, case-sensitive DB constraint) — this
+    feature would have multiplied it across however many identities an
+    admin selected. Fixed at the Pydantic-validator layer (lowercased +
+    stripped on every create/patch/import, not just the new endpoints),
+    plus a migration backfill of existing rows conservative enough to
+    skip (not silently merge) any pre-existing case-duplicate.
+  - **Provenance** — `Contact.source`/`source_ref` added (migration
+    `0049_contact_provenance`), reusing `domain.py:Source.LIONGARD`
+    rather than inventing a parallel vocabulary, and the exact same
+    `importers/liongard.py:build_source_ref()` string format
+    `scope_entity` already uses. Set only at creation, deliberately never
+    rewritten by a later refresh — a contact is a curated record, not a
+    Liongard cache, so `source`/`source_ref` answer "how was this row
+    created," not "when was it last synced."
+
+  **§4 — scope_entity link: recommended as a later slice, not built.**
+  An identity imported as a contact often also exists (or could exist)
+  as a `scope_entity` PERSON row, and linking them would let a future SSP
+  answer "in the CUI boundary *and* is the Security Officer." Recommended
+  direction if it's picked up: a nullable FK the *other* way from how
+  `responsible_contact_id` already points (`scope_entity.attributes` →
+  `contact.id`) — i.e. an explicit, admin-confirmed correlation captured
+  at import time when both rows demonstrably refer to the same identity,
+  not an automatic match on natural key. Automatic matching was
+  considered and rejected here: `scope_entity`'s PERSON natural key
+  prefers Email → Username → DisplayName while `Contact` requires Email,
+  so the two aren't guaranteed to key the same way, and guessing a link
+  between two deliberately-separate models is a worse failure mode than
+  not linking them at all. Left for a dedicated slice with its own
+  design, not half-built here.
+
+  **§5 — lifecycle hazard note.** `contact` rows hard-delete and cascade
+  to `raci_assignment` (see this file's own "Departed contacts" note
+  under the RACI copy-forward Done entry above, which worked out that
+  `RaciAssignment.contact_id` is `ON DELETE CASCADE` by design). This
+  import feature raises the number of contact rows an org accumulates
+  from an external source, which raises the number of rows whose
+  deletion can silently destroy historical RACI records — not fixed
+  here, but whoever picks up a contact-deactivation/soft-delete slice
+  should know this feature increased that exposure.
+
+  **Scope, as specified:** M365/Entra as a second identity source was
+  explicitly out — `identity_to_contact_fields()` and the import
+  endpoints are Liongard-specific by name, but nothing about the
+  selection UI or the `Contact.source`/`source_ref` schema assumes a
+  single source, so a second connector is additive, not a rework.
+  Auto-assigning an imported contact to a RACI/documentation role was
+  also explicitly out — creating the contact is the feature.
+
+  New endpoints (`backend/app/routers/contacts.py`, restricted to
+  `msp_admin`/`consultant_admin` — unlike the rest of that router, which
+  any org member with write access can use, since this is a bulk-adjacent,
+  external-system-sourced action): `GET .../contacts/import/liongard`
+  (lists candidates, cross-referenced against existing contacts by
+  normalized email, read-only) and `POST .../contacts/import/liongard`
+  (creates/refreshes exactly the admin-confirmed selection; echoes back
+  the `source_ref` from the GET response rather than re-pulling Liongard,
+  same dry-run-data-is-authoritative contract as `/imports/workbook/apply`).
+  Frontend: `ContactImportWizard.tsx`, wired into `ContactsPanel.tsx`'s
+  header ("Import from Liongard," gated on `currentUserRole` client-side
+  as a UX affordance only — the backend's own role check is the real
+  enforcement) plus a Source column showing Liongard vs. Manual
+  provenance in the contacts table.
+
 ---
 
 ## Planned
@@ -2845,15 +2968,19 @@ incident.
 
 ```
 Document library (N)
-    → Personnel connector pull (Liongard / M365 → contacts)
 ```
+
+(The Personnel connector row that used to hang off this diagram — "→
+Personnel connector pull (Liongard / M365 → contacts)" — has been removed.
+It never actually depended on the document library; see this file's own
+Done section, "Personnel connector — Liongard identities → contacts
+import", for the correction and the real dependency.)
 
 ---
 
 ## Deferred
 
 - **Document-library template content** — paid add-on seed script; depends on document library (N) mechanism being live. **Verified 2026-09-07: N is still fully unstarted** — no `Document`/`document_objective_tag` model, no `routers/documents.py`. (`importers/document.py` is a different, already-shipped feature — AI extraction of a *product baseline* from a vendor CRM/PDF, not the tenant-facing template library N describes. Don't confuse the two on a future pass.)
-- **Personnel connector** — Liongard / M365 → auto-populate contacts; depends on M. **Note (2026-09-07):** "M" here isn't fully traceable — root `ROADMAP.md` has no item M; the only "M" in this repo is the Multi-org access work (`M.1`–`M.8`) tracked in this file's own Done section, whose core (`M.1`–`M.6`) is done and whose remainder (`M.7`/`M.8`, a deployment-wide user directory + admin grant/revoke UI) doesn't obviously relate to auto-populating contacts. Left as originally written rather than guessed at; re-derive the actual dependency before resuming this item.
 - **AI implementation statements** — generation worker behind BYO-AI provider abstraction; scaffolding exists. **Verified 2026-09-07, more specifically than before:** `config.py`'s `ai_provider` setting and `backend/app/ai/` are real and already load-bearing — `importers/document.py` (the vendor-CRM/baseline extractor) is a working consumer of that same abstraction today. What's still missing is the per-objective draft-statement path itself: no `draft-statement` endpoint exists on `assessments.py`, and `ImplementationStatement` rows are still authored by hand. The provider plumbing this item needs already exists; the feature-specific generation logic does not.
 - ~~**Scope connector** — Liongard / Datto RMM → `scope_entity`~~ **Shipped
   2026-09-11 (D.2) — no longer deferred.** See this file's own Done

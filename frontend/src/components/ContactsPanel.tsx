@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Contact } from "../types";
 import { ContactDrawer } from "./ContactDrawer";
+import { ContactImportWizard } from "./ContactImportWizard";
 
 const ROLE_LABELS: Record<string, string> = {
   it_admin: "IT Admin",
@@ -19,14 +20,25 @@ const ROLE_LABELS: Record<string, string> = {
 interface Props {
   orgId: string;
   canWrite: boolean;
+  // Optional: when omitted (e.g. OnboardingWizard, which has no role
+  // context threaded to it), the Liongard import entry point simply stays
+  // hidden -- the backend's own require_org_access("msp_admin",
+  // "consultant_admin") gate on those endpoints is the real enforcement,
+  // this is only a UX affordance to avoid showing a button that would 403.
+  currentUserRole?: string;
   onChanged?: () => void;
 }
 
-export function ContactsPanel({ orgId, canWrite, onChanged }: Props) {
+const _LIONGARD_IMPORT_ROLES = new Set(["msp_admin", "consultant_admin"]);
+
+export function ContactsPanel({ orgId, canWrite, currentUserRole, onChanged }: Props) {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [drawerContact, setDrawerContact] = useState<Contact | null | undefined>(undefined);
+  const [showImportWizard, setShowImportWizard] = useState(false);
+
+  const canImportLiongard = canWrite && !!currentUserRole && _LIONGARD_IMPORT_ROLES.has(currentUserRole);
 
   useEffect(() => {
     load();
@@ -74,6 +86,11 @@ export function ContactsPanel({ orgId, canWrite, onChanged }: Props) {
             + Add Contact
           </button>
         )}
+        {canImportLiongard && (
+          <button className="btn-ghost btn-sm" onClick={() => setShowImportWizard(true)}>
+            Import from Liongard
+          </button>
+        )}
       </div>
 
       {contacts.length === 0 ? (
@@ -88,6 +105,7 @@ export function ContactsPanel({ orgId, canWrite, onChanged }: Props) {
               <th>Email</th>
               <th>Affiliation</th>
               <th>Documentation Roles</th>
+              <th>Source</th>
               <th></th>
             </tr>
           </thead>
@@ -113,6 +131,13 @@ export function ContactsPanel({ orgId, canWrite, onChanged }: Props) {
                   </div>
                 </td>
                 <td>
+                  {c.source === "liongard" ? (
+                    <span className="affiliation-badge" title={c.source_ref ?? undefined}>Liongard</span>
+                  ) : (
+                    <span className="field-hint">Manual</span>
+                  )}
+                </td>
+                <td>
                   <button className="btn-ghost btn-sm" onClick={() => setDrawerContact(c)}>Edit</button>
                 </td>
               </tr>
@@ -129,6 +154,17 @@ export function ContactsPanel({ orgId, canWrite, onChanged }: Props) {
           onClose={() => setDrawerContact(undefined)}
           onSaved={handleSaved}
           onDeleted={handleDeleted}
+        />
+      )}
+
+      {showImportWizard && (
+        <ContactImportWizard
+          orgId={orgId}
+          onClose={() => setShowImportWizard(false)}
+          onImported={() => {
+            load();
+            onChanged?.();
+          }}
         />
       )}
     </div>

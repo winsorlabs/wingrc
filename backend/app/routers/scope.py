@@ -651,11 +651,16 @@ class LiongardEnvironmentMappingOut(BaseModel):
     updated_at: datetime | None
 
 
-def _get_liongard_credential(session: Session) -> tuple[dict[str, Any], dict[str, Any]]:
+def get_liongard_credential(session: Session) -> tuple[dict[str, Any], dict[str, Any]]:
     """Load and decrypt the deployment-wide Liongard credential
     (IntegrationConnection, migration 0030 -- D.1). Raises a specific
     HTTPException rather than a generic 500 for either failure mode, same
     discipline as routers/integrations.py's own test_connection.
+
+    Not underscore-prefixed: routers/contacts.py's Liongard-identities import
+    imports this directly rather than duplicating credential-decryption
+    logic. This module stays the one place that owns the deployment-wide
+    Liongard credential and the org<->Environment mapping.
     """
     row = session.scalars(
         select(IntegrationConnection).where(IntegrationConnection.connector_key == "liongard")
@@ -681,7 +686,7 @@ def _get_liongard_credential(session: Session) -> tuple[dict[str, Any], dict[str
     return (row.config or {}), credential
 
 
-def _get_liongard_mapping(session: Session, org_id: uuid.UUID) -> OrgLiongardEnvironment | None:
+def get_liongard_mapping(session: Session, org_id: uuid.UUID) -> OrgLiongardEnvironment | None:
     return session.scalars(
         select(OrgLiongardEnvironment).where(OrgLiongardEnvironment.org_id == org_id)
     ).first()
@@ -701,7 +706,7 @@ def list_liongard_environments(
     doesn't use it -- environments come from the one deployment-wide
     credential, not from anything org-specific.
     """
-    config, credential = _get_liongard_credential(session)
+    config, credential = get_liongard_credential(session)
     try:
         environments = liongard_connector.list_environments(config, credential)
     except liongard_connector.LiongardAPIError as e:
@@ -716,7 +721,7 @@ def list_liongard_environments(
 def get_liongard_environment_mapping(
     org_id: uuid.UUID, session: Session = Depends(get_session)
 ) -> LiongardEnvironmentMappingOut | None:
-    row = _get_liongard_mapping(session, org_id)
+    row = get_liongard_mapping(session, org_id)
     if row is None:
         return None
     return LiongardEnvironmentMappingOut(
@@ -741,7 +746,7 @@ def set_liongard_environment_mapping(
     instances, at the wrong tenant's data) with no feedback until the
     first sync attempt failed confusingly.
     """
-    config, credential = _get_liongard_credential(session)
+    config, credential = get_liongard_credential(session)
     try:
         environments = liongard_connector.list_environments(config, credential)
     except liongard_connector.LiongardAPIError as e:
@@ -757,7 +762,7 @@ def set_liongard_environment_mapping(
             ),
         )
 
-    row = _get_liongard_mapping(session, org_id)
+    row = get_liongard_mapping(session, org_id)
     is_new = row is None
     before = (
         None
@@ -832,13 +837,13 @@ def liongard_sync_dry_run(
     workbook dry-run already mixes entity types from its own multiple
     sheets.
     """
-    mapping = _get_liongard_mapping(session, org_id)
+    mapping = get_liongard_mapping(session, org_id)
     if mapping is None:
         raise HTTPException(
             status_code=400,
             detail="No Liongard Environment is mapped to this org yet -- set one first.",
         )
-    config, credential = _get_liongard_credential(session)
+    config, credential = get_liongard_credential(session)
 
     pulled_at = datetime.now(UTC).isoformat()
     source_ref = build_source_ref(

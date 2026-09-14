@@ -296,7 +296,7 @@ export function App() {
                 />
               )}
               {scopeTab === "contacts" && (
-                <ContactsPanel orgId={org.id} canWrite={canWrite} onChanged={() => loadOnboardingStatus(org.id)} />
+                <ContactsPanel orgId={org.id} canWrite={canWrite} currentUserRole={user.role} onChanged={() => loadOnboardingStatus(org.id)} />
               )}
               {scopeTab === "assets" && (
                 <AssetsPanel orgId={org.id} canWrite={canWrite} />

@@ -320,6 +320,8 @@ export interface Contact {
   role_title: string | null;
   contract_ref: string | null;
   notes: string | null;
+  source: string;
+  source_ref: string | null;
   documentation_roles: ContactDocRole[];
   created_at: string;
 }
@@ -638,6 +640,46 @@ export interface LiongardEnvironmentMapping {
   liongard_environment_id: number;
   liongard_environment_name: string | null;
   updated_at: string | null;
+}
+
+// ── Liongard identities -> contacts import — selection-based (never a bulk
+// per-identity create); see backend/app/routers/contacts.py's own module
+// docstring for the full design.
+export interface LiongardIdentityCandidate {
+  liongard_id: string | null;
+  email: string | null;
+  name: string;
+  phone: string | null;
+  enabled: boolean;
+  has_email: boolean;
+  existing_contact: Contact | null;
+}
+
+export interface LiongardIdentityListResult {
+  source_ref: string;
+  candidates: LiongardIdentityCandidate[];
+  warnings: string[];
+}
+
+export interface LiongardContactSelection {
+  email: string;
+  name: string;
+  phone?: string | null;
+  role_title?: string | null;
+  affiliation?: string | null;
+  contact_id?: string | null;
+  refresh_fields?: string[];
+}
+
+export interface LiongardImportResultItem {
+  email: string;
+  outcome: "created" | "refreshed" | "unchanged" | "skipped";
+  contact_id: string | null;
+  detail: string | null;
+}
+
+export interface LiongardImportResult {
+  results: LiongardImportResultItem[];
 }
 
 // ── Tools library (G.9) — mirrors backend/app/routers/admin_products.py's

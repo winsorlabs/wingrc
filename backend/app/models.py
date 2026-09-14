@@ -1092,6 +1092,13 @@ class Contact(Base):
     role_title: Mapped[str | None] = mapped_column(String(200))
     contract_ref: Mapped[str | None] = mapped_column(String(200))
     notes: Mapped[str | None] = mapped_column(Text)
+    # Provenance -- mirrors scope_entity.source/source_ref (migration 0001).
+    # Set once at creation, never rewritten by a later sync: a contact is a
+    # curated record, not a cache of its source, so a re-sync's offer to
+    # refresh specific fields (routers/contacts.py's Liongard import) never
+    # touches these two columns even when it updates name/phone.
+    source: Mapped[str] = mapped_column(String(40), default="manual")
+    source_ref: Mapped[str | None] = mapped_column(String(400))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

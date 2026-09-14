@@ -226,6 +226,58 @@ def identity_to_canonical(
     return entity, []
 
 
+def _identity_display_name(record: dict[str, Any]) -> str:
+    display_name = record.get("DisplayName")
+    if display_name and str(display_name).strip():
+        return str(display_name).strip()
+    first, last = record.get("FirstName"), record.get("LastName")
+    if first or last:
+        return f"{first or ''} {last or ''}".strip()
+    email = record.get("Email")
+    if email and str(email).strip():
+        return str(email).strip()
+    return str(record.get("Username") or "").strip()
+
+
+def identity_to_contact_fields(record: dict[str, Any]) -> dict[str, Any]:
+    """One raw Liongard identity record -> prefill fields for the Contact
+    import wizard (routers/contacts.py). A DIFFERENT mapping from
+    identity_to_canonical() above -- that one feeds scope_entity (the scope
+    graph); this one feeds Contact (RACI/documentation-role/SPRS-submitter/
+    review-cycle target). The two models are deliberately not merged (see
+    this module's own docstring and Contact's docstring in models.py), so
+    this function must never be called from anywhere identity_to_canonical
+    is, and must never write to scope_entity.
+
+    Field reliability, checked against a real tenant (Goodwin-Bradley
+    environment, 24 live Inventory-state identities, 2026-09-14) rather than
+    assumed from Liongard's docs: Email/FirstName/LastName/DisplayName are
+    reliably present (100% of records sampled); Phone is essentially never
+    populated (0/24). No job-title-equivalent field exists anywhere in the
+    schema -- role_title is therefore always None here; the Contact import
+    wizard offers it as a plain admin-typed field with no Liongard prefill,
+    never a silently-set value.
+
+    email is intentionally not defaulted to "" or similar -- a missing
+    email must surface to the caller as None so the import UI can flag the
+    identity as "no email, can't become a contact" rather than silently
+    treat it as importable. Never returns None itself; even an identity
+    with no email still gets a best-effort name so it can be listed and
+    visibly explained, per the task's "filter or flag clearly, don't fail
+    the whole import."
+    """
+    email = record.get("Email")
+    email = str(email).strip() if email and str(email).strip() else None
+    phone = record.get("Phone")
+    phone = str(phone).strip() if phone and str(phone).strip() else None
+    return {
+        "email": email,
+        "name": _identity_display_name(record),
+        "phone": phone,
+        "role_title": None,
+    }
+
+
 def devices_to_canonical(
     records: list[dict[str, Any]], source_ref: str
 ) -> tuple[list[CanonicalEntity], dict[tuple[str, str], list[str]]]:
