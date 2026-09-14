@@ -3230,6 +3230,110 @@ Items without a status are planned but not yet started.
   report from unrelated fields, which is exactly why that's flagged as
   its own open item rather than folded into "fixed."
 
+  **Closed out below (2026-09-18)** — Jarrod applied a real sync in the
+  meantime, making the bug live rather than latent; see that entry.
+
+- **Reconcile compares a meaningful-attributes allowlist, not the raw
+  union** (2026-09-18) — closes the §3 item above. Jarrod had applied a
+  real sync: two WinsorLabs devices live in `scope_entity` with
+  `source='liongard'`, so every subsequent sync would report them CHANGED
+  for no real reason — at his environment's full size (168 devices) that's
+  every device, every sync, permanently, training the reviewer to click
+  through the dry-run/apply control that exists specifically to keep
+  automated input from silently moving the audit boundary. Framed and
+  fixed as a control-integrity issue, not a cosmetic one.
+
+  **Allowlist, not a denylist, deliberately.** A denylist fails open — a
+  new Liongard field appears, nobody excludes it, the noise silently
+  returns. An allowlist fails closed, the correct default for a
+  compliance tool. The full raw record is still stored in `attributes`
+  (genuine provenance) — only what gets *compared* changed.
+
+  **Where the allowlist lives:** `domain.py:DEVICE_SOFTWARE_COMPARABLE_
+  ATTRIBUTES`, derived from the same canonical vocabulary as
+  `routers/scope.py:DeviceSoftwareAttributes` (one list, not two that
+  drift — `test_domain_attribute_vocabulary.py` guards it, since Pydantic
+  fields can't be generated from a plain frozenset without losing each
+  field's type/validator).
+
+  **Per entity type, recommended and justified:** only DEVICE/SOFTWARE
+  have a defined canonical vocabulary today, so only they get an
+  allowlist; every other entity type (PERSON included) falls back to
+  comparing every attribute key, completely unchanged. Extending this to
+  PERSON would mean inventing a canonical PERSON vocabulary, already
+  explicitly ruled out of scope in the Liongard-contacts-import slice —
+  the canonical vocabulary itself *is* the right basis for DEVICE/
+  SOFTWARE (checked, not assumed: it names exactly the fields that should
+  matter), so this wasn't a "stop and ask" case; it's simply that no
+  equivalent vocabulary exists yet for PERSON. **PERSON therefore still
+  has the identical telemetry-diff-noise problem** — a named, deliberate
+  gap for a future slice, not an oversight, and not silently fixed by
+  implication here.
+
+  **`last_login_user` — the judgment call, made deliberately:** canonical
+  (validated, shown in the asset drawer) but excluded from the comparison
+  allowlist. It's telemetry that changes legitimately whenever a
+  different person logs in; comparing it would reintroduce the same
+  noise problem at a lower frequency. Consequence, stated plainly: its
+  *stored* value still updates on every apply, but only when a row is
+  re-applied for some OTHER, genuinely meaningful reason — a device whose
+  only drift, sync over sync, is who logged in will not surface as
+  CHANGED, and its stored `last_login_user` can go stale until something
+  else about it changes. Judged acceptable: the field is presented (asset
+  drawer) as "last observed as of the most recent sync that touched this
+  record," never a live value, and nothing authoritative (ownership,
+  compliance status) depends on its freshness.
+
+  **The allowlist's cost, addressed, not left invisible:**
+  `importers/liongard.py:_unrecognized_device_attributes()` warns (via
+  the existing per-row `warnings` channel — no new plumbing, same
+  mechanism `_resolve_device_subtype()`'s "unrecognized Type" warning
+  already uses) when a pull's attribute keys fall outside both the
+  allowlist and a known-field set (the canonical vocabulary +
+  `connectors.liongard.DEVICE_PROFILES_SORT_BY`, Liongard's own
+  confirmed field-name list, + a short supplementary set of real fields
+  observed live but absent from that sortable-fields-only enum).
+  Confirmed against two real WinsorLabs device records to produce zero
+  warnings today (committed as a permanent regression fixture, not just a
+  one-off check), and against a synthetic new field to confirm the
+  warning actually fires when it should.
+
+  Bench-verified on an isolated wl-util-1 stack: ruff clean,
+  **1113/1113** backend tests (15 new in `test_reconcile.py` — the exact
+  telemetry-only-drift reproduction from the prior session, now inverted
+  to prove UNCHANGED, plus every meaningful attribute tested individually
+  for the dangerous "allowlist too narrow" direction, plus the
+  `last_login_user` exclusion tested both alone and combined with a real
+  change, plus PERSON's fallback-to-everything behavior proven not just
+  assumed; 2 new in `test_domain_attribute_vocabulary.py`; 3 new in
+  `test_liongard_importer.py` for the unknown-field warning; 1 new
+  end-to-end integration test reproducing §4's exact scenario — a
+  pre-this-slice applied row meets the new code, shows CHANGED once for
+  the real reason, then a second sync is clean), `tsc -b` clean,
+  `vite build` clean, **135/135** vitest (frontend untouched by this
+  slice — the existing per-row `warnings` rendering in
+  `ScopeChangeDiffTable.tsx` already surfaces the new warning with no
+  code change needed).
+
+  **Deployed** per `docs/deployment.md` §7 with `--no-deps` (confirmed
+  again: `db`/`minio` untouched). Backup taken and verified (444 TOC
+  entries). No migration — confirmed via `docker logs`, none expected
+  (Pydantic validation + pure Python mapping/comparison logic only).
+
+  **Verified live against the real WinsorLabs environment, dry-run only:**
+  first post-deploy dry-run against the same 2 already-live devices
+  (still unapplied from the prior slice's own dry-run-only check) shows
+  `changed` with **exactly one field in the diff — `display_name`** —
+  where before this fix it would have included `LastSeenTimelineID`,
+  `LastSeen`, `UpdatedOn`, `AvailableStorage`, etc. every time. Zero
+  unrecognized-attribute warnings, matching the two-real-record unit test
+  above. The full "second run is clean" proof (apply, then a clean
+  second dry-run) was demonstrated on the bench stack's real integration
+  test rather than against Jarrod's live tenant, since completing it live
+  requires applying this sync -- not done without being asked, per the
+  standing rule carried through every session in this arc, and posed to
+  Jarrod directly rather than assumed.
+
 ---
 
 ## Planned
