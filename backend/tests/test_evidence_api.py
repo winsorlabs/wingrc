@@ -18,18 +18,20 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from urllib.parse import parse_qs, urlparse
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.auth import get_current_user
+from app.auth import create_session, get_current_user
+from app.config import get_settings
 from app.db import get_session
 from app.engine import start_assessment
 from app.main import app
 from app.models import (
     AssessmentObjective,
+    AuditLog,
     Control,
     ControlState,
     Evidence,
@@ -37,8 +39,10 @@ from app.models import (
     EvidenceTaskStateLink,
     Framework,
     Organization,
+    OrgMembership,
+    User,
 )
-from app.storage import StorageClient, get_storage_client
+from app.storage import NullStorageClient, StorageClient, get_storage_client
 from tests.conftest import _app_session, _authed, _grant
 
 # ---------------------------------------------------------------------------
@@ -71,6 +75,45 @@ class InMemoryStorageClient(StorageClient):
             raise FileNotFoundError(key)
         return self.files[key]
 
+    def stream_bytes(self, key: str, chunk_size: int = 8):
+        if key not in self.files:
+            raise FileNotFoundError(key)
+        data = self.files[key]
+        # Deliberately chunked (not one big yield) so a test asserting on
+        # multiple chunks actually exercises multiple next() calls, the
+        # same shape production's iterate_in_threadpool wrapping sees.
+        for i in range(0, len(data), chunk_size):
+            yield data[i : i + chunk_size]
+
+
+class _StorageCallSpy(InMemoryStorageClient):
+    """Records every method call so a test can assert storage was never
+    touched (e.g. the ownership check rejects before any storage call)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[str] = []
+
+    def upload_file(self, key: str, data: bytes, content_type: str) -> None:
+        self.calls.append("upload_file")
+        super().upload_file(key, data, content_type)
+
+    def get_bytes(self, key: str) -> bytes:
+        self.calls.append("get_bytes")
+        return super().get_bytes(key)
+
+    def stream_bytes(self, key: str, chunk_size: int = 8):
+        self.calls.append("stream_bytes")
+        yield from super().stream_bytes(key, chunk_size)
+
+    def delete_file(self, key: str) -> None:
+        self.calls.append("delete_file")
+        super().delete_file(key)
+
+    def is_configured(self) -> bool:
+        self.calls.append("is_configured")
+        return super().is_configured()
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -87,6 +130,20 @@ def client(db_session, storage, fake_msp_admin):
     app.dependency_overrides[get_session] = _app_session(db_session)
     app.dependency_overrides[get_storage_client] = lambda: storage
     app.dependency_overrides[get_current_user] = _authed(db_session, fake_msp_admin)
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def real_session_client(db_session, storage):
+    """Exercises the real get_current_user -> _resolve_session path (not
+    the _authed dependency-override bypass every other fixture here uses)
+    -- needed to prove the download route isn't accidentally exempt from
+    session-idle-timeout / deactivated-account re-checks that only that
+    real path performs. Mirrors test_session_idle.py's own client fixture.
+    """
+    app.dependency_overrides[get_session] = _app_session(db_session)
+    app.dependency_overrides[get_storage_client] = lambda: storage
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -165,12 +222,42 @@ def _manifest_url(d: dict) -> str:
     return f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/evidence-manifest"
 
 
-def _download_filename_param(url: str) -> str | None:
-    """Decoded download_filename query param, however the URL chose to encode
-    it — asserting on the decoded value avoids coupling tests to one specific
-    (but equally valid) encoding choice."""
-    values = parse_qs(urlparse(url).query).get("download_filename")
-    return values[0] if values else None
+def _seed_real_user_with_evidence(db_session, storage, *, is_active: bool = True) -> dict:
+    """A real User + OrgMembership + one file Evidence row, seeded directly
+    (not through the _authed bypass) so a real cookie session actually
+    resolves to genuine access -- for the get_current_user-path tests
+    below, where the point is proving the real session-resolution checks
+    apply to the download route too.
+    """
+    org = Organization(name=f"RealSessOrg-{uuid.uuid4().hex[:6]}")
+    db_session.add(org)
+    db_session.flush()
+    user = User(
+        home_org_id=org.id,
+        email=f"{uuid.uuid4().hex[:8]}@example.com",
+        display_name="Real Session User",
+        login_method="local",
+        role="msp_admin",
+        is_active=is_active,
+    )
+    db_session.add(user)
+    db_session.flush()
+    db_session.add(OrgMembership(user_id=user.id, org_id=org.id, role="msp_admin"))
+
+    storage_key = f"{org.id}/evidence/{uuid.uuid4()}/f.png"
+    storage.files[storage_key] = b"\x89PNG\r\n\x1a\n real bytes"
+    ev = Evidence(
+        org_id=org.id,
+        kind="file",
+        title="f.png",
+        artifact_type="screenshot",
+        storage_key=storage_key,
+        mime_type="image/png",
+        file_size_bytes=len(storage.files[storage_key]),
+    )
+    db_session.add(ev)
+    db_session.flush()
+    return {"org": org, "user": user, "evidence": ev}
 
 
 # ---------------------------------------------------------------------------
@@ -195,8 +282,9 @@ def test_upload_creates_evidence_and_does_not_change_status(
     assert body["artifact_type"] == "screenshot"
     assert body["title"] == "screenshot.png"
     assert body["file_size_bytes"] == len(b"\x89PNG\r\n\x1a\n extra")
-    assert body["download_url"].startswith("http://fake-storage/")
-    assert _download_filename_param(body["download_url"]) == "screenshot.png"
+    # download_url is a same-origin API route, never a direct storage URL --
+    # the presigned-URL bearer-credential property this route replaces.
+    assert body["download_url"] == f"/orgs/{d['org'].id}/evidence/{body['id']}/download"
     assert body["reference_location"] is None
     assert body["note"] is None
 
@@ -228,8 +316,7 @@ def test_list_evidence_returns_uploaded_item(client, db_session, fake_msp_admin)
     assert item["kind"] == "file"
     assert item["artifact_type"] == "export"
     assert item["title"] == "config.xlsx"
-    assert item["download_url"].startswith("http://fake-storage/")
-    assert _download_filename_param(item["download_url"]) == "config.xlsx"
+    assert item["download_url"] == f"/orgs/{d['org'].id}/evidence/{item['id']}/download"
     assert item["reference_location"] is None
 
 
@@ -251,26 +338,37 @@ def test_evidence_count_increments_in_control_states(client, db_session, fake_ms
 
 
 @pytest.mark.integration
-def test_download_redirects_to_presigned_url(client, db_session, fake_msp_admin):
+def test_download_streams_correct_bytes_content_type_and_filename(
+    client, db_session, fake_msp_admin
+):
+    """No redirect to a presigned URL any more -- the response itself IS
+    the file, byte-for-byte identical to what was uploaded, with the right
+    Content-Type and a Content-Disposition forcing save-as under the
+    original filename."""
+    raw = b"\x89PNG\r\n\x1a\n" + b"fake png body" * 50
     d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     up = client.post(
         _upload_url(d),
-        files={"file": ("mfa.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+        files={"file": ("mfa.png", raw, "image/png")},
         data={"artifact_type": "screenshot"},
     )
     ev_id = up.json()["id"]
 
-    r = client.get(_download_url(d, ev_id), follow_redirects=False)
-    assert r.status_code == 302
-    assert "fake-storage" in r.headers["location"]
-    assert _download_filename_param(r.headers["location"]) == "mfa.png"
+    r = client.get(_download_url(d, ev_id))
+    assert r.status_code == 200
+    assert r.content == raw
+    assert r.headers["content-type"] == "image/png"
+    assert r.headers["content-length"] == str(len(raw))
+    cd = r.headers["content-disposition"]
+    assert cd.startswith("attachment;")
+    assert 'filename="mfa.png"' in cd
 
 
 @pytest.mark.integration
 def test_download_filename_uses_custom_title_with_extension_appended(
     client, db_session, fake_msp_admin
 ):
-    """A custom title without an extension still gets one on the download link,
+    """A custom title without an extension still gets one on the download,
     so the saved file has the right type — see storage.download_filename()."""
     d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     up = client.post(
@@ -279,13 +377,225 @@ def test_download_filename_uses_custom_title_with_extension_appended(
         data={"artifact_type": "document", "title": "Firewall config export"},
     )
     ev_id = up.json()["id"]
-    assert (
-        _download_filename_param(up.json()["download_url"])
-        == "Firewall config export.pdf"
-    )
 
-    r = client.get(_download_url(d, ev_id), follow_redirects=False)
-    assert _download_filename_param(r.headers["location"]) == "Firewall config export.pdf"
+    r = client.get(_download_url(d, ev_id))
+    assert r.status_code == 200
+    assert 'filename="Firewall config export.pdf"' in r.headers["content-disposition"]
+
+
+@pytest.mark.integration
+def test_no_presigned_storage_url_issued_for_evidence(client, db_session, fake_msp_admin):
+    """Grep the actual responses, not just the UI: upload/list/download must
+    never hand back a direct storage URL for evidence -- only this API's own
+    same-origin route."""
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    up = client.post(
+        _upload_url(d),
+        files={"file": ("mfa.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+        data={"artifact_type": "screenshot"},
+    )
+    up_url = up.json()["download_url"]
+    assert up_url is not None and not up_url.startswith("http")
+    assert up_url.startswith(f"/orgs/{d['org'].id}/evidence/")
+
+    list_url = client.get(_upload_url(d)).json()[0]["download_url"]
+    assert list_url == up_url
+
+
+@pytest.mark.integration
+def test_download_cross_org_evidence_id_unreachable(client, db_session, fake_msp_admin):
+    """A guessed evidence_id belonging to a DIFFERENT org must 404 even
+    though the caller has real membership on the org_id in the URL --
+    require_org_access() only confirms the caller belongs to *org_id*, not
+    that evidence_id is actually one of its own rows. The other org's
+    evidence is seeded directly (not via the authenticated client — the
+    caller has no membership there at all, so the upload endpoint itself
+    would correctly 403 it)."""
+    other = _seed(db_session)  # unrelated org, no membership for the caller
+    other_ev = Evidence(
+        org_id=other["org"].id,
+        kind="file",
+        title="secret.png",
+        artifact_type="screenshot",
+        storage_key=f"{other['org'].id}/evidence/leaked/leaked.png",
+        mime_type="image/png",
+        file_size_bytes=10,
+    )
+    db_session.add(other_ev)
+    db_session.flush()
+
+    mine = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+
+    r = client.get(f"/orgs/{mine['org'].id}/evidence/{other_ev.id}/download")
+    assert r.status_code == 404
+
+
+@pytest.mark.integration
+def test_download_ownership_check_precedes_any_storage_call(client, db_session, fake_msp_admin):
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    spy = _StorageCallSpy()
+    app.dependency_overrides[get_storage_client] = lambda: spy
+    try:
+        r = client.get(f"/orgs/{d['org'].id}/evidence/{uuid.uuid4()}/download")
+    finally:
+        app.dependency_overrides.pop(get_storage_client, None)
+    assert r.status_code == 404
+    assert spy.calls == []
+
+
+@pytest.mark.integration
+def test_download_expired_session_401(real_session_client, db_session, storage):
+    """A session past the idle-timeout window must 401 on the download
+    route exactly as it does on every other route -- proves this route
+    isn't accidentally exempt from the real get_current_user path (the
+    fixture here bypasses nothing, unlike every other test in this file).
+    Mirrors test_session_idle.py's own scenario/methodology.
+    """
+    seeded = _seed_real_user_with_evidence(db_session, storage)
+    idle_minutes = get_settings().session_idle_minutes
+    now = datetime.now(UTC)
+    session_row, raw = create_session(db_session, seeded["user"])
+    db_session.flush()
+    session_row.last_activity_at = now - timedelta(minutes=idle_minutes + 5)
+    session_row.expires_at = now + timedelta(hours=8)  # nowhere near absolute expiry
+    db_session.flush()
+
+    real_session_client.cookies.set("wingrc_session", raw)
+    r = real_session_client.get(
+        f"/orgs/{seeded['org'].id}/evidence/{seeded['evidence'].id}/download"
+    )
+    assert r.status_code == 401
+
+
+@pytest.mark.integration
+def test_download_deactivated_account_403(real_session_client, db_session, storage):
+    """A deactivated account's still-valid session cookie must not unlock
+    a download -- _resolve_session re-checks user.is_active on every
+    request, not just at login."""
+    seeded = _seed_real_user_with_evidence(db_session, storage, is_active=False)
+    _row, raw = create_session(db_session, seeded["user"])
+    db_session.flush()
+
+    real_session_client.cookies.set("wingrc_session", raw)
+    r = real_session_client.get(
+        f"/orgs/{seeded['org'].id}/evidence/{seeded['evidence'].id}/download"
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.integration
+def test_download_storage_not_configured_404(client, db_session, fake_msp_admin):
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    up = client.post(
+        _upload_url(d),
+        files={"file": ("mfa.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+        data={"artifact_type": "screenshot"},
+    )
+    ev_id = up.json()["id"]
+
+    app.dependency_overrides[get_storage_client] = lambda: NullStorageClient()
+    try:
+        r = client.get(_download_url(d, ev_id))
+    finally:
+        app.dependency_overrides.pop(get_storage_client, None)
+    assert r.status_code == 404
+    assert r.json()["detail"] == "Storage not configured"
+
+
+@pytest.mark.integration
+def test_download_large_file_streams_via_stream_bytes_not_get_bytes(
+    client, db_session, fake_msp_admin
+):
+    """Demonstrates the download path uses the chunked primitive, not the
+    whole-object one -- a StorageClient double whose get_bytes() raises,
+    and whose stream_bytes() is a real generator (bytes only materialize
+    chunk by chunk, never as one big blob) still serves a correct
+    response."""
+    chunk_size = 4096
+    chunk_count = 50
+    big = bytes(i % 256 for i in range(chunk_size * chunk_count))
+
+    class LargeFileStorage(InMemoryStorageClient):
+        def get_bytes(self, key: str) -> bytes:
+            raise AssertionError("download path must not call get_bytes()")
+
+        def stream_bytes(self, key: str, chunk_size: int = 262_144):
+            # Independent chunk_size from the outer closure's on purpose --
+            # proves the caller-supplied default from StorageClient isn't
+            # what determines chunking here; production always calls this
+            # with no explicit chunk_size (its own default), same as here.
+            for i in range(0, len(big), 4096):
+                yield big[i : i + 4096]
+
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    up = client.post(
+        _upload_url(d),
+        files={"file": ("huge.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+        data={"artifact_type": "screenshot"},
+    )
+    ev_id = up.json()["id"]
+    # The real upload was tiny -- correct the stored size to match what
+    # LargeFileStorage actually serves, or the Content-Length header
+    # download_evidence sends (from Evidence.file_size_bytes) would lie.
+    ev = db_session.get(Evidence, uuid.UUID(ev_id))
+    ev.file_size_bytes = len(big)
+    db_session.flush()
+
+    app.dependency_overrides[get_storage_client] = lambda: LargeFileStorage()
+    try:
+        r = client.get(_download_url(d, ev_id))
+    finally:
+        app.dependency_overrides.pop(get_storage_client, None)
+    assert r.status_code == 200
+    assert r.content == big
+
+
+@pytest.mark.integration
+def test_download_writes_audit_log_entry(client, db_session, fake_msp_admin):
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    up = client.post(
+        _upload_url(d),
+        files={"file": ("mfa.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+        data={"artifact_type": "screenshot"},
+    )
+    ev_id = up.json()["id"]
+
+    r = client.get(_download_url(d, ev_id))
+    assert r.status_code == 200
+
+    rows = db_session.scalars(
+        select(AuditLog).where(
+            AuditLog.org_id == d["org"].id,
+            AuditLog.action == "evidence.download",
+            AuditLog.entity_id == uuid.UUID(ev_id),
+        )
+    ).all()
+    assert len(rows) == 1
+    assert rows[0].after_value["title"] == "mfa.png"
+    assert rows[0].after_value["artifact_type"] == "screenshot"
+    assert rows[0].actor == str(fake_msp_admin.id)
+
+
+@pytest.mark.integration
+def test_list_and_upload_do_not_write_download_audit_log(client, db_session, fake_msp_admin):
+    """Building a download_url into a response is not itself an access --
+    only a real GET against the download route is. Otherwise every page
+    view listing evidence would fire a download-audit row for content
+    nobody actually looked at."""
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    client.post(
+        _upload_url(d),
+        files={"file": ("mfa.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+        data={"artifact_type": "screenshot"},
+    )
+    client.get(_upload_url(d))
+
+    rows = db_session.scalars(
+        select(AuditLog).where(
+            AuditLog.org_id == d["org"].id, AuditLog.action == "evidence.download"
+        )
+    ).all()
+    assert rows == []
 
 
 @pytest.mark.integration
@@ -505,7 +815,7 @@ def test_download_reference_returns_404(client, db_session, fake_msp_admin):
          "artifact_type": "document"}
     ])
     ev_id = ref.json()[0]["id"]
-    r = client.get(_download_url(d, ev_id), follow_redirects=False)
+    r = client.get(_download_url(d, ev_id))
     assert r.status_code == 404
 
 
@@ -550,7 +860,7 @@ def test_list_shows_both_file_and_reference(client, db_session, storage, fake_ms
     assert "Location only" in ref["note"]
 
     fil = next(i for i in items if i["kind"] == "file")
-    assert fil["download_url"].startswith("http://fake-storage/")
+    assert fil["download_url"] == f"/orgs/{d['org'].id}/evidence/{fil['id']}/download"
     assert fil["note"] is None
 
 

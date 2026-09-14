@@ -70,6 +70,15 @@ class InMemoryStorageClient(StorageClient):
         # matching test_bundle.py's own InMemoryStorageClient.
         return self.files.get(key, b"")
 
+    def stream_bytes(self, key: str, chunk_size: int = 8):
+        # Diagrams stream through the same evidence-download route regular
+        # evidence uses (docs/roadmap.md's evidence-download-hardening
+        # entry) -- this is what makes an <img src> preview actually
+        # resolve to real bytes in these tests.
+        data = self.files.get(key, b"")
+        for i in range(0, len(data), chunk_size):
+            yield data[i : i + chunk_size]
+
 
 @pytest.fixture
 def storage():
@@ -150,8 +159,11 @@ def test_upload_network_diagram_png_creates_evidence_and_repoints_fk(
     assert r.status_code == 200
     body = r.json()
     assert body["mime_type"] == "image/png"
-    assert body["url"] is not None
     evidence_id = uuid.UUID(body["evidence_id"])
+    # Same-origin API route, not a presigned storage URL -- diagrams are
+    # Evidence rows, streamed through the identical authenticated route
+    # regular evidence downloads use.
+    assert body["url"] == f"/orgs/{org.id}/evidence/{evidence_id}/download"
 
     ev = db_session.get(Evidence, evidence_id)
     assert ev is not None
@@ -182,9 +194,34 @@ def test_get_system_description_reflects_diagram_urls(client, db_session, fake_m
     assert r.status_code == 200
     data = r.json()
     assert data["network_diagram_evidence_id"] is not None
-    assert data["network_diagram_url"] is not None
+    assert data["network_diagram_url"] == (
+        f"/orgs/{org.id}/evidence/{data['network_diagram_evidence_id']}/download"
+    )
     assert data["data_flow_diagram_evidence_id"] is not None
-    assert data["data_flow_diagram_url"] is not None
+    assert data["data_flow_diagram_url"] == (
+        f"/orgs/{org.id}/evidence/{data['data_flow_diagram_evidence_id']}/download"
+    )
+
+
+@pytest.mark.integration
+def test_diagram_url_streams_real_bytes_via_evidence_download_route(
+    client, db_session, fake_msp_admin
+):
+    """The <img src> URL system-description returns for a diagram isn't
+    just a non-null string -- it actually resolves to the uploaded bytes,
+    proving diagrams are wired onto the same evidence-download hardening
+    as everything else (no lingering presigned storage URL)."""
+    org = _own_org(db_session, fake_msp_admin)
+    client.put(f"/orgs/{org.id}/system-description", json=_SD_BASE)
+    up = client.post(
+        f"/orgs/{org.id}/system-description/network-diagram",
+        files={"file": ("net.png", _FAKE_PNG, "image/png")},
+    ).json()
+
+    r = client.get(up["url"])
+    assert r.status_code == 200
+    assert r.content == _FAKE_PNG
+    assert r.headers["content-type"] == "image/png"
 
 
 # ---------------------------------------------------------------------------

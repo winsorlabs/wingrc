@@ -252,6 +252,18 @@ def test_evidence_upload_cross_org_403(client, db_session):
 
 
 @pytest.mark.integration
+def test_evidence_download_cross_org_403(client, db_session):
+    """The streamed-download route (docs/roadmap.md's evidence-download-
+    hardening entry) sits on this same router under the same
+    require_org_access() dependency -- a caller with no membership on
+    org_id at all must 403 before the handler's own ev.org_id check (or
+    any storage call) is ever reached, same as every other route here."""
+    b = _seed(db_session)
+    url = f"/orgs/{b['org'].id}/evidence/{uuid.uuid4()}/download"
+    assert client.get(url).status_code == 403
+
+
+@pytest.mark.integration
 def test_evidence_same_org_still_works(client, db_session, fake_msp_admin):
     a = _seed(db_session, org_id=fake_msp_admin.org_id)
     _grant(db_session, fake_msp_admin)
