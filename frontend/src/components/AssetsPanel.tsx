@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { assetDisplayName } from "../lib/assetDisplay";
 import type { ScopeEntity } from "../types";
 import { AssetDrawer } from "./AssetDrawer";
 import { AssetImportWizard } from "./AssetImportWizard";
@@ -42,14 +43,20 @@ export function AssetsPanel({ orgId, canWrite }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
+  function sortByDisplayName(list: ScopeEntity[]): ScopeEntity[] {
+    return [...list].sort((a, b) =>
+      assetDisplayName(a.attributes, a.natural_key).localeCompare(
+        assetDisplayName(b.attributes, b.natural_key)
+      )
+    );
+  }
+
   function load() {
     setLoading(true);
     setError(null);
     Promise.all([api.getScope(orgId, "device"), api.getScope(orgId, "software")])
       .then(([devices, software]) => {
-        setAssets(
-          [...devices, ...software].sort((a, b) => a.natural_key.localeCompare(b.natural_key))
-        );
+        setAssets(sortByDisplayName([...devices, ...software]));
         setLoading(false);
       })
       .catch(() => {
@@ -64,9 +71,9 @@ export function AssetsPanel({ orgId, canWrite }: Props) {
       if (idx >= 0) {
         const next = [...prev];
         next[idx] = a;
-        return next;
+        return sortByDisplayName(next);
       }
-      return [...prev, a].sort((x, y) => x.natural_key.localeCompare(y.natural_key));
+      return sortByDisplayName([...prev, a]);
     });
     setDrawerAsset(undefined);
   }
@@ -120,28 +127,36 @@ export function AssetsPanel({ orgId, canWrite }: Props) {
               </tr>
             </thead>
             <tbody>
-              {assets.map((a) => (
-                <tr key={a.id}>
-                  <td><span className="affiliation-badge">{TYPE_LABELS[a.entity_type] ?? a.entity_type}</span></td>
-                  <td>{a.natural_key}</td>
-                  <td>
-                    {a.attributes.device_subtype === "other"
-                      ? (a.attributes.device_subtype_other as string | null) ?? "Other"
-                      : SUBTYPE_LABELS[a.attributes.device_subtype as string] ?? "—"}
-                  </td>
-                  <td>{(a.attributes.asset_tag as string | null) ?? "—"}</td>
-                  <td>{a.scope_category ?? "—"}</td>
-                  <td>{(a.attributes.make_oem as string | null) ?? "—"}</td>
-                  <td>{(a.attributes.model as string | null) ?? "—"}</td>
-                  <td>{(a.attributes.version as string | null) ?? "—"}</td>
-                  <td>{a.status}</td>
-                  <td>
-                    {canWrite && (
-                      <button className="btn-ghost btn-sm" onClick={() => setDrawerAsset(a)}>Edit</button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {assets.map((a) => {
+                const displayName = assetDisplayName(a.attributes, a.natural_key);
+                return (
+                  <tr key={a.id}>
+                    <td><span className="affiliation-badge">{TYPE_LABELS[a.entity_type] ?? a.entity_type}</span></td>
+                    <td>
+                      <div className="contact-name">{displayName}</div>
+                      {displayName !== a.natural_key && (
+                        <div className="contact-sub">{a.natural_key}</div>
+                      )}
+                    </td>
+                    <td>
+                      {a.attributes.device_subtype === "other"
+                        ? (a.attributes.device_subtype_other as string | null) ?? "Other"
+                        : SUBTYPE_LABELS[a.attributes.device_subtype as string] ?? "—"}
+                    </td>
+                    <td>{(a.attributes.asset_tag as string | null) ?? "—"}</td>
+                    <td>{a.scope_category ?? "—"}</td>
+                    <td>{(a.attributes.make_oem as string | null) ?? "—"}</td>
+                    <td>{(a.attributes.model as string | null) ?? "—"}</td>
+                    <td>{(a.attributes.version as string | null) ?? "—"}</td>
+                    <td>{a.status}</td>
+                    <td>
+                      {canWrite && (
+                        <button className="btn-ghost btn-sm" onClick={() => setDrawerAsset(a)}>Edit</button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

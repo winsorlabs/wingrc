@@ -1,3 +1,4 @@
+import { assetDisplayName } from "../lib/assetDisplay";
 import type { ScopeChange } from "../types";
 
 // Shared by AssetImportWizard (workbook) and LiongardSyncWizard (D.2) --
@@ -32,6 +33,9 @@ export function ScopeChangeDiffTable({ changes, excluded, onToggle }: Props) {
         <tbody>
           {changes.map((c, idx) => {
             const applicable = c.change_type === "new" || c.change_type === "changed";
+            const displayName = c.incoming
+              ? assetDisplayName(c.incoming.attributes, c.natural_key)
+              : c.natural_key;
             return (
               <tr key={`${c.entity_type}-${c.natural_key}-${idx}`}>
                 <td>
@@ -49,7 +53,12 @@ export function ScopeChangeDiffTable({ changes, excluded, onToggle }: Props) {
                   </span>
                 </td>
                 <td>{c.entity_type}</td>
-                <td>{c.natural_key}</td>
+                <td>
+                  <div className="contact-name">{displayName}</div>
+                  {displayName !== c.natural_key && (
+                    <div className="contact-sub">{c.natural_key}</div>
+                  )}
+                </td>
                 <td>
                   {c.change_type === "missing" ? (
                     <span className="field-hint">Not touched — apply never deletes</span>

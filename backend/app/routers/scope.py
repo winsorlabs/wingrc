@@ -127,10 +127,24 @@ class DeviceSoftwareAttributes(BaseModel):
     # on modern mobile OSes also means a MAC is not a stable *identity* for
     # phones/tablets -- it's an attribute here, never used as a natural_key.
     mac_addresses: list[str] | None = None
+    # Human-readable label, deliberately never the reconcile identity --
+    # see importers/liongard.py's module docstring ("Display name vs.
+    # natural key") for the full reasoning. A canonical attribute, not a
+    # scope_entity column, for the same "consistent with every other
+    # display-ish field" reasoning as make_oem/model/asset_tag above; the
+    # frontend falls back to natural_key when this is unset, so workbook
+    # and manually-entered assets (which don't set it) render unchanged.
+    display_name: str | None = None
+    # Telemetry, not an ownership signal -- must never be read as, or
+    # written to, responsible_contact_id. See
+    # importers/liongard.py:device_profile_to_canonical()'s own docstring;
+    # this field exists purely so the asset drawer can show it, clearly
+    # labeled as an observed last login, not an owner.
+    last_login_user: str | None = None
 
-    @field_validator("asset_tag")
+    @field_validator("asset_tag", "display_name", "last_login_user")
     @classmethod
-    def _strip_asset_tag(cls, v: str | None) -> str | None:
+    def _strip_optional_text(cls, v: str | None) -> str | None:
         if v is None:
             return None
         v = v.strip()

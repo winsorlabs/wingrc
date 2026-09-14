@@ -637,6 +637,47 @@ def test_apply_writes_scope_entities_with_liongard_provenance(client, db_session
     assert all(e.context["source"] == "liongard" for e in audit_entries)
 
 
+def test_applied_device_shows_display_name_and_last_login_user(
+    client, db_session, fake_msp_admin, _stub_liongard
+):
+    """The actual feature this slice adds: display_name (Alias -> Hostname
+    -> natural_key) and last_login_user survive the real dry-run -> apply
+    -> DB round trip, through the deployed HTTP layer, not just the
+    importer's own unit tests.
+    """
+    org = _org(db_session, fake_msp_admin)
+    _set_credential(client)
+    client.put(
+        f"/orgs/{org.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    _stub_liongard["devices"] = [
+        {**_device_row("WL-DT26"), "Alias": "Jarrods Desktop", "LastLoginUser": "jarrod"},
+        {**_device_row("WL-LT26"), "Alias": None, "LastLoginUser": "WINSORLABS\\jarrod.winsor"},
+    ]
+    dry_run = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
+    r = client.post(f"/orgs/{org.id}/imports/workbook/apply", json={"changes": dry_run["changes"]})
+    assert r.status_code == 200
+
+    devices = {
+        row.natural_key: row
+        for row in db_session.scalars(
+            select(ScopeEntity).where(
+                ScopeEntity.org_id == org.id, ScopeEntity.entity_type == "device"
+            )
+        ).all()
+    }
+    aliased = devices["SN-WL-DT26"]
+    assert aliased.attributes["display_name"] == "Jarrods Desktop"
+    assert aliased.attributes["last_login_user"] == "jarrod"
+    assert "responsible_contact_id" not in aliased.attributes
+
+    unaliased = devices["SN-WL-LT26"]
+    assert unaliased.attributes["display_name"] == "WL-LT26"  # falls back to Hostname
+    assert unaliased.attributes["last_login_user"] == "WINSORLABS\\jarrod.winsor"
+    assert "responsible_contact_id" not in unaliased.attributes
+
+
 def test_second_dry_run_after_apply_reports_no_new_or_changed(
     client, db_session, fake_msp_admin
 ):

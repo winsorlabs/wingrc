@@ -65,6 +65,7 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
 
   const [entityType, setEntityType] = useState("device");
   const [naturalKey, setNaturalKey] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [scopeCategory, setScopeCategory] = useState("");
   const [status, setStatus] = useState("active");
   const [makeOem, setMakeOem] = useState("");
@@ -90,6 +91,7 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
     if (asset) {
       setEntityType(asset.entity_type);
       setNaturalKey(asset.natural_key);
+      setDisplayName((asset.attributes.display_name as string | null) ?? "");
       setScopeCategory(asset.scope_category ?? "");
       setStatus(asset.status);
       setMakeOem((asset.attributes.make_oem as string | null) ?? "");
@@ -103,6 +105,7 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
     } else {
       setEntityType("device");
       setNaturalKey("");
+      setDisplayName("");
       setScopeCategory("");
       setStatus("active");
       setMakeOem("");
@@ -120,16 +123,20 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
 
   async function handleSave() {
     if (!naturalKey.trim()) {
-      setError("Name is required");
+      setError("Natural key is required");
       return;
     }
     setSaving(true);
     setError(null);
-    // Always send all four known keys, using null for blanks — a PATCH
+    // Always send all known keys, using null for blanks — a PATCH
     // shallow-merges `attributes` (see routers/scope.py's ScopeEntityPatch
     // docstring), so a key that's simply omitted here could never be
-    // cleared through this form once set.
+    // cleared through this form once set. display_name is user-settable
+    // here (unlike last_login_user, informational-only — see its own
+    // display below) so a manually-entered or workbook-imported asset can
+    // get one too, not just Liongard-synced devices.
     const attributes: Record<string, unknown> = {
+      display_name: displayName.trim() || null,
       make_oem: makeOem.trim() || null,
       model: model.trim() || null,
       version: version.trim() || null,
@@ -222,7 +229,21 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
             </div>
 
             <div className="form-field">
-              <label>Name <span className="required">*</span></label>
+              <label>Display Name</label>
+              <input
+                type="text"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="Optional — shown in lists instead of the natural key below"
+              />
+              <div className="field-hint">
+                What people actually call this asset. Falls back to the natural key when unset —
+                a Liongard-synced device sets this automatically (Device Alias, then Hostname).
+              </div>
+            </div>
+
+            <div className="form-field">
+              <label>Natural Key <span className="required">*</span></label>
               <input
                 type="text"
                 value={naturalKey}
@@ -230,11 +251,11 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
                 disabled={!isNew}
                 placeholder="Asset tag, serial number, or product name"
               />
-              {!isNew && (
-                <div className="field-hint">
-                  Name can't be changed after creation — delete and re-add to rename.
-                </div>
-              )}
+              <div className="field-hint">
+                What this asset is matched against on re-import or re-sync — never renamed by a
+                display-name change.{" "}
+                {!isNew && "Can't be changed after creation — delete and re-add to change it."}
+              </div>
             </div>
 
             <div className="form-field">
@@ -291,6 +312,17 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
                       value={deviceSubtypeOther}
                       onChange={(e) => setDeviceSubtypeOther(e.target.value)}
                     />
+                  </div>
+                )}
+                {asset?.attributes.last_login_user != null && (
+                  <div className="form-field">
+                    <label>Last Login User</label>
+                    <div>{asset.attributes.last_login_user as string}</div>
+                    <div className="field-hint">
+                      Last observed login from Liongard, as of the most recent sync — telemetry,
+                      not an ownership assignment. Never used to set Responsible Contact above;
+                      set that manually if this device has an assigned owner.
+                    </div>
                   </div>
                 )}
                 <div className="form-field">

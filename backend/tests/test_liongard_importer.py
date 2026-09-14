@@ -64,6 +64,49 @@ def test_device_maps_canonical_attributes_alongside_raw():
     assert entity.attributes["Manufacturer"] == "Apple"  # raw field preserved
     assert entity.attributes["mac_addresses"] == ["14:9d:99:8b:72:36"]
     assert entity.attributes["device_subtype"] == "desktop"
+    # _DEVICE_RECORD has no Alias, so display_name falls back to Hostname --
+    # see the dedicated display_name tests below for the full fallback chain.
+    assert entity.attributes["display_name"] == "SBX-Mini-01"
+    assert entity.attributes["last_login_user"] == "sbxadmin"
+    assert entity.attributes["LastLoginUser"] == "sbxadmin"  # raw field preserved too
+
+
+def test_device_display_name_prefers_alias_over_hostname():
+    record = {**_DEVICE_RECORD, "Alias": "Sandbox Mini"}
+    entity, _ = device_profile_to_canonical(record, "liongard:test")
+    assert entity is not None
+    assert entity.attributes["display_name"] == "Sandbox Mini"
+    # The natural key is untouched by display_name -- still serial-first.
+    assert entity.natural_key == "H2WH90ACPJJ9"
+
+
+def test_device_display_name_falls_back_to_hostname_without_alias():
+    record = {**_DEVICE_RECORD, "Alias": None}
+    entity, _ = device_profile_to_canonical(record, "liongard:test")
+    assert entity is not None
+    assert entity.attributes["display_name"] == "SBX-Mini-01"
+
+
+def test_device_display_name_falls_back_to_natural_key_without_alias_or_hostname():
+    record = {**_DEVICE_RECORD, "Alias": None, "Hostname": None}
+    entity, _ = device_profile_to_canonical(record, "liongard:test")
+    assert entity is not None
+    # Natural key falls back to Hostname when SerialNumber is present, so
+    # this exercises the true "nothing better than the identity itself"
+    # case: SerialNumber present (stays the natural key), no Hostname, no
+    # Alias -- display_name must not be blank, it mirrors the natural key.
+    assert entity.natural_key == "H2WH90ACPJJ9"
+    assert entity.attributes["display_name"] == "H2WH90ACPJJ9"
+
+
+def test_device_blank_alias_is_treated_as_absent():
+    """Liongard can return an empty-string Alias, not just a missing/null
+    one -- must not become a blank display_name.
+    """
+    record = {**_DEVICE_RECORD, "Alias": "   "}
+    entity, _ = device_profile_to_canonical(record, "liongard:test")
+    assert entity is not None
+    assert entity.attributes["display_name"] == "SBX-Mini-01"
 
 
 def test_device_natural_key_prefers_serial_over_hostname():
@@ -90,10 +133,17 @@ def test_device_with_neither_serial_nor_hostname_is_skipped():
 def test_device_never_sets_responsible_contact_id():
     """Liongard's device schema has no authoritative owner field --
     LastLoginUser is telemetry, not an ownership assignment. See the
-    importer's own docstring for the full reasoning.
+    importer's own docstring for the full reasoning. Promoting
+    LastLoginUser to the canonical last_login_user key (2026-09-17) must
+    not relax this -- tested explicitly, not just by omission, since it's
+    the exact mistake this whole rule exists to prevent.
     """
     entity, _ = device_profile_to_canonical(_DEVICE_RECORD, "liongard:test")
     assert entity is not None
+    assert "responsible_contact_id" not in entity.attributes
+    # last_login_user is populated (telemetry) but responsible_contact_id
+    # stays absent regardless -- the two must never be conflated.
+    assert entity.attributes["last_login_user"] == "sbxadmin"
     assert "responsible_contact_id" not in entity.attributes
 
 

@@ -30,6 +30,53 @@ DeviceSoftwareAttributes). Identity/PERSON records therefore write
 Liongard's own field names straight through as attributes, the same way
 workbook-imported users keep their raw "First Name"/"Last Name" columns --
 inventing a canonical PERSON schema is out of scope for this task.
+
+**Display name vs. natural key (2026-09-17):** before this, the UI had no
+concept of a device display name at all -- it rendered `natural_key`
+(SerialNumber-first, Hostname fallback) as if it were a name, so Jarrod
+saw serial numbers in the name column. The fix is NOT to change the
+natural key to Hostname: hostnames get renamed and machines get reimaged,
+serials don't, and keying reconcile on Hostname would turn a rename into
+a MISSING + NEW pair -- an asset silently leaving and re-entering the
+audit boundary. Identity and label are kept separate instead:
+`device_profile_to_canonical()` now always writes a `display_name`
+attribute (Alias -> Hostname -> natural_key, see
+`_device_display_name()`'s own docstring for the ordering rationale) on
+top of the unchanged natural key. This lives as a canonical attribute
+(`routers/scope.py:DeviceSoftwareAttributes`), not a `scope_entity`
+column -- consistent with every other display-ish field (`make_oem`,
+`model`, `asset_tag`) already living there, and the frontend already
+reads `attributes` generically for any entity type, so nothing about
+this is Liongard-specific despite Liongard being the only writer that
+populates it automatically today. Workbook import and manual entry don't
+set it (unchanged in this slice) -- an entity with no `display_name`
+renders its natural key exactly as before, via the frontend's own
+fallback, not a backend default.
+
+**A real, pre-existing diff-noise bug, found while checking `reconcile.py`
+per this slice's own §3, reported here rather than fixed:**
+`device_profile_to_canonical()`'s `attributes = dict(record)` stores the
+*entire* raw Liongard record, including fields that change on every pull
+regardless of whether the device itself changed at all (`LastSeen`,
+`LastSeenTimelineID`, `LastSeenEventID`, `UpdatedOn`, `AvailableStorage`,
+nested `Inspectors` entries, etc. -- confirmed against two real device
+records, 2026-09-17). `reconcile.py:_field_diffs()` compares the full
+union of `current.attributes`/`incoming.attributes` keys with no
+exclusion list, so **every applied Liongard device will report CHANGED
+on every subsequent sync**, purely from telemetry drift -- the review
+diff becomes noise nobody reads, exactly the failure class D.2's own
+MAC-address-ordering fix (`reconcile.py:_comparable()`) already guards
+against for list-valued attributes, but this is broader: whole keys, not
+just element order. **Not fixed in this slice** -- `reconcile.py` is
+shared across every source (workbook, manual, Liongard), so a fix needs
+its own deliberate scope decision, not a quick patch here. Recommended
+direction: compare a defined allowlist of *meaningful* attributes (the
+canonical vocabulary plus a short list of source fields worth tracking)
+rather than the raw union of everything -- safer than a volatile-fields
+denylist, since an unrecognized future field defaults to NOT producing
+diff noise instead of defaulting to producing it until someone notices
+and adds it to an exclude list. Left as a named, described gap
+(docs/roadmap.md) for a dedicated slice.
 """
 
 from __future__ import annotations
@@ -61,6 +108,12 @@ _DEVICE_CANONICAL_FIELDS: dict[str, str] = {
     # anyone who needs the narrower value.
     "version": "OperatingSystem",
     "asset_tag": "AssetTagNumber",
+    # Telemetry, not an ownership assignment -- see
+    # device_profile_to_canonical()'s own docstring for why this must
+    # never feed responsible_contact_id. Promoted to an explicit canonical
+    # key (rather than left as the raw LastLoginUser for readers to know
+    # about) so the asset drawer can surface it labeled correctly.
+    "last_login_user": "LastLoginUser",
 }
 
 
@@ -126,6 +179,34 @@ def _device_natural_key(record: dict[str, Any]) -> str:
     return str(record.get("Hostname") or "").strip()
 
 
+def _device_display_name(record: dict[str, Any], natural_key: str) -> str:
+    """Alias -> Hostname -> natural_key (2026-09-17 decision).
+
+    Deliberately NOT the natural key -- see this module's own docstring
+    and device_profile_to_canonical()'s for why SerialNumber/Hostname stay
+    the reconcile identity (a hostname rename must never look like the
+    asset leaving and a new one appearing). display_name is a pure label,
+    read nowhere reconcile.py compares on.
+
+    Alias first: a human named the device *in Liongard*, deliberately --
+    the strongest signal of "what people actually call this thing" this
+    source can offer, stronger than Hostname (assigned by IT tooling/OS
+    defaults, not usually chosen to be meaningful to a person). Falls back
+    to Hostname (the field Jarrod asked for, and what's actually usually
+    populated -- real tenant data checked 2026-09-17: only one of two real
+    Inventory-state devices had an Alias set). Falls back to natural_key
+    last, matching current behavior exactly when neither exists -- never
+    blank.
+    """
+    alias = record.get("Alias")
+    if alias and str(alias).strip():
+        return str(alias).strip()
+    hostname = record.get("Hostname")
+    if hostname and str(hostname).strip():
+        return str(hostname).strip()
+    return natural_key
+
+
 def device_profile_to_canonical(
     record: dict[str, Any], source_ref: str
 ) -> tuple[CanonicalEntity | None, list[str]]:
@@ -143,7 +224,10 @@ def device_profile_to_canonical(
     mapping it to responsible_contact_id would silently misattribute
     ownership to whoever happened to log in last. An engineer can set
     ownership manually after apply via the existing PATCH /scope endpoint,
-    same as any manually-added asset.
+    same as any manually-added asset. Promoted to the canonical
+    `last_login_user` key (see _DEVICE_CANONICAL_FIELDS) purely as an
+    informational, clearly-telemetry field in the asset drawer -- never as
+    an ownership candidate. This restates and does not relax that rule.
     """
     natural_key = _device_natural_key(record)
     warnings: list[str] = []
@@ -154,6 +238,7 @@ def device_profile_to_canonical(
         ]
 
     attributes: dict[str, Any] = dict(record)
+    attributes["display_name"] = _device_display_name(record, natural_key)
     for canonical_key, liongard_field in _DEVICE_CANONICAL_FIELDS.items():
         value = record.get(liongard_field)
         if value:
