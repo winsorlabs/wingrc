@@ -14,9 +14,29 @@ Test override:
 """
 from __future__ import annotations
 
+import uuid
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from functools import lru_cache
 from urllib.parse import quote
+
+# Default read-chunk size for stream_bytes(): large enough to keep the
+# per-chunk threadpool round-trip (see stream_bytes' own docstring) from
+# dominating, small enough that no single chunk is a meaningful memory
+# spike even under many concurrent downloads.
+_DEFAULT_CHUNK_SIZE = 256 * 1024
+
+
+def evidence_download_path(org_id: uuid.UUID, evidence_id: uuid.UUID) -> str:
+    """The backend route an Evidence file streams from -- shared by
+    routers/evidence.py (its own EvidenceOut.download_url) and
+    routers/orgs.py (system-description diagrams, which are Evidence rows
+    too, just displayed inline rather than linked). A bare app-relative
+    path, not an absolute URL -- the frontend's own /api mount prefix is
+    a deployment detail (nginx/Vite dev proxy) this module has no business
+    knowing about; see frontend/src/api.ts's BASE + assetUrl().
+    """
+    return f"/orgs/{org_id}/evidence/{evidence_id}/download"
 
 
 def download_filename(title: str, ext: str) -> str:
@@ -56,19 +76,61 @@ class StorageClient(ABC):
     def presigned_url(
         self, key: str, expires_in: int = 300, download_filename: str | None = None
     ) -> str:
-        """Presigned GET URL. When download_filename is set, the response
-        carries Content-Disposition: attachment so the browser saves the
-        file instead of rendering it inline — used for download actions,
-        not for inline display (e.g. logo preview)."""
+        """Presigned GET URL — a bearer credential: anyone holding the link
+        can fetch the object until it expires, with no per-request check of
+        session validity, org membership, MFA state, or lockout, and no
+        audit trail of who actually used it.
+
+        Non-sensitive, non-CUI-adjacent display assets ONLY (the org logo
+        is the one caller left — routers/orgs.py's _build_profile_out /
+        upload_logo). Do NOT use this for Evidence or anything backed by an
+        Evidence row (screenshots/exports of a customer's security-control
+        configuration, network/data-flow diagrams) — those stream through
+        the backend instead so every access re-checks the requester's
+        session (see stream_bytes() below, and routers/evidence.py's
+        download_evidence / storage.evidence_download_path). Evidence
+        download hardening (docs/roadmap.md) is the reason this docstring
+        exists at all — read it before reaching for this method again.
+        """
         ...
 
     @abstractmethod
     def delete_file(self, key: str) -> None: ...
 
+    def is_configured(self) -> bool:
+        """False only for NullStorageClient. Lets a caller distinguish
+        "no object at this key" from "no storage backend at all" without
+        inferring it from an empty bytes/iterator result, which get_bytes()/
+        stream_bytes() also (legitimately) return for a zero-byte object.
+        """
+        return True
+
     def get_bytes(self, key: str) -> bytes:  # noqa: ARG002
         """Download and return object bytes. NullStorageClient returns b''.
-        Override in real clients. Tests that need embedded files override this."""
+        Override in real clients. Tests that need embedded files override this.
+
+        Whole-object read — fine for bundle export (bounded, one deliberate
+        operation) but never for a hot per-request download path; use
+        stream_bytes() there instead.
+        """
         return b""
+
+    def stream_bytes(  # noqa: ARG002
+        self, key: str, chunk_size: int = _DEFAULT_CHUNK_SIZE
+    ) -> Iterator[bytes]:
+        """Yield the object's bytes in chunks without holding the whole
+        file in memory at once — the hot-path counterpart to get_bytes().
+        NullStorageClient/default: empty iterator. Override in real clients.
+
+        Passed directly to a Starlette StreamingResponse in
+        routers/evidence.py: a plain (sync) iterator is fine there —
+        Starlette wraps it in iterate_in_threadpool, dispatching each
+        next() call (one chunk read) through anyio's worker threadpool
+        individually rather than pinning one worker for the whole
+        transfer. See docs/roadmap.md's evidence-download-hardening entry
+        for the load measurement behind that claim.
+        """
+        return iter(())
 
 
 class NullStorageClient(StorageClient):
@@ -84,6 +146,9 @@ class NullStorageClient(StorageClient):
 
     def delete_file(self, key: str) -> None:
         pass
+
+    def is_configured(self) -> bool:
+        return False
 
 
 class MinIOClient(StorageClient):
@@ -164,6 +229,17 @@ class MinIOClient(StorageClient):
     def get_bytes(self, key: str) -> bytes:
         resp = self._s3.get_object(Bucket=self._bucket, Key=key)
         return resp["Body"].read()  # type: ignore[no-any-return]
+
+    def stream_bytes(self, key: str, chunk_size: int = _DEFAULT_CHUNK_SIZE) -> Iterator[bytes]:
+        # get_object() itself is one blocking HTTP call (opens the stream;
+        # doesn't read the body) -- happens synchronously in the caller's
+        # own threadpool-dispatched request, same as any other blocking
+        # storage call in this codebase. Body.iter_chunks() is botocore's
+        # own incremental reader over the underlying connection -- each
+        # chunk is read from the socket on demand, never the whole object
+        # at once.
+        resp = self._s3.get_object(Bucket=self._bucket, Key=key)
+        return resp["Body"].iter_chunks(chunk_size=chunk_size)  # type: ignore[no-any-return]
 
 
 @lru_cache(maxsize=1)
