@@ -53,37 +53,41 @@ set it (unchanged in this slice) -- an entity with no `display_name`
 renders its natural key exactly as before, via the frontend's own
 fallback, not a backend default.
 
-**A real, pre-existing diff-noise bug, found while checking `reconcile.py`
-per this slice's own §3, reported here rather than fixed:**
-`device_profile_to_canonical()`'s `attributes = dict(record)` stores the
-*entire* raw Liongard record, including fields that change on every pull
-regardless of whether the device itself changed at all (`LastSeen`,
-`LastSeenTimelineID`, `LastSeenEventID`, `UpdatedOn`, `AvailableStorage`,
-nested `Inspectors` entries, etc. -- confirmed against two real device
-records, 2026-09-17). `reconcile.py:_field_diffs()` compares the full
-union of `current.attributes`/`incoming.attributes` keys with no
-exclusion list, so **every applied Liongard device will report CHANGED
-on every subsequent sync**, purely from telemetry drift -- the review
-diff becomes noise nobody reads, exactly the failure class D.2's own
-MAC-address-ordering fix (`reconcile.py:_comparable()`) already guards
-against for list-valued attributes, but this is broader: whole keys, not
-just element order. **Not fixed in this slice** -- `reconcile.py` is
-shared across every source (workbook, manual, Liongard), so a fix needs
-its own deliberate scope decision, not a quick patch here. Recommended
-direction: compare a defined allowlist of *meaningful* attributes (the
-canonical vocabulary plus a short list of source fields worth tracking)
-rather than the raw union of everything -- safer than a volatile-fields
-denylist, since an unrecognized future field defaults to NOT producing
-diff noise instead of defaulting to producing it until someone notices
-and adds it to an exclude list. Left as a named, described gap
-(docs/roadmap.md) for a dedicated slice.
+**The diff-noise bug found in the prior slice is now fixed, not just
+reported.** `device_profile_to_canonical()`'s `attributes = dict(record)`
+still stores the *entire* raw Liongard record -- that's genuine
+provenance, kept deliberately -- but `reconcile.py:_field_diffs()`
+(2026-09-18) now compares only an allowlist of meaningful attributes for
+DEVICE/SOFTWARE (`domain.py:DEVICE_SOFTWARE_COMPARABLE_ATTRIBUTES`)
+instead of the raw union of every key, so fields that change on every
+pull regardless of whether the device itself changed (`LastSeen`,
+`LastSeenTimelineID`, `UpdatedOn`, `AvailableStorage`, etc.) no longer
+produce a spurious CHANGED. See `reconcile.py`'s own module docstring for
+the full allowlist-vs-denylist reasoning, the per-entity-type decision,
+and the `last_login_user` trade-off.
+
+**The allowlist's own cost, addressed here:** a genuinely new, meaningful
+Liongard field would otherwise go undetected forever, silently, since an
+allowlist fails closed. `_unrecognized_device_attributes()`, below, checks
+each pull's final attribute keys against the canonical vocabulary plus
+`connectors.liongard.DEVICE_PROFILES_SORT_BY` (Liongard's own confirmed
+field-name list) plus a short supplementary set of real fields observed
+in live records that aren't in that enum (it only covers *sortable*
+fields), and warns -- one line, all the unrecognized keys named -- when
+something doesn't match any of those. Surfaced through the existing
+per-row `warnings` mechanism (`ScopeChangeOut.warnings`), the same
+channel `_resolve_device_subtype()`'s "unrecognized Type" warning
+already uses, so it needs no new plumbing and is visible in the dry-run
+result an engineer actually reviews.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from ..connectors.liongard import DEVICE_PROFILES_SORT_BY
 from ..domain import (
+    DEVICE_SOFTWARE_CANONICAL_ATTRIBUTES,
     CanonicalEntity,
     DeviceSubtype,
     EntityStatus,
@@ -93,6 +97,36 @@ from ..domain import (
 )
 
 _DEVICE_SUBTYPE_LOOKUP: dict[str, DeviceSubtype] = {s.value: s for s in DeviceSubtype}
+
+# Real device-record fields observed live (2026-09-17/18, two real
+# WinsorLabs Inventory-state devices) that aren't in
+# connectors.liongard.DEVICE_PROFILES_SORT_BY -- that enum only documents
+# *sortable* fields (discovered from Liongard's own 400-body validation),
+# not every field a record can carry. Re-check against a real pull (same
+# discipline as SORT_BY's own discovery) and add here, rather than
+# guessing, if _unrecognized_device_attributes() below starts warning
+# about something that's actually a normal Liongard field.
+_DEVICE_EXTRA_KNOWN_RAW_FIELDS = frozenset(
+    {
+        "EnvironmentID",
+        "FirstSeenTimelineID",
+        "LastSeenTimelineID",
+        "FirstSeenEventID",
+        "LastSeenEventID",
+        "UpdatedOn",
+        "UpdatedBy",
+        "CreatedBy",
+        "Interfaces",
+        "ReverseDNSHostname",
+        "NetworkRole",
+        "Tags",
+        "Inspectors",
+    }
+)
+
+_DEVICE_KNOWN_ATTRIBUTES = (
+    DEVICE_PROFILES_SORT_BY | _DEVICE_EXTRA_KNOWN_RAW_FIELDS | DEVICE_SOFTWARE_CANONICAL_ATTRIBUTES
+)
 
 # Liongard's own field -> our canonical device attribute key. Not a full
 # alias table like workbook.py's raw-header map -- Liongard already uses
@@ -172,6 +206,29 @@ def _resolve_mac_addresses(attributes: dict[str, Any]) -> list[str]:
     return warnings
 
 
+def _unrecognized_device_attributes(attributes: dict[str, Any]) -> list[str]:
+    """Warn when a device's final attribute set (raw record + canonical
+    enrichment) contains keys outside everything this module currently
+    recognizes -- the safety net the allowlist in reconcile.py needs (see
+    this module's own docstring): an allowlist fails closed, so a
+    genuinely new, meaningful field would otherwise never surface in a
+    diff, silently, forever. This is a Liongard-specific check
+    (Liongard's own field names) deliberately kept out of reconcile.py,
+    which stays source-agnostic.
+
+    One combined warning naming every unrecognized key, not one per key --
+    matches the dry-run result's existing per-row warning shape and avoids
+    turning a handful of genuinely new fields into a wall of separate lines.
+    """
+    unknown = sorted(set(attributes) - _DEVICE_KNOWN_ATTRIBUTES)
+    if not unknown:
+        return []
+    return [
+        f"{len(unknown)} attribute(s) not recognized, not compared for changes -- "
+        f"Liongard may have added a new field: {', '.join(unknown)}."
+    ]
+
+
 def _device_natural_key(record: dict[str, Any]) -> str:
     serial = record.get("SerialNumber")
     if serial and str(serial).strip():
@@ -248,6 +305,7 @@ def device_profile_to_canonical(
     if subtype_warning:
         warnings.append(subtype_warning)
     warnings.extend(_resolve_mac_addresses(attributes))
+    warnings.extend(_unrecognized_device_attributes(attributes))
 
     entity = CanonicalEntity(
         entity_type=EntityType.DEVICE,

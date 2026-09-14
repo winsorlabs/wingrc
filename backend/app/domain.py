@@ -110,6 +110,43 @@ SPECIALIZED_ASSET_SUGGESTED_SUBTYPES: frozenset[DeviceSubtype] = frozenset(
 )
 
 
+# The canonical DEVICE/SOFTWARE attribute vocabulary -- single source of
+# truth for both routers/scope.py:DeviceSoftwareAttributes (validation;
+# kept in sync by test_domain_attribute_vocabulary.py rather than
+# hand-copied, since Pydantic field declarations can't be generated
+# directly from a plain frozenset without losing each field's own type/
+# validator) and reconcile.py's meaningful-attributes allowlist (what
+# actually gets *compared* for CHANGED detection, 2026-09-18 -- see that
+# module's own docstring for why an allowlist, not a denylist). One list
+# describing this vocabulary, not two that drift.
+DEVICE_SOFTWARE_CANONICAL_ATTRIBUTES: frozenset[str] = frozenset(
+    {
+        "make_oem",
+        "model",
+        "version",
+        "responsible_contact_id",
+        "device_subtype",
+        "device_subtype_other",
+        "asset_tag",
+        "mac_addresses",
+        "display_name",
+        "last_login_user",
+    }
+)
+
+# The subset of the canonical vocabulary reconcile.py actually compares.
+# last_login_user is deliberately excluded: it's telemetry that changes
+# legitimately whenever a different person logs into a device, and
+# comparing it would reintroduce the exact per-sync noise problem this
+# allowlist exists to solve -- see reconcile.py's own module docstring for
+# the accepted trade-off this creates (its stored value only refreshes
+# when a row is otherwise re-applied for a genuinely meaningful reason,
+# not on every sync).
+DEVICE_SOFTWARE_COMPARABLE_ATTRIBUTES: frozenset[str] = (
+    DEVICE_SOFTWARE_CANONICAL_ATTRIBUTES - {"last_login_user"}
+)
+
+
 _MAC_HEX_CHARS = "0123456789abcdef"
 
 

@@ -37,6 +37,85 @@ _DEVICE_RECORD = {
     "LastLoginUser": "sbxadmin",
 }
 
+# Captured live against Jarrod's real WinsorLabs tenant (2026-09-17), not
+# synthetic -- every field name here is real, confirmed Liongard output,
+# used to guard _unrecognized_device_attributes()'s known-field set
+# against drifting out of sync with what Liongard actually returns.
+_REAL_WINSORLABS_DEVICE_RECORD = {
+    "ID": "562bbd95-95ad-45fe-bedf-3d7353ec1b59",
+    "EnvironmentID": 5912,
+    "FirstSeenTimelineID": 168296565,
+    "LastSeenTimelineID": 182036271,
+    "InventoryState": "Inventory",
+    "Hostname": "WL-DT26",
+    "OperatingSystem": "Microsoft Windows 11 Business",
+    "OSVersion": "10.0.26200",
+    "InternalIP": '{"10.10.24.39"}',
+    "MACAddress": ["08:BF:B8:6B:B2:F3"],
+    "SerialNumber": "System Serial Number",
+    "DomainRole": "Standalone Workstation",
+    "Manufacturer": "ASUS",
+    "Model": "System Product Name",
+    "ExternalIP": '{"71.161.231.19"}',
+    "HardwareID": None,
+    "Antivirus": ["Windows Defender"],
+    "EDR": ["Senteon Agent", "Huntress Rio", "Datto RMM", "Microsoft Defender Core Service"],
+    "Firmware": "3854",
+    "LastSeen": "2026-09-14T19:11:39.520Z",
+    "LastLogin": "2026-09-08T17:23:23.000Z",
+    "LastLoginUser": "jarrod",
+    "Alias": "Jarrods Desktop",
+    "Class": "standard",
+    "Status": "active",
+    "Category": "compute",
+    "Type": "desktop",
+    "Role": None,
+    "Location": None,
+    "LocationManaged": None,
+    "Physical": True,
+    "HostServer": None,
+    "ClusterName": None,
+    "DataCenter": None,
+    "VirtualizationSoftware": None,
+    "HypervisorVersion": None,
+    "Purpose": None,
+    "PurchaseDate": None,
+    "WarrantyExpiration": None,
+    "EOLDate": None,
+    "ManagedDevice": True,
+    "AssetTagNumber": None,
+    "LastReviewDate": None,
+    "Inspectors": [
+        {"ID": 8, "Name": "office365-inspector", "Alias": "Microsoft 365"},
+        {"ID": 73, "Name": "datto-rmm-inspector", "Alias": "Datto RMM"},
+    ],
+    "CreatedOn": "2026-05-18T20:03:44.619Z",
+    "CreatedBy": None,
+    "UpdatedOn": "2026-09-14T19:11:40.562Z",
+    "UpdatedBy": None,
+    "FirstSeenEventID": None,
+    "LastSeenEventID": None,
+    "AvailableStorage": 1663,
+    "WinElevenReady": "Compatible",
+    "Interfaces": [
+        {
+            "ipAddress": ["10.10.24.39"],
+            "macAddress": "08:BF:B8:6B:B2:F3",
+            "subnetMask": "255.255.255.0",
+            "defaultGateway": "10.10.24.1",
+        }
+    ],
+    "DeletedOn": None,
+    "LicenseExpiration": None,
+    "PrimarySubnetCidr": "10.10.24.0/24",
+    "DefaultGateway": "10.10.24.1",
+    "LastUpdated": None,
+    "ReverseDNSHostname": "wl-dt26.tail9a1f6.ts.net",
+    "NetworkRole": None,
+    "DaysSincePurchaseDate": None,
+    "Tags": [],
+}
+
 _IDENTITY_RECORD = {
     "ID": "87f05e00-7955-4f86-aab1-37f41184551f",
     "EnvironmentID": 8815,
@@ -107,6 +186,44 @@ def test_device_blank_alias_is_treated_as_absent():
     entity, _ = device_profile_to_canonical(record, "liongard:test")
     assert entity is not None
     assert entity.attributes["display_name"] == "SBX-Mini-01"
+
+
+def test_device_with_only_known_fields_produces_no_unknown_attribute_warning():
+    """_DEVICE_RECORD's fields are all real, observed Liongard fields (see
+    this module's own docstring) -- must not spuriously warn.
+    """
+    entity, warnings = device_profile_to_canonical(_DEVICE_RECORD, "liongard:test")
+    assert entity is not None
+    assert warnings == []
+
+
+def test_real_winsorlabs_device_produces_no_unknown_attribute_warning():
+    """Against real, live-captured data (not a synthetic fixture) -- if
+    this ever starts warning, it means either Liongard changed its schema
+    (extend the known-field sets) or the known-field sets drifted from
+    reality. Also pins down display_name/natural_key against the exact
+    real record this whole slice was designed around.
+    """
+    entity, warnings = device_profile_to_canonical(_REAL_WINSORLABS_DEVICE_RECORD, "liongard:test")
+    assert entity is not None
+    assert warnings == []
+    assert entity.natural_key == "System Serial Number"
+    assert entity.attributes["display_name"] == "Jarrods Desktop"
+    assert entity.attributes["last_login_user"] == "jarrod"
+
+
+def test_device_with_a_genuinely_new_field_is_surfaced_not_silently_dropped():
+    """The allowlist's own safety net (2026-09-18): a field this module has
+    never seen must be named in a warning, not silently excluded from the
+    diff forever with nothing indicating it exists.
+    """
+    record = {**_DEVICE_RECORD, "BrandNewLiongardField": "surprise", "AnotherNewOne": 42}
+    entity, warnings = device_profile_to_canonical(record, "liongard:test")
+    assert entity is not None
+    assert len(warnings) == 1
+    assert "2 attribute(s) not recognized" in warnings[0]
+    assert "AnotherNewOne" in warnings[0]
+    assert "BrandNewLiongardField" in warnings[0]
 
 
 def test_device_natural_key_prefers_serial_over_hostname():

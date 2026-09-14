@@ -110,6 +110,16 @@ class DeviceSoftwareAttributes(BaseModel):
     Validated here only -- `attributes` stays a free-form JSONB column, no
     schema migration. Unknown keys in an entity's `attributes` dict pass
     through untouched; only fields listed here are type-checked.
+
+    This field list must match `domain.py:DEVICE_SOFTWARE_CANONICAL_
+    ATTRIBUTES` exactly -- that constant is reconcile.py's own source for
+    which attributes get compared for CHANGED detection (minus
+    last_login_user, deliberately -- see reconcile.py's module docstring),
+    so the two must never drift into two different descriptions of "the
+    canonical vocabulary." Fields stay hand-declared here (not generated
+    from the frozenset) since Pydantic needs each field's own type and
+    validator, not just its name -- test_domain_attribute_vocabulary.py
+    asserts the two stay in sync instead.
     """
 
     make_oem: str | None = None

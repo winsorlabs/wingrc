@@ -678,6 +678,102 @@ def test_applied_device_shows_display_name_and_last_login_user(
     assert "responsible_contact_id" not in unaliased.attributes
 
 
+def test_first_sync_after_upgrade_shows_changed_once_then_second_sync_is_clean(
+    client, db_session, fake_msp_admin, _stub_liongard
+):
+    """§4's exact scenario: a device applied *before* display_name existed
+    (no display_name/last_login_user in its stored attributes -- the real
+    shape of WinsorLabs' own already-applied rows) meets the new code for
+    the first time. It must show CHANGED once, for the real reason
+    (display_name newly populated) -- then a second sync, differing only
+    in telemetry, must be clean. The first run alone proves nothing (it's
+    supposed to show a real diff); the second run is the actual proof this
+    slice's fix works.
+    """
+    org = _org(db_session, fake_msp_admin)
+    _set_credential(client)
+    client.put(
+        f"/orgs/{org.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+
+    # Pre-existing row shaped exactly like a pre-this-slice apply: the
+    # canonical fields the *original* D.2 device import already wrote
+    # (make_oem/model/version/device_subtype/mac_addresses) plus raw
+    # telemetry (attributes = dict(record) always stored it), but no
+    # display_name/last_login_user keys at all -- both new this session.
+    db_session.add(
+        ScopeEntity(
+            org_id=org.id,
+            entity_type="device",
+            natural_key="SN-WL-DT26",
+            source="liongard",
+            source_ref="liongard:environment=8815 (Acme Corp):pulled_at=2026-09-14",
+            attributes={
+                "Hostname": "WL-DT26",
+                "Manufacturer": "Apple",
+                "Model": "Macmini8,1",
+                "OperatingSystem": "macOS Ventura 13.6.5",
+                "Type": "desktop",
+                "MACAddress": ["14:9d:99:8b:72:36"],
+                "make_oem": "Apple",
+                "model": "Macmini8,1",
+                "version": "macOS Ventura 13.6.5",
+                "device_subtype": "desktop",
+                "mac_addresses": ["14:9d:99:8b:72:36"],
+                "LastSeenTimelineID": 182036271,
+                "LastSeen": "2026-09-14T19:11:39.520Z",
+                "UpdatedOn": "2026-09-14T19:11:40.562Z",
+                "AvailableStorage": 1663,
+            },
+        )
+    )
+    db_session.commit()
+
+    _stub_liongard["devices"] = [
+        {
+            **_device_row("WL-DT26"),
+            "Alias": "Jarrods Desktop",
+            "LastLoginUser": "jarrod",
+            "LastSeenTimelineID": 182036271,
+            "LastSeen": "2026-09-14T19:11:39.520Z",
+            "UpdatedOn": "2026-09-14T19:11:40.562Z",
+            "AvailableStorage": 1663,
+        }
+    ]
+    # Isolate this test to the device -- the default identities fixture
+    # would otherwise also show as "new" every dry-run and contaminate
+    # the summary assertions below, which are about the device only.
+    _stub_liongard["identities"] = []
+
+    first = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
+    assert first["summary"]["changed"] == 1
+    change = first["changes"][0]
+    assert change["change_type"] == "changed"
+    assert set(change["field_diffs"]) == {"display_name"}
+    apply_result = client.post(
+        f"/orgs/{org.id}/imports/workbook/apply", json={"changes": first["changes"]}
+    )
+    assert apply_result.status_code == 200
+
+    # Second pull: telemetry has moved on (a real, live sync would never
+    # return byte-identical telemetry), but nothing meaningful changed.
+    _stub_liongard["devices"] = [
+        {
+            **_device_row("WL-DT26"),
+            "Alias": "Jarrods Desktop",
+            "LastLoginUser": "someone.else",  # even a login turnover...
+            "LastSeenTimelineID": 182099999,
+            "LastSeen": "2026-09-15T09:00:00.000Z",
+            "UpdatedOn": "2026-09-15T09:00:01.000Z",
+            "AvailableStorage": 1660,
+        }
+    ]
+    second = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
+    assert second["summary"] == {"new": 0, "changed": 0, "missing": 0, "unchanged": 1}
+    assert second["changes"] == []
+
+
 def test_second_dry_run_after_apply_reports_no_new_or_changed(
     client, db_session, fake_msp_admin
 ):
