@@ -27,9 +27,37 @@ lists:
 
     POST /api/v2/inventory/device-profiles/query
     POST /api/v2/inventory/identities/query
-    body: {"Environment": <int>, "Filters": [...], "Pagination": {"Page", "PageSize"}}
+    body: {"Environment": <int>, "Filters": [...],
+           "Sorting": [{"SortBy": <str>, "Direction": "ASC" | "DESC"}],
+           "Pagination": {"Page", "PageSize"}}
     response: {"Success": bool, "Data": {"DeviceProfiles" | "Identities": [...],
                                           "Pagination": {"HasMoreRows", ...}}}
+
+**`Sorting` is required, found live against Jarrod's real tenant
+(2026-09-15) — not in any published doc.** Its absence 400s with
+`{"Success":false,"Message":"Bad request","ValidationErrors":[{"path":
+"Sorting","message":"Expected Array<{SortBy: ..., Direction: "ASC"|"DESC"}>
+..."}]}` — the error body itself enumerates every valid `SortBy` value,
+which is how `DEVICE_PROFILES_SORT_BY`/`IDENTITIES_SORT_BY` below (the
+two enums, one per endpoint) were discovered: a deliberately-invalid
+`SortBy` sent to each endpoint returns its own full list in the 400 body.
+Do this again if Liongard ever adds fields rather than guessing at what
+changed — don't hand-edit the two constants from a hunch.
+
+**This connector sorts both endpoints by `ID`.** Not `Hostname` (the
+device-side field that would read most naturally): a hostname can be
+blank or duplicated across records (a re-imaged machine, a template
+clone), which would make page boundaries unstable in exactly the case
+this exists to prevent — see `_paginate()`'s own docstring. `ID` is in
+both enums, is Liongard's own per-record identifier (returned as a UUID
+string in every row observed against the real tenant, e.g.
+"036de7e2-299e-4087-8a3c-4cda54cd7b6a"), and is the only field in either
+enum guaranteed both present and unique per record — nothing else in
+either list carries that guarantee from the API itself. If Liongard's own
+`ID` values are ever found to collide (not observed, not expected, but
+not contractually promised either by anything published), pagination
+stability would need a different approach — this is the best guarantee
+available from what the API actually documents about itself.
 
 Environment ids are small integers (e.g. 8815), not UUIDs — see
 models.py's OrgLiongardEnvironment.
@@ -63,6 +91,33 @@ _DEFAULT_PAGE_SIZE = 100
 # unexpected HasMoreRows=true-forever response rather than any real
 # environment size we expect to see.
 _MAX_PAGES = 200
+
+# The two Sorting.SortBy enums, discovered from Liongard's own 400
+# response body (see this module's docstring for how and why) -- kept as
+# real constants, not just docstring prose, so tests/test_liongard_
+# connector.py's fake server can import and enforce the exact same list
+# instead of a second, hand-copied one that could drift from this one.
+# Re-discover (send a deliberately-invalid SortBy, read the enum back out
+# of the 400 body) rather than guessing if Liongard ever changes these.
+DEVICE_PROFILES_SORT_BY = frozenset({
+    "InventoryState", "Hostname", "OperatingSystem", "OSVersion", "WinElevenReady",
+    "InternalIP", "MACAddress", "SerialNumber", "DomainRole", "Manufacturer", "Model",
+    "ExternalIP", "HardwareID", "Antivirus", "EDR", "Firmware", "LastLogin",
+    "LastLoginUser", "Alias", "Class", "Category", "DeviceCategory", "Type", "Role",
+    "Location", "PrimarySubnetCidr", "DefaultGateway", "LocationManaged", "Physical",
+    "HostServer", "ClusterName", "DataCenter", "VirtualizationSoftware",
+    "HypervisorVersion", "ManagedDevice", "Status", "AssetTagNumber", "Purpose",
+    "PurchaseDate", "DaysSincePurchaseDate", "WarrantyExpiration", "LicenseExpiration",
+    "EOLDate", "LastReviewDate", "ID", "LastSeen", "CreatedOn", "AvailableStorage",
+    "DeletedOn", "LastUpdated",
+})
+IDENTITIES_SORT_BY = frozenset({
+    "InventoryState", "IdentityStatus", "Email", "Username", "FirstName", "LastName",
+    "Type", "Membership", "Privileged", "AccountActivity", "LastLogin", "MfaStatus",
+    "Enabled", "Phone", "Status", "Location", "Department", "EmailLicenses",
+    "LiongardBillable", "LastSeen", "ID", "SupportStatus", "AuthorizationStatus",
+    "AuthorizationStartDate", "AuthorizationStopDate", "DeletedOn",
+})
 
 
 def _normalize_instance_url(raw: str) -> str:
@@ -292,7 +347,9 @@ def list_environments(config: dict, credential: dict) -> list[LiongardEnvironmen
     return environments
 
 
-def _paginate(url: str, headers: dict[str, str], environment_id: int, data_key: str) -> list[dict]:
+def _paginate(
+    url: str, headers: dict[str, str], environment_id: int, data_key: str, sort_by: str
+) -> list[dict]:
     """Drive one of the v2 inventory query endpoints to exhaustion.
 
     Loops on Data.Pagination.HasMoreRows rather than trusting a fixed page
@@ -300,6 +357,17 @@ def _paginate(url: str, headers: dict[str, str], environment_id: int, data_key: 
     presented itself as complete would mark real, still-present assets
     MISSING in the reconcile diff, exactly the wrong failure mode (see this
     connector's module docstring / ROADMAP.md D.2's "Errors and limits").
+
+    A deterministic Sorting is required for that same reason, not just to
+    satisfy Liongard's validator (see this module's docstring for the
+    discovery and why `ID` was chosen): without one, page boundaries
+    aren't stable while the underlying set is being read across multiple
+    requests -- a row can shift between pages and get skipped or
+    duplicated, silently, which is exactly the MISSING-in-the-diff failure
+    this function exists to prevent. Found live (2026-09-15): the body
+    this function sent before had no Sorting key at all and Liongard
+    400'd it outright, so this was never actually exercised against a
+    real environment before that -- fixed here, not merely worked around.
     """
     all_rows: list[dict] = []
     page = 1
@@ -307,6 +375,7 @@ def _paginate(url: str, headers: dict[str, str], environment_id: int, data_key: 
         body = {
             "Environment": environment_id,
             "Filters": [],
+            "Sorting": [{"SortBy": sort_by, "Direction": "ASC"}],
             "Pagination": {"Page": page, "PageSize": _DEFAULT_PAGE_SIZE},
         }
         payload = _call(url, headers, body)
@@ -344,7 +413,7 @@ def pull_device_profiles(config: dict, credential: dict, environment_id: int) ->
     instance_url = _instance_url(config)
     headers = _auth_header(credential)
     url = f"{instance_url}/api/v2/inventory/device-profiles/query"
-    rows = _paginate(url, headers, environment_id, "DeviceProfiles")
+    rows = _paginate(url, headers, environment_id, "DeviceProfiles", sort_by="ID")
     return [r for r in rows if r.get("InventoryState") == "Inventory"]
 
 
@@ -356,7 +425,7 @@ def pull_identities(config: dict, credential: dict, environment_id: int) -> list
     instance_url = _instance_url(config)
     headers = _auth_header(credential)
     url = f"{instance_url}/api/v2/inventory/identities/query"
-    rows = _paginate(url, headers, environment_id, "Identities")
+    rows = _paginate(url, headers, environment_id, "Identities", sort_by="ID")
     return [r for r in rows if r.get("InventoryState") == "Inventory"]
 
 

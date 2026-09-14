@@ -11,6 +11,19 @@ code. _normalize_instance_url() and the ValueError guards around
 urllib.request.Request() ARE retested here (2026-09-14, the scheme-less-
 instance_url 500 found live on wl-util-1) since that's specifically about
 this module's own logic, not the router around it.
+
+**Mock-fidelity fix (2026-09-15):** every v2-query fake_urlopen in this
+file now routes the request through _validate_query_body() before
+returning its canned success payload -- it rejects a missing/invalid
+Sorting the same way Liongard's real API does (see connectors/liongard.py's
+own docstring for the missing-Sorting 400 this closes). Before this, the
+fakes here accepted any request body, which is exactly how the connector's
+own missing-Sorting bug shipped without a single local test catching it --
+a mock that's more permissive than the real service validates the
+connector against itself, not against the contract. This is the second
+time a gap has surfaced only under real conditions (the first: the
+scheme-less-URL 500 above) -- see docs/roadmap.md's D.2 entry for this
+recorded as a pattern, not just an incident.
 """
 
 from __future__ import annotations
@@ -38,6 +51,166 @@ class _FakeResponse:
 
     def __exit__(self, *exc):
         return False
+
+
+# ---------------------------------------------------------------------------
+# Mock-fidelity fix (2026-09-15): every fake_urlopen above and below that
+# stands in for a v2 inventory query endpoint used to accept ANY request
+# body -- it validated the connector against itself, not against Liongard's
+# real contract. That's exactly what let the missing-Sorting 400 (this
+# module's own docstring) ship: no test here ever inspected the posted
+# body for a v2 query call, so a hand-authored body missing a field
+# Liongard actually requires sailed through every existing test.
+#
+# _query_urlopen() is the fix: a fake_urlopen that validates Sorting the
+# same way Liongard's own validator does (required, non-empty, SortBy in
+# the endpoint-specific enum discovered in connectors/liongard.py, real
+# 400 body shape on failure) before ever handing off to the caller's own
+# success-payload logic. Every v2-query test below (existing and new) now
+# goes through this rather than a bespoke lambda that only ever checked
+# the URL or nothing at all.
+_ENDPOINT_SORT_BY = {
+    "/api/v2/inventory/device-profiles/query": liongard.DEVICE_PROFILES_SORT_BY,
+    "/api/v2/inventory/identities/query": liongard.IDENTITIES_SORT_BY,
+}
+
+
+class _FakeHTTPError(urllib.error.HTTPError):
+    """A real urllib.error.HTTPError whose .read() returns a body shaped
+    exactly like Liongard's own 400 response -- so the connector's actual
+    error-handling path (_call()'s except HTTPError branch) is what's
+    under test, not a shortcut."""
+
+    def __init__(self, url: str, code: int, body: dict):
+        payload = json.dumps(body).encode()
+        super().__init__(url, code, body.get("Message", "error"), {}, None)
+        self._payload = payload
+
+    def read(self):
+        return self._payload
+
+
+def _validate_query_body(request) -> None:
+    """Raises _FakeHTTPError(400, ...) exactly the way Liongard's real
+    validator does -- the request body inspection this whole test file was
+    missing before. Covers every required field confirmed live against
+    Jarrod's tenant (2026-09-15), not just Sorting (the one that actually
+    shipped broken): Environment ("Expected number but instead got:
+    undefined" when absent) and Filters ("Expected Array<...>" when
+    absent) are ALSO required and were ALSO unvalidated here before this
+    fix -- the connector already sends both unconditionally so neither is
+    a live bug, but an unvalidated mock wouldn't have caught it if it
+    were, the same blind spot Sorting fell into. Pagination is NOT
+    required (confirmed: omitting it live returns 200), so it's
+    deliberately not checked here.
+    """
+    matches = (sbv for path, sbv in _ENDPOINT_SORT_BY.items() if path in request.full_url)
+    valid_sort_by = next(matches, None)
+    if valid_sort_by is None:
+        return  # not a v2 query endpoint (e.g. GET /api/v1/environments) -- no body to check
+
+    body = json.loads(request.data) if request.data else {}
+
+    if not isinstance(body.get("Environment"), int):
+        raise _FakeHTTPError(
+            request.full_url,
+            400,
+            {
+                "Success": False,
+                "Message": "Bad request",
+                "ValidationErrors": [
+                    {
+                        "path": "Environment",
+                        "message": (
+                            "Expected number but instead got: "
+                            f"{json.dumps(body.get('Environment'))}."
+                        ),
+                    }
+                ],
+            },
+        )
+    if not isinstance(body.get("Filters"), list):
+        raise _FakeHTTPError(
+            request.full_url,
+            400,
+            {
+                "Success": False,
+                "Message": "Bad request",
+                "ValidationErrors": [
+                    {
+                        "path": "Filters",
+                        "message": (
+                            "Expected Array<...> but instead got: "
+                            f"{json.dumps(body.get('Filters'))}."
+                        ),
+                    }
+                ],
+            },
+        )
+
+    sorting = body.get("Sorting")
+    if not isinstance(sorting, list) or not sorting:
+        raise _FakeHTTPError(
+            request.full_url,
+            400,
+            {
+                "Success": False,
+                "Message": "Bad request",
+                "ValidationErrors": [
+                    {
+                        "path": "Sorting",
+                        "message": (
+                            f"Expected Array<{{ SortBy: ...valid values..., "
+                            f'Direction: "ASC" | "DESC" }}> but instead got: '
+                            f"{json.dumps(sorting)}."
+                        ),
+                    }
+                ],
+            },
+        )
+    for entry in sorting:
+        sort_by = entry.get("SortBy") if isinstance(entry, dict) else None
+        if sort_by not in valid_sort_by:
+            raise _FakeHTTPError(
+                request.full_url,
+                400,
+                {
+                    "Success": False,
+                    "Message": "Bad request",
+                    "ValidationErrors": [
+                        {
+                            "path": "Sorting",
+                            "message": f"{sort_by!r} is not a valid SortBy for this endpoint.",
+                        }
+                    ],
+                },
+            )
+        if entry.get("Direction") not in ("ASC", "DESC"):
+            raise _FakeHTTPError(
+                request.full_url,
+                400,
+                {
+                    "Success": False,
+                    "Message": "Bad request",
+                    "ValidationErrors": [
+                        {"path": "Sorting", "message": "Direction must be ASC or DESC."}
+                    ],
+                },
+            )
+
+
+def _query_urlopen(page_for_request):
+    """Build a fake_urlopen for a v2 query endpoint: validates Sorting
+    like the real API (raising the real 400 shape on failure), then calls
+    page_for_request(request) -> dict|list for the response body on
+    success. page_for_request can also just be a fixed dict/list."""
+
+    def fake_urlopen(request, timeout):
+        _validate_query_body(request)
+        response = page_for_request(request) if callable(page_for_request) else page_for_request
+        return _FakeResponse(response)
+
+    return fake_urlopen
 
 
 def _device_row(inventory_state: str, hostname: str) -> dict:
@@ -97,6 +270,68 @@ def test_list_environments_rows_without_id_field_raise_clear_error(monkeypatch):
         liongard.list_environments(_CONFIG, _CREDENTIAL)
 
 
+# ---------------------------------------------------------------------------
+# Sorting -- required by the real API (2026-09-15), and load-bearing for
+# pagination stability, not just to satisfy a validator (see _paginate's
+# own docstring for why an unstable page boundary is the exact silent-
+# MISSING-in-the-diff failure this module exists to prevent).
+# ---------------------------------------------------------------------------
+
+
+def test_pull_device_profiles_sends_id_sort_ascending(monkeypatch):
+    payload = {
+        "Success": True,
+        "Data": {"DeviceProfiles": [], "Pagination": {"HasMoreRows": False}},
+    }
+    seen_sorting = []
+
+    def fake_urlopen(request, timeout):
+        _validate_query_body(request)
+        seen_sorting.append(json.loads(request.data)["Sorting"])
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr(liongard.urllib.request, "urlopen", fake_urlopen)
+    liongard.pull_device_profiles(_CONFIG, _CREDENTIAL, 8815)
+    assert seen_sorting == [[{"SortBy": "ID", "Direction": "ASC"}]]
+
+
+def test_pull_identities_sends_id_sort_ascending(monkeypatch):
+    payload = {
+        "Success": True,
+        "Data": {"Identities": [], "Pagination": {"HasMoreRows": False}},
+    }
+    seen_sorting = []
+
+    def fake_urlopen(request, timeout):
+        _validate_query_body(request)
+        seen_sorting.append(json.loads(request.data)["Sorting"])
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr(liongard.urllib.request, "urlopen", fake_urlopen)
+    liongard.pull_identities(_CONFIG, _CREDENTIAL, 8815)
+    assert seen_sorting == [[{"SortBy": "ID", "Direction": "ASC"}]]
+
+
+def test_missing_sorting_surfaces_as_liongard_api_error_not_a_crash(monkeypatch):
+    """The real regression this whole section exists for: before this fix,
+    _paginate() sent no Sorting key at all. Confirms Liongard's real 400
+    for that shape (reproduced by the validating mock) surfaces through
+    _call()'s existing HTTPError branch as a clean LiongardAPIError, not
+    an uncaught exception -- built by hand here (bypassing
+    pull_device_profiles' own now-correct call) specifically to prove the
+    *handling* holds independently of the *fix*, since Liongard rejecting
+    a request for some other future reason has to hit this same path."""
+    monkeypatch.setattr(liongard.urllib.request, "urlopen", _query_urlopen({}))
+    body_missing_sorting = {"Environment": 8815, "Filters": [], "Pagination": {"Page": 1}}
+
+    with pytest.raises(liongard.LiongardAPIError, match="Bad request"):
+        liongard._call(
+            "https://myinstance.app.liongard.com/api/v2/inventory/device-profiles/query",
+            liongard._auth_header(_CREDENTIAL),
+            body_missing_sorting,
+        )
+
+
 def test_pull_device_profiles_paginates_until_has_more_rows_false(monkeypatch):
     pages = [
         {
@@ -117,6 +352,7 @@ def test_pull_device_profiles_paginates_until_has_more_rows_false(monkeypatch):
     calls = []
 
     def fake_urlopen(request, timeout):
+        _validate_query_body(request)
         body = json.loads(request.data)
         calls.append(body["Pagination"]["Page"])
         return _FakeResponse(pages[body["Pagination"]["Page"] - 1])
@@ -139,9 +375,7 @@ def test_pull_device_profiles_filters_out_non_inventory_state(monkeypatch):
             "Pagination": {"HasMoreRows": False},
         },
     }
-    monkeypatch.setattr(
-        liongard.urllib.request, "urlopen", lambda request, timeout: _FakeResponse(payload)
-    )
+    monkeypatch.setattr(liongard.urllib.request, "urlopen", _query_urlopen(payload))
     rows = liongard.pull_device_profiles(_CONFIG, _CREDENTIAL, 8815)
     assert [r["Hostname"] for r in rows] == ["kept"]
 
@@ -157,6 +391,7 @@ def test_pull_identities_uses_identities_endpoint_and_data_key(monkeypatch):
     seen_urls = []
 
     def fake_urlopen(request, timeout):
+        _validate_query_body(request)
         seen_urls.append(request.full_url)
         return _FakeResponse(payload)
 
@@ -171,27 +406,21 @@ def test_pagination_stops_at_max_pages_rather_than_looping_forever(monkeypatch):
         "Success": True,
         "Data": {"DeviceProfiles": [], "Pagination": {"HasMoreRows": True}},
     }
-    monkeypatch.setattr(
-        liongard.urllib.request, "urlopen", lambda request, timeout: _FakeResponse(payload)
-    )
+    monkeypatch.setattr(liongard.urllib.request, "urlopen", _query_urlopen(payload))
     with pytest.raises(liongard.LiongardAPIError, match="Stopped after"):
         liongard.pull_device_profiles(_CONFIG, _CREDENTIAL, 8815)
 
 
 def test_missing_data_key_raises_clear_error(monkeypatch):
     payload = {"Success": True, "Data": {"Pagination": {"HasMoreRows": False}}}
-    monkeypatch.setattr(
-        liongard.urllib.request, "urlopen", lambda request, timeout: _FakeResponse(payload)
-    )
+    monkeypatch.setattr(liongard.urllib.request, "urlopen", _query_urlopen(payload))
     with pytest.raises(liongard.LiongardAPIError, match="DeviceProfiles"):
         liongard.pull_device_profiles(_CONFIG, _CREDENTIAL, 8815)
 
 
 def test_success_false_raises_clear_error(monkeypatch):
     payload = {"Success": False, "Data": {}}
-    monkeypatch.setattr(
-        liongard.urllib.request, "urlopen", lambda request, timeout: _FakeResponse(payload)
-    )
+    monkeypatch.setattr(liongard.urllib.request, "urlopen", _query_urlopen(payload))
     with pytest.raises(liongard.LiongardAPIError, match="unsuccessful"):
         liongard.pull_device_profiles(_CONFIG, _CREDENTIAL, 8815)
 
@@ -302,6 +531,7 @@ def test_list_environments_normalizes_scheme_less_instance_url(monkeypatch):
 
 def test_pull_device_profiles_normalizes_scheme_less_instance_url(monkeypatch):
     def fake_urlopen(request, timeout):
+        _validate_query_body(request)
         assert request.full_url == "https://us4.app.liongard.com/api/v2/inventory/device-profiles/query"
         return _FakeResponse(
             {"Success": True, "Data": {"DeviceProfiles": [], "Pagination": {"HasMoreRows": False}}}
