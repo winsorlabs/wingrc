@@ -31,7 +31,7 @@ from collections import OrderedDict
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import RedirectResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -49,7 +49,13 @@ from ..models import (
     EvidenceTask,
     EvidenceTaskStateLink,
 )
-from ..storage import StorageClient, download_filename, get_storage_client
+from ..storage import (
+    StorageClient,
+    content_disposition,
+    download_filename,
+    evidence_download_path,
+    get_storage_client,
+)
 from ..svg_sanitize import SvgSanitizeError, sanitize_svg
 
 router = APIRouter(
@@ -367,9 +373,7 @@ async def upload_evidence(
         artifact_type=ev.artifact_type,
         mime_type=ev.mime_type,
         file_size_bytes=ev.file_size_bytes,
-        download_url=storage.presigned_url(
-            storage_key, download_filename=download_filename(display_title, ext)
-        ),
+        download_url=evidence_download_path(org_id, ev.id),
         reference_location=None,
         note=None,
         collected_at=ev.collected_at,
@@ -450,7 +454,6 @@ def list_evidence(
     assessment_id: uuid.UUID,
     cs_id: uuid.UUID,
     session: Session = Depends(get_session),
-    storage: StorageClient = Depends(get_storage_client),
 ) -> list[EvidenceOut]:
     _check_assessment(session, org_id, assessment_id)
     cs = _check_cs(session, assessment_id, cs_id)
@@ -471,12 +474,7 @@ def list_evidence(
             mime_type=ev.mime_type,
             file_size_bytes=ev.file_size_bytes,
             download_url=(
-                storage.presigned_url(
-                    ev.storage_key,
-                    download_filename=download_filename(
-                        ev.title, os.path.splitext(ev.storage_key)[1]
-                    ),
-                )
+                evidence_download_path(org_id, ev.id)
                 if ev.kind == "file" and ev.storage_key
                 else None
             ),
@@ -499,7 +497,25 @@ def download_evidence(
     evidence_id: uuid.UUID,
     session: Session = Depends(get_session),
     storage: StorageClient = Depends(get_storage_client),
-) -> RedirectResponse:
+) -> StreamingResponse:
+    """Streams the object through this process instead of redirecting to a
+    presigned storage URL — a presigned URL is a bearer credential good
+    until it expires, downloadable by anyone who obtains the link, with no
+    per-request re-check of session/org access and no audit trail. This
+    route runs under the router-wide require_org_access()/require_write()
+    dependencies like every other route here, so every request re-checks
+    the requester's session and org membership; the ev.org_id != org_id
+    check below additionally guards a guessed evidence_id belonging to a
+    DIFFERENT org than the one in the URL (require_org_access() only
+    confirms the caller belongs to *org_id*, not that evidence_id is
+    actually one of its rows) — done before any storage call, so a
+    cross-org guess never even reaches the storage backend.
+
+    Streamed via StorageClient.stream_bytes(), not get_bytes(): the whole
+    object is never held in this process's memory at once. See that
+    method's docstring for why passing a sync iterator straight into
+    StreamingResponse doesn't pin a worker thread for the whole transfer.
+    """
     ev = session.get(Evidence, evidence_id)
     if ev is None or ev.org_id != org_id:
         raise HTTPException(status_code=404, detail="Evidence not found")
@@ -508,15 +524,36 @@ def download_evidence(
             status_code=404,
             detail="No stored file for this evidence item — it is a location reference",
         )
-
-    url = storage.presigned_url(
-        ev.storage_key,
-        download_filename=download_filename(ev.title, os.path.splitext(ev.storage_key)[1]),
-    )
-    if not url:
+    if not storage.is_configured():
         raise HTTPException(status_code=404, detail="Storage not configured")
 
-    return RedirectResponse(url=url, status_code=302)
+    # Audit before streaming, not after: the access decision (session +
+    # org access already checked by the router-wide dependencies, plus the
+    # ownership check above) is what's worth recording, matching "who
+    # accessed this evidence artifact and when" -- not "who successfully
+    # received every last byte", which a client abort would leave
+    # ambiguous if logged only on completion.
+    log_event(
+        session,
+        org_id=org_id,
+        action="evidence.download",
+        entity_type="evidence",
+        entity_id=ev.id,
+        after_value={"title": ev.title, "artifact_type": ev.artifact_type},
+        context={"via": "api"},
+    )
+    session.commit()
+
+    filename = download_filename(ev.title, os.path.splitext(ev.storage_key)[1])
+    headers = {"Content-Disposition": content_disposition(filename)}
+    if ev.file_size_bytes is not None:
+        headers["Content-Length"] = str(ev.file_size_bytes)
+
+    return StreamingResponse(
+        storage.stream_bytes(ev.storage_key),
+        media_type=ev.mime_type or "application/octet-stream",
+        headers=headers,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -838,9 +875,7 @@ async def collect_task_evidence_file(
         artifact_type=ev.artifact_type,
         mime_type=ev.mime_type,
         file_size_bytes=ev.file_size_bytes,
-        download_url=storage.presigned_url(
-            storage_key, download_filename=download_filename(display_title, ext)
-        ),
+        download_url=evidence_download_path(org_id, ev.id),
         reference_location=None,
         note=None,
         collected_at=ev.collected_at,

@@ -150,6 +150,32 @@ Scoped to meaningful compliance mutations (signal, not firehose):
                                  why decoupling publish from activation
                                  matters (activation stays an org-level
                                  act; publish/unpublish is deployment-wide).
+  evidence.download              — an evidence file's bytes were streamed
+                                 to a requester (routers/evidence.py:
+                                 download_evidence, the evidence-download-
+                                 hardening slice -- presigned storage URLs
+                                 are gone for Evidence rows). after_value
+                                 carries {title, artifact_type} only, never
+                                 the bytes. Also fires for a system-
+                                 description network/data-flow diagram
+                                 view -- those are Evidence rows displayed
+                                 inline via the same route (routers/
+                                 orgs.py's _diagram_url), so a page view
+                                 that renders one is itself the "who
+                                 accessed this artifact and when" signal
+                                 this event exists to capture, not noise.
+                                 Deliberately NOT logged for
+                                 upload/list/collect responses that merely
+                                 include a download_url in their JSON --
+                                 building that URL touches no storage and
+                                 grants no access by itself; only an actual
+                                 GET against it does. NOT logged for bundle
+                                 export's evidence embedding either --
+                                 bundle_service.py reads bytes via
+                                 storage.get_bytes() directly, a different
+                                 path, already covered by its own single
+                                 bundle.export entry rather than one row
+                                 per embedded file.
   product_document.upload       — a real file was attached to a baseline
   product_document.delete         library product (the vendor's CRM, the
                                  MSP's own baseline doc, a KB export --
