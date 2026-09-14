@@ -2567,6 +2567,51 @@ Items without a status are planned but not yet started.
     during this verification pass (see the document-ingestion entry),
     not a regression count.
 
+- **Fix: Liongard connector 500s on a scheme-less instance URL**
+  (2026-09-14) — unrelated to either slice above (doesn't touch
+  `anthropic`/`pypdf`/`python-docx`, and the `test_input` connector
+  signature was already correct — ruled out by reading the code, not
+  assumed), found from a real traceback in wl-util-1's live backend
+  logs after Jarrod reported the baseline importer *and* the Liongard
+  integration both 500ing. `urllib.request.Request()` raises a bare
+  `ValueError` ("unknown url type") when `instance_url` has no scheme —
+  an admin pasting `us4.app.liongard.com` instead of
+  `https://us4.app.liongard.com` (exactly what the config field's own
+  help text shows but never enforced) hit this on every one of the four
+  code paths that build a Liongard request (`_test_connection`,
+  `list_environments` — two call sites in `routers/scope.py` — and the
+  shared `_call()` behind `pull_device_profiles`/`pull_identities`, the
+  sync dry-run's device/identity pull): none of them catch a bare
+  `ValueError`, only `LiongardAPIError`. A configuration mistake
+  surfacing as an uncaught 500 instead of a message naming what to fix
+  is the same standard this violated as the document-ingestion slice's
+  own `ai_provider="none"` requirement above.
+  - Fixed with `connectors/liongard.py:_normalize_instance_url()` —
+    defaults to `https://` when no scheme is present (Liongard is
+    SaaS-only, always HTTPS) — used by both `_test_connection` and the
+    shared `_instance_url()` helper so all four paths get the fix from
+    one place. `ValueError` guards also added around both
+    `urllib.request.Request()` construction sites as a defensive
+    fallback; not expected to fire in normal use once normalization
+    runs first (its output always contains `"://"`, urllib's own
+    trigger for the error), kept for any input this function doesn't
+    anticipate.
+  - Reproduced and confirmed fixed live on a wl-util-1 bench stack
+    (`wingrc_verify_20260915`): the exact reported scenario
+    (`instance_url = "us4.app.liongard.com"`, a fake credential) went
+    from an uncaught 500 to a clean `200` with
+    `"Liongard rejected the key (HTTP 401) — check that it's active and
+    has at least Reader access to this instance."` — reaching a real
+    HTTP 401 from the real API confirms the URL was genuinely
+    normalized to `https://` and dispatched, not just caught locally.
+    Full backend suite: **1046 passed** (was 1039 before this fix's 7
+    new tests, all in `test_liongard_connector.py` — direct coverage of
+    `_normalize_instance_url` plus the scheme-less case through
+    `list_environments`, `pull_device_profiles`, and `_test_connection`
+    itself, none of which the existing `test_integrations.py` suite
+    exercises since it mocks the connector at the `ConnectorSpec` level
+    for every test).
+
 ---
 
 ## Planned
