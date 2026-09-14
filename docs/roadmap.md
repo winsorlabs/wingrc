@@ -2304,13 +2304,40 @@ Items without a status are planned but not yet started.
     `ToolImportWizard.test.tsx` and `ToolsLibraryPanel.test.tsx` gained
     matching frontend coverage (generate/edit/re-check flow, document
     re-attachment after apply, the provenance banner rendering only when
-    set). Full backend suite (`pytest -q -m "not integration"`, 187 passed)
-    and `ruff check` both clean locally against this session's changes;
-    the DB-backed integration tests in `test_admin_products.py` and the
-    frontend `tsc -b`/`vitest`/`vite build` checks require the bench-stack
-    workflow (no local Docker/Node in this session's environment) and are
-    pending that run before merge — do not treat this entry as full
-    end-to-end proof until that's recorded.
+    set).
+  - **Bench-verified 2026-09-14**, together with the evidence-download-
+    hardening slice below (`wingrc_verify_20260914`, wl-util-1, real
+    Postgres + MinIO) — both slices landed on `main` without bench
+    verification when they were first built (no SSH/Docker access in
+    those sessions), touch overlapping files (`admin_products.py`,
+    `storage.py`), and were verified together in one pass once access was
+    resolved; see the evidence-download-hardening entry below for the
+    full stack details and the three bugs this pass found and fixed
+    (none caught by any local-only run — exactly why bench verification
+    happens before merge, not after, going forward). Two gaps this task
+    explicitly called out with no
+    dedicated test yet were closed during this pass and are now covered:
+    `test_ai_provenance_survives_a_later_hand_authored_reimport` (a
+    plain hand-authored re-import of an AI-generated product does not
+    clear `ai_generated_at`/`ai_generated_model`, checked against the
+    real write path — `seeds/baselines.py:_seed_product` — not just the
+    domain type) and
+    `test_ingest_from_documents_reimport_warns_on_affected_orgs`
+    (re-running `/import/from-documents` against a product with active
+    tenants shows the same affected-org warning a hand-authored
+    re-import does, through the identical dry-run path — no second,
+    silently-more-permissive ingest path exists). `wingrc seed-catalog`
+    then `wingrc seed-baselines` run for real against this bench
+    Postgres: 110 controls / 320 objectives seeded, then
+    `rocketcyber.yaml` seeded cleanly (1 product, 27 baseline controls,
+    12 evidence specs, no missing-control warnings), and a second
+    `seed-baselines` run confirmed idempotent (identical counts, no
+    errors) — with the new `coverage_basis`/provenance code active, not
+    the pre-slice version. Full backend suite: **1039 passed** (up from
+    the 187 local-only run — see the evidence-download-hardening entry
+    for the three real bugs this pass found and fixed, none caught by
+    any local run). Frontend `tsc -b`/`vitest` (115/115)/`vite build` all
+    clean via a throwaway `node:24-alpine` container.
   - Reproducing `rocketcyber.yaml` from its two named source documents
     (`RocketCyber_SIEM_and_SOC_Baseline.docx`, the RocketCyber Customer
     Responsibility Matrix doc) was not attempted — neither file is present
@@ -2424,23 +2451,42 @@ Items without a status are planned but not yet started.
     shape creates; adding Range parsing would have been scope creep
     against a problem this deployment doesn't have. Revisit only if a
     future evidence type meaningfully raises that cap.
-  - **§4 performance measurement — written, not yet run.** This session
-    had no SSH/Docker/network access to a live WinGRC stack (see this
-    file's own environment-limitation note pattern elsewhere in this doc
-    for the general shape of that gap) to actually drive the concurrency
-    benchmark this task's own §4 requires before treating the streaming
-    design as proven safe under load. A ready-to-run script exists at
-    `scripts/one-off/bench_evidence_download_20260914.py` (stdlib-only,
-    same methodology as the `get_current_user` threadpool-blocking
-    benchmark above: concurrency 1/10/50 against a real uvicorn+Postgres
-    stack, a concurrent `/health` watcher, p50/p95/p99 + error rate per
-    level) — **its numbers are not yet in this entry.** Do not treat this
-    slice as fully verified per its own §4 requirement, or assume the
-    streaming design is safe at production concurrency, until it has
-    actually been run against a real stack and the results recorded here.
-    The design reasoning above (chunk-at-a-time threadpool dispatch, not
-    one worker pinned per transfer) is a sound argument for why it
-    *should* be safe, not a substitute for having measured it.
+  - **§4 performance measurement — run 2026-09-14 on the bench stack
+    (`wingrc_verify_20260914`, wl-util-1, real uvicorn + Postgres 18 +
+    MinIO, single worker, 4 vCPU / ~5 GiB host).**
+    `scripts/one-off/bench_evidence_download_20260914.py`, concurrency
+    1/10/50, 60 downloads per level, **10 MB PDF** (evidence caps at
+    50 MB; this is a realistic upper-middle size for that range, not the
+    cap itself), stdlib `ThreadPoolExecutor` client, a concurrent
+    `/health` watcher throughout:
+
+    | concurrency | download_evidence (10 MB) | baseline (`GET /orgs`, trivial payload) |
+    |---|---|---|
+    | 1 | p50 29.1ms / p95 31.5ms / p99 33.1ms | p50 4.6ms / p95 5.4ms / p99 14.4ms |
+    | 10 | p50 250.5ms / p95 282.1ms / p99 291.9ms | p50 50.8ms / p95 65.7ms / p99 70.6ms |
+    | 50 | p50 1287.5ms / p95 1401.3ms / p99 1410.9ms | p50 567.4ms / p95 653.4ms / p99 661.9ms |
+
+    **Zero errors and zero `/health` failures at every level** — no
+    repeat of the project's own concurrency-50 event-loop-starvation
+    incident (`get_current_user`, above): the container stayed healthy
+    and responsive throughout, at both baseline and download load. The
+    download endpoint's p50 at concurrency 50 (1287.5ms) is roughly 2.3x
+    the trivial-endpoint baseline at the same concurrency (567.4ms) —
+    the *incremental* cost is streaming 10 MB rather than a small JSON
+    payload, not a qualitatively different failure mode; both curves grow
+    the same shape (DB-pool contention at 40 connections under 50
+    concurrent requests, the same effect the `get_current_user` benchmark
+    already characterized), the download simply adds real transfer time
+    on top. Backend process memory stayed at 358 MiB (`docker stats`)
+    after cumulative 1.8 GB transferred across all three levels combined
+    (60+60+60 downloads × 10 MB) — well below what buffering even one
+    concurrency-50 burst (500 MB at once) would require if
+    `stream_bytes()` weren't actually streaming. **Conclusion: no
+    meaningful degradation at this file size and concurrency — the
+    chunk-at-a-time `iterate_in_threadpool` design holds up under
+    measurement, not just the design argument.** Revisit only if evidence
+    file sizes or concurrent-download volume grow materially past what
+    this test exercised.
   - **Verification status otherwise:** `test_evidence_api.py` extended
     heavily — streamed-byte correctness (content, Content-Type,
     Content-Disposition, Content-Length), no presigned URL issued
@@ -2464,15 +2510,62 @@ Items without a status are planned but not yet started.
     already-absolute presigned URL, i.e. the logo, untouched), with its
     own `api.test.ts`; `EvidenceSection.tsx`'s download link and
     `SystemDescriptionForm.tsx`'s two diagram `<img>` tags route through
-    it. **194 passed locally** (`pytest -q -m "not integration"`), `ruff
-    check .` clean, and the full suite (1037 tests, integration included)
-    collects cleanly with no import/collection errors — but the DB-backed
-    integration tests here, and the frontend `tsc -b`/`vitest`/`vite
-    build` checks, need the bench-stack workflow this session's
-    environment can't run (no local Docker/Node, no SSH reachability to
-    wl-util-1 this session). Pending that run, same caveat as the §4
-    measurement above — this entry records what was implemented and
-    locally verified, not full end-to-end proof.
+    it.
+  - **Bench-verified 2026-09-14 on `wingrc_verify_20260914` (wl-util-1),
+    real Postgres 18 + MinIO, not just local unit runs:** full backend
+    suite **1039 passed** (was 1037 at first run — see the three bugs
+    below; two more slice-specific tests added and passing, see the
+    document-ingestion entry's own bench-verification note), `ruff
+    check .` clean in-container. Frontend via a throwaway `node:24-alpine`
+    container running the repo's own scripts unmodified: `tsc -b` clean,
+    **115/115 vitest** passed across 17 files (including this slice's new
+    `api.test.ts`, `ToolImportWizard.test.tsx`, `ToolsLibraryPanel.test.tsx`),
+    `npm run build` (`tsc -b && vite build`) clean, 444 KB JS bundle
+    (120 KB gzip).
+  - **Three real bugs found and fixed, none of which any local run
+    caught** (this is exactly why the standing bench-verify-before-merge
+    rule exists — see this file's top-of-Done note on the two slices that
+    landed unverified):
+    1. **`backend/Dockerfile` never installed `pyproject.toml`'s `ai`
+       extras group** (`anthropic`/`pypdf`/`python-docx`) — only `pip
+       install ".[dev]"`, never `".[dev,ai]"`. Since `extract_text()`
+       calls `pypdf`/`python-docx` *before* the configured AI provider is
+       ever consulted, the entire document-ingestion endpoint 500'd on
+       every real upload in any container built from this Dockerfile —
+       dev, bench, or a real deployment — regardless of
+       `WINGRC_AI_PROVIDER`. Never caught locally because every local
+       test patches `extract_text()` directly rather than installing
+       real parsing libraries. This image had literally never run
+       `ingest_document()` before this bench session — the committed
+       `rocketcyber.yaml` was produced by a throwaway script outside any
+       container. Fixed: `pip install ".[dev,ai]"`. Installing the
+       `anthropic` SDK unconditionally is safe for air-gapped/CUI-
+       sensitive deployments too — inert unless `WINGRC_AI_PROVIDER=
+       anthropic` is actually set, nothing dials out at import time.
+    2. **Two new `test_evidence_api.py` tests constructed `Evidence(...)`
+       rows directly via the ORM without setting `collected_at`**
+       (`test_download_cross_org_evidence_id_unreachable`,
+       `_seed_real_user_with_evidence`) — that column has no default at
+       any level (checked: no Python-side `default=`, no
+       `server_default=`), only ever set by production code paths
+       explicitly. Every pre-existing direct-`Evidence()` test
+       construction elsewhere in the suite already sets it; these two,
+       new this slice, didn't. `NotNullViolation` only surfaces against a
+       real Postgres `INSERT` — invisible without a DB. Fixed: both now
+       pass `collected_at=datetime.now(UTC)`.
+    3. **`test_ingest_from_documents_requires_ai_provider_configured`
+       never patched `extract_text()`**, on the theory that
+       `ai_provider="none"` would short-circuit before any document
+       parsing happened — it doesn't; extraction always runs first. With
+       real `pypdf` now actually installed (bug 1's fix), the test's
+       `_fake_pdf_bytes()` (not real PDF structure) failed real parsing
+       instead of failing at import, changing the error shape. Fixed: now
+       patches `extract_text` like every sibling ingestion test.
+  - All three fixed forward on `main` (commits after this slice's
+    original push), each re-verified on the bench stack before pushing:
+    `1037→1039 passed` reflects two *new* slice-specific tests added
+    during this verification pass (see the document-ingestion entry),
+    not a regression count.
 
 ---
 

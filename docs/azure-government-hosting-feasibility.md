@@ -430,20 +430,23 @@ discovered to be wrong after the fact.
 
 ## Security dependency that should land with, not after, production
 
-**Shipped 2026-09-14 — this prerequisite is now met.** Evidence downloads
-no longer use presigned object-storage URLs: `routers/evidence.py:
-download_evidence` streams the bytes through the backend itself, so
-every download re-checks session/MFA/lockout/org-access per request —
-see `docs/roadmap.md`'s "Evidence download hardening" Done entry for the
-full writeup. Two things to know before treating this as fully closed
-for a real Gov production instance specifically:
+**Shipped and bench-verified 2026-09-14 — this prerequisite is met.**
+Evidence downloads no longer use presigned object-storage URLs:
+`routers/evidence.py:download_evidence` streams the bytes through the
+backend itself, so every download re-checks session/MFA/lockout/org-
+access per request — see `docs/roadmap.md`'s "Evidence download
+hardening" Done entry for the full writeup. One thing to know before
+treating this as fully closed for a real Gov production instance
+specifically:
 
-- The slice's own §4 load measurement (does streaming through the
-  backend meaningfully pressure the shared worker threadpool under
-  concurrent downloads) was written but **not yet run** — no live-stack
-  access was available in the session that implemented this. Run
-  `scripts/one-off/bench_evidence_download_20260914.py` against a real
-  stack and confirm before relying on this at production concurrency.
+- The slice's own §4 load measurement ran 2026-09-14 against a real
+  Postgres+MinIO bench stack: concurrency 1/10/50, a 10 MB file, zero
+  errors and zero `/health` failures at every level (full numbers in
+  the roadmap entry). That's this project's own dev-box hardware (4
+  vCPU, ~5 GiB) and a 10 MB file specifically — re-confirm against
+  production-representative hardware and evidence file sizes before
+  relying on it unmodified for a real Gov production instance's actual
+  load profile, rather than assuming these exact numbers transfer.
 - `ProductDocument` downloads (vendor baseline-library documents,
   `routers/admin_products.py`) were deliberately left on
   `presigned_url()` — not customer CUI, msp_admin/consultant_admin only,

@@ -33,10 +33,12 @@ downloads. Self-contained (stdlib only, no app imports) so it can run from
 any host with network access to a live stack, not necessarily inside the
 backend container. See the script's own header for exact usage and what it
 sets up (a throwaway org/assessment/evidence row it does not clean up
-afterward). **Not yet run** — see the roadmap entry for status; run it
-against a real stack (wl-util-1 or an isolated bench compose project) and
-record the resulting table there before treating that slice's §4
-requirement as satisfied.
+afterward). **Run 2026-09-14** on `wingrc_verify_20260914` (wl-util-1) —
+10 MB file, concurrency 1/10/50, zero errors, zero `/health` failures;
+see docs/roadmap.md's evidence-download-hardening Done entry for the
+full results table and the baseline comparison. Safe to re-run for a
+future regression check (it creates fresh throwaway data each time, no
+cleanup needed before a re-run).
 
 ## cleanup_empty_assessments_20260910.sql
 
