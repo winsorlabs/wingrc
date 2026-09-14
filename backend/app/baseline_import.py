@@ -130,12 +130,33 @@ def validate(session: Session, data: dict, ctrl_lookup: dict[str, Control]) -> l
                 f"controls[{idx}].classification {classification!r} must be one of "
                 f"{sorted(_VALID_CLASSIFICATIONS)}."
             )
-        coverage_basis = entry.get("coverage_basis", "customer_system")
-        if coverage_basis not in _VALID_COVERAGE_BASES:
-            problems.append(
-                f"controls[{idx}].coverage_basis {coverage_basis!r} must be one of "
-                f"{sorted(_VALID_COVERAGE_BASES)}."
-            )
+        # coverage_basis is moot for customer_owns (evidence-minimization
+        # already zeroes provider_contribution/evidence for those, so WHERE
+        # the vendor's coverage would apply is irrelevant) -- defaulted as
+        # before. For provider_satisfies/shared it answers whether this
+        # credits the customer's CUI systems or just the vendor's own
+        # portal, which CLAUDE.md's hard rules treat very differently, so
+        # it must be explicitly reviewed and set, never defaulted. This is
+        # the gap left open on purpose by the document-ingestion pipeline
+        # (baseline.py:ControlEntry.coverage_basis) -- nothing in a vendor
+        # doc reliably distinguishes the two without a human who knows the
+        # actual deployment.
+        if classification == "customer_owns":
+            coverage_basis = entry.get("coverage_basis", "customer_system")
+            if coverage_basis not in _VALID_COVERAGE_BASES:
+                problems.append(
+                    f"controls[{idx}].coverage_basis {coverage_basis!r} must be one of "
+                    f"{sorted(_VALID_COVERAGE_BASES)}."
+                )
+        else:
+            coverage_basis = entry.get("coverage_basis")
+            if coverage_basis not in _VALID_COVERAGE_BASES:
+                problems.append(
+                    f"controls[{idx}].coverage_basis must be explicitly set to one of "
+                    f"{sorted(_VALID_COVERAGE_BASES)} for classification={classification!r} "
+                    "-- reviewer must confirm whether this credits the customer's CUI "
+                    "systems or only the vendor's own platform."
+                )
         candidate_state = entry.get("candidate_state", "not_satisfied_by_product")
         if candidate_state not in _VALID_CANDIDATE_STATES:
             problems.append(
@@ -237,7 +258,10 @@ def build_preview(
             if isinstance(ctrl_ids, str):
                 ctrl_ids = [ctrl_ids]
             classification = entry["classification"]
-            coverage_basis = entry.get("coverage_basis", "customer_system")
+            coverage_basis = entry.get(
+                "coverage_basis",
+                "customer_system" if classification == "customer_owns" else None,
+            )
             candidate_state = entry.get("candidate_state", "not_satisfied_by_product")
             objectives = entry.get("objectives") or []
             for cid in ctrl_ids:

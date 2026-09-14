@@ -416,6 +416,17 @@ class Product(Base):
         JSONB, server_default=text("'[]'::jsonb")
     )
     is_published: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Permanent AI-generation provenance. Set once by the document-ingestion
+    # import path and never cleared by a later re-import that omits them --
+    # mirrors AssessmentObjective.practitioner_notes_generated_at/_model: this
+    # is a permanent authorship record, not a dismissible status. NULL means
+    # hand-authored.
+    ai_generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    ai_generated_model: Mapped[str | None] = mapped_column(
+        String(80), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

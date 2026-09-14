@@ -59,6 +59,16 @@ class ControlEntry:
     evidence: list[EvidenceSpec] = field(default_factory=list)
     note: str | None = None
     scope_note: str | None = None
+    # WHERE the vendor's coverage applies -- customer_system | platform_only |
+    # assists. None on customer_owns entries (moot -- minimization already
+    # zeroes evidence/contribution for those). None on provider_satisfies/
+    # shared entries means "not yet reviewed" -- baseline_import.validate()
+    # requires a reviewer set this explicitly before apply; the AI pipeline
+    # never fills it in, since crediting a vendor's own-platform-only control
+    # to the customer's CUI systems is exactly what CLAUDE.md's hard rules
+    # forbid, and there's nothing in a vendor doc that reliably distinguishes
+    # the two without a human who knows the deployment.
+    coverage_basis: str | None = None
 
 
 @dataclass
@@ -72,6 +82,11 @@ class ProductMeta:
     role: str
     assumed_config: list[str] = field(default_factory=list)
     source_docs: list[str] = field(default_factory=list)
+    # Permanent AI-generation provenance -- set once by the document-ingestion
+    # pipeline, never cleared by a later re-import that omits them. None for
+    # hand-authored baselines.
+    ai_generated_at: str | None = None
+    ai_generated_model: str | None = None
 
 
 @dataclass
@@ -152,6 +167,7 @@ def _parse_control_entry(raw: dict[str, Any]) -> ControlEntry:
         evidence=evidence,
         note=raw.get("note"),
         scope_note=raw.get("scope_note"),
+        coverage_basis=raw.get("coverage_basis"),
     )
 
 
@@ -171,6 +187,8 @@ def load_baseline(path: str | Path) -> BaselineEntry:
         role=p["role"].strip(),
         assumed_config=list(p.get("assumed_config", [])),
         source_docs=list(p.get("source_docs", [])),
+        ai_generated_at=p.get("ai_generated_at"),
+        ai_generated_model=p.get("ai_generated_model"),
     )
     controls = [_parse_control_entry(c) for c in data.get("controls", [])]
 
@@ -203,6 +221,10 @@ def to_yaml_dict(entry: BaselineEntry) -> dict[str, Any]:
         prod["assumed_config"] = p.assumed_config
     if p.source_docs:
         prod["source_docs"] = p.source_docs
+    if p.ai_generated_at:
+        prod["ai_generated_at"] = p.ai_generated_at
+    if p.ai_generated_model:
+        prod["ai_generated_model"] = p.ai_generated_model
 
     controls = []
     for c in entry.controls:
@@ -230,6 +252,8 @@ def to_yaml_dict(entry: BaselineEntry) -> dict[str, Any]:
             cd["note"] = c.note
         if c.scope_note:
             cd["scope_note"] = c.scope_note
+        if c.coverage_basis:
+            cd["coverage_basis"] = c.coverage_basis
         controls.append(cd)
 
     result: dict[str, Any] = {"product": prod, "controls": controls}

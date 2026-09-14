@@ -16,6 +16,7 @@ Usage (Python):
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -103,6 +104,17 @@ def _seed_product(
     """
     pd = data["product"]
 
+    # Permanent AI-generation provenance: set only when the incoming YAML
+    # explicitly carries it, and never cleared on a re-import that omits it
+    # -- once a baseline is known to be AI-generated, that fact is permanent
+    # (matches AssessmentObjective.practitioner_notes_generated_at/_model).
+    ai_generated_at = (
+        datetime.fromisoformat(pd["ai_generated_at"])
+        if pd.get("ai_generated_at")
+        else None
+    )
+    ai_generated_model = pd.get("ai_generated_model")
+
     product = session.scalars(
         select(Product).where(Product.key == pd["key"])
     ).first()
@@ -118,6 +130,8 @@ def _seed_product(
             assumed_config=pd.get("assumed_config", []),
             source_docs=pd.get("source_docs", []),
             is_published=False,
+            ai_generated_at=ai_generated_at,
+            ai_generated_model=ai_generated_model,
         )
         session.add(product)
     else:
@@ -129,6 +143,10 @@ def _seed_product(
         product.role = pd.get("role", "").strip()
         product.assumed_config = pd.get("assumed_config", [])
         product.source_docs = pd.get("source_docs", [])
+        if ai_generated_at is not None:
+            product.ai_generated_at = ai_generated_at
+        if ai_generated_model is not None:
+            product.ai_generated_model = ai_generated_model
         if reset_published:
             product.is_published = False
     session.flush()
