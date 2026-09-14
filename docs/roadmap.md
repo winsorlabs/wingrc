@@ -2201,6 +2201,122 @@ Items without a status are planned but not yet started.
     certificate feature works in Gov at all were not independently
     confirmed from primary sources.
 
+- **Document-ingestion engine wired into the Tools baseline library** (2026-09-13) —
+  `backend/app/importers/document.py`'s AI extraction pipeline (previously a
+  complete, tested, but uncalled module — it produced `rocketcyber.yaml` via a
+  throwaway script, not a real integration) now has a real caller: a new
+  `POST /admin/products/import/from-documents` endpoint
+  (`routers/admin_products.py`) that runs it against 1-2 uploaded vendor
+  documents and feeds the result through the **existing** dry-run/apply
+  review path (`baseline_import.py`) — no second ingest path was built.
+  `ToolImportWizard.tsx` gained a mode toggle: upload a finished YAML (as
+  before), or generate a candidate from vendor documents into an editable
+  textarea, re-check via the same dry-run call, then apply exactly like a
+  hand-authored file.
+  - **`coverage_basis` has no home in the AI output, on purpose.** This
+    `BaselineControl` field (`customer_system` | `platform_only` | `assists`)
+    answers whether a vendor's coverage credits the customer's CUI systems or
+    only the vendor's own platform — CLAUDE.md's hard rules treat these very
+    differently (`platform_only` is excluded from the magic loop), and
+    nothing in a vendor CRM/baseline doc reliably distinguishes the two
+    without a human who knows the actual deployment. Resolved via explicit
+    decision (Jarrod, this session): the ingestion pipeline
+    (`baseline.py:ControlEntry.coverage_basis`) always leaves it `None`;
+    `baseline_import.py`'s `validate()` was tightened to require it
+    explicitly set for every `provider_satisfies`/`shared` entry (still
+    defaulted for `customer_owns`, where it's moot — evidence-minimization
+    already zeroes everything else out for those) — the same "no silent
+    default" treatment `classification` already got. An AI-generated
+    candidate's dry-run preview will always report this as a problem until
+    a reviewer fills it in; this is the intended gate, not a bug to fix
+    later.
+  - **The "lands unpublished" requirement was already satisfied by reuse,
+    not new code.** `baseline_import.apply_import()` always calls
+    `_seed_product(..., reset_published=True)` — true for a hand-authored
+    re-import already, so an AI-sourced one gets the same guarantee for
+    free by going through the identical write path. No separate flag or
+    "trusted source" bypass exists or was considered.
+  - **Permanent AI-provenance**, mirroring the `practitioner_notes_
+    generated_at`/`_model` precedent (never a dismissible status): new
+    `Product.ai_generated_at` / `ai_generated_model` columns (migration
+    `0048_product_ai_provenance`), set once at apply time and never cleared
+    by a later re-import that omits them (`seeds/baselines.py:_seed_product`).
+    Surfaced permanently in the Tools detail view (`ToolDetailPanel.tsx`) as
+    a `drawer-ai-caveat` banner, styled identically to the practitioner-notes
+    AI caveat in `ControlDrawer.tsx`, and in the raw YAML/`ProductDetailOut`
+    API response.
+  - **AI provider stayed env-var based, not moved into the connector
+    registry** — explicit decision (Jarrod, this session) after scoping what
+    a real registry migration would need (an explicit-key `AnthropicProvider`
+    constructor instead of the SDK's implicit env read, a new paid
+    test-completion action, and a decision about whether `Settings.ai_provider`
+    keeps existing or is replaced by "is there an `integration_connection`
+    row for key=ai"). Tracked as a separate follow-up, not built here. Fixed
+    a small pre-existing honesty gap while here: `config.py`'s comment and
+    `NullProvider`'s error message both referenced `azure_openai`/`local` as
+    if configurable, though `get_ai_provider()`'s registry only ever
+    supported `none`/`anthropic` — corrected the text, not implemented the
+    providers.
+  - **Cost/size guards added to the pipeline itself** (not the prompt,
+    which stayed untouched per this task's own scope limit):
+    `importers/document.py` gained a `DocumentIngestError` exception, a
+    600k-character pre-flight input guard (roughly 150k tokens, comfortably
+    under a 200k-token context window with headroom for the prompt and the
+    model's own reasoning), a raised `max_tokens` (8192 → 16384) for this
+    specific call since a comprehensive CRM can plausibly exceed the
+    AIProvider default sized for shorter completions, and normalization of
+    both a truncation-suspected `JSONDecodeError` and `ai_provider="none"`'s
+    plain `RuntimeError` into that one exception type — the router catches
+    it once and returns a clear 422, never a raw 500.
+  - **§4's "surface the model's uncertainty" (a per-control supporting quote
+    or section reference a reviewer could check without re-reading the whole
+    source document) was deliberately not built.** It would require adding a
+    new field to the AI JSON output schema, which requires editing
+    `_SYSTEM_PROMPT` — directly in conflict with this task's own explicit
+    "don't rewrite or improve the extraction prompt" exclusion (prompt
+    quality is its own task with its own evaluation). Specified here as a
+    well-defined follow-up rather than half-built: add a `support: string`
+    field per control entry in the JSON schema (a quoted span or section
+    reference from the source doc), render it in the review textarea/diff as
+    a collapsible citation, not a confidence score — the framing throughout
+    should help verification, never invite skipping it.
+  - **Fetching vendor documentation from a URL instead of an upload was
+    explicitly out of scope**, per the task's own instruction — noted here
+    as a real follow-up with its own design problem (SSRF, auth-walled
+    pages, content drift between fetch time and review time), not started.
+  - **Distinct from the "AI implementation statements" roadmap item below**
+    (per-objective draft statements) even though both consume the same BYO-AI
+    provider abstraction — this item is baseline-*library* ingestion
+    (vendor CRM/doc → candidate product mapping), not per-objective narrative
+    generation. Keep the two separate on a future pass, same caution already
+    recorded on that item's own Done-adjacent note above.
+  - **Verification:** new/extended tests, not a rewrite of the existing
+    suite — `test_document_ingest.py` gained coverage for `coverage_basis`'s
+    round-trip (present when set, omitted when not), the AI pipeline never
+    setting it, the size guard, the `max_tokens` override, and
+    `DocumentIngestError` normalization for a malformed response, a
+    wrong-shape response, and `ai_provider="none"`; `test_admin_products.py`
+    gained coverage for the tightened `coverage_basis` validation and the
+    new endpoint end-to-end (AI-provider-unconfigured clean 422, generate →
+    reviewer fills in `coverage_basis` → apply → unpublished and invisible to
+    a tenant via the real products-list endpoint → provenance visible on the
+    real detail endpoint), plus the new role-gate and bad-upload cases.
+    `ToolImportWizard.test.tsx` and `ToolsLibraryPanel.test.tsx` gained
+    matching frontend coverage (generate/edit/re-check flow, document
+    re-attachment after apply, the provenance banner rendering only when
+    set). Full backend suite (`pytest -q -m "not integration"`, 187 passed)
+    and `ruff check` both clean locally against this session's changes;
+    the DB-backed integration tests in `test_admin_products.py` and the
+    frontend `tsc -b`/`vitest`/`vite build` checks require the bench-stack
+    workflow (no local Docker/Node in this session's environment) and are
+    pending that run before merge — do not treat this entry as full
+    end-to-end proof until that's recorded.
+  - Reproducing `rocketcyber.yaml` from its two named source documents
+    (`RocketCyber_SIEM_and_SOC_Baseline.docx`, the RocketCyber Customer
+    Responsibility Matrix doc) was not attempted — neither file is present
+    in this repository or its `baselines/` directory, only the already-
+    hand-corrected YAML output is.
+
 ---
 
 ## Planned
