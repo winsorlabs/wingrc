@@ -189,11 +189,24 @@ export function LiongardSyncWizard({ orgId, onClose, onApplied }: Props) {
           </div>
         ) : (
           <>
-            <div className="field-hint">
-              {dryRun.changes.length === 0
-                ? "No changes detected — the scope graph already matches Liongard."
-                : "Review the changes below. Uncheck any row you don't want applied, then confirm."}
-            </div>
+            {dryRun.pull_status.length > 0 ? (
+              dryRun.pull_status.map((p) => (
+                <div className="field-hint" key={p.entity_label}>
+                  {p.message}
+                </div>
+              ))
+            ) : (
+              <div className="field-hint">
+                {dryRun.changes.length === 0
+                  ? "No changes detected — the scope graph already matches Liongard."
+                  : null}
+              </div>
+            )}
+            {dryRun.changes.length > 0 && (
+              <div className="field-hint">
+                Review the changes below. Uncheck any row you don't want applied, then confirm.
+              </div>
+            )}
             {dryRun.warnings.length > 0 && (
               <div className="form-error">
                 {dryRun.warnings.map((w, i) => (

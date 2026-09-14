@@ -622,6 +622,19 @@ export interface DryRunResult {
   // record with no usable natural key, so it never became a row at all.
   // Always empty for the workbook import path today.
   warnings: string[];
+  // Always empty for the workbook import path. See
+  // backend/app/routers/scope.py's LiongardPullStatus docstring -- an
+  // empty `changes` list alone can't tell "nothing found," "everything
+  // already matches," and "found records but none are confirmed
+  // (Inventory state) yet" apart; this can.
+  pull_status: LiongardPullStatus[];
+}
+
+export interface LiongardPullStatus {
+  entity_label: string;
+  total_found: number;
+  inventory_count: number;
+  message: string;
 }
 
 // ── Liongard connector (D.2) — mirrors backend/app/routers/scope.py's

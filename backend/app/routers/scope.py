@@ -272,6 +272,25 @@ class ScopeChangeOut(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class LiongardPullStatus(BaseModel):
+    """One line of "what did the pull actually return" per entity type --
+    always devices + identities for the Liongard path, always empty for
+    the workbook path. Exists because an empty `changes` list is
+    ambiguous on its own: it means either "nothing to compare" (Liongard
+    returned records, all already match scope) or "nothing to find"
+    (every record pulled is still in Discovery state, filtered out before
+    reconcile ever saw it) -- these read identically to a user unless the
+    pre-filter count is surfaced. `message` is the same fact rendered as a
+    plain, actionable sentence so the wizard doesn't have to re-derive it
+    from the three numbers.
+    """
+
+    entity_label: str
+    total_found: int
+    inventory_count: int
+    message: str
+
+
 class DryRunOut(BaseModel):
     summary: dict[str, int]
     changes: list[ScopeChangeOut]
@@ -282,6 +301,8 @@ class DryRunOut(BaseModel):
     # rather than as a workbook-specific field, since "a warning too broad
     # to attach to one row" isn't source-specific.
     warnings: list[str] = Field(default_factory=list)
+    # Always empty for the workbook path -- see LiongardPullStatus above.
+    pull_status: list[LiongardPullStatus] = Field(default_factory=list)
 
 
 class ScopeChangeIn(BaseModel):
@@ -815,6 +836,33 @@ def set_liongard_environment_mapping(
     )
 
 
+def _describe_liongard_pull(
+    entity_label: str, total_found: int, inventory_count: int, changed_count: int
+) -> str:
+    """Plain-language status for one entity type's pull -- see
+    LiongardPullStatus's own docstring for why this exists. Three
+    genuinely different situations, all of which otherwise present as
+    "an empty (or unremarkable) dry-run":
+      1. Liongard returned nothing at all for this environment.
+      2. Liongard returned records, but none are confirmed (Inventory
+         state) yet -- the actionable case, so it names the remedy.
+      3. Records are confirmed and compared, and scope already matches --
+         genuinely nothing to do, worded differently from case 2 on
+         purpose so the two are never mistaken for each other.
+    """
+    if total_found == 0:
+        return f"Liongard returned no {entity_label} for this Environment."
+    if inventory_count == 0:
+        return (
+            f"Liongard returned {total_found} {entity_label}, but none are in Inventory "
+            "state yet -- promote them from Discovery to Inventory in Liongard before "
+            "WinGRC will include them."
+        )
+    if changed_count == 0:
+        return f"{inventory_count} {entity_label} compared against scope -- no changes."
+    return f"{inventory_count} {entity_label} in Inventory, {changed_count} new or changed."
+
+
 @router.post("/{org_id}/integrations/liongard/sync/dry-run", response_model=DryRunOut)
 def liongard_sync_dry_run(
     org_id: uuid.UUID, session: Session = Depends(get_session)
@@ -831,6 +879,12 @@ def liongard_sync_dry_run(
     the resulting diff mixes DEVICE and PERSON rows, exactly like a
     workbook dry-run already mixes entity types from its own multiple
     sheets.
+
+    `pull_status` (see LiongardPullStatus) always carries one entry per
+    entity type, even when there's nothing to report -- an empty `changes`
+    list is ambiguous (nothing found vs. nothing changed vs. everything
+    still Discovery-state and filtered out), and this is what resolves it
+    for the caller instead of leaving that read on the raw numbers.
     """
     mapping = _get_liongard_mapping(session, org_id)
     if mapping is None:
@@ -846,17 +900,17 @@ def liongard_sync_dry_run(
     )
 
     try:
-        device_records = liongard_connector.pull_device_profiles(
+        device_pull = liongard_connector.pull_device_profiles(
             config, credential, mapping.liongard_environment_id
         )
-        identity_records = liongard_connector.pull_identities(
+        identity_pull = liongard_connector.pull_identities(
             config, credential, mapping.liongard_environment_id
         )
     except liongard_connector.LiongardAPIError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
 
-    devices, device_warnings = devices_to_canonical(device_records, source_ref)
-    identities, identity_warnings = identities_to_canonical(identity_records, source_ref)
+    devices, device_warnings = devices_to_canonical(device_pull.records, source_ref)
+    identities, identity_warnings = identities_to_canonical(identity_pull.records, source_ref)
     incoming = devices + identities
 
     row_warnings: dict[tuple[str, str], list[str]] = {}
@@ -871,9 +925,40 @@ def liongard_sync_dry_run(
     current = repo.list_entities(session, org_id)
     result = reconcile(current, incoming)
 
+    changed_by_type: dict[str, int] = {}
+    for c in result.changes:
+        if c.change_type.value in ("new", "changed"):
+            changed_by_type[c.entity_type.value] = changed_by_type.get(c.entity_type.value, 0) + 1
+
+    pull_status = [
+        LiongardPullStatus(
+            entity_label="devices",
+            total_found=device_pull.total_count,
+            inventory_count=device_pull.inventory_count,
+            message=_describe_liongard_pull(
+                "devices",
+                device_pull.total_count,
+                device_pull.inventory_count,
+                changed_by_type.get(EntityType.DEVICE.value, 0),
+            ),
+        ),
+        LiongardPullStatus(
+            entity_label="identities",
+            total_found=identity_pull.total_count,
+            inventory_count=identity_pull.inventory_count,
+            message=_describe_liongard_pull(
+                "identities",
+                identity_pull.total_count,
+                identity_pull.inventory_count,
+                changed_by_type.get(EntityType.PERSON.value, 0),
+            ),
+        ),
+    ]
+
     return DryRunOut(
         summary=result.summary(),
         warnings=pull_level_warnings,
+        pull_status=pull_status,
         changes=[
             ScopeChangeOut(
                 change_type=c.change_type.value,

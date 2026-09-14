@@ -40,6 +40,10 @@ function makeDryRun(overrides: Partial<DryRunResult> = {}): DryRunResult {
   return {
     summary: { new: 1, changed: 0, missing: 0, unchanged: 0 },
     warnings: [],
+    pull_status: [
+      { entity_label: "devices", total_found: 1, inventory_count: 1, message: "1 devices in Inventory, 1 new or changed." },
+      { entity_label: "identities", total_found: 0, inventory_count: 0, message: "Liongard returned no identities for this Environment." },
+    ],
     changes: [
       {
         change_type: "new",
@@ -140,12 +144,47 @@ describe("LiongardSyncWizard — mapped, sync + apply", () => {
 
   it("a no-op sync (matches Liongard already) shows nothing to apply", async () => {
     vi.mocked(api.getLiongardEnvironmentMapping).mockResolvedValue(makeMapping());
-    vi.mocked(api.liongardSyncDryRun).mockResolvedValue(makeDryRun({ changes: [], summary: { new: 0, changed: 0, missing: 0, unchanged: 4 } }));
+    vi.mocked(api.liongardSyncDryRun).mockResolvedValue(
+      makeDryRun({
+        changes: [],
+        summary: { new: 0, changed: 0, missing: 0, unchanged: 4 },
+        pull_status: [
+          { entity_label: "devices", total_found: 4, inventory_count: 4, message: "4 devices compared against scope -- no changes." },
+          { entity_label: "identities", total_found: 0, inventory_count: 0, message: "Liongard returned no identities for this Environment." },
+        ],
+      })
+    );
 
     render(<LiongardSyncWizard orgId="org1" onClose={vi.fn()} onApplied={vi.fn()} />);
     await screen.findByText(/Mapped to Liongard Environment/);
     fireEvent.click(screen.getByRole("button", { name: /Sync Now/ }));
 
-    await screen.findByText(/already matches Liongard/);
+    await screen.findByText(/no changes/);
+  });
+
+  it("a pull that found records but none are Inventory-state yet names the remedy", async () => {
+    vi.mocked(api.getLiongardEnvironmentMapping).mockResolvedValue(makeMapping());
+    vi.mocked(api.liongardSyncDryRun).mockResolvedValue(
+      makeDryRun({
+        changes: [],
+        summary: { new: 0, changed: 0, missing: 0, unchanged: 0 },
+        pull_status: [
+          {
+            entity_label: "devices",
+            total_found: 197,
+            inventory_count: 0,
+            message:
+              "Liongard returned 197 devices, but none are in Inventory state yet -- promote them from Discovery to Inventory in Liongard before WinGRC will include them.",
+          },
+          { entity_label: "identities", total_found: 0, inventory_count: 0, message: "Liongard returned no identities for this Environment." },
+        ],
+      })
+    );
+
+    render(<LiongardSyncWizard orgId="org1" onClose={vi.fn()} onApplied={vi.fn()} />);
+    await screen.findByText(/Mapped to Liongard Environment/);
+    fireEvent.click(screen.getByRole("button", { name: /Sync Now/ }));
+
+    await screen.findByText(/promote them from Discovery to Inventory/);
   });
 });

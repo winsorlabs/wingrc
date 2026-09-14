@@ -85,11 +85,22 @@ def _stub_liongard(monkeypatch):
     """Every test gets a working, controllable stub by default -- individual
     tests override state['devices']/['identities']/['environments'] or
     monkeypatch a raising fake for the error-path tests.
+
+    state['devices_total_count']/['identities_total_count'] default to
+    None, meaning "same as len(records)" (the ordinary case: everything
+    Liongard returned already survived the Inventory-state filter). A test
+    exercising the found-but-all-Discovery message sets one of these
+    higher than len(records) to simulate rows the connector's own filter
+    would have dropped -- state['devices']/['identities'] only ever holds
+    post-filter records, matching what the real connector returns in
+    InventoryPull.records.
     """
     state = {
         "environments": list(_ENVIRONMENTS),
         "devices": [_device_row()],
         "identities": [_identity_row()],
+        "devices_total_count": None,
+        "identities_total_count": None,
     }
     monkeypatch.setattr(
         liongard_module, "list_environments", lambda config, credential: state["environments"]
@@ -97,12 +108,26 @@ def _stub_liongard(monkeypatch):
     monkeypatch.setattr(
         liongard_module,
         "pull_device_profiles",
-        lambda config, credential, environment_id: state["devices"],
+        lambda config, credential, environment_id: liongard_module.InventoryPull(
+            records=state["devices"],
+            total_count=(
+                state["devices_total_count"]
+                if state["devices_total_count"] is not None
+                else len(state["devices"])
+            ),
+        ),
     )
     monkeypatch.setattr(
         liongard_module,
         "pull_identities",
-        lambda config, credential, environment_id: state["identities"],
+        lambda config, credential, environment_id: liongard_module.InventoryPull(
+            records=state["identities"],
+            total_count=(
+                state["identities_total_count"]
+                if state["identities_total_count"] is not None
+                else len(state["identities"])
+            ),
+        ),
     )
     return state
 
@@ -243,6 +268,103 @@ def test_dry_run_classifies_new_device_and_person(client, db_session, fake_msp_a
         assert c["change_type"] == "new"
         assert c["incoming"]["source"] == "liongard"
         assert "liongard:environment=8815" in c["incoming"]["source_ref"]
+
+
+# ---------------------------------------------------------------------------
+# Sync dry-run — Inventory-state pull visibility
+# ---------------------------------------------------------------------------
+
+
+def test_dry_run_pull_status_reports_new_or_changed_counts(client, db_session, fake_msp_admin):
+    org = _org(db_session, fake_msp_admin)
+    _set_credential(client)
+    client.put(
+        f"/orgs/{org.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    body = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
+
+    by_label = {p["entity_label"]: p for p in body["pull_status"]}
+    assert by_label["devices"]["total_found"] == 1
+    assert by_label["devices"]["inventory_count"] == 1
+    assert "1 new or changed" in by_label["devices"]["message"]
+    assert by_label["identities"]["total_found"] == 1
+    assert by_label["identities"]["inventory_count"] == 1
+    assert "1 new or changed" in by_label["identities"]["message"]
+
+
+def test_dry_run_pull_status_distinguishes_no_changes_from_nothing_found(
+    client, db_session, fake_msp_admin
+):
+    """A genuinely-nothing-to-do sync (Inventory rows exist, already match
+    scope) must read differently from an empty-because-filtered pull --
+    the whole point of this feature.
+    """
+    org = _org(db_session, fake_msp_admin)
+    _set_credential(client)
+    client.put(
+        f"/orgs/{org.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    first = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
+    client.post(f"/orgs/{org.id}/imports/workbook/apply", json={"changes": first["changes"]})
+
+    body = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
+    by_label = {p["entity_label"]: p for p in body["pull_status"]}
+    assert by_label["devices"]["inventory_count"] == 1
+    assert "compared against scope -- no changes" in by_label["devices"]["message"]
+    assert "compared against scope -- no changes" in by_label["identities"]["message"]
+
+
+def test_dry_run_pull_status_names_the_remedy_when_everything_is_still_discovery(
+    client, db_session, fake_msp_admin, _stub_liongard
+):
+    """The exact situation found live on Jarrod's real tenant: records
+    exist in Liongard but none have been promoted to Inventory state yet.
+    Must name the remedy, not just report a zero.
+    """
+    org = _org(db_session, fake_msp_admin)
+    _set_credential(client)
+    client.put(
+        f"/orgs/{org.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    _stub_liongard["devices"] = []
+    _stub_liongard["devices_total_count"] = 197
+    _stub_liongard["identities"] = []
+    _stub_liongard["identities_total_count"] = 40
+
+    body = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
+    by_label = {p["entity_label"]: p for p in body["pull_status"]}
+    assert by_label["devices"]["total_found"] == 197
+    assert by_label["devices"]["inventory_count"] == 0
+    assert "197 devices" in by_label["devices"]["message"]
+    assert "promote them from Discovery to Inventory" in by_label["devices"]["message"]
+    assert "40 identities" in by_label["identities"]["message"]
+    assert "promote them from Discovery to Inventory" in by_label["identities"]["message"]
+    assert body["changes"] == []
+
+
+def test_dry_run_pull_status_reports_liongard_returned_nothing_at_all(
+    client, db_session, fake_msp_admin, _stub_liongard
+):
+    org = _org(db_session, fake_msp_admin)
+    _set_credential(client)
+    client.put(
+        f"/orgs/{org.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    _stub_liongard["devices"] = []
+    _stub_liongard["identities"] = []
+
+    body = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
+    by_label = {p["entity_label"]: p for p in body["pull_status"]}
+    assert by_label["devices"]["total_found"] == 0
+    assert by_label["devices"]["message"] == "Liongard returned no devices for this Environment."
+    assert (
+        by_label["identities"]["message"]
+        == "Liongard returned no identities for this Environment."
+    )
 
 
 def test_dry_run_performs_no_writes(client, db_session, fake_msp_admin):

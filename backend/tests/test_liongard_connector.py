@@ -358,9 +358,11 @@ def test_pull_device_profiles_paginates_until_has_more_rows_false(monkeypatch):
         return _FakeResponse(pages[body["Pagination"]["Page"] - 1])
 
     monkeypatch.setattr(liongard.urllib.request, "urlopen", fake_urlopen)
-    rows = liongard.pull_device_profiles(_CONFIG, _CREDENTIAL, 8815)
+    pull = liongard.pull_device_profiles(_CONFIG, _CREDENTIAL, 8815)
     assert calls == [1, 2]
-    assert [r["Hostname"] for r in rows] == ["host-1", "host-2"]
+    assert [r["Hostname"] for r in pull.records] == ["host-1", "host-2"]
+    assert pull.total_count == 2
+    assert pull.inventory_count == 2
 
 
 def test_pull_device_profiles_filters_out_non_inventory_state(monkeypatch):
@@ -376,8 +378,33 @@ def test_pull_device_profiles_filters_out_non_inventory_state(monkeypatch):
         },
     }
     monkeypatch.setattr(liongard.urllib.request, "urlopen", _query_urlopen(payload))
-    rows = liongard.pull_device_profiles(_CONFIG, _CREDENTIAL, 8815)
-    assert [r["Hostname"] for r in rows] == ["kept"]
+    pull = liongard.pull_device_profiles(_CONFIG, _CREDENTIAL, 8815)
+    assert [r["Hostname"] for r in pull.records] == ["kept"]
+    # total_count is pre-filter -- all 3 rows Liongard returned, not just
+    # the 1 that survived InventoryState=="Inventory".
+    assert pull.total_count == 3
+    assert pull.inventory_count == 1
+
+
+def test_pull_device_profiles_all_discovery_reports_total_found_but_zero_inventory(monkeypatch):
+    """The exact shape found live on Jarrod's real tenant (2026-09-15):
+    197 real records, all Discovery, 0 Inventory -- a successful pull with
+    nothing to compare. total_count must still reflect what was actually
+    returned so routers/scope.py can distinguish this from "Liongard
+    returned nothing at all."
+    """
+    payload = {
+        "Success": True,
+        "Data": {
+            "DeviceProfiles": [_device_row("Discovery", f"host-{i}") for i in range(5)],
+            "Pagination": {"HasMoreRows": False},
+        },
+    }
+    monkeypatch.setattr(liongard.urllib.request, "urlopen", _query_urlopen(payload))
+    pull = liongard.pull_device_profiles(_CONFIG, _CREDENTIAL, 8815)
+    assert pull.records == []
+    assert pull.total_count == 5
+    assert pull.inventory_count == 0
 
 
 def test_pull_identities_uses_identities_endpoint_and_data_key(monkeypatch):
@@ -396,8 +423,9 @@ def test_pull_identities_uses_identities_endpoint_and_data_key(monkeypatch):
         return _FakeResponse(payload)
 
     monkeypatch.setattr(liongard.urllib.request, "urlopen", fake_urlopen)
-    rows = liongard.pull_identities(_CONFIG, _CREDENTIAL, 8815)
-    assert rows == [{"InventoryState": "Inventory", "Email": "a@example.com"}]
+    pull = liongard.pull_identities(_CONFIG, _CREDENTIAL, 8815)
+    assert pull.records == [{"InventoryState": "Inventory", "Email": "a@example.com"}]
+    assert pull.total_count == 1
     assert seen_urls == ["https://myinstance.app.liongard.com/api/v2/inventory/identities/query"]
 
 
@@ -539,7 +567,7 @@ def test_pull_device_profiles_normalizes_scheme_less_instance_url(monkeypatch):
 
     monkeypatch.setattr(liongard.urllib.request, "urlopen", fake_urlopen)
     config = {"instance_url": "us4.app.liongard.com"}
-    assert liongard.pull_device_profiles(config, _CREDENTIAL, 8815) == []
+    assert liongard.pull_device_profiles(config, _CREDENTIAL, 8815).records == []
 
 
 def test_test_connection_normalizes_scheme_less_instance_url(monkeypatch):

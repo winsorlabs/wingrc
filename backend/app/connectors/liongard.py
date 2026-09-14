@@ -73,6 +73,35 @@ own `Filters` array: the exact filter operator syntax Liongard expects
 isn't documented anywhere reachable, and guessing at it risks silently
 returning zero rows instead of an honest error — client-side filtering
 needs no guess and is cheap at realistic MSP client inventory sizes.
+
+**Inventory-only is a deliberate, permanent product decision (Jarrod,
+2026-09-15), not an implementation detail to revisit casually.** Liongard's
+Discovery→Inventory promotion is a human confirmation step performed
+inside Liongard itself -- an engineer looking at a discovered asset and
+saying "yes, this is real and ours." WinGRC treats that confirmation as
+authoritative rather than re-doing it: a device or identity only becomes a
+scope_entity candidate after a person has already vouched for it once, in
+Liongard. **Alternative considered and rejected:** surfacing Discovery-state
+records as their own candidates for WinGRC's review flow (i.e., a second,
+WinGRC-side confirmation step layered on top of Liongard's). Rejected
+because it duplicates a confirmation step that already exists and already
+has an owner (whoever runs Liongard for this client), and because it would
+blur "confirmed in the source tool" with "confirmed in WinGRC" into a
+single ambiguous status -- two review queues for the same underlying fact
+is worse than one. If this is ever revisited, it needs its own design
+(where do Discovery candidates live, who reviews them, how do they relate
+to the existing dry-run/apply flow), not a quiet toggle bolted onto this
+filter.
+
+**On a real tenant, this can mean a sync returns a successful, empty
+result** (WinsorLabs' own mapped Environment, checked live 2026-09-15: 197
+records total, 0 in Inventory state). An empty pull and an empty diff look
+identical unless the pre-filter count is surfaced too -- `pull_device_
+profiles`/`pull_identities` return an `InventoryPull` (records plus the
+pre-filter total) rather than a bare list for exactly this reason;
+routers/scope.py's dry-run turns that into the actionable "N found, 0 in
+Inventory -- promote them in Liongard" message rather than a silent empty
+result that reads as either "broken" or "nothing to do."
 """
 
 from __future__ import annotations
@@ -405,28 +434,52 @@ def _paginate(
     return all_rows
 
 
-def pull_device_profiles(config: dict, credential: dict, environment_id: int) -> list[dict]:
-    """Pull every InventoryState="Inventory" device from one Liongard
-    Environment. Returns raw Liongard records -- importers/liongard.py maps
-    them onto CanonicalEntity/the canonical attribute vocabulary.
+@dataclass(frozen=True)
+class InventoryPull:
+    """Result of one device-profile or identity pull.
+
+    `total_count` is every row Liongard returned for the environment
+    (any InventoryState), before the Inventory-only filter this module's
+    docstring explains; `records` (and `inventory_count`, its length) is
+    what survived it. Kept as two numbers, not just the filtered list, so
+    a caller can tell "Liongard returned nothing at all" apart from
+    "Liongard returned plenty, none of it confirmed yet" -- see
+    routers/scope.py's dry-run for where that distinction actually
+    surfaces to a user.
+    """
+
+    records: list[dict]
+    total_count: int
+
+    @property
+    def inventory_count(self) -> int:
+        return len(self.records)
+
+
+def pull_device_profiles(config: dict, credential: dict, environment_id: int) -> InventoryPull:
+    """Pull every device from one Liongard Environment, keeping only
+    InventoryState="Inventory" rows in `.records` -- importers/liongard.py
+    maps those onto CanonicalEntity/the canonical attribute vocabulary.
     """
     instance_url = _instance_url(config)
     headers = _auth_header(credential)
     url = f"{instance_url}/api/v2/inventory/device-profiles/query"
     rows = _paginate(url, headers, environment_id, "DeviceProfiles", sort_by="ID")
-    return [r for r in rows if r.get("InventoryState") == "Inventory"]
+    inventory_rows = [r for r in rows if r.get("InventoryState") == "Inventory"]
+    return InventoryPull(records=inventory_rows, total_count=len(rows))
 
 
-def pull_identities(config: dict, credential: dict, environment_id: int) -> list[dict]:
-    """Pull every InventoryState="Inventory" identity from one Liongard
-    Environment. Returns raw Liongard records -- importers/liongard.py maps
-    them onto CanonicalEntity(entity_type=PERSON).
+def pull_identities(config: dict, credential: dict, environment_id: int) -> InventoryPull:
+    """Pull every identity from one Liongard Environment, keeping only
+    InventoryState="Inventory" rows in `.records` -- importers/liongard.py
+    maps those onto CanonicalEntity(entity_type=PERSON).
     """
     instance_url = _instance_url(config)
     headers = _auth_header(credential)
     url = f"{instance_url}/api/v2/inventory/identities/query"
     rows = _paginate(url, headers, environment_id, "Identities", sort_by="ID")
-    return [r for r in rows if r.get("InventoryState") == "Inventory"]
+    inventory_rows = [r for r in rows if r.get("InventoryState") == "Inventory"]
+    return InventoryPull(records=inventory_rows, total_count=len(rows))
 
 
 CONNECTOR = ConnectorSpec(
