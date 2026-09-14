@@ -689,6 +689,126 @@ def test_ingest_from_documents_apply_lands_unpublished_invisible_with_provenance
     assert listed == []
 
 
+def test_ai_provenance_survives_a_later_hand_authored_reimport(admin_client, db_session):
+    """Once a product is known to be AI-generated, that fact is permanent
+    -- a later re-import (even a plain hand-authored YAML that says
+    nothing about provenance) must not clear ai_generated_at/model.
+    Mirrors AssessmentObjective.practitioner_notes_generated_at/_model's
+    own philosophy; verified against the real write path
+    (seeds/baselines.py:_seed_product), not just the domain type."""
+    seed = _seed_framework_and_control(db_session)
+    stub = _StubIngestProvider(_stub_ingest_response(seed["ctrl"].control_id))
+    with (
+        patch("app.routers.admin_products.get_ai_provider", return_value=stub),
+        patch("app.importers.document.extract_text", return_value="stub text"),
+    ):
+        r = admin_client.post(
+            "/admin/products/import/from-documents",
+            files={"files": ("crm.pdf", _fake_pdf_bytes(), "application/pdf")},
+            data={"product_key": "ingested-tool-provenance"},
+        )
+    assert r.status_code == 200
+
+    import yaml as _yaml
+
+    data_dict = _yaml.safe_load(r.json()["yaml"])
+    for c in data_dict["controls"]:
+        c["coverage_basis"] = "customer_system"
+    admin_client.post(
+        "/admin/products/import/apply",
+        files={
+            "file": (
+                "reviewed.yaml",
+                _yaml.safe_dump(data_dict, sort_keys=False).encode(),
+                "application/x-yaml",
+            )
+        },
+    )
+    product = db_session.scalars(
+        select(Product).where(Product.key == "ingested-tool-provenance")
+    ).one()
+    original_generated_at = product.ai_generated_at
+    original_generated_model = product.ai_generated_model
+    assert original_generated_at is not None
+    assert original_generated_model == "anthropic:stub-model"
+
+    # A human re-imports a hand-authored YAML for the SAME product key --
+    # no ai_generated_at/model in this file at all.
+    hand_yaml = _valid_yaml("ingested-tool-provenance", seed["ctrl"].control_id)
+    reimport = admin_client.post(
+        "/admin/products/import/apply",
+        files={"file": ("hand-authored.yaml", hand_yaml, "application/x-yaml")},
+    )
+    assert reimport.status_code == 201
+
+    db_session.refresh(product)
+    assert product.ai_generated_at == original_generated_at
+    assert product.ai_generated_model == original_generated_model
+
+    detail = admin_client.get(f"/admin/products/{product.id}").json()
+    assert detail["ai_generated_at"] is not None
+    assert detail["ai_generated_model"] == "anthropic:stub-model"
+
+
+def test_ingest_from_documents_reimport_warns_on_affected_orgs(
+    admin_client, db_session, fake_msp_admin
+):
+    """Re-running ingestion against a product that already has tenants
+    active goes through the SAME dry-run path a hand-authored re-import
+    does -- the affected-tenant warning fires here too, not just for
+    plain YAML uploads. Guards against a second, silently-more-permissive
+    ingest path ever being built."""
+    seed = _seed_framework_and_control(db_session)
+    stub = _StubIngestProvider(_stub_ingest_response(seed["ctrl"].control_id))
+    with (
+        patch("app.routers.admin_products.get_ai_provider", return_value=stub),
+        patch("app.importers.document.extract_text", return_value="stub text"),
+    ):
+        r = admin_client.post(
+            "/admin/products/import/from-documents",
+            files={"files": ("crm.pdf", _fake_pdf_bytes(), "application/pdf")},
+            data={"product_key": "ingested-tool-affected"},
+        )
+    import yaml as _yaml
+
+    data_dict = _yaml.safe_load(r.json()["yaml"])
+    for c in data_dict["controls"]:
+        c["coverage_basis"] = "customer_system"
+    admin_client.post(
+        "/admin/products/import/apply",
+        files={
+            "file": (
+                "reviewed.yaml",
+                _yaml.safe_dump(data_dict, sort_keys=False).encode(),
+                "application/x-yaml",
+            )
+        },
+    )
+    product = db_session.scalars(
+        select(Product).where(Product.key == "ingested-tool-affected")
+    ).one()
+    product.is_published = True
+    org = Organization(name=f"AffectedIngestOrg-{uuid.uuid4().hex[:6]}")
+    db_session.add(org)
+    db_session.flush()
+    db_session.add(OrgProduct(org_id=org.id, product_id=product.id, status="active"))
+    db_session.flush()
+
+    with (
+        patch("app.routers.admin_products.get_ai_provider", return_value=stub),
+        patch("app.importers.document.extract_text", return_value="stub text"),
+    ):
+        r2 = admin_client.post(
+            "/admin/products/import/from-documents",
+            files={"files": ("crm-v2.pdf", _fake_pdf_bytes(), "application/pdf")},
+            data={"product_key": "ingested-tool-affected"},
+        )
+    assert r2.status_code == 200
+    preview = r2.json()["preview"]
+    assert preview["affected_org_count"] == 1
+    assert preview["affected_org_names"] == [org.name]
+
+
 def test_ingest_from_documents_rejects_too_many_files(admin_client, db_session):
     _seed_framework_and_control(db_session)
     r = admin_client.post(
