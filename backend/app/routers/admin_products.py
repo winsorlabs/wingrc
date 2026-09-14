@@ -32,21 +32,27 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 import os
+import tempfile
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
+import yaml as _yaml
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from ..ai import get_ai_provider
 from ..audit import log_event
 from ..auth import CurrentUser, actor_type_for, require_role
+from ..baseline import to_yaml_dict
 from ..baseline_import import apply_import as _apply_baseline_import
 from ..baseline_import import build_preview, parse_yaml, validate
+from ..config import get_settings
 from ..db import get_session
+from ..importers.document import DocumentIngestError, ingest_document
 from ..models import (
     BaselineControl,
     BaselineEvidenceSpec,
@@ -72,6 +78,17 @@ router = APIRouter(
 )
 
 _VALID_DOCUMENT_KINDS = frozenset({"crm", "baseline_doc", "kb_export", "other"})
+
+# Narrower than routers/evidence.py's general evidence-upload allowlist --
+# this endpoint only ever feeds documents to importers/document.py's text
+# extraction, which only understands PDF and Word.
+_INGEST_ALLOWED_EXTENSIONS = frozenset({".pdf", ".doc", ".docx"})
+_INGEST_ALLOWED_MIME_TYPES = frozenset({
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+})
+_MAX_INGEST_FILES = 2
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +152,13 @@ class ProductDetailOut(BaseModel):
     assumed_config: list[str]
     is_published: bool
     source_docs: list[str] = Field(default_factory=list)
+    # Permanent AI-generation provenance (models.py:Product) -- non-null
+    # forever once an ingestion sets them, never cleared by a later
+    # hand-edited re-import. See ai_generated_at's own docstring on the
+    # model for why this mirrors practitioner_notes_generated_at/_model
+    # rather than a dismissible flag.
+    ai_generated_at: datetime | None = None
+    ai_generated_model: str | None = None
     baseline_controls: list[BaselineControlOut]
     documents: list[ProductDocumentOut]
 
@@ -168,6 +192,11 @@ class ImportApplyOut(BaseModel):
     product_key: str
     baseline_controls: int
     evidence_specs: int
+
+
+class DocumentIngestOut(BaseModel):
+    yaml: str
+    preview: ImportPreviewOut
 
 
 class PublishOut(BaseModel):
@@ -332,6 +361,8 @@ def get_product_detail(
         assumed_config=product.assumed_config or [],
         is_published=product.is_published,
         source_docs=product.source_docs or [],
+        ai_generated_at=product.ai_generated_at,
+        ai_generated_model=product.ai_generated_model,
         baseline_controls=baseline_out,
         documents=[_document_out(d) for d in docs],
     )
@@ -388,24 +419,7 @@ async def import_dry_run(
         )
 
     preview = build_preview(session, data, ctrl_lookup)
-    return ImportPreviewOut(
-        problems=preview.problems,
-        product_key=preview.product_key,
-        product_is_new=preview.product_is_new,
-        product_name=preview.product_name,
-        control_changes=[
-            ControlChangeOut(
-                control_id=c.control_id,
-                change_type=c.change_type,
-                classification=c.classification,
-                coverage_basis=c.coverage_basis,
-                field_diffs={k: list(v) for k, v in c.field_diffs.items()},
-            )
-            for c in preview.control_changes
-        ],
-        affected_org_count=preview.affected_org_count,
-        affected_org_names=preview.affected_org_names,
-    )
+    return _preview_out(preview)
 
 
 @router.post("/import/apply", response_model=ImportApplyOut, status_code=201)
@@ -462,6 +476,143 @@ async def import_apply(
         product_key=product.key,
         baseline_controls=result["baseline_controls"],
         evidence_specs=result["evidence_specs"],
+    )
+
+
+def _preview_out(preview) -> ImportPreviewOut:
+    return ImportPreviewOut(
+        problems=preview.problems,
+        product_key=preview.product_key,
+        product_is_new=preview.product_is_new,
+        product_name=preview.product_name,
+        control_changes=[
+            ControlChangeOut(
+                control_id=c.control_id,
+                change_type=c.change_type,
+                classification=c.classification,
+                coverage_basis=c.coverage_basis,
+                field_diffs={k: list(v) for k, v in c.field_diffs.items()},
+            )
+            for c in preview.control_changes
+        ],
+        affected_org_count=preview.affected_org_count,
+        affected_org_names=preview.affected_org_names,
+    )
+
+
+@router.post("/import/from-documents", response_model=DocumentIngestOut)
+async def import_from_documents(
+    files: list[UploadFile] = File(...),
+    product_key: str = Form(...),
+    category: str = Form("ESP"),
+    asset_type: str = Form("SPA"),
+    framework: str = Form("NIST 800-171 Rev 2 / CMMC L2"),
+    session: Session = Depends(get_session),
+) -> DocumentIngestOut:
+    """Run the document-ingestion pipeline (importers/document.py) against
+    1-2 uploaded vendor documents and feed its output through the SAME
+    dry-run preview path a hand-authored YAML upload uses
+    (baseline_import.build_preview) -- this endpoint writes nothing.
+    /import/apply (above) is still the only write path, and it still forces
+    is_published=False on any import via reset_published=True, AI-sourced
+    or not -- nothing an AI produces reaches a tenant without a human
+    reviewing this exact preview and then calling apply.
+
+    coverage_basis is deliberately left unset by the ingestion pipeline for
+    every provider_satisfies/shared entry, so the returned preview will
+    always report a problem for those until a reviewer edits the YAML to
+    set it -- see baseline.py:ControlEntry.coverage_basis's docstring for
+    why that gap is intentional, not a bug.
+    """
+    if not (1 <= len(files) <= _MAX_INGEST_FILES):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Upload 1 to {_MAX_INGEST_FILES} documents (CRM and/or MSP baseline).",
+        )
+    if not product_key.strip():
+        raise HTTPException(status_code=422, detail="product_key is required.")
+
+    tmp_paths: list[str] = []
+    try:
+        for f in files:
+            raw_name = _safe_filename(f.filename or "upload")
+            ext = os.path.splitext(raw_name)[1].lower()
+            if ext not in _INGEST_ALLOWED_EXTENSIONS:
+                raise HTTPException(
+                    status_code=415,
+                    detail=(
+                        f"File extension {ext!r} not permitted. "
+                        f"Allowed: {sorted(_INGEST_ALLOWED_EXTENSIONS)}"
+                    ),
+                )
+            data = await f.read()
+            if len(data) > _MAX_FILE_BYTES:
+                raise HTTPException(status_code=413, detail="File exceeds 50 MB limit")
+            mime = (
+                f.content_type
+                or mimetypes.guess_type(raw_name)[0]
+                or "application/octet-stream"
+            )
+            if mime not in _INGEST_ALLOWED_MIME_TYPES:
+                raise HTTPException(
+                    status_code=415,
+                    detail=(
+                        f"Content-Type {mime!r} not permitted. "
+                        f"Allowed: {sorted(_INGEST_ALLOWED_MIME_TYPES)}"
+                    ),
+                )
+            if not _verify_magic_bytes(data, mime):
+                raise HTTPException(
+                    status_code=415,
+                    detail=f"File bytes do not match declared Content-Type {mime!r}",
+                )
+            fd, path = tempfile.mkstemp(suffix=ext)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+            tmp_paths.append(path)
+
+        settings = get_settings()
+        try:
+            ai_provider = get_ai_provider(settings.ai_provider)
+        except ValueError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        try:
+            entry = ingest_document(
+                *tmp_paths,
+                product_key=product_key.strip(),
+                ai_provider=ai_provider,
+                category=category,
+                asset_type=asset_type,
+                framework=framework,
+            )
+        except DocumentIngestError as exc:
+            # Covers the ai_provider="none" case too (importers/document.py
+            # normalizes NullProvider's RuntimeError into this) -- clean,
+            # specific 422, never a raw 500.
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        for p in tmp_paths:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+
+    entry.product.ai_generated_at = datetime.now(UTC).isoformat()
+    entry.product.ai_generated_model = ai_provider.identity
+    data_dict = to_yaml_dict(entry)
+
+    fw, ctrl_lookup = _load_framework_and_controls(session)
+    if fw is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Framework '{_FRAMEWORK_KEY}' not found -- run 'wingrc seed-catalog' first.",
+        )
+    preview = build_preview(session, data_dict, ctrl_lookup)
+
+    return DocumentIngestOut(
+        yaml=_yaml.safe_dump(data_dict, sort_keys=False),
+        preview=_preview_out(preview),
     )
 
 
