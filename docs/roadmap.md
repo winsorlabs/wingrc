@@ -2177,10 +2177,10 @@ Items without a status are planned but not yet started.
   - **Confirmed, not assumed:** Blob Storage SAS URLs differ from MinIO
     presigned URLs only in hostname (`*.usgovcloudapi.net` vs.
     commercial), not in the bearer-token security property — moving to
-    Blob Storage does **not** close the evidence-download-hardening gap
-    (`docs/roadmap.md`'s own "Evidence download hardening" deferred
-    item), a point the research states should land before or with
-    production going live, not after. Also confirmed: the Azure Blob
+    Blob Storage would **not** have closed the evidence-download-
+    hardening gap on its own. **Shipped 2026-09-14 — no longer a gap or
+    a deferred item; see this file's own Done section entry.** Also
+    confirmed at the time of this research: the Azure Blob
     Storage code path (`backend/app/storage.py`) is **not implemented**
     today — only `NullStorageClient`/`MinIOClient` exist — contradicting
     both `cloud-hosting-options.md`'s and the Container Apps plan's
@@ -2317,6 +2317,163 @@ Items without a status are planned but not yet started.
     in this repository or its `baselines/` directory, only the already-
     hand-corrected YAML output is.
 
+- **Evidence download hardening** (2026-09-14) — moved from Deferred (see
+  that section's now-struck entry). Presigned direct-to-MinIO download
+  URLs are gone for every `Evidence` row; `routers/evidence.py:
+  download_evidence` now streams the object's bytes through the backend
+  itself, so every download re-checks the requester's session, MFA/
+  lockout state, and org membership per request — a presigned URL was a
+  bearer credential good until it expired, downloadable by anyone who
+  obtained the link, with no per-request re-check of anything and no
+  audit trail. Azure Blob's SAS URLs would have had the identical
+  property (confirmed in the Azure Gov feasibility research), so this had
+  to be an access-path fix, not a storage-backend one.
+  - **Mechanism:** `StorageClient` gains `stream_bytes()` (chunked
+    iterator, default 256 KB) alongside the existing `get_bytes()` —
+    `get_bytes()` is untouched and still what `bundle_service.py` uses
+    (a bounded, deliberate whole-object read, not a hot path).
+    `download_evidence` passes a plain sync iterator straight into a
+    Starlette `StreamingResponse`; Starlette wraps a non-async iterator in
+    `iterate_in_threadpool`, dispatching each `next()` call (one chunk
+    read) through anyio's worker threadpool individually rather than
+    pinning one worker for the whole transfer — the endpoint function
+    itself stays a normal sync `def`, matching every other route in this
+    codebase, no special-casing needed. `MinIOClient.stream_bytes()` opens
+    the object with one blocking `get_object()` call (same threadpool-
+    dispatched request, no different from any other blocking storage call
+    already in this codebase) and returns botocore's own
+    `Body.iter_chunks()` — bytes are read from the socket on demand, never
+    materialized as one blob.
+  - **Ownership check precedes any storage call, verified directly:** the
+    router-wide `require_org_access()`/`require_write()` dependencies
+    (already on this router, unchanged) confirm the caller belongs to the
+    `org_id` in the URL; `download_evidence`'s own `ev.org_id != org_id`
+    check then catches a guessed `evidence_id` belonging to a *different*
+    org than the one in the URL — org_access alone can't catch that,
+    since it only knows about `org_id`, not which rows are actually that
+    org's. A storage-call spy in `test_evidence_api.py` proves zero
+    storage methods run when this check fails.
+  - **`coverage_basis`-style explicit decision, not silently inferred:**
+    `StorageClient` gains `is_configured()` (`True` by default, `False`
+    only for `NullStorageClient`) so "no storage backend at all" can be
+    told apart from "empty bytes/iterator for a real zero-byte object" —
+    `get_bytes()`/`stream_bytes()` legitimately return empty for the
+    latter, and inferring "not configured" from that would have been
+    wrong. `download_evidence` 404s with "Storage not configured" via this
+    check, before ever calling `stream_bytes()`.
+  - **Every `presigned_url()` caller was found and decided individually
+    (not just the two the task named up front),** per that method's own
+    now-narrowed docstring:
+    - **Evidence file downloads** (`routers/evidence.py`, 4 `EvidenceOut`
+      construction sites + the download route itself) — moved, the core
+      ask.
+    - **System-description network/data-flow diagrams**
+      (`routers/orgs.py`'s `_diagram_url`) — moved too, on the reasoning
+      that these are `Evidence` rows (`kind='file'`) sharing the exact
+      same storage-key convention and CUI-boundary sensitivity as any
+      other evidence, just displayed via `<img src>` instead of a
+      download link — treating them as a separate "other caller" to
+      individually weigh would have missed that they're not actually
+      different from evidence at all. `_diagram_url` no longer touches
+      storage or takes a `StorageClient` argument — it just builds the
+      same `evidence_download_path()` string evidence responses do; the
+      bytes are fetched per-request when the `<img>` tag's browser
+      request actually resolves it. Deliberately **not** audit-logged
+      specially for this inline-view case — see the audit-volume
+      reasoning below for why that's not a firehose concern here, unlike
+      it would be for, say, a list of thumbnails.
+    - **Org logo** (`routers/orgs.py`'s `_build_profile_out`/
+      `upload_logo`) — kept on `presigned_url()`, deliberately. Not an
+      `Evidence` row, not customer CUI, purely decorative branding
+      fetched via `<img>` — `presigned_url()`'s docstring now says
+      explicitly that this is the one caller it's still for, and why
+      (routing a logo through the backend for consistency alone would
+      just be extra API traffic for a non-sensitive asset with no
+      security benefit).
+    - **`ProductDocument` downloads** (`routers/admin_products.py`'s
+      `download_document`, vendor baseline-library documents) —
+      deliberately **left presigned, flagged as a follow-up**, not
+      silently inconsistent: a code comment at the call site and this
+      entry both say why (deployment-wide MSP-internal vendor
+      documentation, msp_admin/consultant_admin only, not customer CUI
+      evidence, and a genuinely different model/router than what this
+      task's own title and gap description scoped to). Same bearer-URL
+      property remains there until a dedicated follow-up closes it — the
+      fix here (a `stream_bytes()`-backed route) is now a known, small
+      shape to copy.
+  - **Audit trail — the capability this slice was explicitly framed as
+    also gaining:** every real download fires one `audit_log` row
+    (`action="evidence.download"`, `after_value={title, artifact_type}`,
+    never the bytes) — `audit.py`'s docstring event list updated to
+    match, including why it also fires for a diagram `<img>` view (a page
+    view rendering the org's *one* network diagram and *one* data-flow
+    diagram is itself meaningful "who looked at the CUI boundary and
+    when" signal, not noise the way re-logging every thumbnail on a
+    crowded list view would be) and why it deliberately does **not** fire
+    for upload/list/collect responses that merely *include* a
+    `download_url` (building that string touches no storage and grants no
+    access; only a real GET against it does) or for bundle export's
+    evidence embedding (a different code path entirely —
+    `bundle_service.py` still calls `storage.get_bytes()` directly,
+    already covered by its own single `bundle.export` entry rather than
+    one row per embedded file).
+  - **HTTP Range support: deliberately not built.** Evidence uploads are
+    capped at 50 MB (`routers/evidence.py`'s existing `_MAX_FILE_BYTES`,
+    unchanged) — realistically screenshots and PDFs, not large media —
+    so resumable/partial downloads aren't a real need this schema's data
+    shape creates; adding Range parsing would have been scope creep
+    against a problem this deployment doesn't have. Revisit only if a
+    future evidence type meaningfully raises that cap.
+  - **§4 performance measurement — written, not yet run.** This session
+    had no SSH/Docker/network access to a live WinGRC stack (see this
+    file's own environment-limitation note pattern elsewhere in this doc
+    for the general shape of that gap) to actually drive the concurrency
+    benchmark this task's own §4 requires before treating the streaming
+    design as proven safe under load. A ready-to-run script exists at
+    `scripts/one-off/bench_evidence_download_20260914.py` (stdlib-only,
+    same methodology as the `get_current_user` threadpool-blocking
+    benchmark above: concurrency 1/10/50 against a real uvicorn+Postgres
+    stack, a concurrent `/health` watcher, p50/p95/p99 + error rate per
+    level) — **its numbers are not yet in this entry.** Do not treat this
+    slice as fully verified per its own §4 requirement, or assume the
+    streaming design is safe at production concurrency, until it has
+    actually been run against a real stack and the results recorded here.
+    The design reasoning above (chunk-at-a-time threadpool dispatch, not
+    one worker pinned per transfer) is a sound argument for why it
+    *should* be safe, not a substitute for having measured it.
+  - **Verification status otherwise:** `test_evidence_api.py` extended
+    heavily — streamed-byte correctness (content, Content-Type,
+    Content-Disposition, Content-Length), no presigned URL issued
+    anywhere for evidence (grepped from real responses, not the UI),
+    cross-org `evidence_id` unreachable even with real membership on the
+    URL's own org, ownership-check-precedes-storage-call via a call spy,
+    a real (non-bypassed) session's idle-timeout and a deactivated
+    account's session both correctly 401/403 the download route
+    specifically (mirroring `test_session_idle.py`'s own methodology,
+    not the `_authed` bypass every other test here uses), storage-not-
+    configured 404, a large-file streaming test whose `get_bytes()`
+    raises if ever called (proving the chunked path is what's actually
+    used), and audit-log presence/absence exactly where expected.
+    `test_diagram_upload.py` and `test_org_access_guard.py` extended to
+    match. `test_storage.py` covers the new `StorageClient` surface
+    (`evidence_download_path`, `is_configured()`/`stream_bytes()`
+    defaults) as plain unit tests, no DB needed. Frontend:
+    `frontend/src/api.ts` gains `assetUrl()` (prepends the `/api` mount
+    prefix onto a bare backend-returned path, since the backend has no
+    business knowing about that nginx/Vite-dev-proxy detail — leaves an
+    already-absolute presigned URL, i.e. the logo, untouched), with its
+    own `api.test.ts`; `EvidenceSection.tsx`'s download link and
+    `SystemDescriptionForm.tsx`'s two diagram `<img>` tags route through
+    it. **194 passed locally** (`pytest -q -m "not integration"`), `ruff
+    check .` clean, and the full suite (1037 tests, integration included)
+    collects cleanly with no import/collection errors — but the DB-backed
+    integration tests here, and the frontend `tsc -b`/`vitest`/`vite
+    build` checks, need the bench-stack workflow this session's
+    environment can't run (no local Docker/Node, no SSH reachability to
+    wl-util-1 this session). Pending that run, same caveat as the §4
+    measurement above — this entry records what was implemented and
+    locally verified, not full end-to-end proof.
+
 ---
 
 ## Planned
@@ -2445,5 +2602,9 @@ Document library (N)
   Datto RMM was not built (Liongard only); a Datto connector, if wanted
   later, is a fresh item, not a reopening of this one.
 - **Asset & user onboarding approval workflow — daily Liongard sync (D.3's second half only; the periodic review/attestation half shipped 2026-09-13, see this file's own Done entry).** Daily Liongard sync; new devices/users land pending, notify the org's `security_officer` and `it_admin` contacts, approval page shows a baseline checklist (DUO/Evo, FenixPyre, RoboShadow, RocketCyber…) evaluated from Liongard metrics, Security Officer + IT formally accept the asset into the environment. Specified in root `ROADMAP.md` **D.3**. Added 2026-09-08 (Jarrod). Depends on D.1 + D.2 and, as of 2026-09-08, on **two things that don't exist in this codebase yet**: outbound email and any job scheduler for the daily run. **Both shipped 2026-09-12** — see this file's own Done entries ("Outbound email" and "Job scheduler") — so this half is now actionable; neither prerequisite is a blocker anymore. Still needs a `pending_approval` state on `domain.py:EntityStatus` (today only `active`/`decommissioned`), and is not built here — the job scheduler slice explicitly excluded any job that writes `scope_entity`/`control_state`; a scheduled job may produce a dry-run for review, never apply one unattended, so this sync must still route through the existing dry-run → review → apply path, not bypass it via the scheduler. Hard constraint recorded in D.3: email notifies, but approval requires an authenticated session — no one-click approve links in email. Sequenced after the review/attestation half deliberately: the Liongard connector (`connectors/liongard.py`) has only ever been verified against a mock server, never a live tenant, so it's the riskier of the two D.3 halves and was left for a dedicated slice rather than bundled in.
-- **Evidence download hardening** — replace presigned direct-to-MinIO download URLs with the backend streaming evidence bytes itself. Presigned URLs are bearer-token style: anyone with the link can download until it expires, with no per-request re-check of session/auth state. Worth revisiting given the investment already made in session/MFA/lockout hardening (item I, now shipped — see Done) — that hardening doesn't currently extend to the download path. Surfaced while proxying MinIO behind nginx for item O. **Verified 2026-09-07: still open** — `storage.py` still defines `presigned_url()` on every storage backend, and `routers/evidence.py` still calls it at 4 call sites (`download_url=storage.presigned_url(...)` for both single-evidence and task-collection responses). Nothing streams bytes through the backend yet.
+- ~~**Evidence download hardening** — replace presigned direct-to-MinIO
+  download URLs with the backend streaming evidence bytes itself.~~
+  **Shipped 2026-09-14 — no longer deferred.** See this file's own Done
+  section entry for the full writeup, including what's still pending
+  (the §4 load measurement, and the bench-stack verification run).
 - **Frontend build determinism** — generate and commit `frontend/package-lock.json` (none is committed — one has been observed untracked on wl-util-1 from a local `npm install`, but that's not what this item is about), then switch `deploy/nginx/Dockerfile` from `npm install` to `npm ci` for reproducible builds. Low priority, not blocking anything currently in flight. **Verified 2026-09-07: still open** — `git ls-files frontend/package-lock.json` returns nothing (not committed), `deploy/nginx/Dockerfile` still runs `npm install`, not `npm ci`.

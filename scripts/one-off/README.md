@@ -23,6 +23,21 @@ Run order:
 2. `cleanup_test_orgs_minio_list.py` — review its output.
 3. `cleanup_test_orgs_minio_delete.py` — only after step 1 has committed.
 
+## bench_evidence_download_20260914.py
+
+Load-test script for the evidence-download-hardening slice
+(docs/roadmap.md, 2026-09-14) — measures whether streaming evidence bytes
+through the backend (instead of redirecting to a presigned MinIO URL) puts
+meaningful pressure on anyio's shared worker threadpool under concurrent
+downloads. Self-contained (stdlib only, no app imports) so it can run from
+any host with network access to a live stack, not necessarily inside the
+backend container. See the script's own header for exact usage and what it
+sets up (a throwaway org/assessment/evidence row it does not clean up
+afterward). **Not yet run** — see the roadmap entry for status; run it
+against a real stack (wl-util-1 or an isolated bench compose project) and
+record the resulting table there before treating that slice's §4
+requirement as satisfied.
+
 ## cleanup_empty_assessments_20260910.sql
 
 2026-09-10, wl-util-1: deletes two hardcoded, confirmed-empty Acme MSP

@@ -430,27 +430,34 @@ discovered to be wrong after the fact.
 
 ## Security dependency that should land with, not after, production
 
-**Evidence downloads use presigned object-storage URLs today —
-bearer-token links that bypass session, MFA, and lockout entirely.**
-`docs/roadmap.md` already carries this as deferred hardening ("Evidence
-download hardening," verified still open as of 2026-09-07: `storage.py`
-still defines `presigned_url()`, `routers/evidence.py` still calls it at
-four sites, nothing streams bytes through the backend).
+**Shipped 2026-09-14 — this prerequisite is now met.** Evidence downloads
+no longer use presigned object-storage URLs: `routers/evidence.py:
+download_evidence` streams the bytes through the backend itself, so
+every download re-checks session/MFA/lockout/org-access per request —
+see `docs/roadmap.md`'s "Evidence download hardening" Done entry for the
+full writeup. Two things to know before treating this as fully closed
+for a real Gov production instance specifically:
 
-That's a tolerable gap on wl-util-1 — a LAN-reachable dev box with no
-real client evidence on it. **It is not tolerable on an internet-
-reachable production instance holding real client evidence**, and
-switching MinIO for Blob Storage does not fix it — confirmed above, a
-Gov Blob Storage SAS URL has the exact same bearer-token property a
-MinIO presigned URL does, just at a different hostname. Anyone with the
-link can download the file until it expires, full stop, regardless of
-which cloud or which storage product is behind it.
+- The slice's own §4 load measurement (does streaming through the
+  backend meaningfully pressure the shared worker threadpool under
+  concurrent downloads) was written but **not yet run** — no live-stack
+  access was available in the session that implemented this. Run
+  `scripts/one-off/bench_evidence_download_20260914.py` against a real
+  stack and confirm before relying on this at production concurrency.
+- `ProductDocument` downloads (vendor baseline-library documents,
+  `routers/admin_products.py`) were deliberately left on
+  `presigned_url()` — not customer CUI, msp_admin/consultant_admin only,
+  a different model/router than Evidence. Flagged as a small, well-
+  scoped follow-up in the roadmap entry, not a blocker for Evidence
+  specifically.
 
-**This should land before or alongside the production instance going
-live, not after.** Not built here — this document is research, not
-implementation — but it's the one item in this whole research pass that
-isn't a hosting question at all, and shouldn't get lost among the ones
-that are.
+Original framing, kept for context: this was a tolerable gap on
+wl-util-1 — a LAN-reachable dev box with no real client evidence on it —
+but not tolerable on an internet-reachable production instance holding
+real client evidence, and switching MinIO for Blob Storage would not
+have fixed it on its own: a Gov Blob Storage SAS URL has the exact same
+bearer-token property a MinIO presigned URL does, just at a different
+hostname. The fix had to be in the access path, and now is.
 
 ## Open decisions for Jarrod
 
