@@ -2985,6 +2985,132 @@ Items without a status are planned but not yet started.
   enforcement) plus a Source column showing Liongard vs. Manual
   provenance in the contacts table.
 
+  **Landed 2026-09-16** — merged to `main` alongside the unmap slice
+  below (verified together, one deploy); see that entry for the combined
+  bench numbers and deploy confirmation.
+
+- **Liongard environment unmap, plus one-environment-one-org enforcement**
+  (2026-09-16) — closes the gap Jarrod hit trying to move the real
+  WinsorLabs Liongard Environment off the demo Acme MSP org: `PUT` could
+  re-point an org's mapping but there was no `DELETE`, so an org could
+  never be fully unmapped.
+
+  **§1b orphan check, done before designing anything, not assumed:**
+  ```sql
+  SELECT o.name, se.source, count(*)
+  FROM scope_entity se JOIN organization o ON o.id = se.org_id
+  GROUP BY 1,2 ORDER BY 1,2;
+  ```
+  returned exactly one row, `('Acme MSP', 'workbook', 13)` — the CMMC
+  demo dataset. **Zero `source='liongard'` rows anywhere**, confirming
+  every Liongard sync to date has in fact been dry-run only. Unmapping is
+  clean today. Built accordingly: `DELETE .../liongard/environment`
+  never touches `scope_entity` — any Liongard-sourced rows a future
+  unmap encounters become manually-owned entities (source stays
+  `"liongard"` as a provenance record, nothing else changes), and the
+  count is surfaced in the response, the audit log context, and the
+  frontend's confirm dialog, never silently dropped.
+
+  **§1c — recommended and built: one Liongard Environment maps to at
+  most one org.** A Liongard Environment already represents one client's
+  infrastructure; nothing stopped two orgs from independently mapping to
+  the same one and each pulling identical devices/identities into two
+  separate scope graphs — for a compliance tool, that's one client's
+  environment leaking into another org's CUI-boundary denominator, not
+  just a mess. No legitimate sharing case was found, so this is enforced,
+  not left permissive. `PUT` now checks a new SECURITY DEFINER function,
+  `auth.liongard_environment_holder()` (same ADR 0009 cross-org-read
+  pattern as migration 0037's `product_deployment_footprint` —
+  `org_liongard_environment` carries RLS, so the requesting org's own
+  session literally cannot see another org's row without this), and 409s
+  naming the org that already holds it, before the DB constraint is ever
+  reached.
+
+  **The migration (`0050_liongard_env_unique`) is deliberately defensive,
+  and this mattered live, not just in theory:** checking §1c's own
+  question surfaced a real, pre-existing collision on wl-util-1 —
+  **"Acme MSP" and "Test Customer A" were both already mapped to
+  environment 5912 (WinsorLabs)** before this slice existed. A plain
+  `ADD CONSTRAINT` would have failed `alembic upgrade head` outright, and
+  since backend's startup command is `alembic upgrade head && exec
+  uvicorn ...`, that would have taken the entire backend down — over a
+  pre-existing data state that isn't a migration's call to resolve
+  unilaterally (deciding which org keeps a shared environment is a
+  tenant-data decision, the same principle migration 0049 already applied
+  by skipping colliding contact emails rather than merging them). So: the
+  migration checks for duplicates first: none → add the constraint;
+  any → skip it, print exactly which orgs collide (visible in `docker
+  logs`), and let the deploy proceed without the DB-level guarantee
+  (the `PUT`-side application check still protects the normal UI-driven
+  flow either way). **Confirmed working both ways**, not just read: on a
+  clean bench DB the constraint and function were both created; with a
+  seeded duplicate, `alembic upgrade head` completed without error, the
+  constraint was skipped with the exact expected log line, and the
+  function still existed. The live deploy (below) hit the real branch,
+  not a synthetic one — same collision, same skip, same log line, live.
+
+  **Bench-verified together** (contact-import + unmap, one isolated
+  wl-util-1 stack, both migrations applying cleanly from a fresh head):
+  ruff clean, **1087/1087** backend tests, `tsc -b` clean, `vite build`
+  clean, **126/126** vitest (`LiongardSyncWizard` 10/10,
+  `ContactImportWizard` 6/6). A merge-reconciliation bug was caught and
+  fixed before this run: the contact-import branch predated
+  `pull_identities()`'s `InventoryPull` return-type change (2026-09-15
+  slice, above) and still treated it as a bare list — `routers/
+  contacts.py`'s identity listing would have crashed on `.records`
+  access. Fixed as its own commit, not folded into the merge.
+
+  **Deployed** per `docs/deployment.md` §7, with two new specifics this
+  slice added to that doc:
+  - **§4a-equivalent pre-flight for migration 0049's email backfill**:
+    zero `(org_id, lower(email))` collisions found on wl-util-1 — safe.
+    Before/after diff: 1 contact total, both times, same
+    `(org_id, email)`, `source="manual"` (correctly defaulted) after.
+  - **`--no-deps` added to §7c's documented deploy command.** The
+    previous (2026-09-15) deploy, naming only `backend worker nginx`,
+    unexpectedly recreated `db` and `minio` too — harmless that time
+    (named volumes reattached, data confirmed intact) but never
+    acceptable as a side effect on a box with real client data. Root
+    cause only partly understood: `minio`'s command interpolates
+    `MINIO_SERVER_URL` from the host `.env`, plausibly read as a config
+    change by Compose; `db` has no such interpolation and recreating
+    anyway is still unexplained. `--no-deps` sidesteps needing the
+    answer — **confirmed on this deploy**: `docker ps` showed `db`/
+    `minio` at their original `CreatedAt` (over an hour prior) while
+    `backend`/`worker`/`nginx` were fresh, and `docker logs` showed only
+    migrations `0049`→`0050` running, nothing unexpected.
+  - Backup taken and verified (`pg_restore --list`, 442 TOC entries)
+    before either migration ran, per §7a.
+
+  **§5 — the actual remapping, attempted through the real deployed HTTP
+  layer (`TestClient` + `dependency_overrides`, attributed to Jarrod's
+  real `msp_admin` account), reported honestly rather than smoothed
+  over:**
+  1. State before: Acme MSP → env 5912; Test Customer A → env 5912 (the
+     collision above); Winsorlabs (the real org) → unmapped.
+  2. **Unmap Acme MSP: succeeded.** `orphaned_scope_entity_count: 0`
+     (matches the §1b check — nothing was ever synced against it).
+  3. **Map Winsorlabs to env 5912: blocked, by design.** `409`:
+     `"Environment 'WinsorLabs' (id 5912) is already mapped to 'Test
+     Customer A' -- unmap it there first."` The brand-new uniqueness
+     check caught the *second*, previously-unaddressed collision on its
+     first real use — Test Customer A still holds env 5912, and this
+     task never asked for Test Customer A to be touched. Not resolved
+     unilaterally, per the same "tenant-data decision, not this
+     migration's/session's to make" principle as the collision above.
+  4. Dry-run for Winsorlabs therefore still 400s ("No Liongard
+     Environment is mapped to this org yet") — expected, given step 3.
+  5. **Final state, confirmed by querying `org_liongard_environment`
+     directly, not the UI:** Acme MSP unmapped; Test Customer A still on
+     env 5912; Winsorlabs still unmapped. **Not what Jarrod ultimately
+     wants (Winsorlabs mapped to its own environment) — one decision
+     away:** whether Test Customer A should be unmapped from env 5912 (a
+     leftover test fixture, going by its name, but not confirmed as
+     disposable) is Jarrod's call. Once decided, mapping Winsorlabs to
+     5912 is a single `PUT` away and was fully dry-run-tested working
+     end-to-end in the bench-verify pass above (the mechanism itself
+     isn't in question, only which org gets to hold 5912).
+
 ---
 
 ## Planned
