@@ -3320,19 +3320,23 @@ Items without a status are planned but not yet started.
   entries). No migration — confirmed via `docker logs`, none expected
   (Pydantic validation + pure Python mapping/comparison logic only).
 
-  **Verified live against the real WinsorLabs environment, dry-run only:**
-  first post-deploy dry-run against the same 2 already-live devices
-  (still unapplied from the prior slice's own dry-run-only check) shows
-  `changed` with **exactly one field in the diff — `display_name`** —
-  where before this fix it would have included `LastSeenTimelineID`,
-  `LastSeen`, `UpdatedOn`, `AvailableStorage`, etc. every time. Zero
-  unrecognized-attribute warnings, matching the two-real-record unit test
-  above. The full "second run is clean" proof (apply, then a clean
-  second dry-run) was demonstrated on the bench stack's real integration
-  test rather than against Jarrod's live tenant, since completing it live
-  requires applying this sync -- not done without being asked, per the
-  standing rule carried through every session in this arc, and posed to
-  Jarrod directly rather than assumed.
+  **Verified live against the real WinsorLabs environment, full proof
+  completed:** first post-deploy dry-run against the same 2 already-live
+  devices (still unapplied from the prior slice's own dry-run-only check)
+  showed `changed` with **exactly one field in the diff —
+  `display_name`** — where before this fix it would have included
+  `LastSeenTimelineID`, `LastSeen`, `UpdatedOn`, `AvailableStorage`, etc.
+  every time. Zero unrecognized-attribute warnings. Applying it was Jarrod's
+  call, not assumed -- asked explicitly, approved, then applied
+  (`applied: 2`, 2 new `scope_entity.import_apply` audit entries,
+  direct query confirms both rows now carry real `display_name`/
+  `last_login_user` values). **The second dry-run, run immediately after
+  against Liongard live (genuine telemetry drift between the two real API
+  calls, minutes apart) came back completely clean: `{"new": 0, "changed":
+  0, "missing": 0, "unchanged": 2}`, `changes: []`, pull_status "2 devices
+  compared against scope -- no changes."** This is the actual proof, live,
+  not just on the bench stack: the exact reproduction from two sessions
+  ago, inverted and closed.
 
 ---
 
