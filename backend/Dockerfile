@@ -27,17 +27,18 @@ FROM postgres:18 AS pgtools
 FROM base AS deps
 COPY backend/pyproject.toml ./
 # `ai` (anthropic/pypdf/python-docx) must always be installed here, not
-# just when WINGRC_AI_PROVIDER is set to something other than "none" --
-# extract_text() in importers/document.py calls pypdf/python-docx before
-# the configured provider is ever consulted, so without this the
-# document-ingestion endpoint 500s on every real upload regardless of AI
-# provider config. Found live during evidence-download-hardening/
-# document-ingestion bench verification (2026-09-14): this image had
-# never actually run ingest_document() before that session, since the
-# committed rocketcyber.yaml was produced by a throwaway script outside
-# the container. Installing the anthropic SDK unconditionally is safe for
-# air-gapped/CUI-sensitive deployments too -- it's inert unless
-# WINGRC_AI_PROVIDER=anthropic is actually set; nothing here dials out at
+# just when the "ai" connector is actually configured -- extract_text() in
+# importers/document.py calls pypdf/python-docx before the configured
+# provider is ever consulted, so without this the document-ingestion
+# endpoint 500s on every real upload regardless of AI provider config.
+# Found live during evidence-download-hardening/document-ingestion bench
+# verification (2026-09-14): this image had never actually run
+# ingest_document() before that session, since the committed
+# rocketcyber.yaml was produced by a throwaway script outside the
+# container. Installing the anthropic SDK unconditionally is safe for
+# air-gapped/CUI-sensitive deployments too -- it's inert unless an "ai"
+# IntegrationConnection credential is actually configured through
+# Administration (connectors/ai.py, 2026-09-19); nothing here dials out at
 # import time.
 RUN pip install --upgrade pip && pip install ".[dev,ai]"
 

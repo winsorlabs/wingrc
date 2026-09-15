@@ -50,7 +50,7 @@ from ..auth import CurrentUser, actor_type_for, require_role
 from ..baseline import to_yaml_dict
 from ..baseline_import import apply_import as _apply_baseline_import
 from ..baseline_import import build_preview, parse_yaml, validate
-from ..config import get_settings
+from ..crypto import CredentialCipherError
 from ..db import get_session
 from ..importers.document import DocumentIngestError, ingest_document
 from ..models import (
@@ -571,11 +571,24 @@ async def import_from_documents(
                 fh.write(data)
             tmp_paths.append(path)
 
-        settings = get_settings()
         try:
-            ai_provider = get_ai_provider(settings.ai_provider)
-        except ValueError as exc:
+            ai_provider = get_ai_provider(session)
+        except CredentialCipherError as exc:
+            # A deployment-level key problem (WINGRC_CREDENTIAL_ENCRYPTION_KEYS
+            # missing/rotated away from what encrypted the stored credential)
+            # -- distinct from "not configured" (a clean 422 below) and from
+            # a bad key at the provider itself (also a 422, raised inside
+            # ingest_document below). This one is an operator/deployment
+            # fault, not something a reviewer fixes by re-entering a key.
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            # The stored config itself is unusable (ai/__init__.py's state
+            # 3 -- decrypts fine, but parse_settings rejects it, e.g. an
+            # unsupported provider value). Not the same message as "no
+            # credential at all" (NullProvider's RuntimeError, surfaced via
+            # DocumentIngestError below) or a call-time provider failure
+            # (also below) -- str(exc) already names the specific problem.
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
         try:
             entry = ingest_document(

@@ -2506,7 +2506,11 @@ Items without a status are planned but not yet started.
     `NullProvider`'s error message both referenced `azure_openai`/`local` as
     if configurable, though `get_ai_provider()`'s registry only ever
     supported `none`/`anthropic` — corrected the text, not implemented the
-    providers.
+    providers. **Follow-up done, 2026-09-19** — see the "AI provider
+    credential moved into the connector registry" Done entry below;
+    `Settings.ai_provider` no longer exists, `get_ai_provider()` now takes a
+    `Session` and resolves from `integration_connection` (connector_key=
+    `"ai"`), exactly the second option scoped here.
   - **Cost/size guards added to the pipeline itself** (not the prompt,
     which stayed untouched per this task's own scope limit):
     `importers/document.py` gained a `DocumentIngestError` exception, a
@@ -3463,7 +3467,7 @@ import", for the correction and the real dependency.)
 ## Deferred
 
 - **Document-library template content** — paid add-on seed script; depends on document library (N) mechanism being live. **Verified 2026-09-07: N is still fully unstarted** — no `Document`/`document_objective_tag` model, no `routers/documents.py`. (`importers/document.py` is a different, already-shipped feature — AI extraction of a *product baseline* from a vendor CRM/PDF, not the tenant-facing template library N describes. Don't confuse the two on a future pass.)
-- **AI implementation statements** — generation worker behind BYO-AI provider abstraction; scaffolding exists. **Verified 2026-09-07, more specifically than before:** `config.py`'s `ai_provider` setting and `backend/app/ai/` are real and already load-bearing — `importers/document.py` (the vendor-CRM/baseline extractor) is a working consumer of that same abstraction today. What's still missing is the per-objective draft-statement path itself: no `draft-statement` endpoint exists on `assessments.py`, and `ImplementationStatement` rows are still authored by hand. The provider plumbing this item needs already exists; the feature-specific generation logic does not.
+- **AI implementation statements** — generation worker behind BYO-AI provider abstraction; scaffolding exists. **Verified 2026-09-07, more specifically than before:** `config.py`'s `ai_provider` setting and `backend/app/ai/` are real and already load-bearing — `importers/document.py` (the vendor-CRM/baseline extractor) is a working consumer of that same abstraction today. What's still missing is the per-objective draft-statement path itself: no `draft-statement` endpoint exists on `assessments.py`, and `ImplementationStatement` rows are still authored by hand. The provider plumbing this item needs already exists; the feature-specific generation logic does not. **Correction, 2026-09-19:** `config.py`'s `ai_provider` setting no longer exists — the provider is now resolved from the encrypted `"ai"` connector via `ai/__init__.py:get_ai_provider(session)`, not a string setting; see this file's Done entry, "AI provider credential moved into the connector registry." The rest of this item's status is unchanged: the provider plumbing exists, the draft-statement generation logic does not.
 - ~~**Scope connector** — Liongard / Datto RMM → `scope_entity`~~ **Shipped
   2026-09-11 (D.2) — no longer deferred.** See this file's own Done
   section, "D.2 — Liongard device/user pull into scope_entity" entry.

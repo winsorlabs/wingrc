@@ -51,7 +51,16 @@ import { UserDirectoryPanel } from "./UserDirectoryPanel";
 // Users above, for the same reason (operational/identity-adjacent
 // infrastructure status, not compliance-data configuration; see
 // routers/scheduled_jobs.py's own docstring).
-type AdminSection = "integrations" | "email" | "tools" | "users" | "scheduled-jobs";
+//
+// AI Provider (connectors/ai.py, 2026-09-19) is the same IntegrationsPanel
+// component again, filtered to kind="ai" -- the Anthropic API key used for
+// document ingestion, moved out of ANTHROPIC_API_KEY into the encrypted
+// connector registry for the same reason Email got its own section rather
+// than living under Integrations: it isn't a compliance data source. Open
+// to consultant_admin like Integrations/Tools/Email (router-wide gate on
+// routers/integrations.py already covers this -- no separate check needed
+// here), not msp_admin-only like Users/Scheduled Jobs.
+type AdminSection = "integrations" | "email" | "ai" | "tools" | "users" | "scheduled-jobs";
 
 interface Props {
   canWrite: boolean;
@@ -74,6 +83,11 @@ export function AdminArea({ canWrite, currentUserRole }: Props) {
         <SideNavCategory>
           <SideNavItem active={section === "email"} onClick={() => setSection("email")}>
             Email
+          </SideNavItem>
+        </SideNavCategory>
+        <SideNavCategory>
+          <SideNavItem active={section === "ai"} onClick={() => setSection("ai")}>
+            AI Provider
           </SideNavItem>
         </SideNavCategory>
         <SideNavCategory>
@@ -103,6 +117,7 @@ export function AdminArea({ canWrite, currentUserRole }: Props) {
       <div className="workspace-content">
         {section === "integrations" && <IntegrationsPanel canWrite={canWrite} kind="data_source" />}
         {section === "email" && <IntegrationsPanel canWrite={canWrite} kind="notification" />}
+        {section === "ai" && <IntegrationsPanel canWrite={canWrite} kind="ai" />}
         {section === "tools" && <ToolsLibraryPanel />}
         {section === "users" && showUsers && <UserDirectoryPanel />}
         {section === "scheduled-jobs" && showScheduledJobs && <ScheduledJobsPanel />}

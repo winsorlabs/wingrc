@@ -393,3 +393,126 @@ def test_fails_closed_when_encryption_key_unset(admin_client, monkeypatch):
         assert "s3cr3t-value-9f8e7d" not in r.text
     finally:
         get_settings.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# AI provider connector (connectors/ai.py, 2026-09-19) -- router-level
+# coverage only, mirroring the Liongard tests above (same generic
+# router, same RBAC gate, same encrypt-at-rest guarantees). run_completion's
+# own exception categorization is test_ai_connector.py's job, not this
+# file's -- these tests stub test_connection exactly like Liongard's/SMTP's
+# own fixtures above, so no real Anthropic call happens here either.
+# ---------------------------------------------------------------------------
+
+_AI_CRED_BODY = {
+    "config": {"provider": "anthropic", "model": "claude-sonnet-4-6"},
+    "credential": {"api_key": "sk-ant-test-key-9f8e7d"},
+}
+
+
+@pytest.fixture(autouse=True)
+def _stub_ai_test_connection(monkeypatch):
+    state = {
+        "result": ConnectorTestResult(
+            ok=True, message="Connected to Anthropic (claude-sonnet-4-6)."
+        ),
+    }
+
+    def _fake(config, credential, test_input=None):
+        return state["result"]
+
+    monkeypatch.setitem(REGISTRY, "ai", dataclasses.replace(REGISTRY["ai"], test_connection=_fake))
+    return state
+
+
+def test_list_integrations_shows_ai_never_connected(admin_client):
+    r = admin_client.get("/integrations")
+    assert r.status_code == 200
+    rows = r.json()
+    ai = next(row for row in rows if row["connector_key"] == "ai")
+    assert ai["configured"] is False
+    assert ai["credential_hint"] is None
+    assert ai["last_test_ok"] is None
+    assert ai["kind"] == "ai"
+
+
+def test_ai_non_admin_cannot_set_credential(engineer_client):
+    r = engineer_client.put("/integrations/ai/credential", json=_AI_CRED_BODY)
+    assert r.status_code == 403
+
+
+def test_ai_set_credential_never_returns_plaintext(admin_client):
+    r = admin_client.put("/integrations/ai/credential", json=_AI_CRED_BODY)
+    assert r.status_code == 200
+    body = r.json()
+    assert "sk-ant-test-key-9f8e7d" not in r.text
+    assert body["configured"] is True
+    assert body["credential_hint"] == "sk-ant-test-key-9f8e7d"[-4:]
+    assert body["config"] == {"provider": "anthropic", "model": "claude-sonnet-4-6"}
+
+
+def test_ai_credential_stored_as_ciphertext_not_plaintext(admin_client, db_session):
+    admin_client.put("/integrations/ai/credential", json=_AI_CRED_BODY)
+    row = db_session.scalars(
+        select(IntegrationConnection).where(IntegrationConnection.connector_key == "ai")
+    ).first()
+    assert row is not None
+    assert row.encrypted_credential is not None
+    assert "sk-ant-test-key-9f8e7d" not in row.encrypted_credential
+
+    import json
+
+    decrypted = json.loads(decrypt_credential(row.encrypted_credential))
+    assert decrypted == _AI_CRED_BODY["credential"]
+
+
+def test_ai_test_connection_success_updates_status(admin_client):
+    admin_client.put("/integrations/ai/credential", json=_AI_CRED_BODY)
+    r = admin_client.post("/integrations/ai/test")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["last_test_ok"] is True
+    assert body["last_test_error"] is None
+
+
+def test_ai_test_connection_surfaces_real_failure_message(admin_client, _stub_ai_test_connection):
+    admin_client.put("/integrations/ai/credential", json=_AI_CRED_BODY)
+    _stub_ai_test_connection["result"] = ConnectorTestResult(
+        ok=False,
+        message=(
+            "Anthropic rejected the API key (HTTP 401) -- check it's active "
+            "and correctly entered."
+        ),
+    )
+    r = admin_client.post("/integrations/ai/test")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["last_test_ok"] is False
+    assert "401" in body["last_test_error"]
+
+
+def test_ai_test_connection_without_credential_rejected(admin_client):
+    r = admin_client.post("/integrations/ai/test")
+    assert r.status_code == 400
+
+
+def test_ai_test_connection_never_echoes_credential(admin_client):
+    admin_client.put("/integrations/ai/credential", json=_AI_CRED_BODY)
+    r = admin_client.post("/integrations/ai/test")
+    assert "sk-ant-test-key-9f8e7d" not in r.text
+
+
+def test_ai_delete_credential_clears_state(admin_client, db_session):
+    admin_client.put("/integrations/ai/credential", json=_AI_CRED_BODY)
+    r = admin_client.delete("/integrations/ai/credential")
+    assert r.status_code == 204
+
+    row = db_session.scalars(
+        select(IntegrationConnection).where(IntegrationConnection.connector_key == "ai")
+    ).first()
+    assert row.encrypted_credential is None
+    assert row.credential_hint is None
+
+    listed = admin_client.get("/integrations").json()
+    ai = next(x for x in listed if x["connector_key"] == "ai")
+    assert ai["configured"] is False

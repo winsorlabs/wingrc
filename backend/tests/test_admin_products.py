@@ -581,8 +581,9 @@ def _fake_pdf_bytes() -> bytes:
 
 
 def test_ingest_from_documents_requires_ai_provider_configured(admin_client, db_session):
-    """ai_provider='none' (the untouched default in tests) must degrade
-    cleanly through this endpoint too -- a specific 422, never a 500.
+    """No "ai" IntegrationConnection row configured (the untouched default
+    in tests) must degrade cleanly through this endpoint too -- a specific
+    422, never a 500.
 
     extract_text() is patched here even though this test is "about" the
     missing AI provider: ingest_document() extracts text from every

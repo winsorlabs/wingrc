@@ -13,12 +13,18 @@ two additions, both backward-compatible (defaulted, so Liongard's own
 
 - `kind` — a display discriminator only, never consulted by
   routers/integrations.py's own logic (every connector goes through the
-  identical CRUD/test-connection code regardless of kind). Liongard is a
-  `"data_source"` (feeds compliance scope); SMTP is a `"notification"`
-  (an outbound comms channel with no compliance content by design — see
-  email_service.py's module docstring). The frontend uses this to decide
-  which Administration section a connector's card renders under
-  (Integrations vs. Email) without hardcoding connector keys.
+  identical CRUD/test-connection code regardless of kind) — and this must
+  stay true; `kind` is a rendering hint for which Administration section a
+  connector's card appears under (Integrations vs. Email vs. AI Provider),
+  never an authorization input. Liongard is a `"data_source"` (feeds
+  compliance scope); SMTP is a `"notification"` (an outbound comms channel
+  with no compliance content by design — see email_service.py's module
+  docstring); `"ai"` (connectors/ai.py, 2026-09-19) is neither — it
+  configures the BYO-AI provider used for document-ingestion, not a data
+  feed or a comms channel, so it gets its own value rather than being
+  force-fit into one of the other two. The frontend uses this to decide
+  which Administration section a connector's card renders under without
+  hardcoding connector keys.
 - `optional_fields` — credential_fields names that may be submitted blank
   (config fields now carry their own `required` flag on ConfigField
   instead — see below). Liongard's two credential fields are both
@@ -158,11 +164,12 @@ class ConnectorSpec:
 
 
 def _build_registry() -> dict[str, ConnectorSpec]:
-    from . import liongard, smtp
+    from . import ai, liongard, smtp
 
     return {
         liongard.CONNECTOR.key: liongard.CONNECTOR,
         smtp.CONNECTOR.key: smtp.CONNECTOR,
+        ai.CONNECTOR.key: ai.CONNECTOR,
     }
 
 

@@ -44,12 +44,6 @@ class Settings(BaseSettings):
     db_pool_size: int = 20
     db_max_overflow: int = 20
 
-    # AI provider abstraction — pluggable so CUI-sensitive tenants can keep
-    # generation local. Currently implemented: none | anthropic. Azure OpenAI
-    # (GCC High) and a local-model backend are planned but not built yet —
-    # see get_ai_provider()'s registry, the actual source of truth.
-    ai_provider: str = "none"
-
     # S3-compatible object storage for evidence artifacts.
     # Set storage_endpoint to activate MinIOClient; leave unset to use NullStorageClient.
     storage_endpoint: str | None = None

@@ -412,7 +412,9 @@ prior permanent "unassigned" degradation.
 configured AI provider with the baseline spec + scope context + existing evidence
 titles as grounding. Returns draft body, stores as `ImplementationStatement`
 with `status='draft'`. Human reviews → `reviewed` → `approved`. Provider
-abstraction already exists in `config.py` (`ai_provider` setting).
+abstraction already exists: `ai/__init__.py:get_ai_provider()` resolves the
+configured provider from the encrypted "ai" connector (Administration → AI
+Provider), added 2026-09-19 — see that section's roadmap entry below.
 
 ### 6. SPRS score display (dashboard widget) ✅ DONE (G.3)
 Shipped as part of a broader org dashboard, not a standalone widget as
