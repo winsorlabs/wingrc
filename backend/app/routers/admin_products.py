@@ -68,7 +68,7 @@ from ..routers.evidence import (
     _safe_filename,
     _verify_magic_bytes,
 )
-from ..seeds.baselines import _FRAMEWORK_KEY
+from ..seeds.baselines import _FRAMEWORK_KEY, normalize_product_key
 from ..storage import StorageClient, download_filename, get_storage_client
 
 router = APIRouter(
@@ -450,8 +450,12 @@ async def import_apply(
         raise HTTPException(status_code=422, detail={"problems": problems})
 
     result = _apply_baseline_import(session, data, ctrl_lookup, fw)
+    # Looked up by the normalized key _seed_product actually wrote under,
+    # not the raw data["product"]["key"] -- they can differ only in case
+    # (e.g. "DattoRMM" normalizes to "dattormm"), but an exact-match .one()
+    # against the raw value would 500 (NoResultFound) whenever they do.
     product = session.scalars(
-        select(Product).where(Product.key == data["product"]["key"])
+        select(Product).where(Product.key == result["product_key"])
     ).one()
 
     log_event(
@@ -531,6 +535,13 @@ async def import_from_documents(
         )
     if not product_key.strip():
         raise HTTPException(status_code=422, detail="product_key is required.")
+    try:
+        # Fail fast, before any file processing or the AI call below --
+        # a bad key shape is a free, instant rejection, not something
+        # worth spending a paid completion on.
+        product_key = normalize_product_key(product_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     tmp_paths: list[str] = []
     try:
@@ -593,7 +604,7 @@ async def import_from_documents(
         try:
             entry = ingest_document(
                 *tmp_paths,
-                product_key=product_key.strip(),
+                product_key=product_key,
                 ai_provider=ai_provider,
                 category=category,
                 asset_type=asset_type,

@@ -32,7 +32,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from .models import AssessmentObjective, BaselineControl, Control, Framework, Product
-from .seeds.baselines import _seed_product
+from .seeds.baselines import _seed_product, normalize_product_key
 
 _VALID_CLASSIFICATIONS = frozenset({"provider_satisfies", "shared", "customer_owns"})
 _VALID_COVERAGE_BASES = frozenset({"customer_system", "platform_only", "assists"})
@@ -89,6 +89,11 @@ def validate(session: Session, data: dict, ctrl_lookup: dict[str, Control]) -> l
     for required in ("key", "name", "provider", "category"):
         if not pd.get(required):
             problems.append(f"product.{required} is required.")
+    if pd.get("key"):
+        try:
+            normalize_product_key(pd["key"])
+        except ValueError as exc:
+            problems.append(str(exc))
 
     controls = data.get("controls")
     if controls is None:
@@ -235,7 +240,18 @@ def build_preview(
 ) -> BaselineImportPreview:
     problems = validate(session, data, ctrl_lookup)
     pd = data.get("product") if isinstance(data.get("product"), dict) else {}
-    product_key = pd.get("key", "")
+    raw_key = pd.get("key", "")
+    try:
+        # Normalized so an existing product ("dattormm") is recognized as
+        # the same product on a re-import spelled "DattoRMM" -- an exact-
+        # match lookup on the raw, un-normalized key would report this as
+        # a brand new product instead of an update. Falls back to the raw
+        # key when it doesn't normalize (validate() above already reports
+        # that as a problem, so this preview's product_key/product_is_new
+        # fields are cosmetic once there's a problem to fix regardless).
+        product_key = normalize_product_key(raw_key) if raw_key else ""
+    except ValueError:
+        product_key = raw_key
     product = (
         session.scalars(select(Product).where(Product.key == product_key)).first()
         if product_key

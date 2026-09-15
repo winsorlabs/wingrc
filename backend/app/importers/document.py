@@ -18,6 +18,13 @@ which product is authoritative per control family; the CRM resolves the
 per-objective responsibility split. This is the pattern that catches the IA
 family correctly — the CRM says "customer IdP owns all of IA", and the baseline
 doesn't claim it for this product, so every IA control is customer_owns.
+
+Known gap: no OCR. A PDF that is scanned page images with no text layer is
+detected (see _MIN_EXTRACTED_TEXT_CHARS below) and reported with a specific
+DocumentIngestError naming the file -- it is never silently sent to the AI
+provider as an empty document. Building OCR support is out of scope here;
+the workaround today is a text-based re-export, or entering that product's
+coverage by hand.
 """
 
 from __future__ import annotations
@@ -50,6 +57,16 @@ _MAX_INPUT_CHARS = 600_000
 # shorter completions like practitioner-notes generation). This is a
 # parameter change only; the extraction prompt itself is untouched.
 _INGEST_MAX_TOKENS = 16384
+
+# Below this many characters of extracted text, treat a document as
+# effectively empty rather than send it to the AI provider. Deliberately
+# low -- this exists to catch "genuinely nothing came out" (a scanned-
+# image PDF with no text layer extracts to 0 characters, occasionally a
+# handful from incidental header/footer artifacts), not to enforce a
+# content-quality or minimum-length bar on legitimately short documents.
+# A real, useful one-page product blurb easily clears this; a scanned
+# page never does. OCR is out of scope -- this only detects and reports.
+_MIN_EXTRACTED_TEXT_CHARS = 50
 
 
 class DocumentIngestError(Exception):
@@ -151,17 +168,62 @@ def extract_text(path: str | Path) -> str:
 def _extract_pdf(path: Path) -> str:
     try:
         from pypdf import PdfReader
+        from pypdf.errors import PdfReadError, PyPdfError
     except ImportError as exc:
         raise RuntimeError(
             "pypdf not installed. Run: pip install 'wingrc-backend[ai]'"
         ) from exc
-    reader = PdfReader(path)
+
+    try:
+        reader = PdfReader(path)
+    except PdfReadError as exc:
+        # Covers EmptyFileError and PdfStreamError (a truncated download,
+        # a corrupted upload, or bytes that just aren't a real PDF despite
+        # passing the router's %PDF-header magic-byte check) -- confirmed
+        # against real truncated/empty/garbage fixtures, not guessed.
+        raise DocumentIngestError(
+            f"{path.name}: could not read this PDF ({exc}). It may be "
+            "corrupt or truncated -- try re-exporting or re-downloading "
+            "it, or re-saving it from the source application."
+        ) from exc
+
+    # PdfReader opens an encrypted PDF successfully (is_encrypted=True)
+    # without raising -- the failure only happens later, the first time
+    # page content is actually read (FileNotDecryptedError, a PdfReadError
+    # subclass). Checking here catches it before that point, with a
+    # message that names the actual problem (a password) rather than a
+    # generic read failure.
+    if reader.is_encrypted:
+        raise DocumentIngestError(
+            f"{path.name} is password-protected. Remove the password (or "
+            "export/print an unprotected copy) before uploading -- "
+            "WinGRC has no way to supply one during ingestion."
+        )
+
     pages = []
-    for page in reader.pages:
-        text = page.extract_text()
-        if text:
-            pages.append(text)
+    try:
+        for page in reader.pages:
+            text = page.extract_text()
+            if text:
+                pages.append(text)
+    except PyPdfError as exc:
+        # Defense in depth: the xref/header parsed fine (PdfReader()
+        # above succeeded) but a specific page's content stream is
+        # corrupt -- a narrower failure than the whole-file case above,
+        # still not something a reviewer can act on from a bare traceback.
+        raise DocumentIngestError(
+            f"{path.name}: failed while reading its pages ({exc}). The "
+            "file may be corrupt."
+        ) from exc
     return "\n".join(pages)
+
+
+# Legacy .doc (OLE2/Compound File Binary Format) magic bytes -- python-docx
+# only reads the modern zip-based .docx format, so a real .doc (or a .docx
+# extension slapped on one) fails as a zip error with no hint of why. This
+# check exists to give that specific, common case ("I renamed a .doc") a
+# direct message instead of a generic "not a valid zip" one.
+_OLE2_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 
 def _extract_docx(path: Path) -> str:
@@ -171,7 +233,36 @@ def _extract_docx(path: Path) -> str:
         raise RuntimeError(
             "python-docx not installed. Run: pip install 'wingrc-backend[ai]'"
         ) from exc
-    doc = Document(path)
+    import zipfile
+
+    with open(path, "rb") as f:
+        head = f.read(8)
+    if head == _OLE2_MAGIC:
+        raise DocumentIngestError(
+            f"{path.name} looks like a legacy Word 97-2003 .doc file, not "
+            "a modern .docx -- python-docx can only read .docx. Re-save "
+            "it as .docx from Word, or export it as a PDF, before "
+            "uploading."
+        )
+
+    try:
+        doc = Document(path)
+    except zipfile.BadZipFile as exc:
+        raise DocumentIngestError(
+            f"{path.name}: not a valid .docx file ({exc}). It may be "
+            "corrupt, or may not actually be a Word document despite its "
+            "extension."
+        ) from exc
+    except KeyError as exc:
+        # A real zip archive, but missing the parts a .docx package must
+        # have (e.g. [Content_Types].xml) -- confirmed live against a
+        # plain zip file, which python-docx rejects this way rather than
+        # with BadZipFile.
+        raise DocumentIngestError(
+            f"{path.name}: this is a zip archive but not a valid Word "
+            f"document ({exc}). It may be corrupt."
+        ) from exc
+
     parts: list[str] = []
     for para in doc.paragraphs:
         if para.text.strip():
@@ -319,7 +410,24 @@ def ingest_document(
     for path in paths:
         p = Path(path)
         source_docs.append(p.name)
-        doc_texts.append(f"=== Source: {p.name} ===\n{extract_text(p)}")
+        text = extract_text(p)
+        stripped_len = len(text.strip())
+        if stripped_len < _MIN_EXTRACTED_TEXT_CHARS:
+            # A "successful" extraction that yields almost nothing is
+            # worse than a clean failure: it would silently hand the AI
+            # provider an empty document and present whatever it
+            # hallucinates back as a real mapping. Most common real cause:
+            # the PDF is scanned page images with no text layer -- OCR is
+            # not implemented (see this module's own scope note), so this
+            # is detected and reported, not worked around.
+            raise DocumentIngestError(
+                f"{p.name}: extracted only {stripped_len} character(s) of "
+                "text. This usually means the PDF is scanned page images "
+                "with no text layer (WinGRC does not OCR documents) or "
+                "the file is otherwise empty. Upload a text-based export "
+                "of this document, or enter its coverage by hand."
+            )
+        doc_texts.append(f"=== Source: {p.name} ===\n{text}")
 
     combined = "\n\n".join(doc_texts)
     if len(combined) > _MAX_INPUT_CHARS:

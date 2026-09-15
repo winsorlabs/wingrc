@@ -15,6 +15,7 @@ Usage (Python):
 """
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -37,6 +38,39 @@ from ..models import (
 # accessible inside the Docker container (./backend is mounted as /app).
 _BASELINES_DIR = Path(__file__).parents[2] / "baselines"
 _FRAMEWORK_KEY = "nist-800-171-r2"
+
+# Lowercase, hyphen-separated -- the shape every baseline already follows
+# (baselines/rocketcyber.yaml). No leading/trailing/double hyphens.
+_PRODUCT_KEY_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+def normalize_product_key(raw: str) -> str:
+    """Lowercase and validate a product key against the slug shape every
+    baseline already follows. `_seed_product` below is the single write
+    path for `Product.key` (the CLI seed of `baselines/*.yaml`, the admin
+    YAML import, and the document-ingestion endpoint's `product_key` field
+    all funnel through here or call this directly) -- so normalization
+    only has to be right in one place for every path to agree on identity.
+
+    Lowercasing is silent, deliberate normalization: "DattoRMM" and
+    "dattormm" are unambiguously the same product, and treating them as
+    two rows would silently fork one tool's baseline into two candidates.
+    Anything containing a character outside [a-z0-9-] is rejected outright
+    rather than mangled into something the caller didn't type -- "Datto
+    RMM" (a space) becomes an error naming the expected shape, never a
+    silent "datto-rmm".
+
+    Raises ValueError with a message safe to surface directly to a user
+    (an HTTP 422 detail, or a baseline_import.py validation problem).
+    """
+    normalized = raw.strip().lower()
+    if not _PRODUCT_KEY_PATTERN.match(normalized):
+        raise ValueError(
+            f"Product key {raw!r} is not valid -- use lowercase letters, digits, "
+            "and hyphens only, with no leading/trailing/double hyphens "
+            "(e.g. 'datto-rmm'). No spaces or other punctuation."
+        )
+    return normalized
 
 
 def seed_baselines(session: Session) -> dict[str, Any]:
@@ -103,6 +137,7 @@ def _seed_product(
     compliance claims.
     """
     pd = data["product"]
+    product_key = normalize_product_key(pd["key"])
 
     # Permanent AI-generation provenance: set only when the incoming YAML
     # explicitly carries it, and never cleared on a re-import that omits it
@@ -116,12 +151,12 @@ def _seed_product(
     ai_generated_model = pd.get("ai_generated_model")
 
     product = session.scalars(
-        select(Product).where(Product.key == pd["key"])
+        select(Product).where(Product.key == product_key)
     ).first()
     if product is None:
         product = Product(
             framework_id=fw.id,
-            key=pd["key"],
+            key=product_key,
             name=pd["name"],
             provider=pd["provider"],
             category=pd["category"],
@@ -237,4 +272,9 @@ def _seed_product(
             bcs_written += 1
 
     session.flush()
-    return {"baseline_controls": bcs_written, "evidence_specs": specs_written, "missing": missing}
+    return {
+        "baseline_controls": bcs_written,
+        "evidence_specs": specs_written,
+        "missing": missing,
+        "product_key": product_key,
+    }

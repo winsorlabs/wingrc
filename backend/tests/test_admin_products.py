@@ -580,6 +580,90 @@ def _fake_pdf_bytes() -> bytes:
     return b"%PDF-1.4 fake content for magic-byte check"
 
 
+def _real_pdf_bytes(
+    text: str = (
+        "Some real extractable text for a legitimate document, long enough "
+        "to clear the ingestion threshold."
+    ),
+) -> bytes:
+    """A genuinely valid, parseable PDF with a real text content stream --
+    built with pypdf alone (already a real dependency; no reportlab or
+    similar needed) so input-hardening tests can truncate/corrupt/encrypt
+    a real file rather than asserting against synthetic bytes."""
+    import io
+
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    w = PdfWriter()
+    page = w.add_blank_page(width=300, height=200)
+    stream = DecodedStreamObject()
+    stream.set_data(f"BT /F1 12 Tf 20 150 Td ({text}) Tj ET".encode())
+    font_dict = DictionaryObject()
+    font_dict[NameObject("/Type")] = NameObject("/Font")
+    font_dict[NameObject("/Subtype")] = NameObject("/Type1")
+    font_dict[NameObject("/BaseFont")] = NameObject("/Helvetica")
+    resources = DictionaryObject()
+    font_res = DictionaryObject()
+    font_res[NameObject("/F1")] = w._add_object(font_dict)
+    resources[NameObject("/Font")] = font_res
+    page[NameObject("/Resources")] = resources
+    page[NameObject("/Contents")] = w._add_object(stream)
+    buf = io.BytesIO()
+    w.write(buf)
+    return buf.getvalue()
+
+
+def _truncated_pdf_bytes() -> bytes:
+    full = _real_pdf_bytes()
+    return full[: len(full) // 2]
+
+
+def _blank_pdf_bytes() -> bytes:
+    """A structurally valid PDF with no text content at all -- the same
+    symptom a scanned-image-only page produces (extract_text() yields 0
+    characters)."""
+    import io
+
+    from pypdf import PdfWriter
+
+    w = PdfWriter()
+    w.add_blank_page(width=200, height=200)
+    buf = io.BytesIO()
+    w.write(buf)
+    return buf.getvalue()
+
+
+def _encrypted_pdf_bytes() -> bytes:
+    import io
+
+    from pypdf import PdfWriter
+
+    w = PdfWriter()
+    w.add_blank_page(width=200, height=200)
+    w.encrypt("secret123")
+    buf = io.BytesIO()
+    w.write(buf)
+    return buf.getvalue()
+
+
+# Legacy Word 97-2003 .doc (OLE2/Compound File Binary) magic bytes.
+_LEGACY_DOC_BYTES = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 200
+
+
+# extract_text() is patched to return this in every test below that isn't
+# specifically testing extraction itself -- long enough to clear
+# importers/document.py's _MIN_EXTRACTED_TEXT_CHARS guard (added
+# alongside the input-hardening slice) so these tests keep exercising
+# what they're actually about (AI response handling, RBAC, etc.) instead
+# of tripping a same-shaped-but-unrelated 422 from that guard.
+_STUB_EXTRACTED_TEXT = (
+    "Stub extracted document text, long enough to clear the minimum-"
+    "extracted-text guard so these tests exercise what they're actually "
+    "testing."
+)
+
+
 def test_ingest_from_documents_requires_ai_provider_configured(admin_client, db_session):
     """No "ai" IntegrationConnection row configured (the untouched default
     in tests) must degrade cleanly through this endpoint too -- a specific
@@ -594,7 +678,7 @@ def test_ingest_from_documents_requires_ai_provider_configured(admin_client, db_
     were actually installed in the image for the first time.
     """
     _seed_framework_and_control(db_session)
-    with patch("app.importers.document.extract_text", return_value="stub text"):
+    with patch("app.importers.document.extract_text", return_value=_STUB_EXTRACTED_TEXT):
         r = admin_client.post(
             "/admin/products/import/from-documents",
             files={"files": ("crm.pdf", _fake_pdf_bytes(), "application/pdf")},
@@ -611,7 +695,7 @@ def test_ingest_from_documents_returns_yaml_and_preview_needing_coverage_basis(
     stub = _StubIngestProvider(_stub_ingest_response(seed["ctrl"].control_id))
     with (
         patch("app.routers.admin_products.get_ai_provider", return_value=stub),
-        patch("app.importers.document.extract_text", return_value="stub text"),
+        patch("app.importers.document.extract_text", return_value=_STUB_EXTRACTED_TEXT),
     ):
         r = admin_client.post(
             "/admin/products/import/from-documents",
@@ -641,7 +725,7 @@ def test_ingest_from_documents_apply_lands_unpublished_invisible_with_provenance
     stub = _StubIngestProvider(_stub_ingest_response(seed["ctrl"].control_id))
     with (
         patch("app.routers.admin_products.get_ai_provider", return_value=stub),
-        patch("app.importers.document.extract_text", return_value="stub text"),
+        patch("app.importers.document.extract_text", return_value=_STUB_EXTRACTED_TEXT),
     ):
         r = admin_client.post(
             "/admin/products/import/from-documents",
@@ -701,7 +785,7 @@ def test_ai_provenance_survives_a_later_hand_authored_reimport(admin_client, db_
     stub = _StubIngestProvider(_stub_ingest_response(seed["ctrl"].control_id))
     with (
         patch("app.routers.admin_products.get_ai_provider", return_value=stub),
-        patch("app.importers.document.extract_text", return_value="stub text"),
+        patch("app.importers.document.extract_text", return_value=_STUB_EXTRACTED_TEXT),
     ):
         r = admin_client.post(
             "/admin/products/import/from-documents",
@@ -763,7 +847,7 @@ def test_ingest_from_documents_reimport_warns_on_affected_orgs(
     stub = _StubIngestProvider(_stub_ingest_response(seed["ctrl"].control_id))
     with (
         patch("app.routers.admin_products.get_ai_provider", return_value=stub),
-        patch("app.importers.document.extract_text", return_value="stub text"),
+        patch("app.importers.document.extract_text", return_value=_STUB_EXTRACTED_TEXT),
     ):
         r = admin_client.post(
             "/admin/products/import/from-documents",
@@ -797,7 +881,7 @@ def test_ingest_from_documents_reimport_warns_on_affected_orgs(
 
     with (
         patch("app.routers.admin_products.get_ai_provider", return_value=stub),
-        patch("app.importers.document.extract_text", return_value="stub text"),
+        patch("app.importers.document.extract_text", return_value=_STUB_EXTRACTED_TEXT),
     ):
         r2 = admin_client.post(
             "/admin/products/import/from-documents",
@@ -901,3 +985,259 @@ def test_customer_poc_gets_403_on_every_endpoint(poc_client, db_session):
         data={"product_key": "x"},
     )
     assert r.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Input hardening: extraction-path failures produce a specific 422, never
+# a raw 500. Real bytes, real extract_text() -- extract_text is NOT
+# patched in this section, unlike every test above, since the whole point
+# is exercising the actual pypdf/python-docx failure paths end to end
+# through the real HTTP endpoint.
+# ---------------------------------------------------------------------------
+
+
+class _AssertNeverCalledProvider(AIProvider):
+    """Fails loudly if the AI provider is ever reached -- every fixture in
+    this section should be rejected during extraction, before any
+    completion call, so reaching .complete() at all is itself the bug."""
+
+    def complete(self, system, user, *, max_tokens=8192):
+        raise AssertionError("AI provider must not be called for a document that fails extraction")
+
+
+def test_ingest_from_documents_truncated_pdf_returns_422_not_500(admin_client, db_session):
+    _seed_framework_and_control(db_session)
+    with patch(
+        "app.routers.admin_products.get_ai_provider",
+        return_value=_AssertNeverCalledProvider(),
+    ):
+        r = admin_client.post(
+            "/admin/products/import/from-documents",
+            files={"files": ("crm.pdf", _truncated_pdf_bytes(), "application/pdf")},
+            data={"product_key": "truncated-test"},
+        )
+    assert r.status_code == 422
+    assert "crm.pdf" in r.json()["detail"]
+    assert "corrupt or truncated" in r.json()["detail"]
+
+
+def test_ingest_from_documents_password_protected_pdf_returns_422(admin_client, db_session):
+    _seed_framework_and_control(db_session)
+    with patch(
+        "app.routers.admin_products.get_ai_provider",
+        return_value=_AssertNeverCalledProvider(),
+    ):
+        r = admin_client.post(
+            "/admin/products/import/from-documents",
+            files={"files": ("crm.pdf", _encrypted_pdf_bytes(), "application/pdf")},
+            data={"product_key": "encrypted-test"},
+        )
+    assert r.status_code == 422
+    assert "crm.pdf" in r.json()["detail"]
+    assert "password-protected" in r.json()["detail"]
+
+
+def test_ingest_from_documents_scanned_pdf_with_no_text_returns_422(admin_client, db_session):
+    _seed_framework_and_control(db_session)
+    with patch(
+        "app.routers.admin_products.get_ai_provider",
+        return_value=_AssertNeverCalledProvider(),
+    ):
+        r = admin_client.post(
+            "/admin/products/import/from-documents",
+            files={"files": ("crm.pdf", _blank_pdf_bytes(), "application/pdf")},
+            data={"product_key": "scanned-test"},
+        )
+    assert r.status_code == 422
+    assert "crm.pdf" in r.json()["detail"]
+    assert "extracted only 0 character" in r.json()["detail"]
+
+
+def test_ingest_from_documents_legacy_doc_as_docx_returns_422(admin_client, db_session):
+    _seed_framework_and_control(db_session)
+    with patch(
+        "app.routers.admin_products.get_ai_provider",
+        return_value=_AssertNeverCalledProvider(),
+    ):
+        r = admin_client.post(
+            "/admin/products/import/from-documents",
+            files={
+                "files": (
+                    "crm.docx",
+                    _LEGACY_DOC_BYTES,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+            data={"product_key": "legacy-doc-test"},
+        )
+    assert r.status_code == 422
+    assert "crm.docx" in r.json()["detail"]
+    assert "legacy Word 97-2003 .doc" in r.json()["detail"]
+
+
+def test_ingest_from_documents_names_which_of_two_files_failed(admin_client, db_session):
+    """Two documents, only the second is broken -- the message must name
+    that one specifically, not just say "one of your files"."""
+    _seed_framework_and_control(db_session)
+    with patch(
+        "app.routers.admin_products.get_ai_provider",
+        return_value=_AssertNeverCalledProvider(),
+    ):
+        r = admin_client.post(
+            "/admin/products/import/from-documents",
+            files=[
+                (
+                    "files",
+                    (
+                        "baseline.pdf",
+                        _real_pdf_bytes(
+                            "A real baseline document with enough content to clear the threshold."
+                        ),
+                        "application/pdf",
+                    ),
+                ),
+                ("files", ("crm.pdf", _blank_pdf_bytes(), "application/pdf")),
+            ],
+            data={"product_key": "two-file-test"},
+        )
+    assert r.status_code == 422
+    assert "crm.pdf" in r.json()["detail"]
+    assert "baseline.pdf" not in r.json()["detail"]
+
+
+def test_ingest_from_documents_two_valid_documents_still_works(admin_client, db_session):
+    """The regression this whole section must not cause: a real, valid
+    two-document upload (the typical MSP-baseline + vendor-CRM pattern)
+    must still succeed exactly as before."""
+    seed = _seed_framework_and_control(db_session)
+    stub = _StubIngestProvider(_stub_ingest_response(seed["ctrl"].control_id))
+    with patch("app.routers.admin_products.get_ai_provider", return_value=stub):
+        r = admin_client.post(
+            "/admin/products/import/from-documents",
+            files=[
+                (
+                    "files",
+                    (
+                        "baseline.pdf",
+                        _real_pdf_bytes(
+                            "MSP baseline document with enough real content to clear the threshold."
+                        ),
+                        "application/pdf",
+                    ),
+                ),
+                (
+                    "files",
+                    (
+                        "crm.pdf",
+                        _real_pdf_bytes(
+                            "Vendor CRM document with enough real content to clear the threshold."
+                        ),
+                        "application/pdf",
+                    ),
+                ),
+            ],
+            data={"product_key": "two-valid-docs-test"},
+        )
+    assert r.status_code == 200
+    assert "two-valid-docs-test" in r.json()["yaml"]
+
+
+# ---------------------------------------------------------------------------
+# Product key normalization
+# ---------------------------------------------------------------------------
+
+
+def test_ingest_from_documents_rejects_invalid_key_shape_before_ai_call(admin_client, db_session):
+    _seed_framework_and_control(db_session)
+    with patch(
+        "app.routers.admin_products.get_ai_provider",
+        return_value=_AssertNeverCalledProvider(),
+    ):
+        r = admin_client.post(
+            "/admin/products/import/from-documents",
+            files={"files": ("crm.pdf", _fake_pdf_bytes(), "application/pdf")},
+            data={"product_key": "datto rmm"},
+        )
+    assert r.status_code == 422
+    assert "not valid" in r.json()["detail"]
+
+
+def test_ingest_from_documents_normalizes_key_case(admin_client, db_session):
+    seed = _seed_framework_and_control(db_session)
+    stub = _StubIngestProvider(_stub_ingest_response(seed["ctrl"].control_id))
+    with (
+        patch("app.routers.admin_products.get_ai_provider", return_value=stub),
+        patch("app.importers.document.extract_text", return_value=_STUB_EXTRACTED_TEXT),
+    ):
+        r = admin_client.post(
+            "/admin/products/import/from-documents",
+            files={"files": ("crm.pdf", _fake_pdf_bytes(), "application/pdf")},
+            data={"product_key": "DattoRMM"},
+        )
+    assert r.status_code == 200
+    import yaml as _yaml
+
+    data_dict = _yaml.safe_load(r.json()["yaml"])
+    assert data_dict["product"]["key"] == "dattormm"
+
+
+def test_import_dry_run_reports_invalid_key_shape_as_problem(admin_client, db_session):
+    seed = _seed_framework_and_control(db_session)
+    yaml_bytes = _valid_yaml("datto rmm", seed["ctrl"].control_id)
+    r = admin_client.post(
+        "/admin/products/import/dry-run",
+        files={"file": ("bad-key.yaml", yaml_bytes, "application/x-yaml")},
+    )
+    assert r.status_code == 200
+    assert any("not valid" in p for p in r.json()["problems"])
+
+
+def test_import_apply_rejects_invalid_key_shape(admin_client, db_session):
+    seed = _seed_framework_and_control(db_session)
+    yaml_bytes = _valid_yaml("datto rmm", seed["ctrl"].control_id)
+    r = admin_client.post(
+        "/admin/products/import/apply",
+        files={"file": ("bad-key.yaml", yaml_bytes, "application/x-yaml")},
+    )
+    assert r.status_code == 422
+    assert any("not valid" in p for p in r.json()["detail"]["problems"])
+    assert (
+        db_session.scalars(select(Product).where(Product.key == "datto rmm")).first() is None
+    )
+
+
+def test_import_apply_normalizes_key_case_and_dedupes_on_reimport(admin_client, db_session):
+    """Importing the same tool twice under different casing must update
+    the one existing row, not silently create a second product."""
+    seed = _seed_framework_and_control(db_session)
+
+    first_yaml = _valid_yaml("DattoRMM", seed["ctrl"].control_id)
+    r1 = admin_client.post(
+        "/admin/products/import/apply",
+        files={"file": ("first.yaml", first_yaml, "application/x-yaml")},
+    )
+    assert r1.status_code == 201
+    first_id = r1.json()["product_id"]
+
+    stored = db_session.scalars(select(Product).where(Product.key == "dattormm")).one()
+    assert stored.id == uuid.UUID(first_id)
+    assert (
+        db_session.scalars(select(Product).where(Product.key == "DattoRMM")).first() is None
+    ), "must be stored lowercased, not verbatim"
+
+    r2 = admin_client.post(
+        "/admin/products/import/apply",
+        files={
+            "file": (
+                "second.yaml",
+                _valid_yaml("dattormm", seed["ctrl"].control_id),
+                "application/x-yaml",
+            )
+        },
+    )
+    assert r2.status_code == 201
+    assert r2.json()["product_id"] == first_id, (
+        "different casing of the same key must resolve to the same product"
+    )
+    all_matching = db_session.scalars(select(Product).where(Product.key == "dattormm")).all()
+    assert len(all_matching) == 1

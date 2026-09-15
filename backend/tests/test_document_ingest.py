@@ -36,6 +36,7 @@ from app.baseline import (
 )
 from app.importers.document import (
     _MAX_INPUT_CHARS,
+    _MIN_EXTRACTED_TEXT_CHARS,
     DocumentIngestError,
     _apply_evidence_minimization,
     extract_text,
@@ -244,6 +245,249 @@ def test_extract_text_rejects_unsupported_format():
 
 
 # ---------------------------------------------------------------------------
+# Input hardening: realistic malformed-upload failure modes, each ending in
+# a specific DocumentIngestError naming the file, never a raw traceback.
+# Built from genuinely broken real files (truncated/encrypted/legacy-format
+# bytes), not asserted from reading the implementation.
+# ---------------------------------------------------------------------------
+
+
+def _write_temp(suffix: str, data: bytes) -> Path:
+    fd, path = tempfile.mkstemp(suffix=suffix)
+    with open(fd, "wb") as f:
+        f.write(data)
+    return Path(path)
+
+
+def _real_pdf_bytes(
+    text: str = (
+        "Some real extractable text for a legitimate document, long enough "
+        "to clear the ingestion threshold."
+    ),
+) -> bytes:
+    """A genuinely valid, parseable PDF with a real text content stream --
+    built with pypdf alone (no new dependency needed)."""
+    import io
+
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    w = PdfWriter()
+    page = w.add_blank_page(width=300, height=200)
+    stream = DecodedStreamObject()
+    stream.set_data(f"BT /F1 12 Tf 20 150 Td ({text}) Tj ET".encode())
+    font_dict = DictionaryObject()
+    font_dict[NameObject("/Type")] = NameObject("/Font")
+    font_dict[NameObject("/Subtype")] = NameObject("/Type1")
+    font_dict[NameObject("/BaseFont")] = NameObject("/Helvetica")
+    resources = DictionaryObject()
+    font_res = DictionaryObject()
+    font_res[NameObject("/F1")] = w._add_object(font_dict)
+    resources[NameObject("/Font")] = font_res
+    page[NameObject("/Resources")] = resources
+    page[NameObject("/Contents")] = w._add_object(stream)
+    buf = io.BytesIO()
+    w.write(buf)
+    return buf.getvalue()
+
+
+def _blank_pdf_bytes() -> bytes:
+    import io
+
+    from pypdf import PdfWriter
+
+    w = PdfWriter()
+    w.add_blank_page(width=200, height=200)
+    buf = io.BytesIO()
+    w.write(buf)
+    return buf.getvalue()
+
+
+def _encrypted_pdf_bytes() -> bytes:
+    import io
+
+    from pypdf import PdfWriter
+
+    w = PdfWriter()
+    w.add_blank_page(width=200, height=200)
+    w.encrypt("secret123")
+    buf = io.BytesIO()
+    w.write(buf)
+    return buf.getvalue()
+
+
+_LEGACY_DOC_BYTES = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 200
+
+
+def test_extract_pdf_truncated_reports_specific_message():
+    full = _real_pdf_bytes()
+    path = _write_temp(".pdf", full[: len(full) // 2])
+    try:
+        with pytest.raises(DocumentIngestError, match="corrupt or truncated"):
+            extract_text(path)
+    finally:
+        path.unlink()
+
+
+def test_extract_pdf_empty_file_reports_specific_message():
+    path = _write_temp(".pdf", b"")
+    try:
+        with pytest.raises(DocumentIngestError, match="could not read this PDF"):
+            extract_text(path)
+    finally:
+        path.unlink()
+
+
+def test_extract_pdf_garbage_bytes_reports_specific_message():
+    path = _write_temp(".pdf", b"not a pdf at all, just garbage bytes 1234567890")
+    try:
+        with pytest.raises(DocumentIngestError, match="could not read this PDF"):
+            extract_text(path)
+    finally:
+        path.unlink()
+
+
+def test_extract_pdf_password_protected_reports_specific_message():
+    path = _write_temp(".pdf", _encrypted_pdf_bytes())
+    try:
+        with pytest.raises(DocumentIngestError, match="password-protected"):
+            extract_text(path)
+    finally:
+        path.unlink()
+
+
+def test_extract_pdf_valid_file_still_works():
+    """The regression this whole section must not cause: a real, valid
+    PDF must still extract its real text exactly as before."""
+    path = _write_temp(".pdf", _real_pdf_bytes("A specific sentence to look for."))
+    try:
+        text = extract_text(path)
+        assert "A specific sentence to look for." in text
+    finally:
+        path.unlink()
+
+
+def test_extract_docx_legacy_doc_reports_specific_message():
+    path = _write_temp(".docx", _LEGACY_DOC_BYTES)
+    try:
+        with pytest.raises(DocumentIngestError, match="legacy Word 97-2003 .doc"):
+            extract_text(path)
+    finally:
+        path.unlink()
+
+
+def test_extract_docx_garbage_bytes_reports_specific_message():
+    path = _write_temp(".docx", b"not a docx at all, just garbage bytes")
+    try:
+        with pytest.raises(DocumentIngestError, match="not a valid .docx file"):
+            extract_text(path)
+    finally:
+        path.unlink()
+
+
+def test_extract_docx_valid_zip_but_not_a_docx_package_reports_specific_message():
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("hello.txt", "not a docx")
+    path = _write_temp(".docx", buf.getvalue())
+    try:
+        with pytest.raises(DocumentIngestError, match="not a valid Word document"):
+            extract_text(path)
+    finally:
+        path.unlink()
+
+
+def test_ingest_document_min_extracted_text_threshold_is_exclusive_at_the_boundary():
+    """Exactly _MIN_EXTRACTED_TEXT_CHARS clears the guard; one character
+    short of it does not -- pinning the boundary so a future edit to the
+    comparison operator (< vs <=) gets caught."""
+    at_threshold = "x" * _MIN_EXTRACTED_TEXT_CHARS
+    below_threshold = "x" * (_MIN_EXTRACTED_TEXT_CHARS - 1)
+
+    with patch("app.importers.document.extract_text", return_value=at_threshold):
+        ingest_document(  # must not raise
+            _fake_docx(), product_key="rocketcyber", ai_provider=_StubAIProvider()
+        )
+
+    with patch("app.importers.document.extract_text", return_value=below_threshold):
+        with pytest.raises(DocumentIngestError, match="extracted only"):
+            ingest_document(
+                _fake_docx(), product_key="rocketcyber", ai_provider=_StubAIProvider()
+            )
+
+
+def test_ingest_document_rejects_near_empty_extracted_text_and_names_the_file():
+    """A "successful" extraction yielding almost nothing (the scanned-
+    image-PDF symptom) must be rejected before ever reaching the AI
+    provider -- proven here with a provider that fails the test if
+    called at all."""
+    path = _write_temp(".pdf", _blank_pdf_bytes())
+
+    class _AssertNeverCalled(AIProvider):
+        def complete(self, system, user, *, max_tokens=8192):
+            raise AssertionError("must not reach the AI call for near-empty text")
+
+    try:
+        with pytest.raises(DocumentIngestError, match="extracted only 0 character"):
+            ingest_document(
+                path, product_key="scanned-test", ai_provider=_AssertNeverCalled()
+            )
+    finally:
+        path.unlink()
+
+
+def test_ingest_document_names_which_of_two_documents_is_near_empty():
+    good = _write_temp(
+        ".pdf",
+        _real_pdf_bytes("A real baseline document with enough content to clear the threshold."),
+    )
+    empty = _write_temp(".pdf", _blank_pdf_bytes())
+
+    class _AssertNeverCalled(AIProvider):
+        def complete(self, system, user, *, max_tokens=8192):
+            raise AssertionError("must not reach the AI call for near-empty text")
+
+    try:
+        with pytest.raises(DocumentIngestError) as exc_info:
+            ingest_document(
+                good, empty, product_key="two-doc-test", ai_provider=_AssertNeverCalled()
+            )
+        message = str(exc_info.value)
+        assert empty.name in message
+        assert good.name not in message
+    finally:
+        good.unlink()
+        empty.unlink()
+
+
+def test_ingest_document_two_real_documents_still_works():
+    """A valid two-document ingest (baseline + CRM) must still work
+    exactly as before -- real extraction this time, not the patched
+    extract_text every other pipeline test in this file uses."""
+    baseline = _write_temp(
+        ".pdf",
+        _real_pdf_bytes("MSP baseline document with enough real content to clear the threshold."),
+    )
+    crm = _write_temp(
+        ".pdf",
+        _real_pdf_bytes("Vendor CRM document with enough real content to clear the threshold."),
+    )
+    try:
+        entry = ingest_document(
+            baseline, crm, product_key="rocketcyber", ai_provider=_StubAIProvider()
+        )
+        assert entry.product.key == "rocketcyber"
+        assert entry.product.source_docs == [baseline.name, crm.name]
+        assert len(entry.controls) == 3
+    finally:
+        baseline.unlink()
+        crm.unlink()
+
+
+# ---------------------------------------------------------------------------
 # Full ingest pipeline with stub AI provider
 # ---------------------------------------------------------------------------
 
@@ -313,9 +557,19 @@ def _fake_docx() -> Path:
     return p
 
 
+# Long enough to clear _MIN_EXTRACTED_TEXT_CHARS (the extraction-hardening
+# slice's own guard against an effectively-empty document) so these tests
+# keep exercising the AI-response-handling logic they're actually about.
+_STUB_TEXT = (
+    "Stub extracted document text, long enough to clear the minimum-"
+    "extracted-text guard so these tests exercise what they're actually "
+    "testing."
+)
+
+
 def test_ingest_pipeline_au_provider_satisfies():
     fake_doc = _fake_docx()
-    with patch("app.importers.document.extract_text", return_value="stub text"):
+    with patch("app.importers.document.extract_text", return_value=_STUB_TEXT):
         entry = ingest_document(
             fake_doc,
             product_key="rocketcyber",
@@ -332,7 +586,7 @@ def test_ingest_pipeline_au_provider_satisfies():
 def test_ingest_pipeline_ia_minimization_enforced():
     """Enforcement must strip the evidence the stub AI wrongly included."""
     fake_doc = _fake_docx()
-    with patch("app.importers.document.extract_text", return_value="stub text"):
+    with patch("app.importers.document.extract_text", return_value=_STUB_TEXT):
         entry = ingest_document(
             fake_doc,
             product_key="rocketcyber",
@@ -349,7 +603,7 @@ def test_ingest_pipeline_ia_minimization_enforced():
 
 def test_ingest_pipeline_summary_computed():
     fake_doc = _fake_docx()
-    with patch("app.importers.document.extract_text", return_value="stub text"):
+    with patch("app.importers.document.extract_text", return_value=_STUB_TEXT):
         entry = ingest_document(
             fake_doc,
             product_key="rocketcyber",
@@ -366,7 +620,7 @@ def test_ingest_pipeline_summary_computed():
 
 def test_ingest_pipeline_product_meta_preserved():
     fake_doc = _fake_docx()
-    with patch("app.importers.document.extract_text", return_value="stub text"):
+    with patch("app.importers.document.extract_text", return_value=_STUB_TEXT):
         entry = ingest_document(
             fake_doc,
             product_key="rocketcyber",
@@ -401,7 +655,7 @@ def test_ingest_pipeline_never_sets_coverage_basis():
     coverage without a human who knows the deployment.
     """
     fake_doc = _fake_docx()
-    with patch("app.importers.document.extract_text", return_value="stub text"):
+    with patch("app.importers.document.extract_text", return_value=_STUB_TEXT):
         entry = ingest_document(
             fake_doc,
             product_key="rocketcyber",
@@ -510,7 +764,7 @@ def test_ingest_document_passes_higher_max_tokens():
             return _STUB_AI_RESPONSE
 
     fake_doc = _fake_docx()
-    with patch("app.importers.document.extract_text", return_value="stub text"):
+    with patch("app.importers.document.extract_text", return_value=_STUB_TEXT):
         ingest_document(
             fake_doc, product_key="rocketcyber", ai_provider=_RecordingProvider()
         )
@@ -523,7 +777,7 @@ def test_ingest_document_wraps_null_provider_error():
     shape to callers than every other failure mode in this module.
     """
     fake_doc = _fake_docx()
-    with patch("app.importers.document.extract_text", return_value="stub text"):
+    with patch("app.importers.document.extract_text", return_value=_STUB_TEXT):
         with pytest.raises(DocumentIngestError, match="No AI provider configured"):
             ingest_document(
                 fake_doc, product_key="rocketcyber", ai_provider=NullProvider()
@@ -536,7 +790,7 @@ def test_ingest_document_wraps_malformed_json():
             return "{not valid json"
 
     fake_doc = _fake_docx()
-    with patch("app.importers.document.extract_text", return_value="stub text"):
+    with patch("app.importers.document.extract_text", return_value=_STUB_TEXT):
         with pytest.raises(DocumentIngestError, match="isn't valid JSON"):
             ingest_document(
                 fake_doc, product_key="rocketcyber", ai_provider=_BadJSONProvider()
@@ -549,7 +803,7 @@ def test_ingest_document_wraps_wrong_shape_json():
             return json.dumps({"controls": []})  # missing "product"
 
     fake_doc = _fake_docx()
-    with patch("app.importers.document.extract_text", return_value="stub text"):
+    with patch("app.importers.document.extract_text", return_value=_STUB_TEXT):
         with pytest.raises(DocumentIngestError, match="expected shape"):
             ingest_document(
                 fake_doc, product_key="rocketcyber", ai_provider=_WrongShapeProvider()
