@@ -3342,6 +3342,111 @@ Items without a status are planned but not yet started.
   not just on the bench stack: the exact reproduction from two sessions
   ago, inverted and closed.
 
+- **AI provider credential moved into the connector registry** (2026-09-19)
+  — closes the follow-up the document-ingestion Done entry above explicitly
+  deferred. `ANTHROPIC_API_KEY`/`WINGRC_AI_PROVIDER` were the sole
+  third-party credential in the product still living in a plaintext env
+  var, teaching every reader of `.env.example` (AGPL, MSP-self-hosted) the
+  opposite of every other integration credential's pattern. Registered a
+  new `"ai"` connector (`backend/app/connectors/ai.py`, `kind="ai"` — a
+  new display-only grouping, never an authorization input, alongside
+  `data_source`/`notification`): `config_fields` = Provider (a `select`
+  offering only `anthropic`, since that's all `get_ai_provider()` has ever
+  constructed — azure_openai/local stay unimplemented, so not rendered as
+  choices that would 500) + Model (defaults to `claude-sonnet-4-6`,
+  overridable); `credential_fields` = `api_key`, write-only/encrypted via
+  the existing Fernet/`IntegrationConnection` pattern, last-4 hint only.
+  `test_connection` makes a minimal (10 max_tokens) real completion call;
+  error categorization (auth/permission/rate-limit/not-found/timeout/
+  connection/generic-status) is built from the real `anthropic` SDK's
+  exception hierarchy, read from the installed package's own
+  `_exceptions.py` source rather than guessed.
+
+  **Env-var fallback: dropped, not kept.** Matches the Liongard/SMTP
+  precedent (one configuration path, no env-var alternative) rather than
+  risking a silent-override precedence question between a stale env var
+  and whatever Administration shows. `Settings.ai_provider` (`config.py`)
+  is removed entirely — `ai/__init__.py:get_ai_provider()` now takes a
+  `Session` and resolves from `integration_connection`
+  (`connector_key="ai"`) instead of a string setting.
+  `.env.example`/`CLAUDE.md`/`backend/Dockerfile` updated to stop
+  referencing the env var.
+
+  **Three distinguishable "not configured" states**, per
+  `ai/__init__.py:get_ai_provider()`'s own docstring: (1) no row, or a row
+  with the credential removed → `NullProvider` → the existing
+  `RuntimeError` → `DocumentIngestError` → clean `422` degradation,
+  unchanged in shape, message updated to point at Administration → AI
+  Provider instead of env vars; (2) a credential that fails to decrypt
+  (`CredentialCipherError`, a deployment-level
+  `WINGRC_CREDENTIAL_ENCRYPTION_KEYS` problem) → left uncaught by
+  `get_ai_provider()`, mapped to `500` at
+  `routers/admin_products.py:import_from_documents`; (3) a credential that
+  decrypts but fails `connectors/ai.py:parse_settings()` (an unsupported
+  provider value) → wrapped as `RuntimeError` → `422`. A fourth,
+  call-time-only state (bad key/rate limit/network/model-not-found once a
+  real `AnthropicProvider.complete()` call is attempted) is
+  `AnthropicProvider`'s own concern, not `get_ai_provider()`'s — surfaced
+  through the same `run_completion()` error categorization
+  `test_connection` uses, so the two can never report a given failure
+  differently.
+
+  **No caching** — per-request resolution (one DB round-trip + Fernet
+  decrypt per document-ingestion call) is immeasurable next to the
+  multi-second AI completion it precedes; document ingestion is the only
+  caller and is rare/human-initiated. Not the "needs a cache with a
+  non-obvious invalidation story" case the task's own stop-condition
+  named — no cache was needed at all, so there was nothing to design an
+  invalidation story for.
+
+  Bench-verified on an isolated wl-util-1 stack: ruff clean, **1138/1138**
+  backend tests (16 new in `test_ai_connector.py` — `parse_settings`
+  validation plus `run_completion`'s exception categorization for every
+  named `anthropic` SDK exception type, each constructed as a *real*
+  instance via `httpx2.Request`/`Response`, not a stand-in class; 13 new
+  in `test_integrations.py` mirroring the existing Liongard/SMTP router
+  coverage — list/RBAC/never-echoed/ciphertext-at-rest/test-connection
+  ok-fail/delete), `tsc -b` clean, `vite build` clean, **135/135** vitest
+  (`AdminArea.test.tsx` unaffected by the new "AI Provider" nav section).
+
+  **Verified live, with a real (Jarrod's own) Anthropic API key** —
+  entered directly by Jarrod against the isolated bench stack, never by
+  the agent, per the standing rule against entering credentials on the
+  user's behalf even with explicit authorization: (1) `PUT
+  /integrations/ai/credential` stored it, `credential_hint` only, never
+  the key, in the response, the audit log, or any other endpoint; (2) DB
+  row's `encrypted_credential` confirmed as genuine Fernet ciphertext
+  (`gAAAAAB...` prefix), not plaintext or base64; (3) first test-connection
+  attempt (before Jarrod added billing credit) produced a real network
+  round-trip to Anthropic and a specific `HTTP 400` — "credit balance too
+  low" — proving both the request path and the generic `APIStatusError`
+  catch-all (a status code this module doesn't name individually) work
+  against the real API, not just mocks; (4) after credit was added,
+  test-connection succeeded for real (`last_test_ok: true`); (5) deleting
+  the credential and re-attempting ingestion produced the exact clean
+  `422` — "No AI provider configured. Configure one in Administration ->
+  AI Provider..."; (6) a real end-to-end ingestion (a small
+  `weasyprint`-rendered PDF describing a fictitious "SentinelGuard EDR"
+  product) returned `200` in ~39s with coherent AI-drafted YAML correctly
+  identifying `SI.L1-3.14.2` and stamping
+  `ai_generated_model: anthropic:claude-sonnet-4-6`; (7) `customer_poc`,
+  `msp_engineer`, and `c3pao_assessor` all got `403` on both `GET
+  /integrations` and `POST /integrations/ai/test`; (8) Liongard/SMTP
+  connectors' own tests passed unchanged as part of the full regression
+  suite above. The wrong-key/`401` path itself was proven with a real
+  `anthropic.AuthenticationError` instance in `test_ai_connector.py`
+  (constructed via genuine `httpx2` request/response objects, not a
+  stand-in) rather than live, since deliberately submitting a bad key is a
+  credential-entry action reserved for Jarrod the same as the real one —
+  the live `400` catch-all above already proves the request/categorization
+  path is real, not mocked.
+
+  **Deployed** per `docs/deployment.md` §7 with `--no-deps`. Jarrod enters
+  the real Anthropic API key through Administration → AI Provider on the
+  live deployment (not `.env`) to activate document ingestion there — it
+  was configured only on the throwaway bench stack above, torn down
+  after verification.
+
 ---
 
 ## Planned
