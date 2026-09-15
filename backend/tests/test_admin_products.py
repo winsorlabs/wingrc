@@ -312,6 +312,98 @@ controls:
 
 
 # ---------------------------------------------------------------------------
+# Import: dry-run-structured -- same validate()/build_preview() logic as
+# dry-run above, but a JSON body in and out instead of a YAML file, for the
+# per-control review table (ToolImportWizard.tsx, documents mode).
+# ---------------------------------------------------------------------------
+
+
+def _valid_structured_body(key: str, control_id: str) -> dict:
+    return {
+        "product": {
+            "key": key,
+            "name": "Test Product",
+            "provider": "Acme",
+            "category": "ESP",
+            "asset_type": "SPA",
+            "role": "A test product.",
+        },
+        "controls": [
+            {
+                "control": control_id,
+                "objectives": ["a"],
+                "classification": "provider_satisfies",
+                "candidate_state": "pending_evidence",
+                "evidence": [{"artifact": "Config export", "type": "export"}],
+                # coverage_basis deliberately omitted -- the case this
+                # endpoint exists to surface row-by-row.
+            }
+        ],
+    }
+
+
+def test_dry_run_structured_flags_missing_coverage_basis_with_row_and_field(
+    admin_client, db_session
+):
+    seed = _seed_framework_and_control(db_session)
+    body = _valid_structured_body("structured-tool", seed["ctrl"].control_id)
+    r = admin_client.post("/admin/products/import/dry-run-structured", json=body)
+    assert r.status_code == 200
+    out = r.json()
+    assert out["preview"]["problems"], "coverage_basis is unset -- must be flagged"
+    row_problems = out["preview"]["row_problems"]
+    assert any(
+        p["row_index"] == 0 and p["field"] == "coverage_basis" for p in row_problems
+    ), row_problems
+    assert len(out["controls"]) == 1
+    row = out["controls"][0]
+    assert row["row_index"] == 0
+    assert row["control"] == [seed["ctrl"].control_id]
+    assert row["coverage_basis"] is None
+    assert row["classification"] == "provider_satisfies"
+    assert out["product"]["key"] == "structured-tool"
+
+
+def test_dry_run_structured_edit_clears_the_flagged_row(admin_client, db_session):
+    seed = _seed_framework_and_control(db_session)
+    body = _valid_structured_body("structured-tool-2", seed["ctrl"].control_id)
+    body["controls"][0]["coverage_basis"] = "customer_system"
+    r = admin_client.post("/admin/products/import/dry-run-structured", json=body)
+    assert r.status_code == 200
+    out = r.json()
+    assert out["preview"]["problems"] == []
+    assert out["preview"]["row_problems"] == []
+    assert out["controls"][0]["coverage_basis"] == "customer_system"
+
+
+def test_dry_run_structured_malformed_classification_still_returns_the_row(
+    admin_client, db_session
+):
+    """A row with an invalid enum value must still render -- a reviewer
+    fixes the value via the row, not through a dropped/crashed response."""
+    seed = _seed_framework_and_control(db_session)
+    body = _valid_structured_body("structured-tool-3", seed["ctrl"].control_id)
+    body["controls"][0]["classification"] = "not_a_real_classification"
+    r = admin_client.post("/admin/products/import/dry-run-structured", json=body)
+    assert r.status_code == 200
+    out = r.json()
+    assert len(out["controls"]) == 1
+    assert out["controls"][0]["classification"] == "not_a_real_classification"
+    assert any(p["field"] == "classification" for p in out["preview"]["row_problems"])
+
+
+def test_dry_run_structured_missing_framework_returns_409(admin_client, db_session):
+    # No _seed_framework_and_control() call -- the nist-800-171-r2
+    # framework genuinely doesn't exist in this test's (rolled-back-per-
+    # test) database.
+    r = admin_client.post(
+        "/admin/products/import/dry-run-structured",
+        json={"product": {}, "controls": []},
+    )
+    assert r.status_code == 409
+
+
+# ---------------------------------------------------------------------------
 # Import: apply
 # ---------------------------------------------------------------------------
 
@@ -713,6 +805,19 @@ def test_ingest_from_documents_returns_yaml_and_preview_needing_coverage_basis(
         "ever be applied -- same validate() gate a hand-authored YAML hits"
     )
     assert body["preview"]["product_is_new"] is True
+    # Structured shape behind the yaml string, for the per-control review
+    # table -- same content, no YAML parsing needed on the frontend.
+    assert body["product"]["key"] == "ingested-tool"
+    assert body["product"]["name"] == "Ingested Tool"
+    assert len(body["controls"]) == 1
+    row = body["controls"][0]
+    assert row["control"] == [seed["ctrl"].control_id]
+    assert row["classification"] == "provider_satisfies"
+    assert row["coverage_basis"] is None
+    assert any(
+        p["row_index"] == 0 and p["field"] == "coverage_basis"
+        for p in body["preview"]["row_problems"]
+    )
 
 
 def test_ingest_from_documents_apply_lands_unpublished_invisible_with_provenance(
@@ -977,6 +1082,11 @@ def test_customer_poc_gets_403_on_every_endpoint(poc_client, db_session):
     r = poc_client.post(
         "/admin/products/import/dry-run",
         files={"file": ("x.yaml", b"product: {}", "application/x-yaml")},
+    )
+    assert r.status_code == 403
+    r = poc_client.post(
+        "/admin/products/import/dry-run-structured",
+        json={"product": {}, "controls": []},
     )
     assert r.status_code == 403
     r = poc_client.post(

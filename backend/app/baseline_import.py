@@ -76,30 +76,51 @@ def _objective_keys_by_control(
     return out
 
 
-def validate(session: Session, data: dict, ctrl_lookup: dict[str, Control]) -> list[str]:
-    """Every problem with `data`, collected rather than raised at the
-    first one -- a validator an admin can actually act on in one pass,
-    per the task's "report every problem at once" requirement.
+@dataclass
+class ValidationProblem:
+    """One problem, tagged with the row/field it belongs to when it has
+    one -- lets a UI point at the exact control/field needing a decision
+    instead of a reviewer counting array indices in a flat message list.
+    `message` is always the same text `validate()` has always produced
+    (that function is now a thin wrapper over this one), so nothing that
+    already parses/asserts on those strings needs to change.
     """
-    problems: list[str] = []
+
+    message: str
+    row_index: int | None = None
+    field: str | None = None
+
+
+def validate_structured(
+    session: Session, data: dict, ctrl_lookup: dict[str, Control]
+) -> tuple[list[ValidationProblem], list[tuple[int, list[str], dict]]]:
+    """Same checks as validate() (which now just unwraps this), plus a
+    row_index/field tag per problem and the parsed_entries list itself --
+    both consumed by build_preview() to render a row for every
+    structurally-parseable control entry regardless of what else is wrong
+    with it, not just once the whole file is clean.
+    """
+    problems: list[ValidationProblem] = []
 
     pd = data.get("product")
     if not isinstance(pd, dict):
-        return ["Missing top-level 'product' mapping."]
+        return [ValidationProblem("Missing top-level 'product' mapping.")], []
     for required in ("key", "name", "provider", "category"):
         if not pd.get(required):
-            problems.append(f"product.{required} is required.")
+            problems.append(
+                ValidationProblem(f"product.{required} is required.", field=f"product.{required}")
+            )
     if pd.get("key"):
         try:
             normalize_product_key(pd["key"])
         except ValueError as exc:
-            problems.append(str(exc))
+            problems.append(ValidationProblem(str(exc), field="product.key"))
 
     controls = data.get("controls")
     if controls is None:
         controls = []
     elif not isinstance(controls, list):
-        problems.append("'controls' must be a list.")
+        problems.append(ValidationProblem("'controls' must be a list."))
         controls = []
 
     # Resolve every referenced control up front so the objective-key check
@@ -110,19 +131,29 @@ def validate(session: Session, data: dict, ctrl_lookup: dict[str, Control]) -> l
     parsed_entries: list[tuple[int, list[str], dict]] = []
     for idx, entry in enumerate(controls):
         if not isinstance(entry, dict):
-            problems.append(f"controls[{idx}] is not a mapping.")
+            problems.append(ValidationProblem(f"controls[{idx}] is not a mapping.", row_index=idx))
             continue
         ctrl_ids = entry.get("control")
         if isinstance(ctrl_ids, str):
             ctrl_ids = [ctrl_ids]
         if not isinstance(ctrl_ids, list) or not ctrl_ids:
-            problems.append(f"controls[{idx}].control must be a control id or a list of them.")
+            problems.append(
+                ValidationProblem(
+                    f"controls[{idx}].control must be a control id or a list of them.",
+                    row_index=idx, field="control",
+                )
+            )
             continue
         parsed_entries.append((idx, ctrl_ids, entry))
         for cid in ctrl_ids:
             ctrl = ctrl_lookup.get(cid)
             if ctrl is None:
-                problems.append(f"controls[{idx}]: unknown control id {cid!r}.")
+                problems.append(
+                    ValidationProblem(
+                        f"controls[{idx}]: unknown control id {cid!r}.",
+                        row_index=idx, field="control",
+                    )
+                )
             else:
                 referenced_control_ids.add(ctrl.id)
 
@@ -132,8 +163,11 @@ def validate(session: Session, data: dict, ctrl_lookup: dict[str, Control]) -> l
         classification = entry.get("classification")
         if classification not in _VALID_CLASSIFICATIONS:
             problems.append(
-                f"controls[{idx}].classification {classification!r} must be one of "
-                f"{sorted(_VALID_CLASSIFICATIONS)}."
+                ValidationProblem(
+                    f"controls[{idx}].classification {classification!r} must be one of "
+                    f"{sorted(_VALID_CLASSIFICATIONS)}.",
+                    row_index=idx, field="classification",
+                )
             )
         # coverage_basis is moot for customer_owns (evidence-minimization
         # already zeroes provider_contribution/evidence for those, so WHERE
@@ -150,28 +184,42 @@ def validate(session: Session, data: dict, ctrl_lookup: dict[str, Control]) -> l
             coverage_basis = entry.get("coverage_basis", "customer_system")
             if coverage_basis not in _VALID_COVERAGE_BASES:
                 problems.append(
-                    f"controls[{idx}].coverage_basis {coverage_basis!r} must be one of "
-                    f"{sorted(_VALID_COVERAGE_BASES)}."
+                    ValidationProblem(
+                        f"controls[{idx}].coverage_basis {coverage_basis!r} must be one of "
+                        f"{sorted(_VALID_COVERAGE_BASES)}.",
+                        row_index=idx, field="coverage_basis",
+                    )
                 )
         else:
             coverage_basis = entry.get("coverage_basis")
             if coverage_basis not in _VALID_COVERAGE_BASES:
                 problems.append(
-                    f"controls[{idx}].coverage_basis must be explicitly set to one of "
-                    f"{sorted(_VALID_COVERAGE_BASES)} for classification={classification!r} "
-                    "-- reviewer must confirm whether this credits the customer's CUI "
-                    "systems or only the vendor's own platform."
+                    ValidationProblem(
+                        f"controls[{idx}].coverage_basis must be explicitly set to one of "
+                        f"{sorted(_VALID_COVERAGE_BASES)} for classification={classification!r} "
+                        "-- reviewer must confirm whether this credits the customer's CUI "
+                        "systems or only the vendor's own platform.",
+                        row_index=idx, field="coverage_basis",
+                    )
                 )
         candidate_state = entry.get("candidate_state", "not_satisfied_by_product")
         if candidate_state not in _VALID_CANDIDATE_STATES:
             problems.append(
-                f"controls[{idx}].candidate_state {candidate_state!r} must be one of "
-                f"{sorted(_VALID_CANDIDATE_STATES)}."
+                ValidationProblem(
+                    f"controls[{idx}].candidate_state {candidate_state!r} must be one of "
+                    f"{sorted(_VALID_CANDIDATE_STATES)}.",
+                    row_index=idx, field="candidate_state",
+                )
             )
 
         objectives = entry.get("objectives") or []
         if not isinstance(objectives, list) or not all(isinstance(o, str) for o in objectives):
-            problems.append(f"controls[{idx}].objectives must be a list of strings.")
+            problems.append(
+                ValidationProblem(
+                    f"controls[{idx}].objectives must be a list of strings.",
+                    row_index=idx, field="objectives",
+                )
+            )
             objectives = []
         for cid in ctrl_ids:
             ctrl = ctrl_lookup.get(cid)
@@ -181,13 +229,18 @@ def validate(session: Session, data: dict, ctrl_lookup: dict[str, Control]) -> l
             for okey in objectives:
                 if okey not in valid_keys:
                     problems.append(
-                        f"controls[{idx}]: objective key {okey!r} is not a real "
-                        f"assessment objective on {cid} (known: {sorted(valid_keys)})."
+                        ValidationProblem(
+                            f"controls[{idx}]: objective key {okey!r} is not a real "
+                            f"assessment objective on {cid} (known: {sorted(valid_keys)}).",
+                            row_index=idx, field="objectives",
+                        )
                     )
 
         evidence = entry.get("evidence") or []
         if not isinstance(evidence, list):
-            problems.append(f"controls[{idx}].evidence must be a list.")
+            problems.append(
+                ValidationProblem(f"controls[{idx}].evidence must be a list.", row_index=idx, field="evidence")
+            )
             evidence = []
         if classification == "customer_owns" and evidence:
             # The minimization invariant (models.py:BaselineEvidenceSpec):
@@ -195,33 +248,98 @@ def validate(session: Session, data: dict, ctrl_lookup: dict[str, Control]) -> l
             # vendor doesn't satisfy the control, so there is nothing of
             # theirs to collect.
             problems.append(
-                f"controls[{idx}]: classification=customer_owns must not carry evidence "
-                f"specs ({len(evidence)} found) -- the minimization invariant: a vendor "
-                "that doesn't satisfy a control generates no evidence task for it."
+                ValidationProblem(
+                    f"controls[{idx}]: classification=customer_owns must not carry evidence "
+                    f"specs ({len(evidence)} found) -- the minimization invariant: a vendor "
+                    "that doesn't satisfy a control generates no evidence task for it.",
+                    row_index=idx, field="evidence",
+                )
             )
         for ev_idx, ev in enumerate(evidence):
             if not isinstance(ev, dict):
-                problems.append(f"controls[{idx}].evidence[{ev_idx}] is not a mapping.")
+                problems.append(
+                    ValidationProblem(
+                        f"controls[{idx}].evidence[{ev_idx}] is not a mapping.",
+                        row_index=idx, field="evidence",
+                    )
+                )
                 continue
             if not ev.get("artifact"):
-                problems.append(f"controls[{idx}].evidence[{ev_idx}].artifact is required.")
+                problems.append(
+                    ValidationProblem(
+                        f"controls[{idx}].evidence[{ev_idx}].artifact is required.",
+                        row_index=idx, field="evidence",
+                    )
+                )
             ev_type = ev.get("type")
             if ev_type not in _VALID_EVIDENCE_TYPES:
                 problems.append(
-                    f"controls[{idx}].evidence[{ev_idx}].type {ev_type!r} must be one of "
-                    f"{sorted(_VALID_EVIDENCE_TYPES)}."
+                    ValidationProblem(
+                        f"controls[{idx}].evidence[{ev_idx}].type {ev_type!r} must be one of "
+                        f"{sorted(_VALID_EVIDENCE_TYPES)}.",
+                        row_index=idx, field="evidence",
+                    )
                 )
 
-    return problems
+    return problems, parsed_entries
+
+
+def validate(session: Session, data: dict, ctrl_lookup: dict[str, Control]) -> list[str]:
+    """Every problem with `data`, collected rather than raised at the
+    first one -- a validator an admin can actually act on in one pass,
+    per the task's "report every problem at once" requirement.
+
+    Thin wrapper over validate_structured() -- same messages, same order,
+    same everything, just without the row/field tags a UI needs and a
+    plain apply-time 422 doesn't.
+    """
+    problems, _ = validate_structured(session, data, ctrl_lookup)
+    return [p.message for p in problems]
 
 
 @dataclass
 class BaselineControlChange:
     control_id: str
     change_type: str  # "new" | "changed" | "unchanged"
-    classification: str
-    coverage_basis: str
+    # classification/coverage_basis can be None here now that rows are built
+    # for every structurally-parseable entry, not just once the whole file
+    # is clean -- an unset/invalid value IS the thing a reviewer is being
+    # shown this row to fix.
+    classification: str | None
+    coverage_basis: str | None
     field_diffs: dict[str, tuple[Any, Any]] = field(default_factory=dict)
+
+
+@dataclass
+class EvidenceSpecDraft:
+    artifact: str
+    type: str
+    kb: str | None = None
+
+
+@dataclass
+class ControlEntryDraft:
+    """The full editable shape of one control entry, built for every row
+    in parsed_entries regardless of what validate_structured() flagged on
+    it -- a reviewer needs to see and fix the actual (possibly invalid)
+    values, not have the row disappear until everything else is already
+    right. Mirrors baseline.py:ControlEntry's field set; kept separate
+    (rather than reusing ControlEntry/_parse_control_entry directly)
+    because that parser enum-casts and dict-indexes in ways that raise on
+    exactly the malformed values this is meant to surface, not hide.
+    """
+
+    row_index: int
+    control: list[str]
+    classification: str | None
+    coverage_basis: str | None
+    candidate_state: str | None
+    objectives: list[str] = field(default_factory=list)
+    provider_contribution: str | None = None
+    customer_action: str | None = None
+    evidence: list[EvidenceSpecDraft] = field(default_factory=list)
+    note: str | None = None
+    scope_note: str | None = None
 
 
 @dataclass
@@ -233,12 +351,32 @@ class BaselineImportPreview:
     control_changes: list[BaselineControlChange]
     affected_org_count: int
     affected_org_names: list[str]
+    row_problems: list[ValidationProblem] = field(default_factory=list)
+    control_rows: list[ControlEntryDraft] = field(default_factory=list)
+
+
+def _coerce_evidence_drafts(raw: Any) -> list[EvidenceSpecDraft]:
+    if not isinstance(raw, list):
+        return []
+    out: list[EvidenceSpecDraft] = []
+    for ev in raw:
+        if not isinstance(ev, dict):
+            continue
+        out.append(
+            EvidenceSpecDraft(
+                artifact=ev.get("artifact") or "",
+                type=ev.get("type") or "",
+                kb=ev.get("kb"),
+            )
+        )
+    return out
 
 
 def build_preview(
     session: Session, data: dict, ctrl_lookup: dict[str, Control]
 ) -> BaselineImportPreview:
-    problems = validate(session, data, ctrl_lookup)
+    problems_structured, parsed_entries = validate_structured(session, data, ctrl_lookup)
+    problems = [p.message for p in problems_structured]
     pd = data.get("product") if isinstance(data.get("product"), dict) else {}
     raw_key = pd.get("key", "")
     try:
@@ -267,47 +405,77 @@ def build_preview(
             )
         }
 
+    # Both loops below iterate parsed_entries (validate_structured()'s own
+    # first pass) rather than raw data.get("controls", []) -- parsed_entries
+    # already guarantees "is a dict with a usable control id/list", which is
+    # what the old `if not problems:` gate used to buy by requiring the
+    # ENTIRE file to be clean first. Everything else (an invalid
+    # classification, an unset coverage_basis, a bad objective key) is
+    # exactly the kind of per-row problem a reviewer needs to see the row
+    # to fix, not one that should hide it.
     changes: list[BaselineControlChange] = []
-    if not problems:
-        for entry in data.get("controls", []):
-            ctrl_ids = entry["control"]
-            if isinstance(ctrl_ids, str):
-                ctrl_ids = [ctrl_ids]
-            classification = entry["classification"]
-            coverage_basis = entry.get(
-                "coverage_basis",
-                "customer_system" if classification == "customer_owns" else None,
+    control_rows: list[ControlEntryDraft] = []
+    for idx, ctrl_ids, entry in parsed_entries:
+        classification = entry.get("classification")
+        if not isinstance(classification, str):
+            classification = None
+        coverage_basis = entry.get(
+            "coverage_basis",
+            "customer_system" if classification == "customer_owns" else None,
+        )
+        if not isinstance(coverage_basis, str):
+            coverage_basis = None
+        candidate_state = entry.get("candidate_state", "not_satisfied_by_product")
+        if not isinstance(candidate_state, str):
+            candidate_state = None
+        objectives = entry.get("objectives") or []
+        if not isinstance(objectives, list) or not all(isinstance(o, str) for o in objectives):
+            objectives = [o for o in objectives if isinstance(o, str)] if isinstance(objectives, list) else []
+
+        control_rows.append(
+            ControlEntryDraft(
+                row_index=idx,
+                control=list(ctrl_ids),
+                classification=classification,
+                coverage_basis=coverage_basis,
+                candidate_state=candidate_state,
+                objectives=objectives,
+                provider_contribution=entry.get("provider_contribution"),
+                customer_action=entry.get("customer_action"),
+                evidence=_coerce_evidence_drafts(entry.get("evidence")),
+                note=entry.get("note"),
+                scope_note=entry.get("scope_note"),
             )
-            candidate_state = entry.get("candidate_state", "not_satisfied_by_product")
-            objectives = entry.get("objectives") or []
-            for cid in ctrl_ids:
-                ctrl = ctrl_lookup.get(cid)
-                if ctrl is None:
-                    continue
-                existing = existing_bcs.get(ctrl.id)
-                if existing is None:
-                    changes.append(
-                        BaselineControlChange(cid, "new", classification, coverage_basis)
-                    )
-                    continue
-                diffs: dict[str, tuple[Any, Any]] = {}
-                if existing.classification != classification:
-                    diffs["classification"] = (existing.classification, classification)
-                if existing.coverage_basis != coverage_basis:
-                    diffs["coverage_basis"] = (existing.coverage_basis, coverage_basis)
-                if existing.candidate_state != candidate_state:
-                    diffs["candidate_state"] = (existing.candidate_state, candidate_state)
-                if sorted(existing.objectives or []) != sorted(objectives):
-                    diffs["objectives"] = (existing.objectives, objectives)
+        )
+
+        for cid in ctrl_ids:
+            ctrl = ctrl_lookup.get(cid)
+            if ctrl is None:
+                continue
+            existing = existing_bcs.get(ctrl.id)
+            if existing is None:
                 changes.append(
-                    BaselineControlChange(
-                        cid,
-                        "changed" if diffs else "unchanged",
-                        classification,
-                        coverage_basis,
-                        diffs,
-                    )
+                    BaselineControlChange(cid, "new", classification, coverage_basis)
                 )
+                continue
+            diffs: dict[str, tuple[Any, Any]] = {}
+            if existing.classification != classification:
+                diffs["classification"] = (existing.classification, classification)
+            if existing.coverage_basis != coverage_basis:
+                diffs["coverage_basis"] = (existing.coverage_basis, coverage_basis)
+            if existing.candidate_state != candidate_state:
+                diffs["candidate_state"] = (existing.candidate_state, candidate_state)
+            if sorted(existing.objectives or []) != sorted(objectives):
+                diffs["objectives"] = (existing.objectives, objectives)
+            changes.append(
+                BaselineControlChange(
+                    cid,
+                    "changed" if diffs else "unchanged",
+                    classification,
+                    coverage_basis,
+                    diffs,
+                )
+            )
 
     affected_org_names: list[str] = []
     if product is not None:
@@ -325,6 +493,8 @@ def build_preview(
         control_changes=changes,
         affected_org_count=len(affected_org_names),
         affected_org_names=affected_org_names,
+        row_problems=problems_structured,
+        control_rows=control_rows,
     )
 
 

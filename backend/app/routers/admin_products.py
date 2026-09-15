@@ -6,7 +6,9 @@ Endpoints:
   GET    /admin/products/{product_id}                 Tool detail (baseline mapping, read-only)
   GET    /admin/products/{product_id}/footprint       Which orgs have it, at what status
   POST   /admin/products/import/dry-run               Validate + preview a baseline YAML upload
+  POST   /admin/products/import/dry-run-structured    Same, JSON body in/out -- no YAML round-trip
   POST   /admin/products/import/apply                 Write a validated import (is_published=False)
+  POST   /admin/products/import/from-documents        AI-drafted candidate from vendor documents
   POST   /admin/products/{product_id}/publish         Expose to tenants
   POST   /admin/products/{product_id}/unpublish       Hide from tenants
   GET    /admin/products/{product_id}/documents       List attached documents
@@ -173,9 +175,20 @@ class FootprintRowOut(BaseModel):
 class ControlChangeOut(BaseModel):
     control_id: str
     change_type: str
-    classification: str
-    coverage_basis: str
+    # Nullable now that build_preview() renders a row for every
+    # structurally-parseable entry, not just once the whole file is
+    # clean -- an unset/invalid value is exactly what the row exists to
+    # surface, not something that's always been decided by the time this
+    # is built.
+    classification: str | None
+    coverage_basis: str | None
     field_diffs: dict[str, list[Any]]
+
+
+class RowProblemOut(BaseModel):
+    row_index: int | None
+    field: str | None
+    message: str
 
 
 class ImportPreviewOut(BaseModel):
@@ -186,6 +199,7 @@ class ImportPreviewOut(BaseModel):
     control_changes: list[ControlChangeOut]
     affected_org_count: int
     affected_org_names: list[str]
+    row_problems: list[RowProblemOut] = Field(default_factory=list)
 
 
 class ImportApplyOut(BaseModel):
@@ -195,9 +209,50 @@ class ImportApplyOut(BaseModel):
     evidence_specs: int
 
 
+class EvidenceDraftOut(BaseModel):
+    artifact: str
+    type: str
+    kb: str | None
+
+
+class ControlEntryOut(BaseModel):
+    row_index: int
+    control: list[str]
+    classification: str | None
+    coverage_basis: str | None
+    candidate_state: str | None
+    objectives: list[str]
+    provider_contribution: str | None
+    customer_action: str | None
+    evidence: list[EvidenceDraftOut]
+    note: str | None
+    scope_note: str | None
+
+
+class ProductMetaOut(BaseModel):
+    key: str
+    name: str
+    provider: str
+    category: str
+    asset_type: str
+    framework: str
+    role: str
+    assumed_config: list[str] = Field(default_factory=list)
+    source_docs: list[str] = Field(default_factory=list)
+    ai_generated_at: str | None = None
+    ai_generated_model: str | None = None
+
+
 class DocumentIngestOut(BaseModel):
     yaml: str
     preview: ImportPreviewOut
+    # Full structured shape behind `yaml` -- lets the per-control review
+    # table (ToolImportWizard.tsx, documents mode) render/edit rows
+    # directly instead of parsing the YAML string itself. `yaml` stays the
+    # single thing actually submitted to /import/apply, always
+    # re-serialized fresh from whatever was just validated.
+    product: ProductMetaOut
+    controls: list[ControlEntryOut]
 
 
 class PublishOut(BaseModel):
@@ -502,6 +557,87 @@ def _preview_out(preview) -> ImportPreviewOut:
         ],
         affected_org_count=preview.affected_org_count,
         affected_org_names=preview.affected_org_names,
+        row_problems=[
+            RowProblemOut(row_index=p.row_index, field=p.field, message=p.message)
+            for p in preview.row_problems
+        ],
+    )
+
+
+def _product_meta_out(pd: dict[str, Any]) -> ProductMetaOut:
+    def _str_list(v: Any) -> list[str]:
+        return [str(x) for x in v] if isinstance(v, list) else []
+
+    return ProductMetaOut(
+        key=str(pd.get("key") or ""),
+        name=str(pd.get("name") or ""),
+        provider=str(pd.get("provider") or ""),
+        category=str(pd.get("category") or ""),
+        asset_type=str(pd.get("asset_type") or ""),
+        framework=str(pd.get("framework") or ""),
+        role=str(pd.get("role") or ""),
+        assumed_config=_str_list(pd.get("assumed_config")),
+        source_docs=_str_list(pd.get("source_docs")),
+        ai_generated_at=pd.get("ai_generated_at"),
+        ai_generated_model=pd.get("ai_generated_model"),
+    )
+
+
+def _control_rows_out(rows: list) -> list[ControlEntryOut]:
+    return [
+        ControlEntryOut(
+            row_index=r.row_index,
+            control=r.control,
+            classification=r.classification,
+            coverage_basis=r.coverage_basis,
+            candidate_state=r.candidate_state,
+            objectives=r.objectives,
+            provider_contribution=r.provider_contribution,
+            customer_action=r.customer_action,
+            evidence=[
+                EvidenceDraftOut(artifact=e.artifact, type=e.type, kb=e.kb) for e in r.evidence
+            ],
+            note=r.note,
+            scope_note=r.scope_note,
+        )
+        for r in rows
+    ]
+
+
+@router.post("/import/dry-run-structured", response_model=DocumentIngestOut)
+async def import_dry_run_structured(
+    body: dict[str, Any], session: Session = Depends(get_session)
+) -> DocumentIngestOut:
+    """Structured counterpart to /import/dry-run and the tail of
+    /import/from-documents below -- takes the same {"product": {...},
+    "controls": [...]} shape as a JSON body instead of a YAML file, so the
+    per-control review table (ToolImportWizard.tsx, documents mode) can
+    re-validate edits made row-by-row without the frontend ever having to
+    parse or serialize YAML itself. Writes nothing, same as dry-run.
+
+    Deliberately NOT a strict Pydantic body: build_preview()/validate()
+    already turn a malformed shape into a reportable problem string, and a
+    strict schema here would instead hard-422 on exactly the malformed
+    shapes (a bad classification value, a missing evidence artifact) this
+    endpoint exists to gracefully describe row-by-row instead.
+    """
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422, detail="Body must be a JSON object.")
+
+    fw, ctrl_lookup = _load_framework_and_controls(session)
+    if fw is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Framework '{_FRAMEWORK_KEY}' not found -- run 'wingrc seed-catalog' first.",
+        )
+
+    preview = build_preview(session, body, ctrl_lookup)
+    pd = body.get("product") if isinstance(body.get("product"), dict) else {}
+    return DocumentIngestOut(
+        yaml=_yaml.safe_dump(body, sort_keys=False),
+        preview=_preview_out(preview),
+        product=_product_meta_out(pd),
+        controls=_control_rows_out(preview.control_rows),
     )
 
 
@@ -648,6 +784,8 @@ async def import_from_documents(
     return DocumentIngestOut(
         yaml=_yaml.safe_dump(data_dict, sort_keys=False),
         preview=_preview_out(preview),
+        product=_product_meta_out(data_dict.get("product") or {}),
+        controls=_control_rows_out(preview.control_rows),
     )
 
 

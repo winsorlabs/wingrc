@@ -1247,6 +1247,19 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .form-actions { display: flex; justify-content: flex-end; padding-top: 0.5rem; }
 .form-error { padding: 0.6rem 0.75rem; background: #fdecea; border: 1px solid #f5c6cb; border-radius: 5px; font-size: 0.85rem; color: #842029; }
 .form-success { padding: 0.6rem 0.75rem; background: #dcfce7; border: 1px solid #bbf7d0; border-radius: 5px; font-size: 0.85rem; color: #166534; }
+
+/* ── Per-row "needs a decision" flags (baseline review table) ───────────── */
+.needs-decision { background: #fdecea; }
+.field-needs-decision { border: 1px solid #dc3545 !important; background: #fff5f5; }
+.field-problem-hint { font-size: 0.68rem; color: #842029; margin-top: 0.15rem; }
+.control-row-table input[type="text"], .control-row-table select {
+  width: 100%; box-sizing: border-box; padding: 0.3rem 0.4rem;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: var(--surface); color: var(--text); font-size: 0.78rem;
+}
+.evidence-mini-list { display: flex; flex-direction: column; gap: 0.3rem; min-width: 14rem; }
+.evidence-mini-row { display: flex; align-items: center; gap: 0.25rem; }
+.evidence-mini-row input[type="text"], .evidence-mini-row select { font-size: 0.72rem; padding: 0.2rem 0.3rem; }
 .form-info-banner { padding: 0.6rem 0.75rem; background: #fff3cd; border: 1px solid #ffe69c; border-radius: 5px; font-size: 0.82rem; color: #664d03; }
 .loading { padding: 2rem; text-align: center; color: var(--muted); font-size: 0.9rem; }
 

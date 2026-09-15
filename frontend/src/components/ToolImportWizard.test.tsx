@@ -3,11 +3,14 @@
 // Coverage for the baseline import wizard's dry-run -> review -> apply
 // discipline (G.9 §3e/§4): an invalid file reports every problem and
 // blocks Apply; a valid re-import for a product with active tenants shows
-// the affected-org warning before anything is written.
+// the affected-org warning before anything is written. Documents mode's
+// per-control review table is covered separately below: a missing
+// coverage_basis renders as a flagged dropdown, picking a value and
+// re-checking clears the flag and unblocks Apply.
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api";
-import type { BaselineImportPreview } from "../types";
+import type { BaselineControlDraft, BaselineImportPreview, ProductMetaDraft } from "../types";
 import { ToolImportWizard } from "./ToolImportWizard";
 
 vi.mock("../api", () => ({
@@ -15,6 +18,7 @@ vi.mock("../api", () => ({
     dryRunBaselineImport: vi.fn(),
     applyBaselineImport: vi.fn(),
     ingestBaselineFromDocuments: vi.fn(),
+    previewStructuredBaselineImport: vi.fn(),
     uploadToolDocument: vi.fn(),
   },
 }));
@@ -40,6 +44,41 @@ function makePreview(overrides: Partial<BaselineImportPreview> = {}): BaselineIm
     ],
     affected_org_count: 0,
     affected_org_names: [],
+    row_problems: [],
+    ...overrides,
+  };
+}
+
+function makeProduct(overrides: Partial<ProductMetaDraft> = {}): ProductMetaDraft {
+  return {
+    key: "newtool",
+    name: "New Tool",
+    provider: "Acme",
+    category: "ESP",
+    asset_type: "SPA",
+    framework: "NIST 800-171 Rev 2 / CMMC L2",
+    role: "Does a thing.",
+    assumed_config: [],
+    source_docs: ["crm.pdf"],
+    ai_generated_at: null,
+    ai_generated_model: null,
+    ...overrides,
+  };
+}
+
+function makeControlRow(overrides: Partial<BaselineControlDraft> = {}): BaselineControlDraft {
+  return {
+    row_index: 0,
+    control: ["AC.L2-3.1.1"],
+    classification: "provider_satisfies",
+    coverage_basis: null,
+    candidate_state: "pending_evidence",
+    objectives: ["a"],
+    provider_contribution: null,
+    customer_action: null,
+    evidence: [],
+    note: null,
+    scope_note: null,
     ...overrides,
   };
 }
@@ -95,8 +134,8 @@ describe("ToolImportWizard — valid re-import with active tenants", () => {
   });
 });
 
-describe("ToolImportWizard — generate from vendor documents", () => {
-  it("generates an editable draft, flags missing coverage_basis, and re-checks after edit", async () => {
+describe("ToolImportWizard — generate from vendor documents (per-control table)", () => {
+  it("flags a missing coverage_basis on its row, and clears after picking a value and re-checking", async () => {
     vi.mocked(api.ingestBaselineFromDocuments).mockResolvedValue({
       yaml: "product:\n  key: newtool\ncontrols:\n  - control: AC.L2-3.1.1\n",
       preview: makePreview({
@@ -105,7 +144,16 @@ describe("ToolImportWizard — generate from vendor documents", () => {
         product_key: "newtool",
         product_name: "New Tool",
         control_changes: [],
+        row_problems: [
+          {
+            row_index: 0,
+            field: "coverage_basis",
+            message: "controls[0].coverage_basis must be explicitly set to one of ...",
+          },
+        ],
       }),
+      product: makeProduct(),
+      controls: [makeControlRow()],
     });
 
     render(<ToolImportWizard onClose={vi.fn()} onApplied={vi.fn()} />);
@@ -119,27 +167,71 @@ describe("ToolImportWizard — generate from vendor documents", () => {
     fireEvent.click(screen.getByRole("button", { name: /Generate Baseline/ }));
 
     await waitFor(() => expect(api.ingestBaselineFromDocuments).toHaveBeenCalledWith([doc], "newtool"));
-    await screen.findByText(/coverage_basis must be explicitly set/);
     expect(screen.getByRole("button", { name: /Apply Import/ })).toHaveProperty("disabled", true);
 
-    // Reviewer edits the draft to add coverage_basis, then re-checks.
-    vi.mocked(api.dryRunBaselineImport).mockResolvedValue(
-      makePreview({ product_is_new: true, product_key: "newtool", product_name: "New Tool" })
-    );
-    const textarea = screen.getByRole("textbox", { name: /Generated baseline/ });
-    fireEvent.change(textarea, {
-      target: { value: "product:\n  key: newtool\ncontrols:\n  - control: AC.L2-3.1.1\n    coverage_basis: customer_system\n" },
+    const coverageSelect = screen.getByRole("combobox", { name: "Coverage basis for row 0" });
+    expect(coverageSelect.className).toContain("field-needs-decision");
+
+    // Reviewer picks a value via the dropdown, then re-checks -- no YAML
+    // text editing, no page reload of the row.
+    vi.mocked(api.previewStructuredBaselineImport).mockResolvedValue({
+      yaml: "product:\n  key: newtool\ncontrols:\n  - control: AC.L2-3.1.1\n    coverage_basis: customer_system\n",
+      preview: makePreview({ product_is_new: true, product_key: "newtool", product_name: "New Tool" }),
+      product: makeProduct(),
+      controls: [makeControlRow({ coverage_basis: "customer_system" })],
     });
+
+    fireEvent.change(coverageSelect, { target: { value: "customer_system" } });
     fireEvent.click(screen.getByRole("button", { name: /Re-check/ }));
 
-    await waitFor(() => expect(api.dryRunBaselineImport).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(api.previewStructuredBaselineImport).toHaveBeenCalledWith(
+        expect.objectContaining({
+          controls: [expect.objectContaining({ coverage_basis: "customer_system" })],
+        })
+      )
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Coverage basis for row 0" }).className).not.toContain(
+        "field-needs-decision"
+      )
+    );
     expect(screen.getByRole("button", { name: /Apply Import/ })).toHaveProperty("disabled", false);
+  });
+
+  it("blocks Apply while a row is edited but not yet re-checked", async () => {
+    vi.mocked(api.ingestBaselineFromDocuments).mockResolvedValue({
+      yaml: "product:\n  key: newtool\ncontrols:\n  - control: AC.L2-3.1.1\n    coverage_basis: customer_system\n",
+      preview: makePreview({ product_is_new: true, product_key: "newtool", product_name: "New Tool", control_changes: [] }),
+      product: makeProduct(),
+      controls: [makeControlRow({ coverage_basis: "customer_system" })],
+    });
+
+    render(<ToolImportWizard onClose={vi.fn()} onApplied={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Generate from vendor documents/ }));
+    fireEvent.change(screen.getByLabelText(/Product key/), { target: { value: "newtool" } });
+    const doc = new File(["fake pdf"], "crm.pdf", { type: "application/pdf" });
+    fireEvent.change(document.querySelector("input[type=file]")!, { target: { files: [doc] } });
+    fireEvent.click(screen.getByRole("button", { name: /Generate Baseline/ }));
+
+    await waitFor(() => expect(api.ingestBaselineFromDocuments).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: /Apply Import/ })).toHaveProperty("disabled", false);
+
+    // Editing a field after the last successful check must re-block Apply
+    // -- otherwise Apply could submit a `yaml` that no longer matches
+    // what's on screen.
+    fireEvent.change(screen.getByRole("combobox", { name: "Candidate state for row 0" }), {
+      target: { value: "not_satisfied_by_product" },
+    });
+    expect(screen.getByRole("button", { name: /Apply Import/ })).toHaveProperty("disabled", true);
   });
 
   it("attaches the original source documents as ProductDocuments after apply", async () => {
     vi.mocked(api.ingestBaselineFromDocuments).mockResolvedValue({
       yaml: "product:\n  key: newtool\ncontrols: []\n",
       preview: makePreview({ product_is_new: true, product_key: "newtool", control_changes: [] }),
+      product: makeProduct(),
+      controls: [],
     });
     vi.mocked(api.applyBaselineImport).mockResolvedValue({
       product_id: "p-new",

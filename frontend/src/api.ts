@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, ProductLibraryItem, ProductPublishState, ProductRow, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UserDirectoryEntry, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UserDirectoryEntry, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -832,11 +832,12 @@ export const api = {
     return r.json() as Promise<BaselineImportResult>;
   },
 
-  // Runs the document-ingestion engine and returns an editable draft YAML
-  // plus a dry-run preview over it -- writes nothing. The reviewer edits
-  // the YAML (coverage_basis in particular -- the pipeline always leaves
-  // it unset), re-checks via dryRunBaselineImport, then applies via
-  // applyBaselineImport exactly like a hand-authored file.
+  // Runs the document-ingestion engine and returns an editable draft
+  // (product + one row per control) plus a dry-run preview over it --
+  // writes nothing. The reviewer edits rows in the per-control table
+  // (coverage_basis in particular -- the pipeline always leaves it unset),
+  // re-checks via previewStructuredBaselineImport, then applies via
+  // applyBaselineImport using the latest server-serialized `yaml`.
   ingestBaselineFromDocuments: async (
     files: File[],
     productKey: string
@@ -845,6 +846,25 @@ export const api = {
     for (const f of files) form.append("files", f);
     form.append("product_key", productKey);
     const r = await fetch(`${BASE}/admin/products/import/from-documents`, { method: "POST", body: form });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<DocumentIngestResult>;
+  },
+
+  // Structured counterpart to dryRunBaselineImport: takes the edited
+  // {product, controls} draft directly as JSON (no YAML round-trip on the
+  // frontend) and returns the same enriched shape ingestBaselineFromDocuments
+  // does, re-validated. Writes nothing.
+  previewStructuredBaselineImport: async (
+    draft: { product: ProductMetaDraft; controls: BaselineControlDraft[] }
+  ): Promise<DocumentIngestResult> => {
+    const r = await fetch(`${BASE}/admin/products/import/dry-run-structured`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(draft),
+    });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
       throw new Error(body.detail ?? `${r.status} ${r.statusText}`);

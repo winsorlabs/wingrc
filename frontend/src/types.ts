@@ -789,9 +789,20 @@ export interface ProductFootprintRow {
 export interface BaselineControlChange {
   control_id: string;
   change_type: string;
-  classification: string;
-  coverage_basis: string;
+  // Nullable: build_preview() now renders a row for every structurally-
+  // parseable entry, not just once the whole file is clean -- an unset/
+  // invalid value is exactly what a row exists to surface.
+  classification: string | null;
+  coverage_basis: string | null;
   field_diffs: Record<string, [unknown, unknown]>;
+}
+
+// One problem tagged with the row/field it belongs to (row_index/field
+// are null for a product-level problem, e.g. a missing product.name).
+export interface RowProblem {
+  row_index: number | null;
+  field: string | null;
+  message: string;
 }
 
 export interface BaselineImportPreview {
@@ -804,6 +815,44 @@ export interface BaselineImportPreview {
   // "how many tenants are affected" warning §4 requires before apply.
   affected_org_count: number;
   affected_org_names: string[];
+  row_problems: RowProblem[];
+}
+
+export interface BaselineEvidenceDraft {
+  artifact: string;
+  type: string;
+  kb: string | null;
+}
+
+// One editable control row for the per-control review table
+// (ToolImportWizard.tsx, documents mode) -- mirrors backend's
+// ControlEntryDraft/ControlEntryOut field-for-field.
+export interface BaselineControlDraft {
+  row_index: number;
+  control: string[];
+  classification: string | null;
+  coverage_basis: string | null;
+  candidate_state: string | null;
+  objectives: string[];
+  provider_contribution: string | null;
+  customer_action: string | null;
+  evidence: BaselineEvidenceDraft[];
+  note: string | null;
+  scope_note: string | null;
+}
+
+export interface ProductMetaDraft {
+  key: string;
+  name: string;
+  provider: string;
+  category: string;
+  asset_type: string;
+  framework: string;
+  role: string;
+  assumed_config: string[];
+  source_docs: string[];
+  ai_generated_at: string | null;
+  ai_generated_model: string | null;
 }
 
 export interface BaselineImportResult {
@@ -819,11 +868,13 @@ export interface ProductPublishState {
 }
 
 export interface DocumentIngestResult {
-  // Editable draft -- the reviewer fills in coverage_basis (and anything
-  // else) before re-checking via the existing dry-run endpoint, same as a
-  // hand-authored file.
+  // The latest server-serialized YAML for whatever was just validated --
+  // never hand-edited; Apply submits this as-is via the existing
+  // YAML-file endpoint. Editing happens on `product`/`controls` instead.
   yaml: string;
   preview: BaselineImportPreview;
+  product: ProductMetaDraft;
+  controls: BaselineControlDraft[];
 }
 
 // Mirrors backend/app/connectors/__init__.py's ConfigFieldOption. Field
