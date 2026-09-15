@@ -3441,11 +3441,25 @@ Items without a status are planned but not yet started.
   the live `400` catch-all above already proves the request/categorization
   path is real, not mocked.
 
-  **Deployed** per `docs/deployment.md` §7 with `--no-deps`. Jarrod enters
-  the real Anthropic API key through Administration → AI Provider on the
-  live deployment (not `.env`) to activate document ingestion there — it
-  was configured only on the throwaway bench stack above, torn down
-  after verification.
+  **Deployed** 2026-09-15 per `docs/deployment.md` §7 with `--no-deps`
+  (backup taken and verified — 444 TOC entries — before deploying; no
+  migration in this slice, so no schema diff to confirm). Hit and fixed a
+  new deploy-tooling gotcha along the way: running `docker compose up`
+  from inside a docker-CLI helper container mounted at an aliased path
+  (`/repo`) rather than the real host path broke `backend`'s
+  `./backend:/app` bind mount (the host daemon resolved it against the
+  alias, not the real checkout, mounting an empty directory over `/app`
+  and crash-looping `backend` on a missing `alembic.ini`) — recorded
+  permanently in `docs/deployment.md` §7c so it isn't rediscovered the
+  hard way again. Live post-deploy confirmation: `REGISTRY` includes `ai`
+  alongside the untouched `liongard`/`smtp` (both still show
+  `configured: true`, unaffected by the deploy), and the same clean `422`
+  degradation confirmed against the real production database (a
+  write-nothing dry-run call, safe to exercise live). Jarrod enters the
+  real Anthropic API key through Administration → AI Provider on the live
+  deployment (not `.env`) to activate document ingestion there — it was
+  configured only on the throwaway bench stack during verification, torn
+  down afterward; production itself has no key yet.
 
 ---
 

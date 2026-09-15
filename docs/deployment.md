@@ -190,6 +190,36 @@ docker compose build backend worker nginx   # nginx bundles the frontend build �
 docker compose up -d --no-deps backend worker nginx   # migrations run automatically via backend's `alembic upgrade head && exec uvicorn ...` startup command
 ```
 
+**When these commands run inside a docker-CLI helper container (`claude`'s
+setup on wl-util-1: no direct filesystem access to `~wladmin/dev/wingrc`,
+only docker-group access), mount the real host path at the identical
+path, not an alias.** Confirmed live 2026-09-15: running `docker compose
+-p wingrc up -d --no-deps backend worker nginx` from inside a
+`docker:27-cli` container started with `-v /home/wladmin/dev/wingrc:/repo
+-w /repo` (and the docker socket mounted so compose talks to the *host's*
+dockerd) recreated `backend` with a broken bind mount — `backend`'s own
+`volumes: [./backend:/app]` line resolves relative to compose's own cwd
+(`/repo`, only meaningful inside the helper container's mount namespace),
+but the actual mount is created by the *host* daemon, which looked for
+`/repo/backend` on the real host filesystem, auto-created it as an empty
+directory, and bind-mounted that empty directory over `/app` — so
+`alembic upgrade head` failed with "No 'script_location' key found in
+configuration" (alembic.ini genuinely wasn't there) and `backend` crash-
+looped. `docker compose build` is unaffected by this (the build context is
+streamed to the daemon as a tar, not resolved as a host path), which is
+why the build step can succeed while `up` then fails — don't take a clean
+build as proof the deploy will work. The fix: mount the helper container
+at the *same absolute path* as the real host checkout (`-v
+/home/wladmin/dev/wingrc:/home/wladmin/dev/wingrc -w
+/home/wladmin/dev/wingrc`), so compose's relative-path resolution and the
+host daemon's literal path both land on the same real directory. If a
+deploy ends up in this state, `docker ps -a` shows the affected service
+`Restarting`, and the fix is just re-running `up` correctly — the bad
+empty bind-mount directory it auto-created (check `docker inspect
+<container> --format '{{range .Mounts}}{{.Source}}{{end}}'` for a path
+that doesn't match the real checkout) is orphaned on the host and safe to
+remove once nothing references it.
+
 **`--no-deps` is not optional.** Without it, a 2026-09-16 deploy naming
 only `backend worker nginx` also recreated `db` and `minio` — undesired
 and unexplained for `db` specifically (part of the cause is known for
