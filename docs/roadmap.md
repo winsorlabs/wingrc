@@ -3730,6 +3730,84 @@ Items without a status are planned but not yet started.
   don't install dependencies the same way — check GitHub Actions status
   directly after a push, don't infer it from a passing bench run.
 
+- **Structured, editable per-control review table for AI-drafted
+  baselines** (2026-09-15). Came directly out of using the ingest-504 fix:
+  reviewing Jarrod's real Datto RMM/Kaseya CRM produced 21-44 `coverage_
+  basis` decisions per run (LLM output varies run to run — see the
+  question this replaced, "how do I fix 21 problems," for the concrete
+  trigger), and the only way to fix them was hand-editing a raw YAML
+  textarea by counting `controls[N]` array indices against a flat list of
+  error strings.
+
+  **Backend.** `baseline_import.py`'s `validate()` is now a thin wrapper
+  over a new `validate_structured()`, which tags every problem with
+  `(row_index, field)` instead of only a formatted string — same
+  messages, same order, so every existing caller/test (including
+  `/import/apply`'s 422 path) is unaffected. `build_preview()` no longer
+  gates row/diff construction behind "the whole file has zero problems"
+  (the old `if not problems:`) — it now renders a `ControlEntryDraft` for
+  every structurally-parseable entry (one that survived validate's own
+  first pass: a dict with a usable `control` id/list) regardless of what
+  else is wrong with it, since showing a reviewer the bad row to fix is
+  the point, not hiding it until everything else is already right. New
+  `POST /admin/products/import/dry-run-structured` takes the same
+  `{product, controls}` shape as a plain JSON body instead of a YAML
+  file — deliberately not a strict Pydantic body, since `validate()`
+  already turns a malformed shape into a reportable per-row problem and a
+  strict schema would instead hard-422 on exactly the shapes this
+  endpoint exists to describe. `/import/apply` itself is completely
+  untouched — the frontend always submits the server's freshly
+  re-serialized `yaml` string (computed fresh on every structured preview
+  call), never anything it serialized itself.
+
+  **Frontend.** `ToolImportWizard.tsx`'s documents mode replaced the raw
+  YAML textarea with a table: one row per control, `classification`/
+  `coverage_basis`/`candidate_state` as `<select>` dropdowns (`coverage_
+  basis` disabled with "not applicable" for `customer_owns` rows, per the
+  hard rule that field is moot there), free-text fields (objectives,
+  provider_contribution, customer_action, note, scope_note) as inputs, and
+  a repeatable evidence mini-list (artifact/type/kb, add/remove). A row
+  with any outstanding problem gets a red background and the specific
+  flagged field gets a red border with the exact problem message inline —
+  no more counting indices. Re-check is an explicit button (not
+  auto-fire-on-blur, per Jarrod's call) that posts the edited draft as
+  JSON to the new endpoint; a `dirty` flag (set on any edit, cleared only
+  by a successful re-check) blocks Apply so it can never submit a `yaml`
+  that no longer matches what's on screen. "Upload YAML" mode is
+  completely untouched, per scope decision — a hand-authored file doesn't
+  have the same "AI left N fields deliberately blank" problem this exists
+  to solve.
+
+  **Bench-verified** on an isolated `wingrc_verify_structured` stack
+  (live `wingrc` project confirmed running, untouched, before and after):
+  **1165/1165** backend tests (4 new, covering the structured endpoint's
+  row/field tagging, edit-then-clear, and a malformed-classification row
+  still rendering instead of crashing), ruff clean, **136/136** vitest (2
+  new covering the flagged-dropdown/re-check/clear cycle and the dirty-
+  blocks-apply behavior), `tsc -b` clean, `vite build` clean.
+
+  **Deployed** 2026-09-15 per `docs/deployment.md` §7c with `--no-deps`
+  — `backend`/`worker`/`nginx` rebuilt and recreated (this slice touches
+  backend routes and the frontend bundle nginx serves); no migration, so
+  no backup per §7a's own scoping; `db`/`minio` confirmed untouched.
+
+  **Verified live, through nginx, in a real browser** — same Datto
+  RMM/Kaseya PDF as the ingest-504 fix, same real Anthropic call (this
+  run produced 30 controls, 27 of them `shared`/`provider_satisfies`
+  needing a `coverage_basis` decision, 3 `customer_owns` correctly showing
+  the dropdown disabled). Set all 27 via the new dropdowns (one via a real
+  click to confirm the interaction wires up genuinely, the rest via
+  scripted native-setter change events for efficiency — the same
+  underlying React onChange path either way), clicked Re-check, confirmed
+  every red flag cleared and Apply Import unlocked, applied under a
+  throwaway key (`dattormm2`, never published, never linked to any org),
+  and confirmed via a live query that `baseline_control.coverage_basis`
+  matched what was picked in the UI (27 rows `customer_system` as chosen,
+  3 `customer_owns` rows at the schema default) — not left at whatever the
+  column's default happened to be. Deleted the throwaway product and its
+  30 baseline_control/33 evidence_spec rows afterward (`product_document`
+  cascades from `product` on delete, confirmed no orphaned row survived).
+
 ---
 
 ## Planned
