@@ -3706,6 +3706,30 @@ Items without a status are planned but not yet started.
   above, so worth deferring until that decision is made rather than
   building a cache for a problem async would also fix.
 
+- **CI's `backend` job silently broken since the AI-provider-connector
+  slice** (2026-09-15, found while chasing an unrelated CI failure
+  notification). `.github/workflows/ci.yml`'s `backend` and `integration`
+  jobs both ran `pip install -e ".[dev]"`, but `backend/Dockerfile`
+  installs `.[dev,ai]` — `anthropic`/`pypdf`/`python-docx` (the `ai`
+  extra) are imported at module scope by `test_ai_connector.py`,
+  `test_document_ingest.py`, and `test_admin_products.py`, so collection
+  failed regardless of the `integration` marker. Every push since
+  `20a6709` (the AI-provider-connector commit) had a red `backend` job on
+  GitHub — invisible to this project's own bench-verification workflow,
+  which builds from the Dockerfile and so always had both extras
+  installed. Fixed by installing `.[dev,ai]` in both jobs' Install step,
+  matching the Dockerfile; reproduced the failure and the fix in a bare
+  `python:3.13` container against a fresh clone (no Docker image, no
+  compose env) to match CI's actual environment exactly, rather than
+  trusting the bench-stack result for this. Confirmed green on `main`
+  after merge: `backend` (285 passed, 876 skipped), `integration`, and
+  `image` all succeeded (run
+  https://github.com/winsorlabs/wingrc/actions/runs/35006863844).
+  **Lesson for this project's own verification practice:** an isolated
+  bench-stack pass is not the same claim as "CI is green" when the two
+  don't install dependencies the same way — check GitHub Actions status
+  directly after a push, don't infer it from a passing bench run.
+
 ---
 
 ## Planned
