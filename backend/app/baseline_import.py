@@ -239,7 +239,9 @@ def validate_structured(
         evidence = entry.get("evidence") or []
         if not isinstance(evidence, list):
             problems.append(
-                ValidationProblem(f"controls[{idx}].evidence must be a list.", row_index=idx, field="evidence")
+                ValidationProblem(
+                    f"controls[{idx}].evidence must be a list.", row_index=idx, field="evidence"
+                )
             )
             evidence = []
         if classification == "customer_owns" and evidence:
@@ -429,8 +431,10 @@ def build_preview(
         if not isinstance(candidate_state, str):
             candidate_state = None
         objectives = entry.get("objectives") or []
-        if not isinstance(objectives, list) or not all(isinstance(o, str) for o in objectives):
-            objectives = [o for o in objectives if isinstance(o, str)] if isinstance(objectives, list) else []
+        if not isinstance(objectives, list):
+            objectives = []
+        elif not all(isinstance(o, str) for o in objectives):
+            objectives = [o for o in objectives if isinstance(o, str)]
 
         control_rows.append(
             ControlEntryDraft(
