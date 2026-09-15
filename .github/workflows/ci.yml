@@ -15,7 +15,12 @@ jobs:
           python-version: "3.13"
       - name: Install
         working-directory: backend
-        run: pip install -e ".[dev]"
+        # [dev,ai] -- backend/Dockerfile installs both; test_ai_connector.py,
+        # test_document_ingest.py, and test_admin_products.py import
+        # anthropic/pypdf/python-docx (the "ai" extra) at collection time, so
+        # [dev] alone fails collection here even though it never touches a
+        # database -- this isn't gated by the integration marker.
+        run: pip install -e ".[dev,ai]"
       - name: Lint
         working-directory: backend
         run: ruff check .
@@ -70,7 +75,7 @@ jobs:
             libffi8 shared-mime-info
       - name: Install
         working-directory: backend
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev,ai]"
       - name: Migration chain (upgrade → downgrade → upgrade)
         working-directory: backend
         run: |
