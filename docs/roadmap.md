@@ -3461,6 +3461,120 @@ Items without a status are planned but not yet started.
   configured only on the throwaway bench stack during verification, torn
   down afterward; production itself has no key yet.
 
+- **Document-ingestion input hardening + product-key normalization**
+  (2026-09-19). Two independent fixes in the same slice, both in
+  `importers/document.py`'s extraction path and `Product.key`'s write
+  paths.
+
+  **Extraction hardening.** A truncated/corrupt PDF (`pypdf.errors.
+  PdfStreamError`/`EmptyFileError`), a password-protected PDF
+  (`FileNotDecryptedError` — checked proactively via `reader.is_encrypted`
+  rather than waiting for the exception), a legacy `.doc` file uploaded as
+  `.docx` (detected by OLE2 magic bytes before python-docx ever gets a
+  `zipfile.BadZipFile`), a genuinely corrupt `.docx`, and a valid zip that
+  isn't a real Word package (`KeyError` on `[Content_Types].xml`) each now
+  raise a specific `DocumentIngestError` naming the file, instead of a raw
+  500. **Known gap, recorded not silent:** no OCR — a scanned-image PDF
+  with no text layer is *detected* (`_MIN_EXTRACTED_TEXT_CHARS = 50`, a
+  deliberately low floor that catches "extracted next to nothing" without
+  rejecting legitimately short real documents) and reported by name
+  before ever reaching the AI provider, never silently sent as an empty
+  document and presented as a real mapping. Building OCR is out of scope;
+  the workaround is a text-based re-export or hand-entry.
+
+  A real bug this slice's own new router-level tests caught: the
+  document-ingestion endpoint wrote each upload to `tempfile.mkstemp()`'s
+  randomly-named file, so every error message (and `source_docs` in the
+  returned YAML) named a meaningless `tmpXXXXXX.pdf` instead of what the
+  admin actually uploaded — "say which document failed" only works if
+  the name shown is the real one. Fixed by writing into a per-request
+  temp directory under the real (sanitized) filename instead.
+
+  **Product key normalization.** `Product.key` was user-entered,
+  `unique=True`, and only `.strip()`ed — `DattoRMM` and `dattormm` would
+  silently become two distinct products with two separate baselines.
+  `seeds/baselines.py:normalize_product_key()` lowercases and validates
+  against a slug pattern (`^[a-z0-9]+(-[a-z0-9]+)*$`); anything containing
+  a disallowed character (a space, most commonly) is rejected with the
+  expected shape rather than silently mangled. Wired into every write
+  path: the document-ingestion endpoint's `product_key` form field
+  (rejected before the paid AI call, not after), `baseline_import.py`'s
+  `validate()` (added to the reported problems list) and `build_preview()`
+  (normalized before the existing-product lookup, so a re-import spelled
+  differently in case is recognized as an update, not a new product), and
+  `seeds/baselines.py:_seed_product()` itself — the one real write path
+  both the CLI seed and the admin YAML import funnel through, so
+  normalization only needed to be correct in one place.
+  `baselines/rocketcyber.yaml`'s key (`rocketcyber`) was already
+  conformant; confirmed live (below) that re-seeding it resolves to the
+  exact same `Product.id` as before — no orphaned row.
+
+  Bench-verified on an isolated wl-util-1 stack: ruff clean, **1161/1161**
+  backend tests (36 new — 11 extraction-hardening unit tests in
+  `test_document_ingest.py` against genuinely broken real files built
+  with pypdf alone, no new dependency; 12 router-level tests in
+  `test_admin_products.py` proving the full HTTP path returns 422 (never
+  500) for each fixture and correctly names which of two uploaded
+  documents failed; product-key normalization/dedup tests for both the
+  document-ingestion endpoint and the YAML import path), `tsc -b` clean,
+  `vite build` clean, **135/135** vitest (frontend untouched by this
+  slice). `wingrc seed-baselines` re-run twice against a fresh catalog
+  confirmed idempotent and produced the identical `Product.id` both times.
+
+  **Deployed** 2026-09-15 per `docs/deployment.md` §7 with `--no-deps`
+  (backup verified — 444 TOC entries; no migration in this slice).
+  Mounted the deploy helper container at the real host path this time
+  (the §7c gotcha from the AI-connector deploy just above) — clean
+  deploy, healthy immediately, `db`/`minio` untouched.
+
+  **The real end-to-end run, for the first time.** Jarrod had by this
+  point entered a real, funded Anthropic key through Administration on
+  production (confirmed live: `configured: true`, `last_test_ok: true`).
+  The task's own candidate document (a Datto RMM/Kaseya CRM) wasn't
+  available on this box; used a genuine real vendor CRM that was —
+  RocketCyber's own CRM PDF, already attached to the real `rocketcyber`
+  product as a `ProductDocument` (585,725 bytes, ~19,500 extracted
+  characters, ~4,900 estimated input tokens). Ran through the actual
+  `/admin/products/import/from-documents` endpoint (not a unit-level
+  call) against a throwaway key (`rocketcyber-real-ingest-test`) so the
+  real, published `rocketcyber` product was never touched — confirmed
+  unchanged afterward (same `Product.id`, still published) — and deleted
+  the throwaway product once verification was done.
+
+  Result: `200`, **74.5s elapsed**, 17 control entries, split 16
+  `shared` / 1 `customer_owns` (the full IA family, correctly batched and
+  disclaimed — "Kaseya enables SSO pass-through but does not own any of
+  these controls," matching the exact IA-family pattern CLAUDE.md's
+  hard-rules section names as the reason this classification exists).
+  `coverage_basis` unset on all 17/17, exactly as designed — confirmed by
+  `apply` itself: the first apply attempt correctly **rejected** the raw
+  AI output with a 422 naming all 16 non-`customer_owns` entries, since a
+  reviewer must set `coverage_basis` before anything can land. Completed
+  that one reviewer step by hand (as the real UI would) for a single
+  representative entry and re-applied: `201`, `is_published: False`,
+  zero `OrgProduct` rows referencing it — nothing reached a tenant.
+
+  **Plausibility review (the task's own explicit ask, not just "did it
+  parse"):** two entries (`AC.L2-3.1.8`, `CM.L2-3.4.2`) were classified
+  `shared` while their own AI-written note reads as a full disclaim
+  ("Kaseya explicitly states it does not implement or enforce...",
+  "...does not manage or enforce the customer's chosen configurations")
+  — arguably `customer_owns` cases per CLAUDE.md's own "never auto-credit
+  a vendor CRM" rule, not `shared`. Not treated as a bug in this slice
+  (the extraction prompt is explicitly out of scope here) — surfaced
+  because this is exactly the failure mode the mandatory human-review
+  step before `apply`/`publish` exists to catch, and it caught it: this
+  candidate was never applied under the real key, and a real reviewer
+  would need to correct these two before using this output. Worth a
+  future prompt-tuning pass, tracked here rather than silently accepted.
+
+  **Cost**: not captured precisely — `AIProvider.complete()` doesn't
+  expose token usage, and adding that was out of this slice's scope.
+  ~4,900 input tokens (extracted text) + system prompt, plus a
+  substantial 17-entry structured output; exact dollar cost is on
+  Jarrod's Anthropic console usage page for this timestamp, not restated
+  here as a guessed figure.
+
 ---
 
 ## Planned
