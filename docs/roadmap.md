@@ -3575,6 +3575,137 @@ Items without a status are planned but not yet started.
   Jarrod's Anthropic console usage page for this timestamp, not restated
   here as a guessed figure.
 
+- **Fix 504 on document ingestion** (2026-09-15). Jarrod's real Datto
+  RMM/Kaseya upload was 504ing through the live proxy despite the slice
+  just above having verified a real end-to-end run.
+
+  **Root cause.** `deploy/nginx/nginx.conf`'s `location /api/` set no
+  `proxy_read_timeout`, so nginx used its 60s default. The prior slice's
+  74.5s verified run — and this slice's own repeat of it, 71s (below) —
+  both exceed that. The Anthropic call completed and billed every time;
+  the result was discarded because nginx had already closed the
+  connection. A retry spends the money again and is likely to time out
+  again the same way.
+
+  **The verification gap that let this ship, twice now.** The prior
+  slice's "real end-to-end run" called the endpoint directly, not through
+  nginx — the proxy is part of the path every real user traverses, and is
+  exactly what silently broke this. This is the same shape of gap as the
+  Liongard connector having only ever been verified against a mock server
+  (docs/roadmap.md's D.3 entry) — worth recording as a pattern this
+  project keeps needing to relearn, not a one-off incident. Verification
+  claiming "end to end" must mean through the actual deployed stack a
+  browser hits, not a shortcut around any of it.
+
+  **Fix.** A route-scoped `location = /api/admin/products/import/from-documents`
+  block in `deploy/nginx/nginx.conf`, not a blanket increase for all of
+  `/api/` — a genuinely hung request on any other route would otherwise
+  tie up a connection for as long as the raised timeout, for no reason.
+  `proxy_read_timeout`/`proxy_send_timeout` set to **300s**, chosen as
+  headroom above the two verified real runs (74.5s, 71s) without being
+  unbounded. `client_max_body_size` set to **105m** on the same route
+  (nginx's compiled-in 1m default was otherwise silent about a real risk:
+  a legitimate upload over 1MB but under the app's own 50MB-per-file cap
+  — `_MAX_FILE_BYTES`, `evidence.py` — would have been rejected by nginx
+  with a bare, unhelpful 413 before the backend's own clear error message
+  ever ran). 105m covers `_MAX_INGEST_FILES = 2` × 50MB plus multipart
+  overhead — comfortably above anything the app itself would ever accept,
+  so the app's own per-file message is what a reviewer actually sees for
+  any oversized upload, not nginx's generic page.
+
+  **Bench-verified** on an isolated `wingrc_verify_20260915` stack (live
+  `wingrc` project confirmed running, untouched, before and after):
+  **1161/1161** backend tests, ruff clean, `tsc -b` clean, **135/135**
+  vitest, `vite build` clean. nginx config syntax validated with
+  `nginx -t` run from the newly-built image, attached to the bench
+  project's own network so the `backend` upstream actually resolves
+  (mounting the real `wingrc_certs` volume read-only) — syntax ok.
+
+  **Deployed** 2026-09-15 per `docs/deployment.md` §7c with `--no-deps`
+  — this slice touches only `deploy/nginx/nginx.conf`, so only `nginx`
+  was rebuilt and recreated; `backend`/`worker`/`db`/`minio` were left
+  running untouched (no migration, nothing else changed).
+
+  **Verified live, through nginx, in a real browser, against the real
+  deployment** — the specific gap that produced this bug, so this is the
+  one check that actually matters here. A normal route
+  (`GET /api/health`) still returns `200` in ~6ms — the timeout change is
+  scoped correctly and doesn't affect anything else. A synthetic 55MB
+  file reached the backend (a clean `401`, not a proxy-level rejection) —
+  proof `client_max_body_size` now clears real oversized-but-plausible
+  uploads. A synthetic 120MB file (deliberately past the app's own
+  100MB ceiling) got nginx's own `413` immediately (0.004s, no hang) —
+  correct, since nothing legitimate is ever that large. Then, logged in
+  as msp_admin at `https://dev.wingrc.us`, uploaded Jarrod's actual
+  591KB Datto RMM/Kaseya CRM PDF through the real "Generate from vendor
+  documents" UI: nginx's access log shows the request running from
+  14:12:53 to 14:14:04 — **71 seconds** — returning `200` with a valid
+  dry-run candidate (coverage_basis correctly left unset on every shared/
+  provider_satisfies entry, several objective-key mismatches surfaced for
+  a reviewer to fix — a content-quality finding, not a bug in this
+  slice). Confirmed via a live query that no `product` row was created
+  (`Apply Import` was never clicked) — a pure dry-run preview, nothing
+  written, exactly as designed.
+
+  **Should this be synchronous? No — recommended, not built here.**
+  Reusing the existing scheduler (`scheduler.py`, `JOB_REGISTRY`,
+  `job_run`, `run_due_jobs()`) is a mismatch for this, not a fit:
+
+  - `JobSpec.run` takes only a `Session` — there's no way to pass a
+    specific request's inputs (uploaded files, `product_key`, category),
+    and a job's identity is its fixed registry name, not a per-request
+    instance. The scheduler has no concept of "one job, one caller, one
+    result" at all.
+  - `_is_due()`'s whole model is "check periodically against the last
+    run's interval" — built for `expire_stale_invites` running hourly,
+    not for "run this one specific thing right now because a user just
+    clicked a button."
+  - `job_run.result` is a small JSON column sized for a scheduler's own
+    log line, not for handing back a multi-control candidate YAML plus a
+    preview diff to a specific waiting request.
+  - The worker loop's polling cadence is tuned for "sometime in the next
+    interval," not a user watching a spinner.
+
+    Forcing this shape onto `JOB_REGISTRY` would mean bolting a
+    per-request job concept, arbitrary result storage, and an
+    immediate-trigger path onto infrastructure deliberately kept simple
+    for periodic sweeps. A small dedicated mechanism, reusing the same
+    *pattern* scheduler.py already proved out (a separate worker process,
+    Postgres-backed, crash-safe) rather than reusing `JOB_REGISTRY`
+    itself, is the better fit.
+
+  What it would need: (1) the POST endpoint returns `{job_id}` (`202`)
+  instead of blocking; (2) a poll endpoint
+  (`GET .../import-jobs/{id}`) returning status and, once done, the
+  result; (3) a small `document_ingest_job` table (status, inputs,
+  result JSONB, error, requested_by, timestamps, and a retention/expiry
+  — see the wasted-spend note below); (4) uploaded files staged in the
+  existing MinIO-backed storage (`StorageClient`) rather than a local
+  temp dir, since the worker container is a different process than
+  `backend` and needs to read what was uploaded; (5) a frontend poll loop
+  replacing today's blocking "Generating…" button state, with a "my
+  recent ingestion jobs" list so a dropped connection doesn't strand the
+  user with no way back to a completed result. Rough size: comparable to
+  the AI-provider-connector or input-hardening slices above — one small
+  migration, 2-3 new endpoints, one new worker-side execution path
+  (a short-interval poll or `LISTEN`/`NOTIFY`, not `JOB_REGISTRY`), and a
+  frontend polling UI. Not a one-day fix, not a large slice either.
+  Jarrod decides whether to build this now or ride on the 300s timeout
+  for longer.
+
+  **The wasted-spend problem — recommended only.** Even with a 300s
+  timeout, a dropped connection (VPN blip, closed laptop, corporate proxy
+  with its own limit) still discards a completed, billed extraction. If
+  the async job above lands, this is solved for free — the `job_run`-
+  style row holds the result regardless of whether the original
+  connection is still open. If it doesn't land soon: consider caching
+  the completed candidate briefly (short TTL, e.g. keyed to a hash of
+  the uploaded file(s) + `product_key`), so an identical retry after a
+  dropped connection can fetch the already-paid-for result instead of
+  re-billing. Not built here — likely entirely subsumed by the async job
+  above, so worth deferring until that decision is made rather than
+  building a cache for a problem async would also fix.
+
 ---
 
 ## Planned
