@@ -32,6 +32,7 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 import os
+import shutil
 import tempfile
 import uuid
 from datetime import UTC, datetime
@@ -543,10 +544,24 @@ async def import_from_documents(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    # A per-request temp dir with real filenames inside it, not
+    # tempfile.mkstemp()'s randomly-named files -- ingest_document()'s
+    # error messages (and the returned YAML's source_docs) name the file
+    # by its Path.name, and a random "tmpXXXXXX.pdf" tells a reviewer
+    # nothing about which of their uploads actually failed.
+    tmp_dir = tempfile.mkdtemp()
     tmp_paths: list[str] = []
+    used_names: set[str] = set()
     try:
         for f in files:
             raw_name = _safe_filename(f.filename or "upload")
+            if raw_name in used_names:
+                # Two uploads sharing a filename in the same request --
+                # keep both distinguishable rather than the second
+                # silently overwriting the first on disk.
+                stem, dupe_ext = os.path.splitext(raw_name)
+                raw_name = f"{stem}-{sum(1 for n in used_names if n.startswith(stem))}{dupe_ext}"
+            used_names.add(raw_name)
             ext = os.path.splitext(raw_name)[1].lower()
             if ext not in _INGEST_ALLOWED_EXTENSIONS:
                 raise HTTPException(
@@ -577,8 +592,8 @@ async def import_from_documents(
                     status_code=415,
                     detail=f"File bytes do not match declared Content-Type {mime!r}",
                 )
-            fd, path = tempfile.mkstemp(suffix=ext)
-            with os.fdopen(fd, "wb") as fh:
+            path = os.path.join(tmp_dir, raw_name)
+            with open(path, "wb") as fh:
                 fh.write(data)
             tmp_paths.append(path)
 
@@ -616,11 +631,7 @@ async def import_from_documents(
             # specific 422, never a raw 500.
             raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:
-        for p in tmp_paths:
-            try:
-                os.unlink(p)
-            except OSError:
-                pass
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     entry.product.ai_generated_at = datetime.now(UTC).isoformat()
     entry.product.ai_generated_model = ai_provider.identity
