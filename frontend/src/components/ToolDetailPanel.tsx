@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { ProductDetail, ProductDocumentItem, ProductFootprintRow } from "../types";
+import { ToolImportWizard } from "./ToolImportWizard";
 
-// Read-only baseline-mapping view (§3c) plus publish/unpublish (§3f) and
-// document attachments (§3d). No field-by-field editing here on purpose --
-// the YAML is the authoring format; this screen ingests and reviews it.
+// Baseline-mapping view (§3c) plus publish/unpublish (§3f), document
+// attachments (§3d), and an "Edit Baseline Mapping" entry point into
+// ToolImportWizard's per-control review table (opened with editProductId
+// set, which skips the chooser screen and loads/validates this product's
+// current mapping directly) -- the same reviewed dry-run/apply path a
+// fresh import uses, not a separate editor.
 
 const _DOCUMENT_KINDS = ["crm", "baseline_doc", "kb_export", "other"];
 
@@ -31,6 +35,7 @@ export function ToolDetailPanel({ productId, onBack, onChanged }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   const [uploadKind, setUploadKind] = useState("other");
   const [uploadTitle, setUploadTitle] = useState("");
@@ -117,8 +122,23 @@ export function ToolDetailPanel({ productId, onBack, onChanged }: Props) {
           <button className="btn-ghost btn-sm" onClick={handleTogglePublish} disabled={publishing} style={{ marginLeft: "0.5rem" }}>
             {publishing ? "Working…" : detail.is_published ? "Unpublish" : "Publish"}
           </button>
+          <button className="btn-ghost btn-sm" onClick={() => setEditing(true)} style={{ marginLeft: "0.5rem" }}>
+            Edit Baseline Mapping
+          </button>
         </div>
       </div>
+
+      {editing && (
+        <ToolImportWizard
+          editProductId={productId}
+          onClose={() => setEditing(false)}
+          onApplied={() => {
+            setEditing(false);
+            load();
+            onChanged();
+          }}
+        />
+      )}
 
       {detail.ai_generated_at && (
         <div className="drawer-ai-caveat">

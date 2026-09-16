@@ -377,7 +377,10 @@ def _coerce_evidence_drafts(raw: Any) -> list[EvidenceSpecDraft]:
 def build_preview(
     session: Session, data: dict, ctrl_lookup: dict[str, Control]
 ) -> BaselineImportPreview:
-    problems_structured, parsed_entries = validate_structured(session, data, ctrl_lookup)
+    # parsed_entries (validate_structured's own first pass) isn't used here
+    # -- see the row-building loop below for why it iterates the raw
+    # controls list directly instead.
+    problems_structured, _parsed_entries = validate_structured(session, data, ctrl_lookup)
     problems = [p.message for p in problems_structured]
     pd = data.get("product") if isinstance(data.get("product"), dict) else {}
     raw_key = pd.get("key", "")
@@ -407,17 +410,32 @@ def build_preview(
             )
         }
 
-    # Both loops below iterate parsed_entries (validate_structured()'s own
-    # first pass) rather than raw data.get("controls", []) -- parsed_entries
-    # already guarantees "is a dict with a usable control id/list", which is
-    # what the old `if not problems:` gate used to buy by requiring the
-    # ENTIRE file to be clean first. Everything else (an invalid
-    # classification, an unset coverage_basis, a bad objective key) is
-    # exactly the kind of per-row problem a reviewer needs to see the row
-    # to fix, not one that should hide it.
+    # Row-building iterates every dict-shaped entry in data["controls"]
+    # directly -- NOT parsed_entries (validate_structured()'s first pass),
+    # which excludes any entry whose `control` field isn't *already* a
+    # valid non-empty id/list. That exclusion is right for validate_
+    # structured's own purposes (objective-key/evidence checks need a real
+    # control to check against), but wrong here: a freshly-added blank row
+    # (the "+ Add control" affordance, before a reviewer has typed a real
+    # id into it) would otherwise silently vanish from the very next
+    # Re-check response instead of staying visible with its own "control id
+    # required" flag like any other incomplete row. `ctrl_ids` is derived
+    # leniently (empty list if missing/malformed) purely for display and
+    # diff-lookup purposes; validate_structured's own problem reporting for
+    # a bad `control` field is unaffected by this.
     changes: list[BaselineControlChange] = []
     control_rows: list[ControlEntryDraft] = []
-    for idx, ctrl_ids, entry in parsed_entries:
+    for idx, entry in enumerate(data.get("controls") or []):
+        if not isinstance(entry, dict):
+            continue
+        raw_ctrl_ids = entry.get("control")
+        if isinstance(raw_ctrl_ids, str):
+            ctrl_ids: list[str] = [raw_ctrl_ids]
+        elif isinstance(raw_ctrl_ids, list):
+            ctrl_ids = [c for c in raw_ctrl_ids if isinstance(c, str)]
+        else:
+            ctrl_ids = []
+
         classification = entry.get("classification")
         if not isinstance(classification, str):
             classification = None

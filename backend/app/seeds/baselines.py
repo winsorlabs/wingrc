@@ -2,8 +2,11 @@
 
 Loads every *.yaml file in backend/baselines/ into product, baseline_control,
 and baseline_evidence_spec.  Safe to call repeatedly — uses SELECT-then-upsert
-for product and baseline_control; evidence specs are delete-and-replace per
-baseline_control (no natural key to upsert on).
+for product and baseline_control; evidence specs have no natural key to
+upsert on, so they're matched by content (artifact/type/kb) against what's
+already there — a spec whose content is unchanged keeps its row (and with
+it, any EvidenceTask.baseline_spec_id already pointing at it); only specs
+whose content doesn't match anything submitted get deleted.
 
 Usage (CLI):
     wingrc seed-baselines
@@ -238,36 +241,56 @@ def _seed_product(
                 bc.batch_group_id = batch_id
             session.flush()
 
-            # Delete-and-replace specs: no natural key to upsert by.
-            # Nullify evidence_task.baseline_spec_id FK first — those tasks
-            # survive reseed (they record what was collected) but lose the
-            # spec pointer that will be replaced with a fresh row.
+            # Specs have no natural key to upsert by, so match by content
+            # (artifact/type/kb) instead of unconditionally deleting
+            # everything: a spec whose content is unchanged keeps its row
+            # -- and with it, any EvidenceTask.baseline_spec_id already
+            # pointing at it -- rather than being severed and recreated on
+            # every apply regardless of whether anything about it actually
+            # changed. Only specs left unmatched afterward (content that's
+            # genuinely gone or changed) get deleted, with the FK nulled
+            # first exactly as before -- those tasks survive (they record
+            # what was collected) but lose the pointer to a spec that no
+            # longer exists.
             old_specs = session.scalars(
                 select(BaselineEvidenceSpec).where(
                     BaselineEvidenceSpec.baseline_control_id == bc.id
                 )
             ).all()
-            if old_specs:
-                old_ids = [s.id for s in old_specs]
+            available: dict[tuple[str, str, str | None], list[BaselineEvidenceSpec]] = {}
+            for s in old_specs:
+                available.setdefault(
+                    (s.artifact_description, s.evidence_type, s.kb_reference), []
+                ).append(s)
+
+            matched_ids: set[uuid.UUID] = set()
+            for ev in entry.get("evidence") or []:
+                key = (ev["artifact"], ev["type"], ev.get("kb"))
+                bucket = available.get(key)
+                if bucket:
+                    matched_ids.add(bucket.pop(0).id)
+                else:
+                    session.add(
+                        BaselineEvidenceSpec(
+                            baseline_control_id=bc.id,
+                            artifact_description=ev["artifact"],
+                            evidence_type=ev["type"],
+                            kb_reference=ev.get("kb"),
+                        )
+                    )
+                specs_written += 1
+
+            stale = [s for s in old_specs if s.id not in matched_ids]
+            if stale:
+                stale_ids = [s.id for s in stale]
                 session.execute(
                     update(EvidenceTask)
-                    .where(EvidenceTask.baseline_spec_id.in_(old_ids))
+                    .where(EvidenceTask.baseline_spec_id.in_(stale_ids))
                     .values(baseline_spec_id=None)
                 )
-                for s in old_specs:
+                for s in stale:
                     session.delete(s)
                 session.flush()
-
-            for ev in entry.get("evidence") or []:
-                session.add(
-                    BaselineEvidenceSpec(
-                        baseline_control_id=bc.id,
-                        artifact_description=ev["artifact"],
-                        evidence_type=ev["type"],
-                        kb_reference=ev.get("kb"),
-                    )
-                )
-                specs_written += 1
 
             bcs_written += 1
 

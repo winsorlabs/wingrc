@@ -27,6 +27,7 @@ from app.models import (
     BaselineEvidenceSpec,
     Control,
     ControlState,
+    EvidenceTask,
     Framework,
     Organization,
     OrgProduct,
@@ -392,6 +393,34 @@ def test_dry_run_structured_malformed_classification_still_returns_the_row(
     assert any(p["field"] == "classification" for p in out["preview"]["row_problems"])
 
 
+def test_dry_run_structured_blank_control_field_still_returns_the_row(admin_client, db_session):
+    """A freshly-added row (the frontend's "+ Add control" affordance)
+    starts with no control id typed in yet -- it must still come back as a
+    row (with its own "control id required" problem attached), not vanish
+    from the response the moment it's re-checked."""
+    seed = _seed_framework_and_control(db_session)
+    body = _valid_structured_body("structured-tool-4", seed["ctrl"].control_id)
+    body["controls"].append(
+        {
+            "control": "",
+            "classification": None,
+            "candidate_state": "pending_evidence",
+            "objectives": [],
+            "evidence": [],
+        }
+    )
+    r = admin_client.post("/admin/products/import/dry-run-structured", json=body)
+    assert r.status_code == 200
+    out = r.json()
+    assert len(out["controls"]) == 2, "the blank row must still be returned, not dropped"
+    blank_row = out["controls"][1]
+    assert blank_row["row_index"] == 1
+    assert blank_row["control"] == []
+    assert any(
+        p["row_index"] == 1 and p["field"] == "control" for p in out["preview"]["row_problems"]
+    )
+
+
 def test_dry_run_structured_missing_framework_returns_409(admin_client, db_session):
     # No _seed_framework_and_control() call -- the nist-800-171-r2
     # framework genuinely doesn't exist in this test's (rolled-back-per-
@@ -460,6 +489,106 @@ def test_reimport_resets_is_published_to_false(admin_client, db_session):
     assert product.is_published is False, (
         "re-importing an already-published product must force a fresh review, "
         "not silently carry the old publish decision forward"
+    )
+
+
+def test_reimport_with_unchanged_evidence_keeps_spec_id_and_task_link(admin_client, db_session):
+    """Evidence-minimization applies to the spec rows themselves, not just
+    to which controls get tasks at all -- re-importing the SAME evidence
+    content must not sever an already-created EvidenceTask's pointer to
+    its originating spec."""
+    product = _seed_product(db_session, published=True)
+    bc = db_session.scalars(
+        select(BaselineControl).where(BaselineControl.product_id == product.id)
+    ).first()
+    spec = db_session.scalars(
+        select(BaselineEvidenceSpec).where(BaselineEvidenceSpec.baseline_control_id == bc.id)
+    ).one()
+    org = Organization(name=f"EvidenceStabilityOrg-{uuid.uuid4().hex[:6]}")
+    db_session.add(org)
+    db_session.flush()
+    task = EvidenceTask(
+        org_id=org.id, baseline_spec_id=spec.id, title="Config export", artifact_type="export"
+    )
+    db_session.add(task)
+    db_session.flush()
+    spec_id = spec.id
+
+    ctrl_row = db_session.get(Control, bc.control_id)
+    # Same product, same control, same evidence content as _seed_product's
+    # own seed -- a pure no-op re-import.
+    yaml_bytes = _valid_yaml(product.key, ctrl_row.control_id)
+    r = admin_client.post(
+        "/admin/products/import/apply",
+        files={"file": ("reimport.yaml", yaml_bytes, "application/x-yaml")},
+    )
+    assert r.status_code == 201
+
+    remaining = db_session.scalars(
+        select(BaselineEvidenceSpec).where(BaselineEvidenceSpec.baseline_control_id == bc.id)
+    ).all()
+    assert len(remaining) == 1
+    assert remaining[0].id == spec_id, (
+        "unchanged evidence content must keep its existing spec row, not be "
+        "deleted and recreated"
+    )
+    db_session.refresh(task)
+    assert task.baseline_spec_id == spec_id, (
+        "an EvidenceTask pointing at unchanged evidence must not have its "
+        "spec pointer severed by a re-import that didn't actually change it"
+    )
+
+
+def test_reimport_with_changed_evidence_replaces_spec_and_nulls_task_link(admin_client, db_session):
+    product = _seed_product(db_session, published=True)
+    bc = db_session.scalars(
+        select(BaselineControl).where(BaselineControl.product_id == product.id)
+    ).first()
+    old_spec = db_session.scalars(
+        select(BaselineEvidenceSpec).where(BaselineEvidenceSpec.baseline_control_id == bc.id)
+    ).one()
+    org = Organization(name=f"EvidenceChurnOrg-{uuid.uuid4().hex[:6]}")
+    db_session.add(org)
+    db_session.flush()
+    task = EvidenceTask(
+        org_id=org.id, baseline_spec_id=old_spec.id, title="Config export", artifact_type="export"
+    )
+    db_session.add(task)
+    db_session.flush()
+    old_spec_id = old_spec.id
+
+    ctrl_row = db_session.get(Control, bc.control_id)
+    yaml_bytes = f"""
+product:
+  key: {product.key}
+  name: Test Tool
+  provider: Acme
+  category: ESP
+controls:
+  - control: {ctrl_row.control_id}
+    objectives: [a]
+    classification: provider_satisfies
+    coverage_basis: customer_system
+    candidate_state: pending_evidence
+    evidence:
+      - {{artifact: "A totally different export", type: export}}
+""".encode()
+    r = admin_client.post(
+        "/admin/products/import/apply",
+        files={"file": ("reimport.yaml", yaml_bytes, "application/x-yaml")},
+    )
+    assert r.status_code == 201
+
+    remaining = db_session.scalars(
+        select(BaselineEvidenceSpec).where(BaselineEvidenceSpec.baseline_control_id == bc.id)
+    ).all()
+    assert len(remaining) == 1
+    assert remaining[0].id != old_spec_id
+    assert remaining[0].artifact_description == "A totally different export"
+    db_session.refresh(task)
+    assert task.baseline_spec_id is None, (
+        "genuinely changed evidence must still sever the FK on the task "
+        "that pointed at the old, now-removed spec"
     )
 
 

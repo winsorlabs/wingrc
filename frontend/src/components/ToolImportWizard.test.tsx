@@ -10,7 +10,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api";
-import type { BaselineControlDraft, BaselineImportPreview, ProductMetaDraft } from "../types";
+import type { BaselineControlDraft, BaselineImportPreview, ProductDetail, ProductMetaDraft } from "../types";
 import { ToolImportWizard } from "./ToolImportWizard";
 
 vi.mock("../api", () => ({
@@ -20,6 +20,7 @@ vi.mock("../api", () => ({
     ingestBaselineFromDocuments: vi.fn(),
     previewStructuredBaselineImport: vi.fn(),
     uploadToolDocument: vi.fn(),
+    getToolDetail: vi.fn(),
   },
 }));
 
@@ -79,6 +80,41 @@ function makeControlRow(overrides: Partial<BaselineControlDraft> = {}): Baseline
     evidence: [],
     note: null,
     scope_note: null,
+    ...overrides,
+  };
+}
+
+function makeProductDetail(overrides: Partial<ProductDetail> = {}): ProductDetail {
+  return {
+    id: "p1",
+    key: "rocketcyber",
+    name: "RocketCyber",
+    provider: "Kaseya",
+    category: "ESP",
+    asset_type: "SPA",
+    role: "Managed SIEM + SOC",
+    assumed_config: [],
+    is_published: true,
+    source_docs: [],
+    ai_generated_at: null,
+    ai_generated_model: null,
+    baseline_controls: [
+      {
+        control_id: "AC.L2-3.1.1",
+        family: "AC",
+        title: "Limit system access",
+        objectives: ["a"],
+        classification: "provider_satisfies",
+        coverage_basis: "customer_system",
+        candidate_state: "pending_evidence",
+        provider_contribution: null,
+        customer_action: null,
+        note: null,
+        scope_note: null,
+        evidence_specs: [],
+      },
+    ],
+    documents: [],
     ...overrides,
   };
 }
@@ -254,5 +290,78 @@ describe("ToolImportWizard — generate from vendor documents (per-control table
     await waitFor(() =>
       expect(api.uploadToolDocument).toHaveBeenCalledWith("p-new", doc, { title: "crm.pdf", kind: "other" })
     );
+  });
+});
+
+describe("ToolImportWizard — editing an existing product's mapping", () => {
+  it("loads pre-populated and pre-validated, with the key field read-only", async () => {
+    vi.mocked(api.getToolDetail).mockResolvedValue(makeProductDetail());
+    vi.mocked(api.previewStructuredBaselineImport).mockResolvedValue({
+      yaml: "product:\n  key: rocketcyber\ncontrols:\n  - control: AC.L2-3.1.1\n",
+      preview: makePreview({ product_key: "rocketcyber", product_name: "RocketCyber" }),
+      product: makeProduct({ key: "rocketcyber", name: "RocketCyber" }),
+      controls: [makeControlRow({ coverage_basis: "customer_system" })],
+    });
+
+    render(<ToolImportWizard editProductId="p1" onClose={vi.fn()} onApplied={vi.fn()} />);
+
+    expect(await screen.findByText("Edit Baseline Mapping")).toBeTruthy();
+    await waitFor(() => expect(api.getToolDetail).toHaveBeenCalledWith("p1"));
+    await waitFor(() => expect(api.previewStructuredBaselineImport).toHaveBeenCalled());
+
+    // Landed straight in the table -- no chooser screen, no separate
+    // "Preview"/"Generate" click needed.
+    expect(await screen.findByRole("combobox", { name: "Classification for row 0" })).toBeTruthy();
+    const keyInput = screen.getByDisplayValue("rocketcyber") as HTMLInputElement;
+    expect(keyInput.disabled).toBe(true);
+    expect(screen.getByRole("button", { name: /Save Changes/ })).toHaveProperty("disabled", false);
+  });
+
+  it("a newly added blank row survives Re-check with its own flag, instead of vanishing", async () => {
+    vi.mocked(api.getToolDetail).mockResolvedValue(makeProductDetail());
+    vi.mocked(api.previewStructuredBaselineImport).mockResolvedValueOnce({
+      yaml: "product:\n  key: rocketcyber\ncontrols:\n  - control: AC.L2-3.1.1\n",
+      preview: makePreview({ product_key: "rocketcyber", product_name: "RocketCyber" }),
+      product: makeProduct({ key: "rocketcyber", name: "RocketCyber" }),
+      controls: [makeControlRow({ coverage_basis: "customer_system" })],
+    });
+
+    render(<ToolImportWizard editProductId="p1" onClose={vi.fn()} onApplied={vi.fn()} />);
+    await waitFor(() => expect(api.previewStructuredBaselineImport).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(await screen.findByRole("button", { name: /\+ Add control/ }));
+
+    // The second (Re-check) call reflects the blank row surviving the
+    // round trip, with its own row_problem attached.
+    vi.mocked(api.previewStructuredBaselineImport).mockResolvedValueOnce({
+      yaml: "product:\n  key: rocketcyber\ncontrols:\n  - control: AC.L2-3.1.1\n  - control: ''\n",
+      preview: makePreview({
+        problems: ["controls[1].control must be a control id or a list of them."],
+        product_key: "rocketcyber",
+        product_name: "RocketCyber",
+        row_problems: [
+          {
+            row_index: 1,
+            field: "control",
+            message: "controls[1].control must be a control id or a list of them.",
+          },
+        ],
+      }),
+      product: makeProduct({ key: "rocketcyber", name: "RocketCyber" }),
+      controls: [
+        makeControlRow({ coverage_basis: "customer_system" }),
+        makeControlRow({ row_index: 1, control: [], classification: null, coverage_basis: null, objectives: [] }),
+      ],
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Re-check/ }));
+
+    await waitFor(() => expect(api.previewStructuredBaselineImport).toHaveBeenCalledTimes(2));
+    const secondCallArg = vi.mocked(api.previewStructuredBaselineImport).mock.calls[1][0];
+    expect(secondCallArg.controls).toHaveLength(2);
+
+    // The blank row is still rendered (row 1), flagged, not dropped.
+    expect(screen.getByRole("combobox", { name: "Classification for row 0" })).toBeTruthy();
+    const row1Control = screen.getByRole("textbox", { name: "Control(s) for row 1" });
+    expect(row1Control.className).toContain("field-needs-decision");
   });
 });

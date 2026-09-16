@@ -1260,6 +1260,16 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .evidence-mini-list { display: flex; flex-direction: column; gap: 0.3rem; min-width: 14rem; }
 .evidence-mini-row { display: flex; align-items: center; gap: 0.25rem; }
 .evidence-mini-row input[type="text"], .evidence-mini-row select { font-size: 0.72rem; padding: 0.2rem 0.3rem; }
+
+/* Slim scrollbar strip pinned to the bottom of .wizard-body's own scroll
+   viewport (not the bottom of the table, which can be many rows tall) --
+   its scrollLeft is kept in sync with the real table wrapper via JS, since
+   no CSS-only way exists to reposition a container's own overflow
+   scrollbar. Only rendered when the table is actually overflowing. */
+.sticky-scroll-x {
+  position: sticky; bottom: 0; overflow-x: auto; overflow-y: hidden;
+  height: 14px; background: var(--surface); border-top: 1px solid var(--border);
+}
 .form-info-banner { padding: 0.6rem 0.75rem; background: #fff3cd; border: 1px solid #ffe69c; border-radius: 5px; font-size: 0.82rem; color: #664d03; }
 .loading { padding: 2rem; text-align: center; color: var(--muted); font-size: 0.9rem; }
 
@@ -1571,6 +1581,13 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
   width: min(720px, 96vw); max-height: 90vh;
   display: flex; flex-direction: column; overflow: hidden;
   box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+}
+/* Wider/taller variant for the baseline review table (ToolImportWizard) --
+   a modifier, not a change to the base .wizard size, so the other four
+   wizards (Liongard sync, contact import, onboarding, asset import) are
+   unaffected. */
+.wizard--wide {
+  width: min(1400px, 95vw); max-height: 92vh;
 }
 .wizard-header {
   display: flex; align-items: center; gap: 0.75rem;

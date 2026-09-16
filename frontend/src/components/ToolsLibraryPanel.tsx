@@ -6,9 +6,10 @@ import { ToolImportWizard } from "./ToolImportWizard";
 
 // Deployment-tier baseline library management (G.9) — see this file's own
 // docstring in backend/app/routers/admin_products.py for the full scope.
-// This screen manages the library only: it never writes OrgProduct, and
-// there is no field-by-field mapping editor here. The YAML is the
-// authoring format; this ingests and reviews it.
+// This screen manages the library only: it never writes OrgProduct. Field-
+// by-field mapping edits happen in ToolDetailPanel.tsx's "Edit Baseline
+// Mapping" button, not here -- this screen is just the list + the initial
+// import entry point.
 export function ToolsLibraryPanel() {
   const [products, setProducts] = useState<ProductLibraryItem[]>([]);
   const [loading, setLoading] = useState(true);
