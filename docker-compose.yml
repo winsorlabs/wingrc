@@ -13,6 +13,15 @@ x-backend-env: &backend-env
   # unset now refuses, on purpose, since that's the actual shape of a
   # fresh production deploy where nobody set this yet.
   WINGRC_ENVIRONMENT: development
+  # The URL a browser uses to reach this deployment -- see config.py's own
+  # docstring on this setting. Only consumed by routers/users.py (invite/
+  # reset email links) and scheduler.py's review-cycle/SPRS-reminder jobs
+  # (the link inside each notification) -- both backend AND worker need
+  # it, since the worker is what actually sends those notifications.
+  # Unset means those emails/notifications fall back to a link-less body
+  # (routers/users.py's token-only response; scheduler.py's "the WinGRC
+  # application" placeholder text) rather than a broken link.
+  WINGRC_PUBLIC_URL: ${WINGRC_PUBLIC_URL:-}
   WINGRC_STORAGE_ENDPOINT: http://minio:9000
   # Set WINGRC_STORAGE_PUBLIC_ENDPOINT in your host .env to the address
   # browsers use to reach MinIO. Behind the nginx reverse proxy (see

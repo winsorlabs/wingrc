@@ -425,6 +425,98 @@ def test_dry_run_structured_blank_control_field_still_returns_the_row(admin_clie
     )
 
 
+# ---------------------------------------------------------------------------
+# Disclaim-language flag -- advisory only, never blocks Apply, never
+# reclassifies anything (baseline_import.py:_disclaims_coverage/DisclaimFlag)
+# ---------------------------------------------------------------------------
+
+
+def test_disclaim_flag_catches_the_real_rocketcyber_wording(admin_client, db_session):
+    """Ground truth: the exact phrasing from the real RocketCyber ingestion
+    run that produced two shared-classified entries whose own note read as
+    a full disclaim (docs/roadmap.md's own plausibility-review writeup for
+    that slice) -- this is the actual case this check exists to catch."""
+    seed = _seed_framework_and_control(db_session)
+    body = _valid_structured_body("disclaim-test", seed["ctrl"].control_id)
+    body["controls"][0]["classification"] = "shared"
+    body["controls"][0]["coverage_basis"] = "customer_system"
+    body["controls"][0]["note"] = (
+        "Kaseya explicitly states it does not implement or enforce this control."
+    )
+    r = admin_client.post("/admin/products/import/dry-run-structured", json=body)
+    assert r.status_code == 200
+    out = r.json()
+    flags = out["preview"]["disclaim_flags"]
+    assert any(f["row_index"] == 0 for f in flags), flags
+    # Advisory only -- must never block Apply or touch the classification.
+    assert out["controls"][0]["classification"] == "shared"
+    assert out["preview"]["problems"] == []
+
+
+def test_disclaim_flag_catches_the_second_real_wording(admin_client, db_session):
+    seed = _seed_framework_and_control(db_session)
+    body = _valid_structured_body("disclaim-test-2", seed["ctrl"].control_id)
+    body["controls"][0]["classification"] = "shared"
+    body["controls"][0]["coverage_basis"] = "customer_system"
+    body["controls"][0]["customer_action"] = (
+        "The vendor does not manage or enforce the customer's chosen configurations."
+    )
+    r = admin_client.post("/admin/products/import/dry-run-structured", json=body)
+    assert r.status_code == 200
+    flags = r.json()["preview"]["disclaim_flags"]
+    assert any(f["row_index"] == 0 for f in flags), flags
+
+
+def test_disclaim_flag_does_not_fire_on_customer_owns_rows(admin_client, db_session):
+    """No noise on rows already correctly classified -- the identical
+    disclaiming text on a customer_owns entry (where it's expected and
+    correct) must not flag."""
+    seed = _seed_framework_and_control(db_session)
+    body = _valid_structured_body("disclaim-test-3", seed["ctrl"].control_id)
+    body["controls"][0]["classification"] = "customer_owns"
+    body["controls"][0].pop("coverage_basis", None)
+    body["controls"][0].pop("evidence", None)
+    body["controls"][0]["note"] = (
+        "Kaseya explicitly states it does not implement or enforce this control."
+    )
+    r = admin_client.post("/admin/products/import/dry-run-structured", json=body)
+    assert r.status_code == 200
+    assert r.json()["preview"]["disclaim_flags"] == []
+
+
+def test_disclaim_flag_does_not_fire_on_ordinary_shared_text(admin_client, db_session):
+    """No false positives on a legitimately-shared entry with ordinary,
+    non-disclaiming supporting text (the real CM.L2-3.4.2 baseline text,
+    once hand-corrected -- see baselines/rocketcyber.yaml)."""
+    seed = _seed_framework_and_control(db_session)
+    body = _valid_structured_body("disclaim-test-4", seed["ctrl"].control_id)
+    body["controls"][0]["classification"] = "shared"
+    body["controls"][0]["coverage_basis"] = "customer_system"
+    body["controls"][0]["provider_contribution"] = (
+        "Exposes configurable security settings; mechanisms support enforcement."
+    )
+    body["controls"][0]["customer_action"] = "Establish and enforce the security configuration."
+    r = admin_client.post("/admin/products/import/dry-run-structured", json=body)
+    assert r.status_code == 200
+    assert r.json()["preview"]["disclaim_flags"] == []
+
+
+def test_disclaim_flag_never_changes_classification(admin_client, db_session):
+    """Explicit negative assertion per the task's own verification ask:
+    flagging must never reclassify anything -- the row's classification
+    coming back out is identical to what was submitted."""
+    seed = _seed_framework_and_control(db_session)
+    body = _valid_structured_body("disclaim-test-5", seed["ctrl"].control_id)
+    body["controls"][0]["classification"] = "provider_satisfies"
+    body["controls"][0]["coverage_basis"] = "customer_system"
+    body["controls"][0]["note"] = "The vendor does not provide this capability at all."
+    r = admin_client.post("/admin/products/import/dry-run-structured", json=body)
+    assert r.status_code == 200
+    out = r.json()
+    assert any(f["row_index"] == 0 for f in out["preview"]["disclaim_flags"])
+    assert out["controls"][0]["classification"] == "provider_satisfies"
+
+
 def test_dry_run_structured_missing_framework_returns_409(admin_client, db_session):
     # No _seed_framework_and_control() call -- the nist-800-171-r2
     # framework genuinely doesn't exist in this test's (rolled-back-per-

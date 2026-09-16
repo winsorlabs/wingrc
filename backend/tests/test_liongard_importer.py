@@ -292,6 +292,42 @@ def test_identity_maps_to_person_with_email_natural_key():
     assert entity.attributes["DisplayName"] == "Ahmed Abdelrehim"
 
 
+def test_identity_maps_canonical_person_attributes_alongside_raw():
+    """domain.py:PERSON_CANONICAL_ATTRIBUTES -- the fix that closes
+    reconcile.py's PERSON noise gap. Canonical keys must sit alongside the
+    raw Liongard field names, not replace them (matches
+    test_device_maps_canonical_attributes_alongside_raw's own pattern)."""
+    entity, warnings = identity_to_canonical(_IDENTITY_RECORD, "liongard:test")
+    assert warnings == []
+    assert entity is not None
+    assert entity.attributes["email"] == "aabdelrehim@coopsys.com"
+    assert entity.attributes["Email"] == "aabdelrehim@coopsys.com"  # raw preserved too
+    assert entity.attributes["username"] == "aabdelrehim_coopsys.com#EXT#@liongard.onmicrosoft.com"
+    assert entity.attributes["enabled"] is True
+    assert entity.attributes["display_name"] == "Ahmed Abdelrehim"
+
+
+def test_identity_disabled_maps_enabled_false_not_dropped():
+    """The is-not-None check in identity_to_canonical(), not a truthy
+    check: enabled=False is a real, meaningful value that a truthy field
+    mapping (matching _DEVICE_CANONICAL_FIELDS' own `if value:` pattern)
+    would have silently dropped."""
+    record = {**_IDENTITY_RECORD, "Enabled": False}
+    entity, _ = identity_to_canonical(record, "liongard:test")
+    assert entity is not None
+    assert entity.attributes["enabled"] is False
+
+
+def test_identity_with_a_genuinely_new_field_is_surfaced_not_silently_dropped():
+    """PERSON's counterpart to test_device_with_a_genuinely_new_field_is_
+    surfaced_not_silently_dropped -- the allowlist's own safety net."""
+    record = {**_IDENTITY_RECORD, "SomeNewLiongardField": "unexpected"}
+    entity, warnings = identity_to_canonical(record, "liongard:test")
+    assert entity is not None
+    assert len(warnings) == 1
+    assert "SomeNewLiongardField" in warnings[0]
+
+
 def test_identity_falls_back_to_username_without_email():
     record = {**_IDENTITY_RECORD, "Email": ""}
     entity, _ = identity_to_canonical(record, "liongard:test")

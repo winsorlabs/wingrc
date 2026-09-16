@@ -191,6 +191,11 @@ class RowProblemOut(BaseModel):
     message: str
 
 
+class DisclaimFlagOut(BaseModel):
+    row_index: int
+    message: str
+
+
 class ImportPreviewOut(BaseModel):
     problems: list[str]
     product_key: str
@@ -200,6 +205,9 @@ class ImportPreviewOut(BaseModel):
     affected_org_count: int
     affected_org_names: list[str]
     row_problems: list[RowProblemOut] = Field(default_factory=list)
+    # Advisory only -- never affects `problems`/whether Apply is enabled.
+    # See baseline_import.py:DisclaimFlag's own docstring.
+    disclaim_flags: list[DisclaimFlagOut] = Field(default_factory=list)
 
 
 class ImportApplyOut(BaseModel):
@@ -560,6 +568,10 @@ def _preview_out(preview) -> ImportPreviewOut:
         row_problems=[
             RowProblemOut(row_index=p.row_index, field=p.field, message=p.message)
             for p in preview.row_problems
+        ],
+        disclaim_flags=[
+            DisclaimFlagOut(row_index=f.row_index, message=f.message)
+            for f in preview.disclaim_flags
         ],
     )
 
