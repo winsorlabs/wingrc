@@ -25,14 +25,13 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from sqlalchemy import select, update
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from ..models import (
     BaselineControl,
     BaselineEvidenceSpec,
     Control,
-    EvidenceTask,
     Framework,
     Product,
 )
@@ -283,10 +282,23 @@ def _seed_product(
             stale = [s for s in old_specs if s.id not in matched_ids]
             if stale:
                 stale_ids = [s.id for s in stale]
+                # A bare ORM UPDATE on evidence_task here would silently
+                # match zero rows: this whole function runs under the RLS-
+                # enforced wingrc_app role with no app.current_org set (the
+                # baseline library is deployment-wide, never org-scoped --
+                # see admin_products.py's own module docstring), and
+                # evidence_task IS org-scoped/RLS-protected. Postgres's FK
+                # constraint check on the DELETE below still sees the real,
+                # RLS-invisible row and correctly rejects it -- caught live
+                # by this slice's own regression test, not by inspection.
+                # SECURITY DEFINER function, same precedent as
+                # auth.expire_stale_invites()/auth.mark_sprs_reminder_sent()
+                # (0042/0044): the one way this codebase lets a deployment-
+                # wide operation touch rows across every org, without a
+                # blanket RLS bypass.
                 session.execute(
-                    update(EvidenceTask)
-                    .where(EvidenceTask.baseline_spec_id.in_(stale_ids))
-                    .values(baseline_spec_id=None)
+                    text("SELECT auth.null_evidence_task_baseline_spec_refs(:ids)"),
+                    {"ids": stale_ids},
                 )
                 for s in stale:
                     session.delete(s)

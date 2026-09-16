@@ -402,7 +402,11 @@ def test_dry_run_structured_blank_control_field_still_returns_the_row(admin_clie
     body = _valid_structured_body("structured-tool-4", seed["ctrl"].control_id)
     body["controls"].append(
         {
-            "control": "",
+            # Matches the frontend's addControlRow() exactly -- an empty
+            # LIST, not an empty string (which validate_structured treats
+            # differently: [""] is a truthy, structurally "valid" list of
+            # one id, just one that happens not to resolve).
+            "control": [],
             "classification": None,
             "candidate_state": "pending_evidence",
             "objectives": [],
