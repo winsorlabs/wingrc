@@ -29,18 +29,18 @@ concern (only Liongard's importer knows Liongard's own field names), kept
 out of this module on purpose; this module only needs the allowlist
 itself, not the reasoning behind every individual field name.
 
-**Per entity type, not a single flat list.** Only DEVICE/SOFTWARE have a
-defined canonical attribute vocabulary today
-(`domain.py:DEVICE_SOFTWARE_COMPARABLE_ATTRIBUTES`, derived from
+**Per entity type, not a single flat list.** DEVICE/SOFTWARE compare
+`domain.py:DEVICE_SOFTWARE_COMPARABLE_ATTRIBUTES` (derived from
 `routers/scope.py:DeviceSoftwareAttributes` -- one list, not two that
-drift, kept in sync by test_domain_attribute_vocabulary.py). Every other
-entity type (PERSON, PROCESS, EXTERNAL_SERVICE, FACILITY, DATA_STORE)
-falls back to comparing every attribute key, completely unchanged from
-before this fix -- extending the allowlist to PERSON would mean inventing
-a canonical PERSON vocabulary, already explicitly ruled out of scope in
-the Liongard-contacts-import slice (see docs/roadmap.md). PERSON therefore
-still has the identical telemetry-diff-noise problem this fix closes for
-devices -- a named, deliberate gap, not an oversight.
+drift, kept in sync by test_domain_attribute_vocabulary.py). PERSON
+compares `domain.py:PERSON_COMPARABLE_ATTRIBUTES` (added once a canonical
+PERSON vocabulary existed to compare against -- see that constant's own
+docstring for what it covers and why it's deliberately minimal). PROCESS,
+EXTERNAL_SERVICE, FACILITY, and DATA_STORE still fall back to comparing
+every attribute key -- none of them have a canonical vocabulary defined
+yet, so there is nothing narrower to compare against; the identical
+telemetry-diff-noise problem DEVICE/SOFTWARE and PERSON have both had
+fixed remains open for those, a named, deliberate gap, not an oversight.
 
 **last_login_user is canonical but NOT compared**, on purpose: it's
 telemetry that changes legitimately whenever a different person logs into
@@ -62,6 +62,7 @@ from __future__ import annotations
 
 from .domain import (
     DEVICE_SOFTWARE_COMPARABLE_ATTRIBUTES,
+    PERSON_COMPARABLE_ATTRIBUTES,
     CanonicalEntity,
     ChangeType,
     EntityChange,
@@ -76,6 +77,7 @@ from .domain import (
 _COMPARABLE_ATTRIBUTES_BY_ENTITY_TYPE: dict[EntityType, frozenset[str]] = {
     EntityType.DEVICE: DEVICE_SOFTWARE_COMPARABLE_ATTRIBUTES,
     EntityType.SOFTWARE: DEVICE_SOFTWARE_COMPARABLE_ATTRIBUTES,
+    EntityType.PERSON: PERSON_COMPARABLE_ATTRIBUTES,
 }
 
 

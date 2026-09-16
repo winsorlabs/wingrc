@@ -45,6 +45,65 @@ _VALID_EVIDENCE_TYPES = frozenset({"screenshot", "export", "document", "link", "
 # nothing about them is "current"), so they don't count toward the warning.
 _LIVE_ORG_PRODUCT_STATUSES = frozenset({"active", "candidate"})
 
+# Real failure mode from a real ingestion run: the AI classified two
+# RocketCyber entries `shared` while its OWN note read as a full disclaim
+# ("Kaseya explicitly states it does not implement/enforce..."). `shared`
+# partially credits the vendor and queues evidence tasks; the note it came
+# with said the opposite. This is a deterministic, post-AI, code-enforced
+# check for exactly that contradiction -- the same reasoning as the
+# evidence-minimization rules (baseline.py's own docstring): a confused
+# model must not be trusted to police itself, so the check lives in code a
+# model can't talk its way around. It only ever FLAGS for a human to look
+# at -- never reclassifies anything itself (CLAUDE.md's "candidates, never
+# auto-met" rule applies just as much to a classification as to a control
+# status). Bias this list toward catching things: a false positive costs a
+# reviewer one glance at a row they'd have looked at anyway; a false
+# negative lets an unearned vendor credit sit in a real SSP unnoticed.
+# Expected to grow as real ingestions turn up new disclaim phrasing --
+# add to it freely, here, in one place a human can find.
+_DISCLAIM_PHRASES = (
+    "does not implement",
+    "does not enforce",
+    "does not provide",
+    "does not satisfy",
+    "does not manage",
+    "does not configure",
+    "does not control",
+    "does not own",
+    "does not offer",
+    "not implemented by",
+    "not enforced by",
+    "not provided by",
+    "not configured by",
+    "not supported by",
+    "not managed by",
+    "not covered by",
+    "not the responsibility of",
+    "customer is responsible",
+    "customer's responsibility",
+    "responsibility of the customer",
+    "customer must",
+    "customer's own",
+    "customer-managed",
+    "outside the scope of",
+    "does not cover",
+    "no visibility into",
+    "cannot enforce",
+    "cannot configure",
+    "does not have access to",
+)
+
+
+def _disclaims_coverage(*texts: str | None) -> bool:
+    """True if any of the given supporting-text fields reads as a vendor
+    disclaiming what its own classification credits it for. Case-
+    insensitive substring match against `_DISCLAIM_PHRASES` -- deliberately
+    simple (no NLP/AI in this check at all) so it's auditable and can't be
+    talked around the way the thing it's checking already was.
+    """
+    combined = " ".join(t for t in texts if t).lower()
+    return any(phrase in combined for phrase in _DISCLAIM_PHRASES)
+
 
 def parse_yaml(raw: bytes) -> tuple[dict | None, str | None]:
     """Parse raw YAML bytes. Returns (data, None) or (None, error) --
@@ -345,6 +404,21 @@ class ControlEntryDraft:
 
 
 @dataclass
+class DisclaimFlag:
+    """Advisory only -- deliberately NOT a ValidationProblem. This never
+    blocks Apply and never changes anything about the row; it exists
+    purely so a reviewer notices the contradiction between a classification
+    and its own supporting text without having to read both closely on
+    every one of 17+ rows. See _disclaims_coverage()'s own docstring for
+    why the check itself is a plain phrase match, not a confidence score
+    or anything a reviewer could treat as permission to skip reading it.
+    """
+
+    row_index: int
+    message: str
+
+
+@dataclass
 class BaselineImportPreview:
     problems: list[str]
     product_key: str
@@ -355,6 +429,7 @@ class BaselineImportPreview:
     affected_org_names: list[str]
     row_problems: list[ValidationProblem] = field(default_factory=list)
     control_rows: list[ControlEntryDraft] = field(default_factory=list)
+    disclaim_flags: list[DisclaimFlag] = field(default_factory=list)
 
 
 def _coerce_evidence_drafts(raw: Any) -> list[EvidenceSpecDraft]:
@@ -425,6 +500,7 @@ def build_preview(
     # a bad `control` field is unaffected by this.
     changes: list[BaselineControlChange] = []
     control_rows: list[ControlEntryDraft] = []
+    disclaim_flags: list[DisclaimFlag] = []
     for idx, entry in enumerate(data.get("controls") or []):
         if not isinstance(entry, dict):
             continue
@@ -454,6 +530,11 @@ def build_preview(
         elif not all(isinstance(o, str) for o in objectives):
             objectives = [o for o in objectives if isinstance(o, str)]
 
+        provider_contribution = entry.get("provider_contribution")
+        customer_action = entry.get("customer_action")
+        note = entry.get("note")
+        scope_note = entry.get("scope_note")
+
         control_rows.append(
             ControlEntryDraft(
                 row_index=idx,
@@ -462,13 +543,28 @@ def build_preview(
                 coverage_basis=coverage_basis,
                 candidate_state=candidate_state,
                 objectives=objectives,
-                provider_contribution=entry.get("provider_contribution"),
-                customer_action=entry.get("customer_action"),
+                provider_contribution=provider_contribution,
+                customer_action=customer_action,
                 evidence=_coerce_evidence_drafts(entry.get("evidence")),
-                note=entry.get("note"),
-                scope_note=entry.get("scope_note"),
+                note=note,
+                scope_note=scope_note,
             )
         )
+
+        if classification in ("shared", "provider_satisfies") and _disclaims_coverage(
+            note, provider_contribution, customer_action, scope_note
+        ):
+            disclaim_flags.append(
+                DisclaimFlag(
+                    row_index=idx,
+                    message=(
+                        "This entry's own supporting text reads as a disclaim "
+                        f"(vendor doesn't cover this), but it's classified "
+                        f"{classification!r} -- confirm this should credit the "
+                        "vendor at all, not customer_owns instead."
+                    ),
+                )
+            )
 
         for cid in ctrl_ids:
             ctrl = ctrl_lookup.get(cid)
@@ -517,6 +613,7 @@ def build_preview(
         affected_org_names=affected_org_names,
         row_problems=problems_structured,
         control_rows=control_rows,
+        disclaim_flags=disclaim_flags,
     )
 
 

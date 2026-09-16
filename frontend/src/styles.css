@@ -1252,6 +1252,15 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .needs-decision { background: #fdecea; }
 .field-needs-decision { border: 1px solid #dc3545 !important; background: #fff5f5; }
 .field-problem-hint { font-size: 0.68rem; color: #842029; margin-top: 0.15rem; }
+
+/* Disclaim-language flag: deliberately amber, not red -- this is advisory
+   ("go look at this"), never a thing blocking Apply the way a red
+   needs-decision flag is. Never applied together on the same cell as
+   field-needs-decision (see ToolImportWizard.tsx's disclaim/clsProblem
+   precedence). */
+.disclaim-flag-row { background: #fff7ed; }
+.field-disclaim-flag { border: 1px solid #c2740c !important; background: #fff7ed; }
+.field-disclaim-hint { font-size: 0.68rem; color: #9a5b13; margin-top: 0.15rem; }
 .control-row-table input[type="text"], .control-row-table select {
   width: 100%; box-sizing: border-box; padding: 0.3rem 0.4rem;
   border: 1px solid var(--border); border-radius: 4px;

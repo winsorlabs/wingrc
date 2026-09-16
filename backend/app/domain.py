@@ -147,6 +147,45 @@ DEVICE_SOFTWARE_COMPARABLE_ATTRIBUTES: frozenset[str] = (
 )
 
 
+# The canonical PERSON attribute vocabulary -- closes the gap
+# reconcile.py's own docstring names: PERSON entities compared every raw
+# attribute key because no canonical PERSON vocabulary existed (deliberately
+# out of scope for D.2's Liongard-contacts-import slice). Deliberately
+# minimal, derived from a real record rather than assumed: identity_to_
+# contact_fields()'s own docstring in importers/liongard.py already
+# recorded, against a real tenant (Goodwin-Bradley, 24 live Inventory-state
+# identities, 2026-09-14), that Email/FirstName/LastName/DisplayName are
+# reliably present (100% of records sampled) -- Username and Enabled were
+# not independently measured in that same study, but are the obvious
+# remaining candidates the product needs (Enabled drives EntityStatus
+# already; Username is Liongard's own fallback identity key when Email is
+# blank -- see importers/liongard.py:_identity_natural_key). No job-title,
+# phone, or other HR-style field: Phone was checked and found essentially
+# never populated (0/24 in that same study), and nothing downstream reads
+# the others -- this is not a speculative schema for fields nothing uses.
+#
+# AccountActivity/LastLogin/LastSeen -- the person equivalent of DEVICE's
+# last_login_user telemetry problem -- are deliberately NOT part of this
+# vocabulary at all, not canonicalized-then-excluded the way DEVICE's
+# last_login_user is: nothing downstream reads a canonical "last active"
+# value for a person today, so there's no reason to invent one just to
+# immediately exclude it. They stay under their raw Liongard field names in
+# `attributes` for provenance, exactly like any other un-canonicalized
+# field, and are therefore never compared by construction.
+PERSON_CANONICAL_ATTRIBUTES: frozenset[str] = frozenset(
+    {"email", "display_name", "username", "enabled"}
+)
+
+# Every canonical PERSON attribute is meaningful (unlike DEVICE_SOFTWARE's
+# last_login_user) -- comparable and canonical are the same set today. Kept
+# as its own name, not just PERSON_CANONICAL_ATTRIBUTES reused directly in
+# reconcile.py, so a future telemetry-style PERSON field could be added to
+# the canonical vocabulary (e.g. if something eventually needs to *display*
+# last-activity data) and excluded from comparison here without also
+# touching reconcile.py.
+PERSON_COMPARABLE_ATTRIBUTES: frozenset[str] = PERSON_CANONICAL_ATTRIBUTES
+
+
 _MAC_HEX_CHARS = "0123456789abcdef"
 
 

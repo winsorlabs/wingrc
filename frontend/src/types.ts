@@ -805,6 +805,15 @@ export interface RowProblem {
   message: string;
 }
 
+// Advisory only -- never affects `problems`/whether Apply is enabled, and
+// never implies the classification was changed. A row's own supporting
+// text (note/provider_contribution/customer_action/scope_note) reading as
+// a vendor disclaim while classified shared/provider_satisfies.
+export interface DisclaimFlag {
+  row_index: number;
+  message: string;
+}
+
 export interface BaselineImportPreview {
   problems: string[];
   product_key: string;
@@ -816,6 +825,7 @@ export interface BaselineImportPreview {
   affected_org_count: number;
   affected_org_names: string[];
   row_problems: RowProblem[];
+  disclaim_flags: DisclaimFlag[];
 }
 
 export interface BaselineEvidenceDraft {

@@ -46,6 +46,7 @@ function makePreview(overrides: Partial<BaselineImportPreview> = {}): BaselineIm
     affected_org_count: 0,
     affected_org_names: [],
     row_problems: [],
+    disclaim_flags: [],
     ...overrides,
   };
 }
@@ -363,5 +364,48 @@ describe("ToolImportWizard — editing an existing product's mapping", () => {
     expect(screen.getByRole("combobox", { name: "Classification for row 0" })).toBeTruthy();
     const row1Control = screen.getByRole("textbox", { name: "Control(s) for row 1" });
     expect(row1Control.className).toContain("field-needs-decision");
+  });
+
+  it("shows a disclaim flag as advisory (amber), distinct from a red needs-decision flag, and never blocks Apply", async () => {
+    vi.mocked(api.ingestBaselineFromDocuments).mockResolvedValue({
+      yaml: "product:\n  key: newtool\ncontrols:\n  - control: AC.L2-3.1.1\n    classification: shared\n    coverage_basis: customer_system\n",
+      preview: makePreview({
+        product_is_new: true,
+        product_key: "newtool",
+        product_name: "New Tool",
+        control_changes: [],
+        disclaim_flags: [
+          {
+            row_index: 0,
+            message:
+              "This entry's own supporting text reads as a disclaim (vendor doesn't cover this), but it's classified 'shared'.",
+          },
+        ],
+      }),
+      product: makeProduct(),
+      controls: [
+        makeControlRow({
+          coverage_basis: "customer_system",
+          note: "Kaseya explicitly states it does not implement or enforce this control.",
+        }),
+      ],
+    });
+
+    render(<ToolImportWizard onClose={vi.fn()} onApplied={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Generate from vendor documents/ }));
+    fireEvent.change(screen.getByLabelText(/Product key/), { target: { value: "newtool" } });
+    const doc = new File(["fake pdf"], "crm.pdf", { type: "application/pdf" });
+    fireEvent.change(document.querySelector("input[type=file]")!, { target: { files: [doc] } });
+    fireEvent.click(screen.getByRole("button", { name: /Generate Baseline/ }));
+
+    await waitFor(() => expect(api.ingestBaselineFromDocuments).toHaveBeenCalled());
+
+    const clsSelect = screen.getByRole("combobox", { name: "Classification for row 0" });
+    expect(clsSelect.className).toContain("field-disclaim-flag");
+    expect(clsSelect.className).not.toContain("field-needs-decision");
+    expect(screen.getByText(/reads as a disclaim/)).toBeTruthy();
+    // No coverage_basis problem here (it's set), no row_problems at all --
+    // an advisory-only flag must never block Apply.
+    expect(screen.getByRole("button", { name: /Apply Import/ })).toHaveProperty("disabled", false);
   });
 });

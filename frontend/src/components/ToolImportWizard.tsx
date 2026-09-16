@@ -379,6 +379,14 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
     return !!preview?.row_problems.some((p) => p.row_index === rowIndex);
   }
 
+  // Advisory only -- distinct from rowProblem/hasProblems on purpose. A
+  // disclaim flag never blocks Apply and is never treated as something to
+  // fix before Re-check will pass; it's a "look at this" nudge, not a
+  // validation error.
+  function disclaimFlag(rowIndex: number) {
+    return preview?.disclaim_flags.find((f) => f.row_index === rowIndex);
+  }
+
   const hasProblems = !!preview && preview.problems.length > 0;
   const canGenerate = mode === "documents" && ingestFiles.length > 0 && !!productKey.trim() && !ingesting;
   // Problems with no specific row (e.g. a missing product field) --
@@ -543,13 +551,13 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
                     <tr>
                       <th>Control(s)</th>
                       <th>Classification</th>
+                      <th>Note</th>
+                      <th>Provider contribution</th>
+                      <th>Customer action</th>
+                      <th>Scope note</th>
                       <th>Coverage basis</th>
                       <th>Candidate state</th>
                       <th>Objectives</th>
-                      <th>Provider contribution</th>
-                      <th>Customer action</th>
-                      <th>Note</th>
-                      <th>Scope note</th>
                       <th>Evidence</th>
                     </tr>
                   </thead>
@@ -563,8 +571,14 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
                       const controlProblem = rowProblem(idx, "control");
                       const objProblem = rowProblem(idx, "objectives");
                       const evProblem = rowProblem(idx, "evidence");
+                      const disclaim = disclaimFlag(idx);
+                      const rowClass = rowFlagged
+                        ? "needs-decision"
+                        : disclaim
+                          ? "disclaim-flag-row"
+                          : undefined;
                       return (
-                        <tr key={idx} className={rowFlagged ? "needs-decision" : undefined}>
+                        <tr key={idx} className={rowClass}>
                           <td>
                             <input
                               type="text"
@@ -581,7 +595,7 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
                           <td>
                             <select
                               aria-label={`Classification for row ${idx}`}
-                              className={clsProblem ? "field-needs-decision" : undefined}
+                              className={clsProblem ? "field-needs-decision" : disclaim ? "field-disclaim-flag" : undefined}
                               value={row.classification ?? ""}
                               onChange={(e) => updateControlField(idx, "classification", e.target.value || null)}
                             >
@@ -591,6 +605,37 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
                               ))}
                             </select>
                             {clsProblem && <div className="field-problem-hint">{clsProblem.message}</div>}
+                            {!clsProblem && disclaim && (
+                              <div className="field-disclaim-hint">⚠ {disclaim.message}</div>
+                            )}
+                          </td>
+                          <td>
+                            <input
+                              type="text"
+                              value={row.note ?? ""}
+                              onChange={(e) => updateControlField(idx, "note", e.target.value)}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="text"
+                              value={row.provider_contribution ?? ""}
+                              onChange={(e) => updateControlField(idx, "provider_contribution", e.target.value)}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="text"
+                              value={row.customer_action ?? ""}
+                              onChange={(e) => updateControlField(idx, "customer_action", e.target.value)}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="text"
+                              value={row.scope_note ?? ""}
+                              onChange={(e) => updateControlField(idx, "scope_note", e.target.value)}
+                            />
                           </td>
                           <td>
                             <select
@@ -636,34 +681,6 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
                               onBlur={() => commitListField(idx, "objectives")}
                             />
                             {objProblem && <div className="field-problem-hint">{objProblem.message}</div>}
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              value={row.provider_contribution ?? ""}
-                              onChange={(e) => updateControlField(idx, "provider_contribution", e.target.value)}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              value={row.customer_action ?? ""}
-                              onChange={(e) => updateControlField(idx, "customer_action", e.target.value)}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              value={row.note ?? ""}
-                              onChange={(e) => updateControlField(idx, "note", e.target.value)}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              value={row.scope_note ?? ""}
-                              onChange={(e) => updateControlField(idx, "scope_note", e.target.value)}
-                            />
                           </td>
                           <td>
                             <div className={`evidence-mini-list${evProblem ? " field-needs-decision" : ""}`}>

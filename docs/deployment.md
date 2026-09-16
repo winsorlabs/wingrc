@@ -37,6 +37,11 @@ Edit `.env`:
   `backend/app/auth.py`). Do not skip this.
 - `WINGRC_STORAGE_PUBLIC_ENDPOINT=https://storage.YOUR_HOSTNAME`
 - `MINIO_SERVER_URL=https://storage.YOUR_HOSTNAME`
+- `WINGRC_PUBLIC_URL=https://YOUR_HOSTNAME` — the URL a browser uses to
+  reach this deployment. Without it, invite/reset emails and review-cycle/
+  SPRS-reminder notifications fall back to a link-less body instead of a
+  working link (see `config.py`'s own docstring on this setting). Read by
+  both `backend` and `worker` — recreate both after setting it.
 - Set real values for `WINGRC_STORAGE_ACCESS_KEY` / `WINGRC_STORAGE_SECRET_KEY`
   (don't ship with the `wingrc` / `wingrc-dev-secret` defaults) and any other
   secrets called out in `.env.example`.

@@ -24,12 +24,16 @@ actually converges if the same value was captured on both sides; that's a
 data-quality property of the source systems, not something this module can
 force.
 
-No canonical PERSON attribute vocabulary exists anywhere in this codebase
-today (only DEVICE/SOFTWARE has one -- see routers/scope.py's
-DeviceSoftwareAttributes). Identity/PERSON records therefore write
-Liongard's own field names straight through as attributes, the same way
+**PERSON canonical vocabulary (2026-09-16), closing the gap this module's
+docstring used to name here.** `identity_to_canonical()` now maps a small,
+deliberately minimal set of raw Liongard identity fields onto
+`domain.py:PERSON_CANONICAL_ATTRIBUTES` (email/display_name/username/
+enabled) -- see that constant's own docstring for exactly why those four
+and no more. Everything else about a Liongard identity record still lands
+in `attributes` under its raw Liongard name, unchanged, the same way
 workbook-imported users keep their raw "First Name"/"Last Name" columns --
-inventing a canonical PERSON schema is out of scope for this task.
+only the four fields reconcile.py actually needs to compare got a
+canonical name.
 
 **Display name vs. natural key (2026-09-17):** before this, the UI had no
 concept of a device display name at all -- it rendered `natural_key`
@@ -85,9 +89,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..connectors.liongard import DEVICE_PROFILES_SORT_BY
+from ..connectors.liongard import DEVICE_PROFILES_SORT_BY, IDENTITIES_SORT_BY
 from ..domain import (
     DEVICE_SOFTWARE_CANONICAL_ATTRIBUTES,
+    PERSON_CANONICAL_ATTRIBUTES,
     CanonicalEntity,
     DeviceSubtype,
     EntityStatus,
@@ -149,6 +154,58 @@ _DEVICE_CANONICAL_FIELDS: dict[str, str] = {
     # about) so the asset drawer can surface it labeled correctly.
     "last_login_user": "LastLoginUser",
 }
+
+# Unlike _DEVICE_EXTRA_KNOWN_RAW_FIELDS, there's no independently-verified
+# supplementary "real fields observed on a live identity record beyond the
+# sort_by enum" list here -- WinsorLabs has zero identities in Inventory
+# state (see this module's own PERSON docstring), so a full raw identity
+# record has never actually been inspected the way DEVICE's extra fields
+# were. What IS confirmed: DisplayName is a real field (used throughout
+# this module -- _identity_natural_key/_identity_display_name -- and
+# present in the real Postman-collection-derived fixture this module's
+# own tests use), and IDENTITIES_SORT_BY only documents *sortable* fields,
+# same gap the device path's own comment describes -- DisplayName simply
+# isn't sortable. EnvironmentID is included by inference (every other
+# Liongard record type checked so far carries it), not independent
+# confirmation for identities specifically. If
+# _unrecognized_person_attributes() below starts warning about other
+# ordinary fields once identities are actually pulled live, re-check
+# against a real pull and extend this set, same discipline as the device
+# path's own comment describes.
+_PERSON_EXTRA_KNOWN_RAW_FIELDS = frozenset({"EnvironmentID", "DisplayName"})
+
+_PERSON_KNOWN_ATTRIBUTES = (
+    IDENTITIES_SORT_BY | _PERSON_EXTRA_KNOWN_RAW_FIELDS | PERSON_CANONICAL_ATTRIBUTES
+)
+
+# Liongard's own field -> our canonical person attribute key. display_name
+# is deliberately absent here -- it's not a 1:1 rename, it's a fallback
+# chain (DisplayName -> FirstName+LastName -> Email -> Username, see
+# _identity_display_name()), so it's set separately in
+# identity_to_canonical() the same way device_profile_to_canonical() sets
+# display_name separately from _DEVICE_CANONICAL_FIELDS.
+_PERSON_CANONICAL_FIELDS: dict[str, str] = {
+    "email": "Email",
+    "username": "Username",
+    "enabled": "Enabled",
+}
+
+
+def _unrecognized_person_attributes(attributes: dict[str, Any]) -> list[str]:
+    """PERSON's counterpart to _unrecognized_device_attributes() -- see
+    that function's own docstring for the full reasoning (an allowlist
+    fails closed, so this is the safety net that keeps a genuinely new,
+    meaningful Liongard identity field from silently going uncompared
+    forever instead of just until someone notices and extends the
+    vocabulary).
+    """
+    unknown = sorted(set(attributes) - _PERSON_KNOWN_ATTRIBUTES)
+    if not unknown:
+        return []
+    return [
+        f"{len(unknown)} attribute(s) not recognized, not compared for changes -- "
+        f"Liongard may have added a new field: {', '.join(unknown)}."
+    ]
 
 
 def _warn(
@@ -341,12 +398,18 @@ def identity_to_canonical(
     DisplayName as a last resort. Returns (None, warnings) if none of the
     three yield anything to key on.
 
-    All of Type ("user"/"service"/"shared"/None), Privileged, Enabled,
-    Status and AccountActivity are preserved verbatim under their Liongard
-    names -- this connector doesn't attempt to bifurcate service accounts
-    into a different EntityType; ROADMAP.md D.2 asks for identities to map
-    to EntityType.PERSON, full stop, so that classification work is left
-    for whoever needs it next rather than guessed at here.
+    Maps email/username/enabled straight through onto
+    domain.py:PERSON_CANONICAL_ATTRIBUTES (see that constant's own
+    docstring for why exactly these and no more), plus display_name via
+    _identity_display_name()'s fallback chain -- mirrors
+    device_profile_to_canonical()'s canonicalization exactly, just for the
+    PERSON vocabulary instead of DEVICE/SOFTWARE's. Everything else (Type,
+    Privileged, Status, AccountActivity, ...) is preserved verbatim under
+    its Liongard name, same as before this vocabulary existed -- this
+    connector doesn't attempt to bifurcate service accounts into a
+    different EntityType; ROADMAP.md D.2 asks for identities to map to
+    EntityType.PERSON, full stop, so that classification work is left for
+    whoever needs it next rather than guessed at here.
     """
     natural_key = _identity_natural_key(record)
     if not natural_key:
@@ -355,10 +418,23 @@ def identity_to_canonical(
             f"(EnvironmentID={record.get('EnvironmentID')!r})."
         ]
 
+    attributes: dict[str, Any] = dict(record)
+    attributes["display_name"] = _identity_display_name(record)
+    for canonical_key, liongard_field in _PERSON_CANONICAL_FIELDS.items():
+        value = record.get(liongard_field)
+        # `is not None`, not truthy (unlike _DEVICE_CANONICAL_FIELDS' `if
+        # value:`) -- enabled=False is a real, meaningful value for a
+        # boolean field, not an absent one; a truthy check would silently
+        # drop every disabled identity's enabled status.
+        if value is not None:
+            attributes[canonical_key] = value
+
+    warnings = _unrecognized_person_attributes(attributes)
+
     entity = CanonicalEntity(
         entity_type=EntityType.PERSON,
         natural_key=natural_key,
-        attributes=dict(record),
+        attributes=attributes,
         status=(
             EntityStatus.DECOMMISSIONED if record.get("Enabled") is False else EntityStatus.ACTIVE
         ),
@@ -366,7 +442,7 @@ def identity_to_canonical(
         source=Source.LIONGARD,
         source_ref=source_ref,
     )
-    return entity, []
+    return entity, warnings
 
 
 def _identity_display_name(record: dict[str, Any]) -> str:

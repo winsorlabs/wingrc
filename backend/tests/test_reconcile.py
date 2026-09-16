@@ -168,25 +168,103 @@ def test_software_entity_uses_the_same_allowlist_as_device():
     assert set(result.changes[0].field_diffs) == {"version"}
 
 
-def test_person_entity_has_no_allowlist_and_still_compares_everything():
-    """PERSON has no defined canonical vocabulary (out of scope, see
-    reconcile.py's own docstring) -- unchanged from before this fix, on
-    purpose. A raw-field-only change must still report CHANGED, proving
-    the fallback is real and not accidentally narrowed too.
-    """
-    current = CanonicalEntity(
+# PERSON now has a defined canonical vocabulary
+# (domain.py:PERSON_COMPARABLE_ATTRIBUTES: email/display_name/username/
+# enabled) -- closing the gap a prior version of this test asserted was
+# permanent ("PERSON has no allowlist and still compares everything").
+# That assertion is now the WRONG outcome for the scenario it tested
+# (a Department-only change), so it's updated here rather than left
+# contradicting the real behavior -- see reconcile.py's own module
+# docstring for the full history.
+_REAL_PERSON_ATTRIBUTES = {
+    # Meaningful (compared) canonical keys.
+    "email": "ahmed@coopsys.com",
+    "display_name": "Ahmed Hassan",
+    "username": "ahmed.hassan",
+    "enabled": True,
+    # Not compared, deliberately -- the PERSON equivalent of DEVICE's
+    # last_login_user telemetry problem. Never even canonicalized (see
+    # domain.py:PERSON_CANONICAL_ATTRIBUTES' own docstring for why), so
+    # these stay under their raw Liongard names.
+    "AccountActivity": "2026-09-14T10:00:00Z",
+    "LastLogin": "2026-09-14T09:55:00Z",
+    "LastSeen": "2026-09-15T09:00:00.000Z",
+    # Raw Liongard fields with no canonical mapping -- nothing downstream
+    # reads these, so they're correctly never compared either.
+    "Email": "ahmed@coopsys.com",
+    "Username": "ahmed.hassan",
+    "Enabled": True,
+    "Department": "Engineering",
+    "Type": "user",
+}
+
+
+def _person(attributes: dict, natural_key: str = "ahmed@coopsys.com") -> CanonicalEntity:
+    return CanonicalEntity(
         entity_type=EntityType.PERSON,
-        natural_key="ahmed@coopsys.com",
-        attributes={"Email": "ahmed@coopsys.com", "Department": "Engineering"},
+        natural_key=natural_key,
+        attributes=attributes,
+        status=EntityStatus.ACTIVE,
+        source=Source.LIONGARD,
     )
-    incoming = CanonicalEntity(
-        entity_type=EntityType.PERSON,
-        natural_key="ahmed@coopsys.com",
-        attributes={"Email": "ahmed@coopsys.com", "Department": "Sales"},
+
+
+def test_person_telemetry_only_drift_reconciles_to_unchanged():
+    """The PERSON equivalent of test_telemetry_only_drift_reconciles_to_
+    unchanged: two pulls of the same identity differing only in volatile
+    fields (AccountActivity/LastLogin/LastSeen) must reconcile UNCHANGED --
+    this is the actual noise-gap the task closes. WinsorLabs has zero
+    identities in Inventory state, so this exact scenario is bench-verified
+    only; the live PERSON reconcile path remains unexercised."""
+    current = _person(_REAL_PERSON_ATTRIBUTES)
+    incoming = _person(
+        {
+            **_REAL_PERSON_ATTRIBUTES,
+            "AccountActivity": "2026-09-15T10:00:00Z",
+            "LastLogin": "2026-09-15T09:55:00Z",
+            "LastSeen": "2026-09-16T09:00:00.000Z",
+        }
     )
     result = reconcile([current], [incoming])
+    assert result.changes[0].change_type == ChangeType.UNCHANGED
+    assert result.changes[0].field_diffs == {}
+
+
+def test_person_non_canonical_raw_field_change_alone_reconciles_to_unchanged():
+    """A change to a raw Liongard field with no canonical mapping
+    (Department, Type, ...) is correctly invisible to reconcile now that
+    PERSON has a defined vocabulary -- this is the scenario the old,
+    now-updated version of this test asserted the opposite outcome for."""
+    current = _person(_REAL_PERSON_ATTRIBUTES)
+    incoming = _person({**_REAL_PERSON_ATTRIBUTES, "Department": "Sales", "Type": "service"})
+    result = reconcile([current], [incoming])
+    assert result.changes[0].change_type == ChangeType.UNCHANGED
+    assert result.changes[0].field_diffs == {}
+
+
+@pytest.mark.parametrize(
+    ("field", "old_value", "new_value"),
+    [
+        ("email", "ahmed@coopsys.com", "ahmed.hassan@coopsys.com"),
+        ("display_name", "Ahmed Hassan", "Ahmed H. Hassan"),
+        ("username", "ahmed.hassan", "ahassan"),
+        ("enabled", True, False),
+    ],
+)
+def test_person_real_change_to_each_meaningful_attribute_reports_changed(
+    field, old_value, new_value
+):
+    """The dangerous direction: an allowlist that's too narrow silently
+    stops detecting real drift. Each of PERSON's four canonical attributes
+    tested individually -- enabled=True -> False in particular is the
+    exact case a truthy-only (rather than `is not None`) field mapping in
+    identity_to_canonical() would have silently dropped."""
+    current = _person(_REAL_PERSON_ATTRIBUTES)
+    incoming = _person({**_REAL_PERSON_ATTRIBUTES, field: new_value})
+    result = reconcile([current], [incoming])
     assert result.changes[0].change_type == ChangeType.CHANGED
-    assert result.changes[0].field_diffs == {"Department": ("Engineering", "Sales")}
+    assert field in result.changes[0].field_diffs
+    assert result.changes[0].field_diffs[field] == (old_value, new_value)
 
 
 def test_new_and_missing_change_types_are_unaffected_by_the_allowlist():

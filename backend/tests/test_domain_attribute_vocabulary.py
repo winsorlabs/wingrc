@@ -9,7 +9,12 @@ docstrings for the full reasoning.
 
 from __future__ import annotations
 
-from app.domain import DEVICE_SOFTWARE_CANONICAL_ATTRIBUTES, DEVICE_SOFTWARE_COMPARABLE_ATTRIBUTES
+from app.domain import (
+    DEVICE_SOFTWARE_CANONICAL_ATTRIBUTES,
+    DEVICE_SOFTWARE_COMPARABLE_ATTRIBUTES,
+    PERSON_CANONICAL_ATTRIBUTES,
+    PERSON_COMPARABLE_ATTRIBUTES,
+)
 from app.routers.scope import DeviceSoftwareAttributes
 
 
@@ -22,3 +27,20 @@ def test_comparable_attributes_is_canonical_minus_last_login_user():
         "last_login_user"
     }
     assert "last_login_user" not in DEVICE_SOFTWARE_COMPARABLE_ATTRIBUTES
+
+
+def test_person_canonical_attributes_is_minimal_and_expected():
+    """No Pydantic schema exists for PERSON attributes (unlike DEVICE's
+    DeviceSoftwareAttributes) -- nothing manually edits a structured PERSON
+    attribute set today, so there's nothing here to drift out of sync with.
+    This just pins the vocabulary itself: exactly email/display_name/
+    username/enabled, no more (see domain.py's own docstring for why)."""
+    assert PERSON_CANONICAL_ATTRIBUTES == {"email", "display_name", "username", "enabled"}
+
+
+def test_person_comparable_attributes_equals_canonical():
+    """Unlike DEVICE_SOFTWARE (which excludes last_login_user), every
+    canonical PERSON attribute is meaningful -- comparable and canonical
+    are the same set today. See domain.py:PERSON_COMPARABLE_ATTRIBUTES'
+    own docstring for why this is still a separate name, not just reuse."""
+    assert PERSON_COMPARABLE_ATTRIBUTES == PERSON_CANONICAL_ATTRIBUTES
