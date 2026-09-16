@@ -36,10 +36,12 @@ from .engine import recompute_sprs
 from .models import (
     Assessment,
     AssessmentObjective,
+    BaselineControl,
     Contact,
     ContactDocumentationRole,
     Control,
     ControlState,
+    ControlStateContributor,
     Evidence,
     EvidenceStateLink,
     EvidenceTask,
@@ -47,6 +49,7 @@ from .models import (
     Finding,
     ImplementationStatement,
     Organization,
+    Product,
     RaciAssignment,
     ScopeEntity,
     SprsSubmission,
@@ -128,17 +131,19 @@ _CSS = (
     # the Boundary column's net content width). Shrunk specifically here.
     ".inv-table .s{padding:.05rem .25rem;font-size:.65rem;letter-spacing:0}"
     # CRM table: same fixed-layout/narrow-padding rationale as .inv-table
-    # above (7 columns here) -- Objective/Description carry most of the
+    # above (8 columns here, since the Tools column was added for
+    # multi-tool coverage) -- Objective/Description/Tools carry most of the
     # width, the four RACI-letter columns and Responsibility stay narrow.
     ".crm-table{table-layout:fixed;font-size:.72rem}"
     ".crm-table th,.crm-table td{padding:.25rem .3rem;word-break:break-word}"
-    ".crm-table th:nth-child(1),.crm-table td:nth-child(1){width:12%}"
-    ".crm-table th:nth-child(2),.crm-table td:nth-child(2){width:28%}"
-    ".crm-table th:nth-child(3),.crm-table td:nth-child(3){width:15%}"
-    ".crm-table th:nth-child(4),.crm-table td:nth-child(4),"
+    ".crm-table th:nth-child(1),.crm-table td:nth-child(1){width:10%}"
+    ".crm-table th:nth-child(2),.crm-table td:nth-child(2){width:24%}"
+    ".crm-table th:nth-child(3),.crm-table td:nth-child(3){width:13%}"
+    ".crm-table th:nth-child(4),.crm-table td:nth-child(4){width:15%}"
     ".crm-table th:nth-child(5),.crm-table td:nth-child(5),"
     ".crm-table th:nth-child(6),.crm-table td:nth-child(6),"
-    ".crm-table th:nth-child(7),.crm-table td:nth-child(7){width:11.25%}"
+    ".crm-table th:nth-child(7),.crm-table td:nth-child(7),"
+    ".crm-table th:nth-child(8),.crm-table td:nth-child(8){width:9.5%}"
     ".crm-table .s-tag{margin-left:0;display:inline-block;margin-top:.15rem}"
     "@media print{body{max-width:100%}a{color:inherit}}"
 )
@@ -272,6 +277,19 @@ class SprsSubmissionSnap:
 
 
 @dataclass
+class ContributorSnap:
+    """One product contributing coverage to an objective at export time --
+    see models.py:ControlStateContributor. Captured into the snapshot like
+    everything else here (BundleSnapshot's own docstring): a bundle is a
+    point-in-time record, and a contributor added to the live assessment
+    after this bundle was generated must never retroactively appear in it."""
+
+    product_key: str
+    product_name: str
+    classification: str
+
+
+@dataclass
 class ObjectiveSnap:
     objective_key: str
     objective_text: str
@@ -281,6 +299,7 @@ class ObjectiveSnap:
     stmt_status: str | None
     evidence: list[EvidenceSnap] = field(default_factory=list)
     raci: list[RaciSnap] = field(default_factory=list)
+    contributors: list[ContributorSnap] = field(default_factory=list)
 
 
 @dataclass
@@ -356,6 +375,7 @@ class CrmRowSnap:
     objective_text: str
     responsibility: str
     assignments: list[RaciSnap] = field(default_factory=list)
+    contributors: list[ContributorSnap] = field(default_factory=list)
 
 
 @dataclass
@@ -927,6 +947,30 @@ def snapshot_bundle(
                 )
             )
 
+    # --- contributors per control state (multi-tool coverage) ---
+    contributors_by_cs: dict[uuid.UUID, list[ContributorSnap]] = {}
+    if all_cs_ids:
+        contrib_rows = session.execute(
+            select(
+                ControlStateContributor.control_state_id,
+                Product.key,
+                Product.name,
+                BaselineControl.classification,
+            )
+            .join(Product, ControlStateContributor.product_id == Product.id)
+            .join(
+                BaselineControl,
+                ControlStateContributor.baseline_control_id == BaselineControl.id,
+            )
+            .where(ControlStateContributor.control_state_id.in_(all_cs_ids))
+        ).all()
+        for cs_id, pkey, pname, classification in contrib_rows:
+            contributors_by_cs.setdefault(cs_id, []).append(
+                ContributorSnap(
+                    product_key=pkey, product_name=pname, classification=classification
+                )
+            )
+
     # Build ControlSnap tree (preserves query order via insertion-ordered dict)
     ctrl_map: dict[str, ControlSnap] = {}
     for row in ctrl_rows:
@@ -952,6 +996,7 @@ def snapshot_bundle(
                 stmt_status=row.stmt_status,
                 evidence=ev_by_cs.get(cs_id, []),
                 raci=raci_by_cs.get(cs_id, []),
+                contributors=contributors_by_cs.get(cs_id, []),
             )
         )
 
@@ -970,6 +1015,7 @@ def snapshot_bundle(
             objective_text=obj.objective_text,
             responsibility=obj.responsibility,
             assignments=obj.raci,
+            contributors=obj.contributors,
         )
         for ctrl in controls
         for obj in ctrl.objectives
@@ -1372,6 +1418,14 @@ def _implementation_body(snapshot: BundleSnapshot) -> str:
                 else "<p class='no-stmt'>No implementation statement drafted.</p>"
             )
 
+            tools_html = ""
+            if obj.contributors:
+                tools_items = ", ".join(_esc(c.product_name) for c in obj.contributors)
+                tools_html = (
+                    f"<p style='font-size:.85rem;color:#4b5563'>"
+                    f"<strong>Tools:</strong> {tools_items}</p>"
+                )
+
             raci_html = ""
             if obj.raci:
                 raci_items = ", ".join(
@@ -1415,7 +1469,7 @@ def _implementation_body(snapshot: BundleSnapshot) -> str:
                 f'<span class="obj-k">[{_esc(obj.objective_key)}]</span>'
                 f" {_esc(obj.objective_text)}"
                 f" {_status_badge(obj.status)}"
-                f"<br>{stmt_html}{raci_html}{ev_html}"
+                f"<br>{stmt_html}{tools_html}{raci_html}{ev_html}"
                 f"</div>"
             )
 
@@ -1560,11 +1614,17 @@ def _crm_body(snapshot: BundleSnapshot) -> str:
             for a in holders
         )
 
+    def _tools_cell(row: CrmRowSnap) -> str:
+        if not row.contributors:
+            return '<span class="no-stmt">—</span>'
+        return "<br>".join(_esc(c.product_name) for c in row.contributors)
+
     body_rows = "".join(
         "<tr>"
         f"<td>{_esc(row.control_id)}[{_esc(row.objective_key)}]</td>"
         f"<td>{_esc(row.objective_text)}</td>"
         f"<td>{_status_badge(row.responsibility)}</td>"
+        f"<td>{_tools_cell(row)}</td>"
         f"<td>{_cell(row, 'R')}</td>"
         f"<td>{_cell(row, 'A')}</td>"
         f"<td>{_cell(row, 'C')}</td>"
@@ -1580,9 +1640,11 @@ def _crm_body(snapshot: BundleSnapshot) -> str:
         "and whether that party is the MSP or the customer — the split "
         "this matrix exists to make explicit. An objective with no "
         "assignment recorded shows &#8212; in every RACI column, not a "
-        "guessed default.</p>"
+        "guessed default. Tools lists every product currently contributing "
+        "coverage to that objective — more than one tool can legitimately "
+        "cover the same objective at once.</p>"
         '<table class="crm-table"><tr><th>Objective</th><th>Description</th>'
-        "<th>Responsibility</th><th>R</th><th>A</th><th>C</th><th>I</th></tr>"
+        "<th>Responsibility</th><th>Tools</th><th>R</th><th>A</th><th>C</th><th>I</th></tr>"
         f"{body_rows}</table>"
     )
 

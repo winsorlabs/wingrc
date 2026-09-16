@@ -206,7 +206,14 @@ def magic_loop_updates(
 
     The DB layer is responsible for:
       - Upserting each result into control_state.
-      - Linking sourced_from_product_id to the activating product.
+      - Recording a control_state_contributor row for the activating
+        product (see that model's docstring) -- possibly alongside other
+        products already contributing to the same objective; see
+        resolve_contributor_responsibility() / contributor_added_status()
+        below for how a control_state with multiple contributors resolves
+        its actual status/responsibility, which this function's own
+        per-product output does NOT attempt (it only ever describes what
+        ONE product's baseline claims in isolation).
       - Creating evidence_task rows from baseline_evidence_specs.
     """
     updates: list[dict] = []
@@ -230,3 +237,58 @@ def magic_loop_updates(
                 }
             )
     return updates
+
+
+def resolve_contributor_responsibility(classifications: list[str]) -> str:
+    """Resolve one control_state.responsibility from the classifications of
+    ALL its current contributors (multiple products can now cover the same
+    objective -- see models.py:ControlStateContributor).
+
+    Rule: 'shared' wins over 'provider_satisfies' whenever both are present
+    -- the weakest (most customer-inclusive) claim governs, not the
+    strongest. Decided explicitly (Jarrod, 2026-09-16) over the alternative
+    (strongest claim wins, i.e. any provider_satisfies contributor clears
+    the objective regardless of what else covers it): if even one
+    contributing product's own baseline mapping says the customer still has
+    a real action item (classification=shared, customer_action populated),
+    that obligation is real and must keep surfacing in the CRM/SSP. Letting
+    a DIFFERENT, unrelated product's provider_satisfies claim silently
+    override it would hide a genuine customer responsibility from the exact
+    document that exists to state responsibilities plainly -- the same
+    conservative-bias principle baseline_import.py's disclaim-flag check
+    already applies to a single product's own text (false positive costs a
+    glance; false negative puts unearned credit in an SSP).
+
+    classifications must be non-empty (a control_state always has at least
+    one contributor by the time this is called) and contain only
+    'provider_satisfies'/'shared' -- customer_owns baseline_control rows
+    are excluded from ever becoming a contributor at the query layer
+    (engine.py:_run_loop), the same filter magic_loop_updates() above
+    already applies for the single-product case.
+    """
+    return (
+        Responsibility.SHARED
+        if "shared" in classifications
+        else Responsibility.PROVIDER_SATISFIES
+    )
+
+
+def contributor_added_status(current_status: str, is_first_contributor: bool) -> str:
+    """Resolve control_state.status when a product is added as a contributor.
+
+    A brand-new (first-ever) contributor sets status=pending_evidence --
+    identical to today's single-product magic-loop behavior. An ADDITIONAL
+    contributor onto an objective that already has one never changes
+    status: adding a second tool's coverage is not a reason to un-verify
+    what a human already confirmed (met stays met; pending_evidence,
+    partial, and needs_review are equally left alone). Before this
+    function existed, engine.py:_run_loop unconditionally overwrote status
+    to pending_evidence on every activation regardless of the objective's
+    current state -- confirmed live on a bench stack (2026-09-16) to
+    silently regress an already-met, evidenced objective back to
+    pending_evidence the moment a second overlapping product activated.
+    This function is what replaces that blind overwrite.
+    """
+    if is_first_contributor:
+        return ControlStatus.PENDING_EVIDENCE
+    return current_status

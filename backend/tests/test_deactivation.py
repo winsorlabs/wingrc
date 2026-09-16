@@ -2,9 +2,12 @@
 
 Deactivation — provenance-based (not status-based):
   - OrgProduct → decommissioned with deactivated_at set
-  - ALL control states with sourced_from_product_id == product → needs_review
-    (pending_evidence, partial, AND met — provenance is the signal, not status)
-  - States with sourced_from_product_id IS NULL (independent) → untouched
+  - ALL control states with a control_state_contributor row for this product →
+    needs_review (pending_evidence, partial, AND met — provenance is the
+    signal, not status). See test_multi_tool_coverage.py for the case where
+    another product still contributes after this one is removed.
+  - States with no control_state_contributor row for this product (independent)
+    → untouched
   - Evidence-state links on ALL tool-sourced states → archived with product pointer
   - Evidence-state links on independent states → NOT archived
   - Open evidence tasks → archived + closed (na)
@@ -50,6 +53,7 @@ from app.models import (
     BaselineEvidenceSpec,
     Control,
     ControlState,
+    ControlStateContributor,
     ControlStateHistory,
     Evidence,
     EvidenceStateLink,
@@ -146,6 +150,16 @@ def _setup(db_session: Session, ref: dict) -> tuple[Assessment, dict]:
     return a, result
 
 
+def _contributor_product_ids(db_session: Session, control_state_id) -> set:
+    return set(
+        db_session.scalars(
+            select(ControlStateContributor.product_id).where(
+                ControlStateContributor.control_state_id == control_state_id
+            )
+        ).all()
+    )
+
+
 @pytest.fixture
 def client(db_session: Session, fake_msp_admin):
     app.dependency_overrides[get_session] = _app_session(db_session)
@@ -191,7 +205,7 @@ def test_deactivate_flips_auto_controls_to_needs_review(db_session: Session, ref
     ).first()
     assert ac_state is not None
     assert ac_state.status == "needs_review"
-    assert ac_state.sourced_from_product_id is None
+    assert _contributor_product_ids(db_session, ac_state.id) == set()
 
 
 def test_deactivate_writes_history_for_auto_controls(db_session: Session, ref: dict):
@@ -237,7 +251,8 @@ def test_deactivate_does_not_touch_customer_owns(db_session: Session, ref: dict)
 def test_deactivate_reverts_tool_sourced_met_to_needs_review(
     db_session: Session, ref: dict
 ):
-    """A state manually marked met still reverts if sourced_from_product_id is set."""
+    """A state manually marked met still reverts if a control_state_contributor
+    row for this product is set."""
     a, _ = _setup(db_session, ref)
 
     ac_state = db_session.scalars(
@@ -247,9 +262,9 @@ def test_deactivate_reverts_tool_sourced_met_to_needs_review(
         )
     ).first()
     assert ac_state is not None
-    assert ac_state.sourced_from_product_id == ref["product"].id
+    assert _contributor_product_ids(db_session, ac_state.id) == {ref["product"].id}
 
-    # Human marks it met — but sourced pointer is still from this product
+    # Human marks it met — but the contributor row is still from this product
     ac_state.status = "met"
     db_session.flush()
 
@@ -257,14 +272,14 @@ def test_deactivate_reverts_tool_sourced_met_to_needs_review(
 
     db_session.refresh(ac_state)
     assert ac_state.status == "needs_review"
-    assert ac_state.sourced_from_product_id is None
+    assert _contributor_product_ids(db_session, ac_state.id) == set()
     assert result["controls_flagged"] == 1
 
 
 def test_deactivate_does_not_touch_independent_met_state(
     db_session: Session, ref: dict
 ):
-    """A state with sourced_from_product_id=None (independent) survives deactivation."""
+    """A state with no control_state_contributor row (independent) survives deactivation."""
     a, _ = _setup(db_session, ref)
 
     # IA is customer_owns — never touched by the magic loop, no sourced pointer
@@ -275,7 +290,7 @@ def test_deactivate_does_not_touch_independent_met_state(
         )
     ).first()
     assert ia_state is not None
-    assert ia_state.sourced_from_product_id is None
+    assert _contributor_product_ids(db_session, ia_state.id) == set()
 
     ia_state.status = "met"
     db_session.flush()
@@ -373,7 +388,7 @@ def test_deactivate_archives_evidence_on_tool_sourced_met_state(
             ControlState.objective_id == ref["ac_obj"].id,
         )
     ).first()
-    ac_state.status = "met"  # sourced_from still points to product
+    ac_state.status = "met"  # control_state_contributor row still points to product
     db_session.flush()
 
     ev = Evidence(

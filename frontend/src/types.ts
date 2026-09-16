@@ -144,6 +144,13 @@ export interface ReviewCycleDetail extends ReviewCycle {
   flags: ReviewCycleFlag[];
 }
 
+export interface Contributor {
+  product_id: string;
+  product_key: string;
+  product_name: string;
+  classification: string;
+}
+
 export interface ControlStateRow {
   id: string;
   objective_id: string;
@@ -155,8 +162,7 @@ export interface ControlStateRow {
   objective_text: string;
   status: string;
   responsibility: string;
-  sourced_from_product_id: string | null;
-  sourced_from_product_key: string | null;
+  contributors: Contributor[];
   statement_status: string | null;
   evidence_count: number;
   sprs_weight: number;

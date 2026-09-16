@@ -259,7 +259,7 @@ def test_list_products_shows_active_after_activate(client, db_session, fake_msp_
 
 @pytest.mark.integration
 def test_control_states_include_product_key_after_activate(client, db_session, fake_msp_admin):
-    """After activation, sourced_from_product_key appears on covered objectives."""
+    """After activation, the activating product appears in `contributors` on covered objectives."""
     d = _seed_rocketcyber(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     client.post(_activate_url(d))
 
@@ -267,10 +267,10 @@ def test_control_states_include_product_key_after_activate(client, db_session, f
     by_ctrl = {row["control_id"] + "[" + row["objective_key"] + "]": row for row in rows}
 
     au = by_ctrl["AU.L2-3.3.1[a]"]
-    assert au["sourced_from_product_key"] == d["product"].key
+    assert [c["product_key"] for c in au["contributors"]] == [d["product"].key]
 
     ia = by_ctrl["IA.L2-3.5.1[a]"]
-    assert ia["sourced_from_product_key"] is None
+    assert ia["contributors"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +304,7 @@ def test_activate_rocketcyber_au_pending_evidence_not_met(client, db_session, fa
         f"AU objective must be pending_evidence after activation, got {au['status']!r}"
     )
     assert au["responsibility"] == "provider_satisfies"
-    assert au["sourced_from_product_key"] == d["product"].key
+    assert [c["product_key"] for c in au["contributors"]] == [d["product"].key]
     assert au["status"] != "met", "Activation must never produce 'met' — evidence required first"
 
 
@@ -328,8 +328,8 @@ def test_activate_rocketcyber_ia_family_untouched(client, db_session, fake_msp_a
     assert ia["responsibility"] == "customer_owns", (
         f"IA responsibility must stay customer_owns, got {ia['responsibility']!r}"
     )
-    assert ia["sourced_from_product_key"] is None, (
-        "IA objective must have no product source — RocketCyber does not own IA"
+    assert ia["contributors"] == [], (
+        "IA objective must have no product contributor — RocketCyber does not own IA"
     )
 
 
@@ -442,8 +442,8 @@ def test_platform_only_controls_excluded_from_activation(client, db_session, fak
     assert ac["responsibility"] == "customer_owns", (
         f"platform_only control must stay customer_owns, got {ac['responsibility']!r}"
     )
-    assert ac["sourced_from_product_key"] is None, (
-        "platform_only control must have no product source"
+    assert ac["contributors"] == [], (
+        "platform_only control must have no product contributor"
     )
 
 

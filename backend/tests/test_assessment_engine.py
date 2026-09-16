@@ -18,7 +18,9 @@ from app.assessment import (
     ControlStatus,
     Responsibility,
     compute_sprs,
+    contributor_added_status,
     magic_loop_updates,
+    resolve_contributor_responsibility,
 )
 
 # ---------------------------------------------------------------------------
@@ -289,6 +291,79 @@ def test_magic_loop_result_contains_required_keys():
     assert "status" in u
     assert "responsibility" in u
     assert u["objective_id"] == "obj-au-a"
+
+
+# ---------------------------------------------------------------------------
+# resolve_contributor_responsibility: multi-tool coverage responsibility
+# ---------------------------------------------------------------------------
+
+
+def test_single_provider_satisfies_contributor_stays_provider_satisfies():
+    assert (
+        resolve_contributor_responsibility(["provider_satisfies"])
+        == Responsibility.PROVIDER_SATISFIES
+    )
+
+
+def test_single_shared_contributor_stays_shared():
+    assert resolve_contributor_responsibility(["shared"]) == Responsibility.SHARED
+
+
+def test_mixed_contributors_resolve_to_shared_weakest_wins():
+    """Jarrod's explicit decision (2026-09-16): a real customer_action
+    recorded by ANY contributing product must never be silently hidden
+    because a different product's mapping claims full coverage."""
+    assert (
+        resolve_contributor_responsibility(["provider_satisfies", "shared"])
+        == Responsibility.SHARED
+    )
+    assert (
+        resolve_contributor_responsibility(["shared", "provider_satisfies"])
+        == Responsibility.SHARED
+    )
+
+
+def test_all_provider_satisfies_contributors_stay_provider_satisfies():
+    assert (
+        resolve_contributor_responsibility(
+            ["provider_satisfies", "provider_satisfies", "provider_satisfies"]
+        )
+        == Responsibility.PROVIDER_SATISFIES
+    )
+
+
+# ---------------------------------------------------------------------------
+# contributor_added_status: status must not regress
+# ---------------------------------------------------------------------------
+
+
+def test_first_contributor_sets_pending_evidence():
+    assert (
+        contributor_added_status("not_met", is_first_contributor=True)
+        == ControlStatus.PENDING_EVIDENCE
+    )
+
+
+def test_additional_contributor_never_regresses_met():
+    """The exact regression confirmed live on a bench stack before this
+    function existed: a second overlapping product's activation used to
+    silently flip an already-met, evidenced objective back to
+    pending_evidence."""
+    assert contributor_added_status("met", is_first_contributor=False) == "met"
+
+
+def test_additional_contributor_never_regresses_needs_review():
+    assert (
+        contributor_added_status("needs_review", is_first_contributor=False)
+        == "needs_review"
+    )
+
+
+def test_additional_contributor_leaves_pending_evidence_alone():
+    assert (
+        contributor_added_status("pending_evidence", is_first_contributor=False)
+        == "pending_evidence"
+    )
 
 
 # ---------------------------------------------------------------------------
