@@ -4021,6 +4021,162 @@ either.
 
 ---
 
+### Multi-tool coverage: let multiple products satisfy the same control ✅ DONE (2026-09-16)
+
+Real case: Jarrod's four Kaseya products (Datto RMM, IT Glue, RocketCyber,
+SaaS Alerts) overlap by design on access control, logging, and system
+integrity — more than one tool legitimately covers the same objective, and
+he does not want that blocked.
+
+**§0 — observed today's actual behavior first, on a bench stack, before
+designing anything.** `control_state.sourced_from_product_id` could only
+ever name one product. Confirmed live: activating a second product that
+covers an objective already `met` with attached evidence **silently
+regressed it back to `pending_evidence`**, overwrote `responsibility` with
+no merge (last activation wins, full stop), and overwrote
+`sourced_from_product_id` — the first product's contribution vanished from
+the record entirely. Deactivation was worse: it only ever acted on
+whichever product `sourced_from_product_id` currently named, so
+deactivating the *first*-activated of two overlapping products did
+**nothing at all** — not even a review flag — while the control kept
+showing `pending_evidence` attributed to a product that was, by then, the
+only one still actually active. This was the live, undocumented behavior
+for every overlapping product before this slice.
+
+**The model.** New `control_state_contributor` join table (`control_state_id`,
+`product_id`, `baseline_control_id`, `created_at`, unique on
+`(control_state_id, product_id)`) records every product currently
+contributing coverage. `baseline_control_id` is the live answer to "why
+does this product cover this control" — a real FK to the justifying row
+(classification, provider_contribution, customer_action, note), not a
+denormalized snapshot, so an edit to that baseline text via the
+edit-baseline-mapping tool is reflected immediately, not frozen at
+activation time.
+
+`sourced_from_product_id` is **retired, not kept as a denormalized
+"primary."** Every real consumer (the assessment-board badge, the CRM/
+bundle export, deactivation's provenance check) was rewritten to want
+either "all current contributors" or "is product X a contributor" — none
+needed a single "primary," and keeping the column would have meant
+inventing an arbitrary tiebreak rule with no actual use. That is exactly
+the "populated but meaningless" trap worth avoiding rather than
+accumulating.
+
+**Migration 0052** creates the table, backfills every existing
+`sourced_from_product_id` into one contributor row (matched via
+`baseline_control.objectives @> objective_key`, the same JSONB
+containment the read path already used to resolve a product's key for
+display), then drops the column. The backfill counts its own INSERTs
+against the source row count and **raises, rolling back the whole
+migration transaction**, on any mismatch rather than silently dropping an
+orphan — verified this is not just a theoretical safety net: a read-only
+query against wl-util-1's real data beforehand confirmed all 28 existing
+`sourced_from_product_id` rows (all Acme MSP, RocketCyber + Datto RMM)
+matched a `baseline_control` cleanly, zero orphans. Deployed live: the
+migration ran clean (no raise), and a post-deploy query confirmed exactly
+28 `control_state_contributor` rows, matching pre-migration data
+row-for-row.
+
+**§3 decisions:**
+
+1. **Responsibility conflict — Jarrod's explicit call**, asked directly
+   rather than guessed at (the ticket flagged this as genuinely two-sided):
+   when contributors disagree, the **weakest** (most customer-inclusive)
+   classification wins — `shared` beats `provider_satisfies` whenever both
+   are present. Rationale: if even one contributing product's own baseline
+   mapping says the customer still has a real `customer_action`, that
+   obligation is real and must keep surfacing in the CRM/SSP; letting a
+   different, unrelated product's `provider_satisfies` claim silently
+   override it would hide a genuine customer responsibility from the exact
+   document that exists to state responsibilities plainly. Same
+   conservative-bias principle as the disclaim-flag check from the
+   previous slice (false positive costs a glance; false negative puts
+   unearned credit in an SSP). Implemented as
+   `assessment.py:resolve_contributor_responsibility()`, recomputed on
+   every contributor add/remove from whichever contributors remain.
+2. **Evidence tasks — no code change needed.** Checked what the current
+   code actually does before proposing anything: `routers/evidence.py`'s
+   own module docstring already states no endpoint here ever modifies
+   `control_state.status` — evidence sufficiency has always been a pure
+   human judgment call, gated by nothing, for a single product exactly as
+   much as for many. `EvidenceTaskStateLink` is already many-to-many, so
+   every contributing product's own evidence tasks already appear
+   together against one control_state with zero changes required.
+3. **SPRS scoring — verified unaffected, not just assumed.**
+   `assessment.py:compute_sprs()` reads only per-objective `status`, never
+   `responsibility` or contributor count — provably unaffected by
+   construction. Confirmed directly with an integration test activating
+   the same objective via one contributor vs. three and asserting an
+   identical SPRS score.
+
+**Behavior:**
+- Adding a contributor to an objective that already has one **never
+  regresses status** (`assessment.py:contributor_added_status()`) — a
+  `met`, evidenced objective stays `met` when a second overlapping product
+  activates; this is the exact regression §0 confirmed live before the
+  fix. The new contributor row is still recorded and `responsibility`
+  still recomputes.
+- Deactivating one of several contributors — **Jarrod's explicit
+  decision**: the control falls to `needs_review` regardless of whether
+  another product still covers it (losing a tool is exactly when a
+  coverage claim deserves a second look), matching the exact reasoning
+  `activate_org_product`'s reactivation-evidence path already uses
+  ("re-confirm coverage is still current"). The surviving contributor(s)
+  stay recorded, `responsibility` is recomputed from them, and
+  `control_state_history.change_reason` names both the departing and
+  surviving product(s) by name so a reviewer can see which tool actually
+  went away.
+- Deactivating the **last** contributor keeps today's exact pre-existing
+  behavior, confirmed rather than assumed: `needs_review`, with
+  `responsibility` left completely unchanged (not reset to
+  `customer_owns`) — this was already true before this slice and is
+  preserved byte-for-byte.
+- **Known, deliberately unfixed limitation**: evidence-state-link
+  archival on deactivation remains all-or-nothing per `control_state`,
+  not scoped to which product's evidence it is (pre-existing behavior,
+  unchanged). A state with two contributors has ALL its evidence archived
+  if EITHER one deactivates, which can archive evidence that actually
+  supports the surviving contributor. Fixing this needs evidence-to-
+  product provenance tracking — a genuinely new capability, out of scope
+  for "record and reconcile multiple contributors." Flagged here
+  deliberately rather than silently left for the next person to discover.
+
+**Visibility:** the assessment board shows every contributing product's
+badge per objective (`ObjectiveRow.tsx`, was a single badge). The CRM
+export gained a **Tools** column listing every contributing product per
+objective; the SSP's per-objective Implementation Statements view gained
+a "Tools:" line alongside RACI. Both are captured into `BundleSnapshot` at
+export time like everything else there — verified with a regression test
+that a contributor added to a *different* assessment's control_state
+never leaks into another assessment's bundle.
+
+**Bench-verified** on an isolated `wingrc_verify_multitool` stack (live
+`wingrc` project confirmed running, untouched, before and after):
+**1203/1203** backend tests (16 new — 8 pure-function tests for the two
+new `assessment.py` functions, 9 integration tests in the new
+`test_multi_tool_coverage.py`, 3 new bundle-contributor tests — some
+overlap across files), `ruff check .` clean, **139/139** vitest, `tsc -b`
+clean, `vite build` clean.
+
+**Deployed** 2026-09-16 per `docs/deployment.md` §7 with `--no-deps` and a
+pre-deploy backup (§7a — this migration touches `control_state`): backup
+verified (446 TOC entries) before `backend`/`worker`/`nginx` were rebuilt
+and recreated; `db`/`minio` confirmed untouched; migration 0052 applied
+clean (no raise); live query confirmed exactly 28 contributor rows,
+matching the pre-migration count and content exactly; a live browser
+walkthrough against `https://dev.wingrc.us` confirmed the assessment
+board renders RocketCyber's contributor badge correctly on AU.L2-3.3.1's
+objectives against the real migrated data.
+
+**Explicitly not started, per this slice's own scope boundary**: AI
+research of vendor platform documentation (needs provenance/fetch-safety/
+cost design, next slice) and any change to how the magic loop decides
+coverage in the first place (this slice is about recording and
+reconciling multiple contributors, not about changing what counts as
+coverage) — no placeholders or partial scaffolding added for either.
+
+---
+
 ## Planned
 
 ### N. Document Library
