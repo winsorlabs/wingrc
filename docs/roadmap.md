@@ -3808,6 +3808,118 @@ Items without a status are planned but not yet started.
   30 baseline_control/33 evidence_spec rows afterward (`product_document`
   cascades from `product` on delete, confirmed no orphaned row survived).
 
+- **Edit an existing product's baseline mapping; add control rows; wider
+  review table** (2026-09-16). Direct follow-on ask: "update/edit the
+  Baseline Mapping after import," "add additional lines/controls if
+  needed," and the review table using more of the screen with a
+  reachable scrollbar.
+
+  **Edit entry point — zero new backend endpoints.** `ToolDetailPanel.tsx`
+  gained an "Edit Baseline Mapping" button that opens `ToolImportWizard`
+  with a new `editProductId` prop: on mount it fetches the product's
+  current mapping (the same `GET /admin/products/{id}` `ToolDetailPanel`
+  already used), transforms it into the identical draft shape the AI-
+  ingestion path produces, and immediately posts it to the existing
+  `dry-run-structured` endpoint to get a real validated preview before
+  showing the table — the exact same Re-check/Apply machinery, no new
+  write path. The `key` field is read-only while editing (`_seed_product`
+  upserts by key; an accidental edit there would silently retarget Apply
+  at a different product). A known, accepted limitation: multi-control
+  batch grouping (`batch_group_id`) isn't recoverable from the read model
+  and is dissolved on a round trip through this screen — cosmetic only,
+  nothing currently renders that grouping anyway.
+
+  **"+ Add control"** appends a blank row (both entry points, since they
+  share one table). Required a real backend fix to support safely:
+  `build_preview()` used to only render a row for entries whose `control`
+  field was *already* valid, so a still-blank added row would silently
+  vanish the moment Re-check ran. It now renders a row for every dict-
+  shaped entry regardless, with its own "control id required" flag
+  attached — confirmed live (see below) rather than just in tests.
+  Deliberately no row-removal in this slice: removing an *already-applied*
+  row wouldn't actually delete anything (`_seed_product` has no
+  delete/tombstone mechanism at all, confirmed by reading it start to
+  finish), so offering a remove button would silently lie about what it
+  does; not asked for here either way.
+
+  **A real bug this slice's own new regression test caught, not just
+  inspection:** `_seed_product`'s evidence-spec handling was changed from
+  unconditional delete-and-replace to content-based matching (an
+  unchanged spec keeps its row — and any `EvidenceTask.baseline_spec_id`
+  already pointing at it — instead of that link being severed on every
+  apply regardless of whether anything changed). Implementing this
+  surfaced a genuine, pre-existing production bug: `/admin/products/
+  import/apply` runs under the RLS-enforced `wingrc_app` role with no
+  `app.current_org` set (the baseline library is deployment-wide, never
+  org-scoped), and `evidence_task` IS org-scoped/RLS-protected — a bare
+  ORM `UPDATE evidence_task SET baseline_spec_id = NULL WHERE ...` under
+  that role silently matched zero rows, invisible to a plain SELECT too,
+  while Postgres's FK constraint check on the following DELETE still saw
+  the real row and correctly rejected it with an `IntegrityError`. This
+  was already latent in the *original* delete-and-replace code (same bare
+  UPDATE shape) — no existing test before this slice combined "a real
+  `EvidenceTask` exists" with "re-import that product through the actual
+  admin endpoint" in one case, so it never surfaced. Fixed with migration
+  `0051_null_task_spec_ref_secdef` — `auth.null_evidence_task_baseline_
+  spec_refs(uuid[])`, a SECURITY DEFINER function matching `auth.expire_
+  stale_invites()`/`auth.mark_sprs_reminder_sent()`'s established
+  precedent exactly (0042/0044): never a blanket RLS bypass, one
+  purpose-built cross-org function for the one operation that needs it.
+  Also hit, and fixed forward before merging: a 39-character revision id
+  broke the `alembic_version` table's 32-char column — the exact same
+  failure class `docs/bench-stack-verification.md`'s own opening
+  paragraph already names as a real bug this workflow has caught before.
+
+  **Wider modal + reachable scrollbar.** New `.wizard--wide` CSS modifier
+  (not a change to the shared `.wizard` class the other four wizard
+  components use) widens this one modal to `min(1400px, 95vw)`. Confirmed
+  via research before building it that no CSS-only way exists in any
+  current browser to pin a container's own `overflow-x` scrollbar to a
+  fixed position independent of the container's actual height — a native
+  scrollbar isn't a repositionable DOM node. Built the standard real-world
+  workaround instead: a slim `position: sticky; bottom: 0` strip inside
+  `.wizard-body` (so it tracks the visible scroll viewport, not the bottom
+  of the — possibly 20+-row — table) whose `scrollLeft` is mirrored both
+  ways with the real table wrapper via `onScroll` handlers, rendered only
+  when the table is actually overflowing.
+
+  **Bench-verified** on an isolated `wingrc_verify_editmap` stack (live
+  `wingrc` project confirmed running, untouched, before and after):
+  **1168/1168** backend tests (3 new — the RLS/evidence-FK fix's two
+  cases, the blank-row-survives-Re-check case), ruff clean, migration
+  chain (`upgrade → downgrade → upgrade`) clean, **138/138** vitest (2
+  new — edit-mode loads pre-validated with `key` read-only, a newly-added
+  blank row survives Re-check flagged instead of vanishing), `tsc -b`
+  clean, `vite build` clean.
+
+  **Deployed** 2026-09-16 per `docs/deployment.md` §7 with `--no-deps` —
+  this slice carries a migration (new function only, no data touched), so
+  §7a's backup ran first and was verified (444 TOC entries) before
+  `backend`/`worker`/`nginx` were rebuilt and recreated; `db`/`minio`
+  confirmed untouched; the new `auth.null_evidence_task_baseline_spec_
+  refs` function confirmed present live via `\df`.
+
+  **Verified live, through nginx, in a real browser.** Opened the real,
+  published, actively-used RocketCyber product (Acme MSP has it active) —
+  confirmed the edit screen loads pre-populated, already clean, with the
+  live affected-org warning showing and the `key` field genuinely
+  disabled — then deliberately backed out **without saving**, since this
+  is real production data a live org depends on, not a throwaway. Built a
+  separate, real throwaway product (`editflowtest`, via a plain YAML
+  upload — one control, one evidence spec, no org ever activated it) to
+  safely exercise the actual save path: edited the note field, clicked
+  "+ Add control," clicked Re-check with the new row still blank and
+  confirmed it stayed visible flagged (not silently dropped) exactly as
+  designed, filled in a real second control id, Re-checked clean, Save
+  Changes, confirmed via a live query that both the edited note and the
+  new second control landed, that the original (unchanged-content)
+  evidence spec kept a stable row, and that the product was correctly
+  force-unpublished. Deleted the throwaway product and its 2 baseline_
+  control/1 evidence_spec rows afterward. Noted along the way — and left
+  alone, since it's real, current work, not test debris — a `datto-rmm`
+  product already unpublished in the library from Jarrod's own earlier
+  session testing the ingestion tool against his real Datto RMM document.
+
 ---
 
 ## Planned
