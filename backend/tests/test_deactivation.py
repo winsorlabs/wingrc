@@ -251,7 +251,8 @@ def test_deactivate_does_not_touch_customer_owns(db_session: Session, ref: dict)
 def test_deactivate_reverts_tool_sourced_met_to_needs_review(
     db_session: Session, ref: dict
 ):
-    """A state manually marked met still reverts if a control_state_contributor row for this product is set."""
+    """A state manually marked met still reverts if a control_state_contributor
+    row for this product is set."""
     a, _ = _setup(db_session, ref)
 
     ac_state = db_session.scalars(

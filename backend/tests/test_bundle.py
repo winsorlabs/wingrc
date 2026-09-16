@@ -1382,7 +1382,9 @@ def _seed_contributor(db_session, *, org, ctrl, cs, product_key: str, classifica
     db_session.add(bc)
     db_session.flush()
     db_session.add(
-        ControlStateContributor(control_state_id=cs.id, product_id=product.id, baseline_control_id=bc.id)
+        ControlStateContributor(
+            control_state_id=cs.id, product_id=product.id, baseline_control_id=bc.id
+        )
     )
     db_session.flush()
     return product

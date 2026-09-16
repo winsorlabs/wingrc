@@ -38,10 +38,8 @@ from sqlalchemy.orm import Session
 
 from app.engine import activate_org_product, deactivate_org_product, start_assessment
 from app.models import (
-    Assessment,
     AssessmentObjective,
     BaselineControl,
-    BaselineEvidenceSpec,
     Control,
     ControlState,
     ControlStateContributor,

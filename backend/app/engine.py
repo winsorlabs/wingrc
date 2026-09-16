@@ -774,7 +774,10 @@ def _run_loop(
                 ControlStateContributor.product_id,
                 BaselineControl.classification,
             )
-            .join(BaselineControl, ControlStateContributor.baseline_control_id == BaselineControl.id)
+            .join(
+                BaselineControl,
+                ControlStateContributor.baseline_control_id == BaselineControl.id,
+            )
             .where(ControlStateContributor.control_state_id.in_(cs_ids))
         ).all():
             contributors_by_cs.setdefault(cs_id, []).append((contrib_product_id, classification))
@@ -1045,7 +1048,10 @@ def deactivate_org_product(
                 BaselineControl.classification,
                 Product.name,
             )
-            .join(BaselineControl, ControlStateContributor.baseline_control_id == BaselineControl.id)
+            .join(
+                BaselineControl,
+                ControlStateContributor.baseline_control_id == BaselineControl.id,
+            )
             .join(Product, ControlStateContributor.product_id == Product.id)
             .where(ControlStateContributor.control_state_id.in_(sourced_state_ids))
         ).all():
