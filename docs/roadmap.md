@@ -3922,6 +3922,105 @@ Items without a status are planned but not yet started.
 
 ---
 
+### WINGRC_PUBLIC_URL wiring, AI-classification disclaim flag, PERSON reconcile vocabulary ✅ DONE (2026-09-16)
+
+Three-part slice, landed together.
+
+**1. `WINGRC_PUBLIC_URL` was never actually wired into `docker-compose.yml`**
+despite `config.py`'s `Settings.public_url` field already existing —
+confirmed via grep before this slice returning nothing. Added to the
+shared `x-backend-env` anchor (`${WINGRC_PUBLIC_URL:-}`) so both `backend`
+and `worker` see it (the worker is what actually sends review-cycle/SPRS-
+reminder notifications). Documented in `docs/deployment.md`. Set live to
+`https://dev.wingrc.us` on wl-util-1 and verified end-to-end: forced a
+`review_cycle_sweep` run (`app.scheduler._review_cycle_sweep`, called
+directly rather than waiting on its 24h due-window) against real cycle
+`b327e64c-75c9-4651-ab83-e6a321822e4d` — both reviewers, including the
+external Gmail address that can't resolve an in-house hostname (known/
+accepted, not designed around), now show a populated `notified_at` and a
+cleared `notification_error`, confirming the whole notification chain
+works with a real public URL configured.
+
+**2. Disclaim-flag check** (`baseline_import.py:_disclaims_coverage()` /
+`DisclaimFlag`) — a deterministic, post-AI, code-enforced check, same
+pattern as the existing evidence-minimization rules. Motivated by a real
+case: RocketCyber ingestion classified `AC.L2-3.1.8` and `CM.L2-3.4.2` as
+`shared` while the model's own note said Kaseya "explicitly states it does
+not implement/enforce" them — should've been `customer_owns`. A human
+caught it in review; this makes that catch systematic. Scans `note`,
+`provider_contribution`, `customer_action`, and `scope_note` (whichever
+exist) for disclaim language against `_DISCLAIM_PHRASES`, a module-level,
+commented, deliberately over-inclusive constant (a false positive costs a
+glance; a false negative puts unearned credit in an SSP) — **expected to
+grow** as more real ingestion runs surface phrasings it misses. Flags any
+`shared`/`provider_satisfies` row whose own text reads as a disclaim;
+**never auto-reclassifies** — advisory only, kept structurally separate
+from `row_problems`/`ValidationProblem` (which block Apply). Re-tested
+against the real RocketCyber wording that motivated this (both known
+phrasings), confirmed a correctly-classified `customer_owns` row with
+disclaim language does NOT flag, and confirmed a real `shared` row's
+ordinary (non-disclaiming) text does NOT flag. Frontend: reordered the
+review table so `Note`/`Provider contribution`/`Customer action`/`Scope
+note` sit immediately after `Classification` (supporting text next to the
+decision it supports), flagged rows get an amber `.disclaim-flag-row`
+style distinct from the red `needs-decision` style — no confidence score,
+nothing inviting a reviewer to skip the glance.
+
+**3. PERSON reconcile vocabulary** — closes the noise gap DEVICE/SOFTWARE
+already had fixed (`domain.py:DEVICE_SOFTWARE_COMPARABLE_ATTRIBUTES`);
+PERSON previously compared every attribute key with no allowlist at all
+(`importers/liongard.py` had explicitly called a canonical vocabulary out
+of scope for D.2). Defined `domain.py:PERSON_CANONICAL_ATTRIBUTES` —
+**`email`, `display_name`, `username`, `enabled`**, deliberately minimal —
+derived from the same real-tenant field-reliability data already recorded
+in `identity_to_contact_fields()`'s docstring (Goodwin-Bradley, 24
+identities, 100% Email/Name coverage). **Treated as telemetry and
+deliberately left un-canonicalized** (not canonicalized-then-excluded like
+DEVICE's `last_login_user`): `AccountActivity`, `LastLogin`, `LastSeen` —
+nothing downstream reads a canonical "last active" value for a person, so
+there's nothing to preserve by canonicalizing them at all.
+`importers/liongard.py:identity_to_canonical()` now maps raw Liongard
+identity fields onto this vocabulary (`enabled` checked via `is not None`,
+not truthy — `enabled=False` is a real, meaningful value, and a truthy
+check would silently drop every disabled identity's status) and warns on
+unrecognized fields, mirroring the device path's existing safety net.
+Added `test_domain_attribute_vocabulary.py` coverage pinning the vocabulary
+itself (no PERSON-equivalent Pydantic schema exists to sync against, unlike
+`DeviceSoftwareAttributes` — confirmed by grep, nothing to drift).
+
+**Live PERSON path remains unexercised** — WinsorLabs has zero identities
+in Inventory state today, so this can only be bench-verified, not confirmed
+against a real sync. Bench-verified thoroughly instead: two pulls differing
+only in volatile/non-canonical fields reconcile to `UNCHANGED`
+(`test_person_telemetry_only_drift_reconciles_to_unchanged`,
+`test_person_non_canonical_raw_field_change_alone_reconciles_to_unchanged`),
+and a real change to each of the four canonical attributes individually
+still reports `CHANGED`
+(`test_person_real_change_to_each_meaningful_attribute_reports_changed`,
+parametrized, `enabled` case specifically toggling True→False to catch the
+`is not None`-vs-truthy bug class). Device/software reconcile behavior is
+unaffected (same allowlist, untouched).
+
+**Bench-verified** on an isolated `wingrc_verify_0916` stack (live `wingrc`
+project confirmed running, untouched, before and after): **1183/1183**
+backend tests, `ruff check .` clean, **139/139** vitest, `tsc -b` clean,
+`vite build` clean.
+
+**Deployed** 2026-09-16 per `docs/deployment.md` §7 with `--no-deps` — no
+migration in this slice (env var + code-only), so no backup step was
+needed; `backend`/`worker`/`nginx` rebuilt and recreated, `db`/`minio`
+confirmed untouched, `WINGRC_PUBLIC_URL` confirmed present via `printenv`
+in both `backend` and `worker` post-deploy.
+
+**Explicitly not started, per this slice's own scope boundary**: real
+multi-tool coverage per control (needs a `control_state` data-model
+change) and AI research of vendor platform documentation (needs
+provenance/fetch-safety/cost design) — both deliberately deferred to their
+own future slices, no placeholders or partial scaffolding added for
+either.
+
+---
+
 ## Planned
 
 ### N. Document Library
