@@ -71,14 +71,15 @@ export function ObjectiveRow({ row, orgId, assessmentId, canWrite, onStatusChang
       <span className="obj-key">[{row.objective_key}]</span>
       <span className="obj-text">{row.objective_text}</span>
       <span className="obj-badges">
-        {row.sourced_from_product_key && (
+        {row.contributors.map((c) => (
           <span
-            className={`source-badge source-badge-${row.responsibility === "shared" ? "shared" : "provider"}`}
-            title={`Sourced from ${row.sourced_from_product_key}`}
+            key={c.product_id}
+            className={`source-badge source-badge-${c.classification === "shared" ? "shared" : "provider"}`}
+            title={`${c.product_name} (${c.classification === "shared" ? "shared" : "provider satisfies"})`}
           >
-            {row.sourced_from_product_key}
+            {c.product_key}
           </span>
-        )}
+        ))}
         <span className="status-picker" ref={dropdownRef}>
           <button
             className={`badge ${badgeClass} badge-btn${saving ? " badge-saving" : ""}`}

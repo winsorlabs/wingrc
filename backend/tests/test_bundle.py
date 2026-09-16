@@ -38,15 +38,18 @@ from app.main import app
 from app.models import (
     AssessmentObjective,
     AuditLog,
+    BaselineControl,
     Contact,
     ContactDocumentationRole,
     Control,
     ControlState,
+    ControlStateContributor,
     Evidence,
     EvidenceStateLink,
     Framework,
     ImplementationStatement,
     Organization,
+    Product,
     RaciAssignment,
     ScopeEntity,
     SystemDescription,
@@ -1358,3 +1361,103 @@ def test_bundle_crm_in_pdf_toc(client, db_session, storage, fake_msp_admin):
 
     assert pdf_bytes_after[:5] == b"%PDF-"
     assert len(pdf_bytes_after) > len(pdf_bytes_before)
+
+
+# ---------------------------------------------------------------------------
+# Multi-tool coverage: contributors captured into the bundle snapshot
+# ---------------------------------------------------------------------------
+
+
+def _seed_contributor(db_session, *, org, ctrl, cs, product_key: str, classification: str):
+    product = Product(
+        framework_id=ctrl.framework_id, key=product_key, name=f"Tool {product_key}",
+        provider="Vendor", category="ESP", asset_type="SPA", role="test", is_published=True,
+    )
+    db_session.add(product)
+    db_session.flush()
+    bc = BaselineControl(
+        product_id=product.id, control_id=ctrl.id, objectives=["a"],
+        classification=classification, candidate_state="pending_evidence",
+    )
+    db_session.add(bc)
+    db_session.flush()
+    db_session.add(
+        ControlStateContributor(control_state_id=cs.id, product_id=product.id, baseline_control_id=bc.id)
+    )
+    db_session.flush()
+    return product
+
+
+@pytest.mark.integration
+def test_bundle_crm_lists_every_contributing_tool(client, db_session, storage, fake_msp_admin):
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    _seed_contributor(
+        db_session, org=d["org"], ctrl=d["ctrl"], cs=d["cs_a"],
+        product_key="rocketcyber", classification="shared",
+    )
+    _seed_contributor(
+        db_session, org=d["org"], ctrl=d["ctrl"], cs=d["cs_a"],
+        product_key="datto-rmm", classification="provider_satisfies",
+    )
+
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        html = _crm_html(zf)
+
+    assert "Tool rocketcyber" in html
+    assert "Tool datto-rmm" in html
+
+
+@pytest.mark.integration
+def test_bundle_implementation_statements_show_contributing_tools(
+    client, db_session, storage, fake_msp_admin
+):
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    _seed_contributor(
+        db_session, org=d["org"], ctrl=d["ctrl"], cs=d["cs_a"],
+        product_key="rocketcyber", classification="shared",
+    )
+
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        name = next(n for n in zf.namelist() if n.endswith("02_implementation.html"))
+        html = zf.read(name).decode()
+
+    assert "Tool rocketcyber" in html
+
+
+@pytest.mark.integration
+def test_bundle_does_not_show_contributors_added_to_a_different_assessment(
+    client, db_session, storage, fake_msp_admin
+):
+    """A contributor recorded against one assessment's control_state must
+    never leak into a different assessment's bundle -- point-in-time
+    snapshot integrity per objective, not per org."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+
+    # A second, separate assessment for the SAME org/control -- gets its
+    # own fresh control_state rows (independent from d["cs_a"]).
+    second_assessment = start_assessment(
+        db_session, org_id=d["org"].id, framework_id=d["fw"].id, name="Q2 Self-Assessment"
+    )
+    db_session.flush()
+    second_cs_a = db_session.scalars(
+        select(ControlState).where(
+            ControlState.assessment_id == second_assessment.id,
+            ControlState.objective_id == d["obj_a"].id,
+        )
+    ).first()
+    _seed_contributor(
+        db_session, org=d["org"], ctrl=d["ctrl"], cs=second_cs_a,
+        product_key="only-on-second-assessment", classification="shared",
+    )
+
+    # Export the FIRST (original) assessment's bundle.
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        html = _crm_html(zf)
+
+    assert "only-on-second-assessment" not in html

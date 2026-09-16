@@ -33,7 +33,9 @@ from .assessment import (
     OrgProductStatus,
     Responsibility,
     compute_sprs,
+    contributor_added_status,
     magic_loop_updates,
+    resolve_contributor_responsibility,
 )
 from .audit import log_event
 from .models import (
@@ -44,6 +46,7 @@ from .models import (
     Contact,
     Control,
     ControlState,
+    ControlStateContributor,
     ControlStateHistory,
     EvidenceStateLink,
     EvidenceTask,
@@ -728,7 +731,16 @@ def _run_loop(
         if bc.control_id in ctrl_uuid_to_str
     ]
 
-    # --- pure function ---
+    # bc has at most one row per control_id for this product (DB unique
+    # constraint uq_baseline_control_identity on (product_id, control_id)),
+    # so this lookup is always unambiguous.
+    bc_by_control_str: dict[str, BaselineControl] = {
+        ctrl_uuid_to_str[bc.control_id]: bc
+        for bc in baseline_controls
+        if bc.control_id in ctrl_uuid_to_str
+    }
+
+    # --- pure function: what THIS product's own baseline claims ---
     updates = magic_loop_updates(entries, objective_lookup)
     if not updates:
         return {"objectives_updated": 0, "tasks_created": 0}
@@ -744,9 +756,32 @@ def _run_loop(
             )
         ).all()
     }
+    obj_id_to_control_str: dict[uuid.UUID, str] = {
+        obj.id: ctrl_uuid_to_str[obj.control_id]
+        for obj in objectives
+        if obj.control_id in ctrl_uuid_to_str
+    }
+
+    # --- pre-load EVERY current contributor (any product) for these
+    # control_states, so a new contributor's status/responsibility can be
+    # resolved against the full set, not just this product's own claim.
+    cs_ids = [cs.id for cs in existing_states.values()]
+    contributors_by_cs: dict[uuid.UUID, list[tuple[uuid.UUID, str]]] = {}
+    if cs_ids:
+        for cs_id, contrib_product_id, classification in session.execute(
+            select(
+                ControlStateContributor.control_state_id,
+                ControlStateContributor.product_id,
+                BaselineControl.classification,
+            )
+            .join(BaselineControl, ControlStateContributor.baseline_control_id == BaselineControl.id)
+            .where(ControlStateContributor.control_state_id.in_(cs_ids))
+        ).all():
+            contributors_by_cs.setdefault(cs_id, []).append((contrib_product_id, classification))
 
     # --- apply updates + write history ---
     history_rows: list[ControlStateHistory] = []
+    new_contributor_rows: list[ControlStateContributor] = []
     objectives_updated = 0
 
     for upd in updates:
@@ -755,25 +790,49 @@ def _run_loop(
         if state is None:
             continue
 
+        bc = bc_by_control_str.get(obj_id_to_control_str.get(obj_id, ""))
+        if bc is None:
+            continue
+
+        current_contributors = contributors_by_cs.get(state.id, [])
+        if any(pid == product_id for pid, _ in current_contributors):
+            # Already a contributor (idempotent re-activation) -- no-op,
+            # matching the existing evidence-task dedup's idempotency.
+            continue
+
+        had_prior_contributors = bool(current_contributors)
         prev_status = state.status
         prev_resp = state.responsibility
 
-        state.status = upd["status"]
-        state.responsibility = upd["responsibility"]
-        state.sourced_from_product_id = product_id
+        new_contributor_rows.append(
+            ControlStateContributor(
+                control_state_id=state.id,
+                product_id=product_id,
+                baseline_control_id=bc.id,
+            )
+        )
+        all_classifications = [c for _, c in current_contributors] + [bc.classification]
+
+        state.status = contributor_added_status(prev_status, not had_prior_contributors)
+        state.responsibility = resolve_contributor_responsibility(all_classifications)
 
         history_rows.append(
             ControlStateHistory(
                 control_state_id=state.id,
                 previous_status=prev_status,
-                new_status=upd["status"],
+                new_status=state.status,
                 previous_responsibility=prev_resp,
-                new_responsibility=upd["responsibility"],
-                change_reason=f"Magic loop: {product.name} activated",
+                new_responsibility=state.responsibility,
+                change_reason=(
+                    f"Magic loop: {product.name} activated"
+                    if not had_prior_contributors
+                    else f"Contributor added: {product.name} (also covers this control)"
+                ),
             )
         )
         objectives_updated += 1
 
+    session.add_all(new_contributor_rows)
     session.add_all(history_rows)
     session.flush()
 
@@ -885,13 +944,31 @@ def deactivate_org_product(
     """Decommission a product and revert/archive all its contributions.
 
     Implements provenance-based reversal:
-      - ALL control states with sourced_from_product_id == this product → needs_review,
-        regardless of current status (pending_evidence, partial, or met). The sourced
-        pointer is the canonical signal; a human may have confirmed a state as met while
-        coverage still came from this product, but if the product is gone it needs review.
-      - Only states with sourced_from_product_id IS NULL survive untouched.
-      - Evidence-state links on ALL tool-sourced states → archived.
+      - ALL control states this product is a control_state_contributor for →
+        needs_review, regardless of current status (pending_evidence, partial, or
+        met). Provenance is the canonical signal; a human may have confirmed a
+        state as met while coverage still came from this product, but if the
+        product is gone it needs review.
+      - A control_state with NO contributor row for this product survives untouched.
+      - Multi-contributor case (models.py:ControlStateContributor -- more than one
+        product can cover the same objective): this product's contributor row is
+        removed; if others remain, responsibility is recomputed from their
+        classifications (resolve_contributor_responsibility) and change_reason
+        names both the departing product and which product(s) still cover it. If
+        this was the last contributor, responsibility is left exactly as it was
+        (this is the original, pre-multi-contributor behavior, preserved
+        unchanged) -- only status moves to needs_review either way.
+      - Evidence-state links on ALL affected states → archived. NOTE: this
+        remains all-or-nothing per control_state, not scoped to which product's
+        evidence it is -- a state with two contributors has ALL its evidence
+        archived if EITHER one deactivates, which can archive evidence that
+        actually supports the surviving contributor. Pre-existing behavior,
+        unchanged by the multi-contributor work; would need evidence-to-product
+        provenance (a new capability) to fix. See docs/roadmap.md's multi-tool-
+        coverage writeup.
       - Evidence tasks from this product → archived; open ones also closed (na).
+        Already correctly scoped per-product (via baseline_control.product_id),
+        unaffected by the multi-contributor change.
       - OrgProduct → decommissioned with deactivated_at timestamp.
       - SPRS recomputed (needs_review does not satisfy, so score reflects lost coverage).
 
@@ -936,27 +1013,73 @@ def deactivate_org_product(
         context=deactivation_ctx,
     )
 
-    # 2. Classify control_states sourced from this product
-    sourced_states = session.scalars(
-        select(ControlState).where(
+    # 2. Classify control_states this product currently contributes to.
+    # This product may not be the ONLY contributor: another product can
+    # still cover the same objective (models.py:ControlStateContributor).
+    # Either way the status falls to needs_review (Jarrod's explicit
+    # decision, 2026-09-16: losing a tool is exactly when a coverage claim
+    # deserves a second look, even if another tool still covers it) --
+    # they differ only in whether responsibility is recomputed from the
+    # survivors or left exactly as it was (the pre-existing, unchanged
+    # behavior for the last-contributor-removed case).
+    contributor_rows = session.execute(
+        select(ControlStateContributor, ControlState)
+        .join(ControlState, ControlStateContributor.control_state_id == ControlState.id)
+        .where(
             ControlState.assessment_id == assessment_id,
-            ControlState.sourced_from_product_id == product_id,
+            ControlStateContributor.product_id == product_id,
         )
     ).all()
+    sourced_states = [cs for _, cs in contributor_rows]
+    sourced_state_ids = [cs.id for cs in sourced_states]
+
+    for contributor, _cs in contributor_rows:
+        session.delete(contributor)
+    session.flush()
+
+    remaining_by_cs: dict[uuid.UUID, list[tuple[str, str]]] = {}
+    if sourced_state_ids:
+        for cs_id, classification, other_product_name in session.execute(
+            select(
+                ControlStateContributor.control_state_id,
+                BaselineControl.classification,
+                Product.name,
+            )
+            .join(BaselineControl, ControlStateContributor.baseline_control_id == BaselineControl.id)
+            .join(Product, ControlStateContributor.product_id == Product.id)
+            .where(ControlStateContributor.control_state_id.in_(sourced_state_ids))
+        ).all():
+            remaining_by_cs.setdefault(cs_id, []).append((classification, other_product_name))
 
     history_rows: list[ControlStateHistory] = []
     controls_flagged = 0
 
     for cs in sourced_states:
         prev_status = cs.status
+        prev_resp = cs.responsibility
+        remaining = remaining_by_cs.get(cs.id, [])
+
+        cs.status = ControlStatus.NEEDS_REVIEW
+        if remaining:
+            cs.responsibility = resolve_contributor_responsibility(
+                [classification for classification, _ in remaining]
+            )
+            other_names = ", ".join(sorted({name for _, name in remaining}))
+            reason = f"Contributor removed: {product.name} (still covered by {other_names})"
+        else:
+            # Last contributor removed -- today's pre-existing behavior,
+            # unchanged: responsibility is left exactly as it was, only
+            # status moves to needs_review.
+            reason = f"Satisfying tool deactivated: {product.name}"
+
         history_rows.append(
             ControlStateHistory(
                 control_state_id=cs.id,
                 previous_status=prev_status,
                 new_status=ControlStatus.NEEDS_REVIEW,
-                previous_responsibility=cs.responsibility,
+                previous_responsibility=prev_resp,
                 new_responsibility=cs.responsibility,
-                change_reason=f"Satisfying tool deactivated: {product.name}",
+                change_reason=reason,
             )
         )
         log_event(
@@ -967,16 +1090,15 @@ def deactivate_org_product(
             entity_id=cs.id,
             before_value={
                 "status": prev_status,
-                "sourced_from_product_id": str(product_id),
+                "responsibility": prev_resp,
             },
             after_value={
                 "status": ControlStatus.NEEDS_REVIEW,
-                "sourced_from_product_id": None,
+                "responsibility": cs.responsibility,
+                "remaining_contributors": len(remaining),
             },
             context=deactivation_ctx,
         )
-        cs.status = ControlStatus.NEEDS_REVIEW
-        cs.sourced_from_product_id = None
         controls_flagged += 1
 
     session.add_all(history_rows)
@@ -985,7 +1107,6 @@ def deactivate_org_product(
     # 3. Archive evidence_state_link rows on all tool-sourced states
     evidence_links_archived = 0
     if sourced_states:
-        sourced_state_ids = [cs.id for cs in sourced_states]
         link_rows = session.scalars(
             select(EvidenceStateLink).where(
                 EvidenceStateLink.control_state_id.in_(sourced_state_ids),

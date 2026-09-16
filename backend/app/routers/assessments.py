@@ -48,6 +48,7 @@ from ..models import (
     BaselineEvidenceSpec,
     Control,
     ControlState,
+    ControlStateContributor,
     ControlStateHistory,
     EvidenceStateLink,
     EvidenceTask,
@@ -243,6 +244,13 @@ class EvidenceTaskOut(BaseModel):
     linked_states: list[EvidenceTaskStateRef] = []
 
 
+class ContributorOut(BaseModel):
+    product_id: uuid.UUID
+    product_key: str
+    product_name: str
+    classification: str
+
+
 class ControlStateOut(BaseModel):
     id: uuid.UUID
     objective_id: uuid.UUID
@@ -254,8 +262,7 @@ class ControlStateOut(BaseModel):
     objective_text: str
     status: str
     responsibility: str
-    sourced_from_product_id: uuid.UUID | None = None
-    sourced_from_product_key: str | None = None
+    contributors: list[ContributorOut] = []
     statement_status: str | None = None
     evidence_count: int = 0
     sprs_weight: int = 1
@@ -680,7 +687,6 @@ def list_control_states(
             AssessmentObjective,
             Control,
             ImplementationStatement,
-            Product,
             ev_count_sq.label("evidence_count"),
         )
         .join(AssessmentObjective, ControlState.objective_id == AssessmentObjective.id)
@@ -690,13 +696,42 @@ def list_control_states(
             (ImplementationStatement.objective_id == AssessmentObjective.id)
             & (ImplementationStatement.assessment_id == assessment_id),
         )
-        .outerjoin(Product, ControlState.sourced_from_product_id == Product.id)
         .where(ControlState.assessment_id == assessment_id)
         .where(ControlState.org_id == org_id)
         .order_by(Control.sequence_order, AssessmentObjective.objective_key)
     )
     if family:
         stmt = stmt.where(Control.family == family.upper())
+
+    rows = session.execute(stmt).all()
+
+    contributors_by_cs: dict[uuid.UUID, list[ContributorOut]] = {}
+    cs_ids = [cs.id for cs, *_ in rows]
+    if cs_ids:
+        contrib_rows = session.execute(
+            select(
+                ControlStateContributor.control_state_id,
+                Product.id,
+                Product.key,
+                Product.name,
+                BaselineControl.classification,
+            )
+            .join(Product, ControlStateContributor.product_id == Product.id)
+            .join(
+                BaselineControl,
+                ControlStateContributor.baseline_control_id == BaselineControl.id,
+            )
+            .where(ControlStateContributor.control_state_id.in_(cs_ids))
+        ).all()
+        for cs_id, pid, pkey, pname, classification in contrib_rows:
+            contributors_by_cs.setdefault(cs_id, []).append(
+                ContributorOut(
+                    product_id=pid,
+                    product_key=pkey,
+                    product_name=pname,
+                    classification=classification,
+                )
+            )
 
     return [
         ControlStateOut(
@@ -710,14 +745,13 @@ def list_control_states(
             objective_text=obj.text,
             status=cs.status,
             responsibility=cs.responsibility,
-            sourced_from_product_id=cs.sourced_from_product_id,
-            sourced_from_product_key=prod.key if prod is not None else None,
+            contributors=contributors_by_cs.get(cs.id, []),
             statement_status=imp_stmt.status if imp_stmt is not None else None,
             evidence_count=ev_count or 0,
             sprs_weight=ctrl.sprs_weight,
             is_level_1=ctrl.is_level_1,
         )
-        for cs, obj, ctrl, imp_stmt, prod, ev_count in session.execute(stmt).all()
+        for cs, obj, ctrl, imp_stmt, ev_count in rows
     ]
 
 

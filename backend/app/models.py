@@ -669,6 +669,22 @@ class ControlState(Base):
 
     See assessment.py for full status/responsibility vocabulary (design notes
     1, 2, 4).
+
+    MULTIPLE CONTRIBUTORS (2026-09-16): which product(s) actually cover this
+    objective lives in ControlStateContributor (see that class's own
+    docstring), a join to product/baseline_control, not a column here. This
+    control_state row used to carry a single sourced_from_product_id --
+    retired by this same change, not kept alongside the join as a
+    denormalized "primary" pointer. There was no real consumer left that
+    needed a single "primary" contributor once every consumer (the UI badge,
+    the CRM/bundle export, deactivation's provenance check) was rewritten to
+    want either "all contributors" or "is product X a contributor" -- neither
+    needs a tiebreak-by-something-arbitrary "primary." Keeping the column
+    would have meant inventing a tiebreak rule with no real use, which is
+    exactly the "populated but meaningless" trap worth avoiding. See
+    docs/roadmap.md's multi-tool-coverage writeup for the full reasoning and
+    migration 0052's backfill of every existing sourced_from_product_id value
+    into a ControlStateContributor row before the column was dropped.
     """
 
     __tablename__ = "control_state"
@@ -703,10 +719,6 @@ class ControlState(Base):
     )
     status: Mapped[str] = mapped_column(String(20), default="not_met")
     responsibility: Mapped[str] = mapped_column(String(25), default="customer_owns")
-    # Audit trail back to the product whose magic loop set this state
-    sourced_from_product_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("product.id"), nullable=True
-    )
     implementation_notes: Mapped[str | None] = mapped_column(Text)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
@@ -714,6 +726,66 @@ class ControlState(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ControlStateContributor(Base):
+    """One product actively contributing coverage to one control_state.
+
+    Real motivating case: an MSP's Kaseya suite (Datto RMM, IT Glue,
+    RocketCyber, SaaS Alerts) legitimately overlaps by design on access
+    control, logging, and system integrity -- more than one tool can and
+    does satisfy the same objective for the same tenant, and Jarrod does
+    not want that blocked (see docs/roadmap.md's multi-tool-coverage
+    writeup). Before this table, control_state.sourced_from_product_id
+    could only ever name one product; activating a second overlapping
+    product silently overwrote it (see that same writeup for what this
+    looked like in practice before the fix).
+
+    baseline_control_id is NOT NULL and is the real answer to "why does
+    this product cover this control" -- it is the specific baseline_control
+    row (classification, provider_contribution, customer_action, note)
+    engine.py's magic loop matched to reach this state, not a denormalized
+    copy of its fields: if that baseline_control's own text is edited
+    later (the edit-baseline-mapping feature), this row's explanation
+    should reflect the live text, not a stale snapshot frozen at
+    activation time -- consistent with how every other join in this
+    codebase works (nothing here snapshots except bundle export, which
+    snapshots everything on purpose at render time; see BundleSnapshot's
+    own docstring).
+
+    Rows are inserted by engine.py's _run_loop when a product's magic loop
+    first claims an objective, and DELETED by deactivate_org_product when
+    that product deactivates -- this table names the CURRENT, live set of
+    contributors, not a history of who ever contributed. The historical
+    fact "product X used to cover this, then stopped" lives in
+    control_state_history.change_reason (free text), matching the exact
+    existing convention deactivate_org_product already used for
+    change_reason="Satisfying tool deactivated: ..." before this table
+    existed -- not a new convention invented for this table.
+    """
+
+    __tablename__ = "control_state_contributor"
+    __table_args__ = (
+        UniqueConstraint(
+            "control_state_id", "product_id", name="uq_control_state_contributor_identity"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    control_state_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("control_state.id", ondelete="CASCADE"), index=True
+    )
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("product.id"), index=True
+    )
+    baseline_control_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("baseline_control.id"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
 
 

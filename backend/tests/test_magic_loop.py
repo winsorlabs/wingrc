@@ -26,6 +26,7 @@ from app.models import (
     BaselineEvidenceSpec,
     Control,
     ControlState,
+    ControlStateContributor,
     ControlStateHistory,
     EvidenceTask,
     Framework,
@@ -190,7 +191,12 @@ def test_start_assessment_seeds_all_objectives(db_session: Session, ref: dict):
     assert len(states) == 3
     assert all(s.status == "not_met" for s in states)
     assert all(s.responsibility == "customer_owns" for s in states)
-    assert all(s.sourced_from_product_id is None for s in states)
+    contributors = db_session.scalars(
+        select(ControlStateContributor).where(
+            ControlStateContributor.control_state_id.in_([s.id for s in states])
+        )
+    ).all()
+    assert contributors == []
 
 
 def test_start_assessment_no_tasks_without_active_product(
@@ -235,7 +241,12 @@ def test_magic_loop_flips_covered_objectives_to_pending(
 
     assert ac_a.status == "pending_evidence"
     assert ac_a.responsibility == "shared"
-    assert ac_a.sourced_from_product_id == ref["product"].id
+    ac_a_contributors = db_session.scalars(
+        select(ControlStateContributor).where(
+            ControlStateContributor.control_state_id == ac_a.id
+        )
+    ).all()
+    assert [c.product_id for c in ac_a_contributors] == [ref["product"].id]
 
     assert ac_b.status == "pending_evidence"
     assert ac_b.responsibility == "shared"
@@ -243,7 +254,12 @@ def test_magic_loop_flips_covered_objectives_to_pending(
     # customer_owns — must not be touched
     assert ia_a.status == "not_met"
     assert ia_a.responsibility == "customer_owns"
-    assert ia_a.sourced_from_product_id is None
+    ia_a_contributors = db_session.scalars(
+        select(ControlStateContributor).where(
+            ControlStateContributor.control_state_id == ia_a.id
+        )
+    ).all()
+    assert ia_a_contributors == []
 
     assert result["objectives_updated"] == 2
 
