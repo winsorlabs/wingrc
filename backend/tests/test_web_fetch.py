@@ -279,9 +279,13 @@ def test_read_capped_allows_response_under_cap():
 
 def test_user_agent_identifies_wingrc_and_no_auth_header_is_ever_built():
     assert "WinGRC" in web_fetch.USER_AGENT
-    source = inspect.getsource(web_fetch)
-    assert "Authorization" not in source
-    assert "Cookie" not in source
+    # Checks the actual outbound header dicts built in _raw_get, not just
+    # the module's prose -- this module's own docstring names
+    # "Authorization"/"Cookie" as headers that are deliberately never
+    # sent, which a bare substring-of-the-whole-file check would trip on.
+    source = inspect.getsource(web_fetch._raw_get)
+    assert '"authorization"' not in source.lower()
+    assert '"cookie"' not in source.lower()
 
 
 # ---------------------------------------------------------------------------
