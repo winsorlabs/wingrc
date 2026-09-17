@@ -11,6 +11,8 @@ one rule.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.ai.base import AIProvider
@@ -89,7 +91,10 @@ def test_web_proposal_for_new_control_is_added():
 
     data, flags, summary = merge_research(primary, web)
 
-    control_ids = [c["control"][0] if isinstance(c["control"], list) else c["control"] for c in data["controls"]]
+    # _crm_entry/_web_entry always build control=[id], so to_yaml_dict's
+    # output is always a single-element list here -- no need to handle
+    # the bare-string form the real schema also allows.
+    control_ids = [c["control"][0] for c in data["controls"]]
     assert "AU.L2-3.3.1" in control_ids
     assert summary.controls_added_from_web == 1
     assert summary.conflicts_flagged == 0
@@ -122,8 +127,16 @@ def test_web_proposal_matching_existing_non_disclaiming_crm_entry_is_not_duplica
 def test_web_proposal_conflicting_with_customer_owns_crm_entry_is_flagged_not_added():
     """THE §0 HEADLINE TEST: a CRM disclaim (customer_owns) must never be
     silently upgraded by a web-research proposal."""
-    primary = _primary([_crm_entry("IA.L2-3.5.1", Classification.CUSTOMER_OWNS, note="Customer's IdP owns this.")])
-    web = [_web_entry("IA.L2-3.5.1", Classification.PROVIDER_SATISFIES, source="https://docs.vendor.com/sso")]
+    crm_entry = _crm_entry(
+        "IA.L2-3.5.1", Classification.CUSTOMER_OWNS, note="Customer's IdP owns this."
+    )
+    primary = _primary([crm_entry])
+    web = [
+        _web_entry(
+            "IA.L2-3.5.1", Classification.PROVIDER_SATISFIES,
+            source="https://docs.vendor.com/sso",
+        )
+    ]
 
     data, flags, summary = merge_research(primary, web)
 
@@ -166,7 +179,9 @@ def test_web_proposal_conflicting_with_disclaiming_text_is_flagged_even_when_cla
 def test_conflict_never_changes_the_crm_rows_other_fields_either():
     """Assert the negative explicitly: a flagged conflict touches nothing
     about the existing row -- not classification, not note, not anything."""
-    crm_row = _crm_entry("IA.L2-3.5.1", Classification.CUSTOMER_OWNS, note="Customer's IdP owns this.")
+    crm_row = _crm_entry(
+        "IA.L2-3.5.1", Classification.CUSTOMER_OWNS, note="Customer's IdP owns this."
+    )
     primary = _primary([crm_row])
     web = [_web_entry("IA.L2-3.5.1", Classification.SHARED)]
 
@@ -255,14 +270,16 @@ def test_ingest_web_page_stamps_source_on_every_entry():
 
 def test_ingest_web_page_never_proposes_customer_owns():
     entries = ingest_web_page(
-        "text", source_url="https://docs.vendor.com/x", ai_provider=_StubWebAIProvider(_WEB_RESPONSE)
+        "text", source_url="https://docs.vendor.com/x",
+        ai_provider=_StubWebAIProvider(_WEB_RESPONSE),
     )
     assert all(e.classification != Classification.CUSTOMER_OWNS for e in entries)
 
 
 def test_ingest_web_page_applies_evidence_minimization():
     entries = ingest_web_page(
-        "text", source_url="https://docs.vendor.com/x", ai_provider=_StubWebAIProvider(_WEB_RESPONSE)
+        "text", source_url="https://docs.vendor.com/x",
+        ai_provider=_StubWebAIProvider(_WEB_RESPONSE),
     )
     au = entries[0]
     assert au.evidence == [EvidenceSpec(artifact="Audit log export", type="export", kb=None)]
@@ -272,7 +289,10 @@ def test_ingest_web_page_applies_evidence_minimization():
 def test_ingest_web_page_rejects_oversized_page():
     text = "a" * (MAX_PAGE_CHARS + 1)
     with pytest.raises(ResearchIngestError, match="character"):
-        ingest_web_page(text, source_url="https://docs.vendor.com/huge", ai_provider=_StubWebAIProvider("{}"))
+        ingest_web_page(
+            text, source_url="https://docs.vendor.com/huge",
+            ai_provider=_StubWebAIProvider("{}"),
+        )
 
 
 def test_ingest_web_page_handles_malformed_json():
@@ -284,7 +304,13 @@ def test_ingest_web_page_handles_malformed_json():
 
 
 def test_ingest_web_page_ignores_malformed_control_entries_without_failing():
-    response = '{"controls": [{"control": "AC.L2-3.1.1"}, "not-a-dict", {"classification": "bogus", "control": "AU.L2-3.3.1"}]}'
+    response = json.dumps({
+        "controls": [
+            {"control": "AC.L2-3.1.1"},  # missing classification
+            "not-a-dict",
+            {"classification": "bogus", "control": "AU.L2-3.3.1"},  # invalid enum value
+        ]
+    })
     entries = ingest_web_page(
         "text", source_url="https://docs.vendor.com/x", ai_provider=_StubWebAIProvider(response)
     )
@@ -296,15 +322,13 @@ def test_ingest_web_page_ignores_malformed_control_entries_without_failing():
 # ---------------------------------------------------------------------------
 
 
-_SUGGEST_RESPONSE = """
-{
-  "suggestions": [
-    {"url": "https://docs.vendor.com/admin/security", "rationale": "Official admin guide's security chapter."},
-    {"url": "http://not-https.example.com/", "rationale": "Not https -- should be filtered."},
-    {"url": "https://vendor.com/pricing", "rationale": "This is actually a sales page."}
-  ]
-}
-"""
+_SUGGEST_RESPONSE = json.dumps({
+    "suggestions": [
+        {"url": "https://docs.vendor.com/admin/security", "rationale": "Official admin guide."},
+        {"url": "http://not-https.example.com/", "rationale": "Not https -- filtered."},
+        {"url": "https://vendor.com/pricing", "rationale": "This is actually a sales page."},
+    ]
+})
 
 
 def test_suggest_documentation_urls_filters_non_https():

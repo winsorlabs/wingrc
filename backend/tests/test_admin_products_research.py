@@ -342,7 +342,8 @@ def _seed_web_research_document(db_session, storage, product_id, *, url: str, ht
 def test_with_research_requires_at_least_one_document(admin_client, db_session, storage):
     seed = _seed_product(db_session)
     doc = _seed_web_research_document(
-        db_session, storage, seed["product"].id, url="https://docs.vendor.com/x", html=b"<html></html>"
+        db_session, storage, seed["product"].id,
+        url="https://docs.vendor.com/x", html=b"<html></html>",
     )
     r = admin_client.post(
         f"/admin/products/{seed['product'].id}/import/from-documents-with-research",
@@ -356,7 +357,8 @@ def test_with_research_new_control_is_added_and_reported(admin_client, db_sessio
     seed = _seed_product(db_session)
     web_html = b"<html><body>Audit logging documented here.</body></html>"
     doc = _seed_web_research_document(
-        db_session, storage, seed["product"].id, url="https://docs.vendor.com/logging", html=web_html
+        db_session, storage, seed["product"].id,
+        url="https://docs.vendor.com/logging", html=web_html,
     )
 
     call_responses = iter([
@@ -402,20 +404,25 @@ def test_with_research_new_control_is_added_and_reported(admin_client, db_sessio
     assert body["research"]["controls_added_from_web"] == 1
     assert body["research"]["conflicts_flagged"] == 0
     # Nothing is written -- same dry-run discipline as /import/from-documents.
-    assert db_session.query(BaselineControl).filter(BaselineControl.control_id == au.id).count() == 0
+    remaining = db_session.query(BaselineControl).filter(BaselineControl.control_id == au.id)
+    assert remaining.count() == 0
 
 
-def test_with_research_disclaimed_control_is_flagged_not_upgraded(admin_client, db_session, storage):
+def test_with_research_disclaimed_control_is_flagged_not_upgraded(
+    admin_client, db_session, storage
+):
     """THE §0 headline test, exercised through the real HTTP endpoint."""
     seed = _seed_product(db_session, disclaimed_control=True)
     web_html = b"<html><body>Our SSO handles identity for you.</body></html>"
     doc = _seed_web_research_document(
-        db_session, storage, seed["product"].id, url="https://docs.vendor.com/sso", html=web_html
+        db_session, storage, seed["product"].id,
+        url="https://docs.vendor.com/sso", html=web_html,
     )
 
+    disclaimed_id = seed["disclaimed_ctrl"].control_id
     call_responses = iter([
-        _stub_primary_response(seed["ctrl"].control_id, also_disclaim=seed["disclaimed_ctrl"].control_id),
-        _stub_web_response_proposing(seed["disclaimed_ctrl"].control_id, "provider_satisfies"),
+        _stub_primary_response(seed["ctrl"].control_id, also_disclaim=disclaimed_id),
+        _stub_web_response_proposing(disclaimed_id, "provider_satisfies"),
     ])
 
     class _SequencedProvider(AIProvider):
@@ -438,7 +445,7 @@ def test_with_research_disclaimed_control_is_flagged_not_upgraded(admin_client, 
     assert r.status_code == 200
     body = r.json()
 
-    ia_row = next(c for c in body["controls"] if c["control"] == [seed["disclaimed_ctrl"].control_id])
+    ia_row = next(c for c in body["controls"] if c["control"] == [disclaimed_id])
     assert ia_row["classification"] == "customer_owns", "must NEVER be upgraded by web research"
 
     assert body["research"]["controls_added_from_web"] == 0

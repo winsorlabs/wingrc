@@ -165,7 +165,8 @@ def test_fetch_url_safely_refuses_redirect_to_private_address(monkeypatch):
     result = web_fetch.fetch_url_safely("https://public.example.com/page")
     assert result.ok is False
     assert result.error is not None
-    assert "169.254.169.254" in result.error or "private" in result.error.lower() or "special" in result.error.lower()
+    error_lower = result.error.lower()
+    assert "169.254.169.254" in result.error or "private" in error_lower or "special" in error_lower
 
 
 def test_fetch_url_safely_follows_redirect_to_a_public_address(monkeypatch):
