@@ -540,12 +540,23 @@ class ProductDocument(Base):
     Deployment-wide like Product itself -- no org_id, no RLS. Storage key
     follows Evidence's convention (models.py:Evidence): id-based path so a
     crafted filename can't path-traverse, original name kept in `title`.
+
+    kind='web_research' (2026-09-17, AI research slice): a page fetched by
+    importers/research.py's SSRF-safe fetcher (web_fetch.py) rather than
+    uploaded by an admin -- distinguishes "this came from an uploaded file"
+    from "this came from a fetched web page" at a glance, per that slice's
+    own provenance requirement. For these rows, `title` is the fetched
+    page's <title> (falling back to the URL itself), `source_docs_ref`
+    holds the exact URL fetched, and `uploaded_at` (the column's existing
+    name, unchanged) IS the retrieval timestamp -- no new columns needed,
+    the existing shape already carries everything a reader needs to
+    reproduce or re-check the claim.
     """
 
     __tablename__ = "product_document"
     __table_args__ = (
         CheckConstraint(
-            "kind IN ('crm', 'baseline_doc', 'kb_export', 'other')",
+            "kind IN ('crm', 'baseline_doc', 'kb_export', 'other', 'web_research')",
             name="ck_product_document_kind",
         ),
     )

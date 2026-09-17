@@ -5,8 +5,11 @@ import type {
   BaselineControlDraft,
   BaselineEvidenceDraft,
   BaselineImportPreview,
+  FetchUrlResult,
   ProductDetail,
   ProductMetaDraft,
+  ResearchCost,
+  UrlSuggestion,
 } from "../types";
 
 // Mirrors AssetImportWizard's dry-run -> review -> apply discipline, with
@@ -86,6 +89,7 @@ function productDetailToDraft(
       })),
       note: bc.note,
       scope_note: bc.scope_note,
+      source: null,
     })),
   };
 }
@@ -129,6 +133,24 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [applied, setApplied] = useState<{ baseline_controls: number; evidence_specs: number } | null>(null);
+
+  // AI research of vendor platform documentation (edit-existing-product
+  // flow only -- see backend/app/routers/admin_products.py's own note on
+  // why: a fetched page attaches to a real product_id, which a brand-new
+  // product doesn't have until Apply). Propose -> approve -> fetch (§1):
+  // suggestions are never trusted, only fetchedDocumentIds (built from an
+  // explicit approve/paste step) are ever sent to re-generate the mapping.
+  const [showResearch, setShowResearch] = useState(false);
+  const [researchFiles, setResearchFiles] = useState<File[]>([]);
+  const [suggestions, setSuggestions] = useState<UrlSuggestion[]>([]);
+  const [suggesting, setSuggesting] = useState(false);
+  const [approvedUrls, setApprovedUrls] = useState<Set<string>>(new Set());
+  const [pastedUrls, setPastedUrls] = useState("");
+  const [fetchResults, setFetchResults] = useState<FetchUrlResult[]>([]);
+  const [fetchedDocumentIds, setFetchedDocumentIds] = useState<string[]>([]);
+  const [fetching, setFetching] = useState(false);
+  const [researching, setResearching] = useState(false);
+  const [researchCost, setResearchCost] = useState<ResearchCost | null>(null);
 
   // Sticky horizontal scrollbar for the control-row table: a slim strip
   // pinned to the bottom of `.wizard-body`'s own scroll area (not the
@@ -225,6 +247,72 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
       setError(e instanceof Error ? e.message : "Generation failed");
     } finally {
       setIngesting(false);
+    }
+  }
+
+  async function handleSuggestUrls() {
+    if (!editProductId) return;
+    setSuggesting(true);
+    setError(null);
+    try {
+      setSuggestions(await api.suggestResearchUrls(editProductId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not suggest documentation URLs");
+    } finally {
+      setSuggesting(false);
+    }
+  }
+
+  function toggleApprovedUrl(url: string) {
+    setApprovedUrls((prev) => {
+      const next = new Set(prev);
+      if (next.has(url)) next.delete(url);
+      else next.add(url);
+      return next;
+    });
+  }
+
+  async function handleFetchUrls() {
+    if (!editProductId) return;
+    const pasted = pastedUrls
+      .split(/[\n,]/)
+      .map((u) => u.trim())
+      .filter(Boolean);
+    const urls = Array.from(new Set([...approvedUrls, ...pasted]));
+    if (urls.length === 0) return;
+    setFetching(true);
+    setError(null);
+    try {
+      const result = await api.fetchResearchUrls(editProductId, urls);
+      setFetchResults(result.results);
+      setFetchedDocumentIds((prev) => {
+        const ids = result.results.filter((r) => r.ok && r.document_id).map((r) => r.document_id as string);
+        return Array.from(new Set([...prev, ...ids]));
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Fetch failed");
+    } finally {
+      setFetching(false);
+    }
+  }
+
+  async function handleGenerateWithResearch() {
+    if (!editProductId || researchFiles.length === 0 || fetchedDocumentIds.length === 0) return;
+    setResearching(true);
+    setError(null);
+    try {
+      const result = await api.ingestBaselineWithResearch(editProductId, researchFiles, fetchedDocumentIds);
+      setDraft({ product: result.product, controls: result.controls });
+      seedListText(result.product, result.controls);
+      setLatestYaml(result.yaml);
+      setPreview(result.preview);
+      setResearchCost(result.research ?? null);
+      setDirty(false);
+      setShowResearch(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Research-enabled generation failed");
+    } finally {
+      setResearching(false);
     }
   }
 
@@ -352,6 +440,7 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
         evidence: [],
         note: null,
         scope_note: null,
+        source: null,
       };
       return { ...prev, controls: [...prev.controls, newRow] };
     });
@@ -550,6 +639,7 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
                   <thead>
                     <tr>
                       <th>Control(s)</th>
+                      <th>Source</th>
                       <th>Classification</th>
                       <th>Note</th>
                       <th>Provider contribution</th>
@@ -591,6 +681,21 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
                               onBlur={() => commitListField(idx, "control")}
                             />
                             {controlProblem && <div className="field-problem-hint">{controlProblem.message}</div>}
+                          </td>
+                          <td>
+                            {row.source ? (
+                              <a
+                                href={row.source}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="source-badge source-badge-shared"
+                                title={row.source}
+                              >
+                                web research
+                              </a>
+                            ) : (
+                              <span className="field-hint">Document</span>
+                            )}
                           </td>
                           <td>
                             <select
@@ -743,7 +848,125 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
                 <button className="btn-ghost btn-sm" onClick={handleRecheck} disabled={checking}>
                   {checking ? "Re-checking…" : "Re-check"}
                 </button>
+                {editProductId && (
+                  <button className="btn-ghost btn-sm" onClick={() => setShowResearch((v) => !v)}>
+                    {showResearch ? "Hide research" : "🔬 Add web research"}
+                  </button>
+                )}
               </div>
+
+              {editProductId && showResearch && (
+                <fieldset className="form-field" style={{ marginTop: "0.6rem" }}>
+                  <legend>AI research of vendor platform documentation</legend>
+                  <div className="field-hint" style={{ marginBottom: "0.5rem" }}>
+                    Attached documents come first — the CRM/baseline you upload here stays
+                    authoritative. Web research can only ADD candidate coverage; it can never
+                    override a control the CRM disclaims (a conflict is flagged instead, never
+                    silently applied). Re-upload the CRM/baseline document(s) below, then
+                    optionally add approved documentation pages.
+                  </div>
+
+                  <div className="form-field">
+                    <label>
+                      Vendor document(s) to re-analyze (required)
+                      <input
+                        type="file"
+                        accept=".pdf,.doc,.docx"
+                        multiple
+                        onChange={(e) => setResearchFiles(Array.from(e.target.files ?? []).slice(0, _MAX_INGEST_FILES))}
+                      />
+                    </label>
+                  </div>
+                  {researchFiles.length > 0 && (
+                    <div className="field-hint">{researchFiles.map((f) => f.name).join(", ")}</div>
+                  )}
+
+                  <div style={{ marginTop: "0.5rem" }}>
+                    <button className="btn-ghost btn-sm" onClick={handleSuggestUrls} disabled={suggesting}>
+                      {suggesting ? "Asking AI…" : "Suggest documentation URLs"}
+                    </button>
+                  </div>
+
+                  {suggestions.length > 0 && (
+                    <div style={{ marginTop: "0.4rem" }}>
+                      {suggestions.map((s) => (
+                        <label key={s.url} style={{ display: "block", fontSize: "0.75rem", marginBottom: "0.25rem" }}>
+                          <input
+                            type="checkbox"
+                            checked={approvedUrls.has(s.url)}
+                            onChange={() => toggleApprovedUrl(s.url)}
+                          />{" "}
+                          <strong>{s.url}</strong> — {s.rationale}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="form-field" style={{ marginTop: "0.5rem" }}>
+                    <label>
+                      Paste additional URLs (one per line)
+                      <textarea
+                        rows={2}
+                        value={pastedUrls}
+                        onChange={(e) => setPastedUrls(e.target.value)}
+                        placeholder="https://docs.vendor.com/admin/security"
+                      />
+                    </label>
+                  </div>
+
+                  <div style={{ marginTop: "0.4rem", display: "flex", gap: "0.5rem" }}>
+                    <button
+                      className="btn-ghost btn-sm"
+                      onClick={handleFetchUrls}
+                      disabled={fetching || (approvedUrls.size === 0 && !pastedUrls.trim())}
+                    >
+                      {fetching ? "Fetching…" : "Fetch approved URLs"}
+                    </button>
+                  </div>
+
+                  {fetchResults.length > 0 && (
+                    <div style={{ marginTop: "0.4rem", fontSize: "0.75rem" }}>
+                      {fetchResults.map((r) => (
+                        <div key={r.url}>
+                          {r.ok ? (
+                            <span>✓ {r.title ?? r.url} ({r.characters?.toLocaleString()} chars)</span>
+                          ) : (
+                            <span className="form-error">✗ {r.url}: {r.error}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {fetchedDocumentIds.length > 0 && (
+                    <div className="field-hint" style={{ marginTop: "0.4rem" }}>
+                      {fetchedDocumentIds.length} page{fetchedDocumentIds.length === 1 ? "" : "s"} ready to include.
+                    </div>
+                  )}
+
+                  <div style={{ marginTop: "0.5rem" }}>
+                    <button
+                      className="btn-primary btn-sm"
+                      onClick={handleGenerateWithResearch}
+                      disabled={researching || researchFiles.length === 0 || fetchedDocumentIds.length === 0}
+                    >
+                      {researching ? "Generating…" : "Re-generate mapping with research"}
+                    </button>
+                  </div>
+                </fieldset>
+              )}
+
+              {researchCost && (
+                <div className="field-hint" style={{ marginTop: "0.5rem" }}>
+                  Research added: {researchCost.pages_included} page{researchCost.pages_included === 1 ? "" : "s"},{" "}
+                  {researchCost.total_web_characters.toLocaleString()} characters (~
+                  {researchCost.estimated_added_tokens.toLocaleString()} tokens), {researchCost.ai_calls_added}{" "}
+                  additional AI call{researchCost.ai_calls_added === 1 ? "" : "s"},{" "}
+                  {researchCost.elapsed_seconds}s elapsed — {researchCost.controls_added_from_web} control
+                  {researchCost.controls_added_from_web === 1 ? "" : "s"} added,{" "}
+                  {researchCost.conflicts_flagged} conflict{researchCost.conflicts_flagged === 1 ? "" : "s"} flagged.
+                </div>
+              )}
             </>
           ) : (
             <>

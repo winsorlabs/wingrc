@@ -332,6 +332,7 @@ def _apply_evidence_minimization(entry: ControlEntry) -> ControlEntry:
             note=entry.note,
             scope_note=entry.scope_note,
             coverage_basis=entry.coverage_basis,
+            source=entry.source,
         )
     return ControlEntry(
         control=entry.control,
@@ -344,6 +345,7 @@ def _apply_evidence_minimization(entry: ControlEntry) -> ControlEntry:
         note=entry.note,
         scope_note=entry.scope_note,
         coverage_basis=entry.coverage_basis,
+        source=entry.source,
     )
 
 

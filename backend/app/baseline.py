@@ -69,6 +69,14 @@ class ControlEntry:
     # forbid, and there's nothing in a vendor doc that reliably distinguishes
     # the two without a human who knows the deployment.
     coverage_basis: str | None = None
+    # Per-claim source attribution (2026-09-17, AI research slice). None
+    # means "from the uploaded CRM/baseline document(s)" -- the original,
+    # unchanged document-ingestion pipeline never sets this itself. A URL
+    # string means the entry was proposed by importers/research.py's
+    # web-research pass over that specific fetched page -- assigned in code
+    # when the entry is built, never trusted from the model's own output,
+    # so a reviewer's "where did this come from" is always exactly right.
+    source: str | None = None
 
 
 @dataclass
@@ -168,6 +176,7 @@ def _parse_control_entry(raw: dict[str, Any]) -> ControlEntry:
         note=raw.get("note"),
         scope_note=raw.get("scope_note"),
         coverage_basis=raw.get("coverage_basis"),
+        source=raw.get("source"),
     )
 
 
@@ -254,6 +263,8 @@ def to_yaml_dict(entry: BaselineEntry) -> dict[str, Any]:
             cd["scope_note"] = c.scope_note
         if c.coverage_basis:
             cd["coverage_basis"] = c.coverage_basis
+        if c.source:
+            cd["source"] = c.source
         controls.append(cd)
 
     result: dict[str, Any] = {"product": prod, "controls": controls}

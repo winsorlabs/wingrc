@@ -401,6 +401,10 @@ class ControlEntryDraft:
     evidence: list[EvidenceSpecDraft] = field(default_factory=list)
     note: str | None = None
     scope_note: str | None = None
+    # None = from the uploaded CRM/baseline document(s); a URL = proposed by
+    # importers/research.py's web-research pass over that fetched page. See
+    # baseline.py:ControlEntry.source's own docstring.
+    source: str | None = None
 
 
 @dataclass
@@ -534,6 +538,9 @@ def build_preview(
         customer_action = entry.get("customer_action")
         note = entry.get("note")
         scope_note = entry.get("scope_note")
+        source = entry.get("source")
+        if not isinstance(source, str):
+            source = None
 
         control_rows.append(
             ControlEntryDraft(
@@ -548,6 +555,7 @@ def build_preview(
                 evidence=_coerce_evidence_drafts(entry.get("evidence")),
                 note=note,
                 scope_note=scope_note,
+                source=source,
             )
         )
 
