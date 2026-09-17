@@ -50,6 +50,7 @@ from app.models import (
     ImplementationStatement,
     Organization,
     Product,
+    ProductBaselineVersion,
     RaciAssignment,
     ScopeEntity,
     SystemDescription,
@@ -1375,8 +1376,14 @@ def _seed_contributor(db_session, *, org, ctrl, cs, product_key: str, classifica
     )
     db_session.add(product)
     db_session.flush()
+    version = ProductBaselineVersion(product_id=product.id, version_number=1)
+    db_session.add(version)
+    db_session.flush()
+    product.current_version_id = version.id
+    db_session.flush()
     bc = BaselineControl(
-        product_id=product.id, control_id=ctrl.id, objectives=["a"],
+        product_id=product.id, baseline_version_id=version.id, control_id=ctrl.id,
+        objectives=["a"],
         classification=classification, candidate_state="pending_evidence",
     )
     db_session.add(bc)

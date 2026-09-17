@@ -14,6 +14,7 @@ interface Props {
 export function ProductCard({ product, orgId, assessmentId, canWrite, onActivated, onDeactivated }: Props) {
   const [activating, setActivating] = useState(false);
   const [deactivating, setDeactivating] = useState(false);
+  const [movingVersion, setMovingVersion] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleActivate() {
@@ -39,6 +40,29 @@ export function ProductCard({ product, orgId, assessmentId, canWrite, onActivate
       setError((e as Error).message);
     } finally {
       setDeactivating(false);
+    }
+  }
+
+  // Baseline versioning (roadmap item P): offered only when this org's
+  // pin is behind the product's current version. Resolves the target
+  // version's id from the versions list (ProductRow only carries the
+  // number) rather than assuming current_version_number's id -- the
+  // library's own detail screen is the source of truth for that mapping.
+  async function handleMoveVersion() {
+    setMovingVersion(true);
+    setError(null);
+    try {
+      const versions = await api.listProductVersions(product.id);
+      const target = versions.find((v) => v.is_current);
+      if (!target) {
+        throw new Error("No current version found for this product.");
+      }
+      await api.moveProductVersion(orgId, assessmentId, product.id, target.id);
+      onActivated();
+    } catch (e: unknown) {
+      setError((e as Error).message);
+    } finally {
+      setMovingVersion(false);
     }
   }
 
@@ -75,7 +99,24 @@ export function ProductCard({ product, orgId, assessmentId, canWrite, onActivate
       <div className="product-card-footer">
         {product.is_active ? (
           <>
-            <span className="product-active-label">Active — pending evidence</span>
+            <span className="product-active-label">
+              Active — pending evidence
+              {product.pinned_version_number != null && (
+                <span className="product-version-badge"> · v{product.pinned_version_number}</span>
+              )}
+            </span>
+            {!product.is_on_latest_version && canWrite && (
+              <button
+                className="btn-ghost btn-sm"
+                onClick={handleMoveVersion}
+                disabled={movingVersion}
+                title={`A newer baseline version (v${product.current_version_number}) is available. Moving reviews only what actually changed -- see engine.py:move_org_product_version.`}
+              >
+                {movingVersion
+                  ? "Moving…"
+                  : `Move to v${product.current_version_number}`}
+              </button>
+            )}
             {canWrite && (
               <button
                 className="btn-ghost btn-sm product-deactivate-btn"

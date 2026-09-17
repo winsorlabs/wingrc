@@ -65,6 +65,7 @@ export function ToolsLibraryPanel() {
                 <th>Category</th>
                 <th>Framework</th>
                 <th>Status</th>
+                <th>Version</th>
                 <th>Controls</th>
                 <th>Objectives</th>
               </tr>
@@ -81,6 +82,7 @@ export function ToolsLibraryPanel() {
                       {p.is_published ? "Published" : "Unpublished"}
                     </span>
                   </td>
+                  <td>{p.current_version_number != null ? `v${p.current_version_number}` : "—"}</td>
                   <td>{p.control_count}</td>
                   <td>{p.objective_count}</td>
                 </tr>

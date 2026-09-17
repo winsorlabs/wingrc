@@ -1,12 +1,27 @@
 """Idempotent seed for the product baseline library.
 
-Loads every *.yaml file in backend/baselines/ into product, baseline_control,
-and baseline_evidence_spec.  Safe to call repeatedly — uses SELECT-then-upsert
-for product and baseline_control; evidence specs have no natural key to
-upsert on, so they're matched by content (artifact/type/kb) against what's
-already there — a spec whose content is unchanged keeps its row (and with
-it, any EvidenceTask.baseline_spec_id already pointing at it); only specs
-whose content doesn't match anything submitted get deleted.
+Loads every *.yaml file in backend/baselines/ into product,
+product_baseline_version, baseline_control, and baseline_evidence_spec.
+
+Baseline versioning (roadmap item P, migration 0054): a control mapping is
+never mutated in place. Each call diffs the incoming YAML against the
+product's CURRENT version's baseline_control/baseline_evidence_spec
+content. If nothing differs, the call is a true no-op (existing version
+reused, nothing written, is_published untouched). If anything differs --
+including a control disappearing entirely, which the old upsert-by-key
+code silently never noticed -- a brand new ProductBaselineVersion is
+created with entirely fresh BaselineControl/BaselineEvidenceSpec rows for
+every control the new import lists. The previous version's rows are never
+touched, so any OrgProduct still pinned to it (engine.py's magic loop
+reads OrgProduct.baseline_version_id, not "whatever's current") keeps
+seeing exactly what it always saw. See ProductBaselineVersion's own
+docstring for the full reasoning.
+
+Product-level fields (name, provider, category, role, assumed_config,
+source_docs, ai_generated_*) are NOT versioned -- only the control mapping
+and its evidence specs are. Those are display/provenance metadata, not a
+compliance claim; there is no "which version of the product's name was a
+tenant's activation based on" question worth answering.
 
 Usage (CLI):
     wingrc seed-baselines
@@ -25,7 +40,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -34,6 +49,7 @@ from ..models import (
     Control,
     Framework,
     Product,
+    ProductBaselineVersion,
 )
 
 # baselines/ lives alongside app/ inside the backend/ tree so it is
@@ -96,6 +112,7 @@ def seed_baselines(session: Session) -> dict[str, Any]:
     total_products = 0
     total_bcs = 0
     total_specs = 0
+    total_versions_created = 0
     missing: list[str] = []
 
     for yaml_path in sorted(_BASELINES_DIR.glob("*.yaml")):
@@ -105,6 +122,7 @@ def seed_baselines(session: Session) -> dict[str, Any]:
         total_products += 1
         total_bcs += r["baseline_controls"]
         total_specs += r["evidence_specs"]
+        total_versions_created += 1 if r["version_created"] else 0
         missing.extend(r["missing"])
 
     session.flush()
@@ -112,8 +130,58 @@ def seed_baselines(session: Session) -> dict[str, Any]:
         "products": total_products,
         "baseline_controls": total_bcs,
         "evidence_specs": total_specs,
+        "versions_created": total_versions_created,
         "missing_controls": missing,
     }
+
+
+def _evidence_sort_key(t: tuple[str, str, str | None]) -> tuple[str, str, str]:
+    """Sort key for an (artifact, type, kb) evidence tuple. kb can be None;
+    coercing it to "" avoids "'<' not supported between NoneType and str"
+    the moment two specs share artifact+type and the comparison reaches
+    the kb element."""
+    return (t[0], t[1], t[2] or "")
+
+
+def _entry_signature(row: dict[str, Any]) -> tuple:
+    """Comparable snapshot of one control's compliance-relevant content --
+    everything that would change what a tenant's activation actually
+    claims. batch_group_id is deliberately excluded: it's a display-only
+    grouping of YAML rows, not a claim, so a pure regrouping with no other
+    change must not mint a new version.
+    """
+    return (
+        tuple(sorted(row["objectives"])),
+        row["classification"],
+        row["coverage_basis"],
+        row["candidate_state"],
+        row["provider_contribution"],
+        row["customer_action"],
+        row["note"],
+        row["scope_note"],
+        tuple(sorted(row["evidence"], key=_evidence_sort_key)),
+    )
+
+
+def _existing_signature(
+    bc: BaselineControl, specs: list[BaselineEvidenceSpec]
+) -> tuple:
+    return (
+        tuple(sorted(bc.objectives or [])),
+        bc.classification,
+        bc.coverage_basis,
+        bc.candidate_state,
+        bc.provider_contribution,
+        bc.customer_action,
+        bc.note,
+        bc.scope_note,
+        tuple(
+            sorted(
+                ((s.artifact_description, s.evidence_type, s.kb_reference) for s in specs),
+                key=_evidence_sort_key,
+            )
+        ),
+    )
 
 
 def _seed_product(
@@ -124,7 +192,7 @@ def _seed_product(
     *,
     reset_published: bool = False,
 ) -> dict:
-    """Upsert one product + its baseline_control/evidence_spec rows.
+    """Upsert one product's metadata, and version its control mapping.
 
     reset_published: False for this module's own callers (the CLI seeding
     git-tracked baseline files at deploy time -- a lower-stakes trust
@@ -136,7 +204,10 @@ def _seed_product(
     something that survives a re-import unattended -- re-importing an
     already-published product's mapping must force a fresh review, not
     carry the old publish decision forward onto new (possibly different)
-    compliance claims.
+    compliance claims. Only applied when a new version is actually
+    created -- a no-op reimport (content identical to the current
+    version) has no "changed compliance mapping" to force a re-review of,
+    so it leaves is_published exactly as it was.
     """
     pd = data["product"]
     product_key = normalize_product_key(pd["key"])
@@ -184,12 +255,36 @@ def _seed_product(
             product.ai_generated_at = ai_generated_at
         if ai_generated_model is not None:
             product.ai_generated_model = ai_generated_model
-        if reset_published:
-            product.is_published = False
     session.flush()
 
-    bcs_written = 0
-    specs_written = 0
+    # --- resolve the current version (None for a brand new product) ---
+    current_version: ProductBaselineVersion | None = None
+    if product.current_version_id is not None:
+        current_version = session.get(ProductBaselineVersion, product.current_version_id)
+
+    existing_bcs_by_control: dict[uuid.UUID, BaselineControl] = {}
+    existing_specs_by_bc: dict[uuid.UUID, list[BaselineEvidenceSpec]] = {}
+    if current_version is not None:
+        existing_bcs_by_control = {
+            bc.control_id: bc
+            for bc in session.scalars(
+                select(BaselineControl).where(
+                    BaselineControl.baseline_version_id == current_version.id
+                )
+            )
+        }
+        if existing_bcs_by_control:
+            for s in session.scalars(
+                select(BaselineEvidenceSpec).where(
+                    BaselineEvidenceSpec.baseline_control_id.in_(
+                        [bc.id for bc in existing_bcs_by_control.values()]
+                    )
+                )
+            ):
+                existing_specs_by_bc.setdefault(s.baseline_control_id, []).append(s)
+
+    # --- parse every incoming control entry into a comparable row ---
+    incoming_by_control: dict[uuid.UUID, dict[str, Any]] = {}
     missing: list[str] = []
 
     for entry in data.get("controls", []):
@@ -207,109 +302,101 @@ def _seed_product(
                 missing.append(ctrl_id_str)
                 continue
 
-            bc = session.scalars(
-                select(BaselineControl).where(
-                    BaselineControl.product_id == product.id,
-                    BaselineControl.control_id == ctrl.id,
-                )
-            ).first()
-            if bc is None:
-                bc = BaselineControl(
-                    product_id=product.id,
-                    control_id=ctrl.id,
-                    objectives=entry.get("objectives") or [],
-                    classification=entry["classification"],
-                    coverage_basis=entry.get("coverage_basis", "customer_system"),
-                    candidate_state=entry.get("candidate_state", "not_satisfied_by_product"),
-                    provider_contribution=entry.get("provider_contribution"),
-                    customer_action=entry.get("customer_action"),
-                    note=entry.get("note"),
-                    scope_note=entry.get("scope_note"),
-                    batch_group_id=batch_id,
-                )
-                session.add(bc)
-            else:
-                bc.objectives = entry.get("objectives") or []
-                bc.classification = entry["classification"]
-                bc.coverage_basis = entry.get("coverage_basis", "customer_system")
-                bc.candidate_state = entry.get("candidate_state", "not_satisfied_by_product")
-                bc.provider_contribution = entry.get("provider_contribution")
-                bc.customer_action = entry.get("customer_action")
-                bc.note = entry.get("note")
-                bc.scope_note = entry.get("scope_note")
-                bc.batch_group_id = batch_id
+            incoming_by_control[ctrl.id] = {
+                "objectives": entry.get("objectives") or [],
+                "classification": entry["classification"],
+                "coverage_basis": entry.get("coverage_basis", "customer_system"),
+                "candidate_state": entry.get("candidate_state", "not_satisfied_by_product"),
+                "provider_contribution": entry.get("provider_contribution"),
+                "customer_action": entry.get("customer_action"),
+                "note": entry.get("note"),
+                "scope_note": entry.get("scope_note"),
+                "batch_group_id": batch_id,
+                "evidence": [
+                    (ev["artifact"], ev["type"], ev.get("kb"))
+                    for ev in (entry.get("evidence") or [])
+                ],
+            }
+
+    # --- diff against the current version's content ---
+    changed = False
+    removed: list[str] = []
+    uuid_to_control_str = {c.id: cid for cid, c in ctrl_lookup.items()}
+    all_control_uuids = set(incoming_by_control) | set(existing_bcs_by_control)
+    for ctrl_uuid in all_control_uuids:
+        old_bc = existing_bcs_by_control.get(ctrl_uuid)
+        new_row = incoming_by_control.get(ctrl_uuid)
+        if old_bc is not None and new_row is None:
+            changed = True
+            removed.append(uuid_to_control_str.get(ctrl_uuid, str(ctrl_uuid)))
+        elif old_bc is None and new_row is not None:
+            changed = True
+        elif old_bc is not None and new_row is not None:
+            if _existing_signature(old_bc, existing_specs_by_bc.get(old_bc.id, [])) != (
+                _entry_signature(new_row)
+            ):
+                changed = True
+
+    needs_new_version = current_version is None or changed
+
+    bcs_written = 0
+    specs_written = 0
+
+    if needs_new_version:
+        next_version_number = (
+            1 if current_version is None else current_version.version_number + 1
+        )
+        new_version = ProductBaselineVersion(
+            product_id=product.id, version_number=next_version_number
+        )
+        session.add(new_version)
+        session.flush()
+        product.current_version_id = new_version.id
+        # A brand new product's first-ever version has no prior publish
+        # decision to protect tenants from -- only unpublish when a real,
+        # previously-current version is being replaced.
+        if reset_published and current_version is not None:
+            product.is_published = False
+
+        for ctrl_uuid, row in incoming_by_control.items():
+            bc = BaselineControl(
+                product_id=product.id,
+                baseline_version_id=new_version.id,
+                control_id=ctrl_uuid,
+                objectives=row["objectives"],
+                classification=row["classification"],
+                coverage_basis=row["coverage_basis"],
+                candidate_state=row["candidate_state"],
+                provider_contribution=row["provider_contribution"],
+                customer_action=row["customer_action"],
+                note=row["note"],
+                scope_note=row["scope_note"],
+                batch_group_id=row["batch_group_id"],
+            )
+            session.add(bc)
             session.flush()
-
-            # Specs have no natural key to upsert by, so match by content
-            # (artifact/type/kb) instead of unconditionally deleting
-            # everything: a spec whose content is unchanged keeps its row
-            # -- and with it, any EvidenceTask.baseline_spec_id already
-            # pointing at it -- rather than being severed and recreated on
-            # every apply regardless of whether anything about it actually
-            # changed. Only specs left unmatched afterward (content that's
-            # genuinely gone or changed) get deleted, with the FK nulled
-            # first exactly as before -- those tasks survive (they record
-            # what was collected) but lose the pointer to a spec that no
-            # longer exists.
-            old_specs = session.scalars(
-                select(BaselineEvidenceSpec).where(
-                    BaselineEvidenceSpec.baseline_control_id == bc.id
-                )
-            ).all()
-            available: dict[tuple[str, str, str | None], list[BaselineEvidenceSpec]] = {}
-            for s in old_specs:
-                available.setdefault(
-                    (s.artifact_description, s.evidence_type, s.kb_reference), []
-                ).append(s)
-
-            matched_ids: set[uuid.UUID] = set()
-            for ev in entry.get("evidence") or []:
-                key = (ev["artifact"], ev["type"], ev.get("kb"))
-                bucket = available.get(key)
-                if bucket:
-                    matched_ids.add(bucket.pop(0).id)
-                else:
-                    session.add(
-                        BaselineEvidenceSpec(
-                            baseline_control_id=bc.id,
-                            artifact_description=ev["artifact"],
-                            evidence_type=ev["type"],
-                            kb_reference=ev.get("kb"),
-                        )
-                    )
-                specs_written += 1
-
-            stale = [s for s in old_specs if s.id not in matched_ids]
-            if stale:
-                stale_ids = [s.id for s in stale]
-                # A bare ORM UPDATE on evidence_task here would silently
-                # match zero rows: this whole function runs under the RLS-
-                # enforced wingrc_app role with no app.current_org set (the
-                # baseline library is deployment-wide, never org-scoped --
-                # see admin_products.py's own module docstring), and
-                # evidence_task IS org-scoped/RLS-protected. Postgres's FK
-                # constraint check on the DELETE below still sees the real,
-                # RLS-invisible row and correctly rejects it -- caught live
-                # by this slice's own regression test, not by inspection.
-                # SECURITY DEFINER function, same precedent as
-                # auth.expire_stale_invites()/auth.mark_sprs_reminder_sent()
-                # (0042/0044): the one way this codebase lets a deployment-
-                # wide operation touch rows across every org, without a
-                # blanket RLS bypass.
-                session.execute(
-                    text("SELECT auth.null_evidence_task_baseline_spec_refs(:ids)"),
-                    {"ids": stale_ids},
-                )
-                for s in stale:
-                    session.delete(s)
-                session.flush()
-
             bcs_written += 1
+            for artifact, ev_type, kb in row["evidence"]:
+                session.add(
+                    BaselineEvidenceSpec(
+                        baseline_control_id=bc.id,
+                        artifact_description=artifact,
+                        evidence_type=ev_type,
+                        kb_reference=kb,
+                    )
+                )
+                specs_written += 1
+        version_number = next_version_number
+    else:
+        version_number = current_version.version_number if current_version else None
 
     session.flush()
     return {
         "baseline_controls": bcs_written,
         "evidence_specs": specs_written,
         "missing": missing,
+        "removed": removed,
         "product_key": product_key,
+        "version_number": version_number,
+        "version_created": needs_new_version,
     }

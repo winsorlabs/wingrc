@@ -599,6 +599,13 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .coverage-basis-platform-only { background: #fff7ed; }
 .coverage-basis-platform-only td { color: #9a5b13; }
 
+/* Baseline versioning (roadmap item P): a control dropped from this
+   import -- used to be a silent no-op (seed_baselines never deleted an
+   unmatched baseline_control row); now a visible row so a reviewer sees
+   exactly what a new version stops claiming. */
+.baseline-change-removed { background: #fef2f2; }
+.baseline-change-removed td { color: #b91c1c; }
+
 .products-panel-title {
   font-size: 1rem;
   font-weight: 600;

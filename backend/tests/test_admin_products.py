@@ -32,6 +32,7 @@ from app.models import (
     Organization,
     OrgProduct,
     Product,
+    ProductBaselineVersion,
 )
 from app.storage import StorageClient, get_storage_client
 from tests.conftest import _app_session, _authed, _grant, _make_fake_user
@@ -136,8 +137,14 @@ def _seed_product(db_session, *, published: bool = False) -> Product:
     )
     db_session.add(product)
     db_session.flush()
+    version = ProductBaselineVersion(product_id=product.id, version_number=1)
+    db_session.add(version)
+    db_session.flush()
+    product.current_version_id = version.id
+    db_session.flush()
     bc = BaselineControl(
         product_id=product.id,
+        baseline_version_id=version.id,
         control_id=seed["ctrl"].id,
         objectives=["a"],
         classification="provider_satisfies",

@@ -47,6 +47,9 @@ function makePreview(overrides: Partial<BaselineImportPreview> = {}): BaselineIm
     affected_org_names: [],
     row_problems: [],
     disclaim_flags: [],
+    current_version_number: 1,
+    next_version_number: 2,
+    has_changes: true,
     ...overrides,
   };
 }
@@ -156,6 +159,9 @@ describe("ToolImportWizard — valid re-import with active tenants", () => {
       product_key: "rocketcyber",
       baseline_controls: 1,
       evidence_specs: 0,
+      version_number: 2,
+      version_created: true,
+      removed_controls: [],
     });
 
     render(<ToolImportWizard onClose={vi.fn()} onApplied={vi.fn()} />);
@@ -276,6 +282,9 @@ describe("ToolImportWizard — generate from vendor documents (per-control table
       product_key: "newtool",
       baseline_controls: 0,
       evidence_specs: 0,
+      version_number: 1,
+      version_created: true,
+      removed_controls: [],
     });
 
     render(<ToolImportWizard onClose={vi.fn()} onApplied={vi.fn()} />);

@@ -726,7 +726,8 @@ def seed_baselines_cmd(
         typer.echo(
             f"Baselines seeded: {result['products']} products, "
             f"{result['baseline_controls']} baseline controls, "
-            f"{result['evidence_specs']} evidence specs."
+            f"{result['evidence_specs']} evidence specs, "
+            f"{result['versions_created']} new baseline version(s) created."
         )
         if result["missing_controls"]:
             typer.echo(f"  Missing controls (not in catalog): {result['missing_controls']}")
