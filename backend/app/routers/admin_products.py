@@ -5,7 +5,7 @@ Endpoints:
   GET    /admin/products                              Library view
   GET    /admin/products/{product_id}                 Tool detail (baseline mapping, read-only)
   GET    /admin/products/{product_id}/footprint       Which orgs have it, at what status/version
-  GET    /admin/products/{product_id}/versions         Every immutable baseline version (roadmap item P)
+  GET    /admin/products/{product_id}/versions         Every immutable baseline version (item P)
   POST   /admin/products/import/dry-run               Validate + preview a baseline YAML upload
   POST   /admin/products/import/dry-run-structured    Same, JSON body in/out -- no YAML round-trip
   POST   /admin/products/import/apply                 Write a validated import (is_published=False)
@@ -401,7 +401,6 @@ def list_products(session: Session = Depends(get_session)) -> list[ProductLibrar
     products = session.scalars(select(Product).order_by(Product.name)).all()
     if not products:
         return []
-    product_ids = [p.id for p in products]
     fw_names = {
         f.id: f.name
         for f in session.scalars(
