@@ -196,6 +196,22 @@ writeup.
   go to `needs_review` (not `pending_evidence`) — MSP must re-confirm prior
   artifacts are still current
 
+**Baseline versioning** (migration 0054, `models.py:ProductBaselineVersion`):
+`BaselineControl` rows are immutable once created — an import that actually
+changes the mapping creates an entirely new version (fresh rows) rather than
+mutating the current one; a no-op reimport writes nothing and leaves
+`is_published` untouched. `OrgProduct.baseline_version_id` pins a tenant to
+the version active when they activated (`_run_loop` resolves `BaselineControl`
+by that pin, never by bare `product_id`); a later reimport never touches an
+already-activated tenant's claims. Moving a tenant onto a newer version is a
+separate, explicit action (`engine.py:move_org_product_version`) — only the
+objectives whose claim actually changed land in `needs_review`; evidence
+always survives a version move (contrast deactivation, which archives it).
+See `docs/roadmap.md`'s item P for the full design writeup, including the §1
+bug this fixed: `seed_baselines` used to silently keep honoring a control
+removed from the source YAML — now dry-run shows it as `change_type="removed"`
+and a new version excludes it.
+
 **Deactivation/archive lifecycle** (`engine.py:deactivate_org_product`):
 - All control states sourced from the deactivated product → `needs_review`
 - Evidence-state links attributed to the product → archived (`is_archived=True`,

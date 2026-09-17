@@ -1624,8 +1624,9 @@ Items without a status are planned but not yet started.
     not a reuse of `INTEGRATIONS_ROLES`) is unchanged — Jarrod's call, not
     made here.
   - **Baseline versioning (§4 of the task) was explicitly flagged, not
-    fixed** — see Planned item P below. What shipped is visibility (the
-    import dry-run's affected-org-count warning), not a solution.
+    fixed** — see item P below (shipped 2026-09-17). What shipped *here*
+    was visibility only (the import dry-run's affected-org-count
+    warning), not a solution.
   - **Deployed to wl-util-1 (dev.wingrc.us) 2026-09-12.** Backed up first
     (`pg_dump --format=custom`, verified restorable via `pg_restore
     --list` — 342 TOC entries — before touching anything; the box's own
@@ -4447,7 +4448,7 @@ Item 1's source content is written and validated: `docs/wl-util-1-worked-example
 
 ---
 
-### P. Baseline versioning
+### P. Baseline versioning ✅ DONE (2026-09-17)
 
 Added 2026-09-11, flagged by the G.9 Tools baseline-library screen
 (`docs/PLAN-gui-restructure.md`'s G.9 section) but **predates that
@@ -4455,49 +4456,169 @@ screen** — it is `seed_baselines`'s own long-standing gap, only made more
 reachable once a runtime admin action could trigger it, not something
 this screen introduced.
 
-**The problem:** `seed_baselines` upserts `Product`/`BaselineControl`/
+**The problem:** `seed_baselines` upserted `Product`/`BaselineControl`/
 `BaselineEvidenceSpec` rows by key. Editing `baselines/rocketcyber.yaml`
-and re-seeding (via the CLI, or now via G.9's import screen) retroactively
-changes the compliance claims of every tenant that already activated that
+and re-seeding (via the CLI, or via G.9's import screen) retroactively
+changed the compliance claims of every tenant that already activated that
 product — their `control_state` was set under the *old* mapping, and the
-justification for it is silently replaced under them, with no record that
-anything changed. This is the same class of problem this codebase already
-refuses to allow elsewhere: `sprs_snapshot` is never retroactively
-rewritten, the audit log is append-only, bundle exports are point-in-time
-snapshots. Today's baseline edit *does* rewrite yesterday's record, and
-nothing in the schema or the magic loop notices.
+justification for it was silently replaced under them, with no record
+that anything changed. This was the same class of problem this codebase
+already refuses to allow elsewhere: `sprs_snapshot` is never
+retroactively rewritten, the audit log is append-only, bundle exports are
+point-in-time snapshots.
 
-**Options, none chosen yet:**
-1. **Immutable baseline versions.** Each import creates a new versioned
-   `Product`/`BaselineControl` set rather than mutating the existing rows;
-   `OrgProduct` pins to the version that was active at activation time.
-   Correct, but every FK that currently points at `BaselineControl`
-   (`ControlState.sourced_from_product_id`, the evidence-task fan-out,
-   G.9's own footprint/detail queries) has to learn to reason about "which
-   version," not just "which product" — a real migration, not a bolt-on.
-2. **`OrgProduct` pinned to an import timestamp/hash**, with the mapping
-   resolved against a point-in-time snapshot rather than the live row.
-   Smaller schema footprint than (1), but "what did version N actually
-   say" still needs somewhere durable to live — this is effectively
-   option 1 with the versioning made implicit instead of a first-class
-   table, which tends to be harder to reason about later, not easier.
-3. **Do nothing beyond a warning at import time** and treat baseline
-   edits as a rare, deliberate, MSP-wide operational event — the same way
-   editing the control catalog itself already is — rather than something
-   the product actively protects tenants from. Cheapest today; leaves the
-   silent-rewrite risk exactly where it has always been.
+**§0 — observed today-behavior, established on a bench stack before
+designing anything:** activating a product, collecting evidence to
+`met`, then editing that product's baseline and re-applying left the
+tenant's `control_state` completely undisturbed (the write path never
+touched existing rows at all) — the danger wasn't "your `met` status
+flips," it was invisible: the *justification text* behind an unrelated
+already-`met` status could change out from under the assessment with no
+record, and — the worse case, confirmed below — a removed control simply
+kept being honored forever with zero indication anything was wrong.
 
-**What already shipped (G.9), which is not a fix:** the risk is now
-*visible* at the moment it's taken. The import dry-run computes how many
-orgs have the product `active`/`candidate` today and shows that count and
-the org names before Apply is enabled. It does not block the import and it
-does not solve the underlying versioning question — it just stops the
-rewrite from being silent.
+**§1 bug, confirmed and fixed:** `seed_baselines`/`_seed_product` upserted
+`BaselineControl` by `(product_id, control_id)` and never deleted an
+unmatched row; `baseline_import.py`'s `ControlChange.change_type` had no
+`"removed"` value, so the dry-run preview couldn't even show it. Dropping
+a control from a baseline (vendor CRM corrected, or a reviewer deleting a
+fabricated AI-ingested row) was a **total no-op** — the old row stayed
+live and the magic loop kept honoring it, with the UI reporting a clean
+apply. Fixed by the same versioning change below: a control absent from a
+new import simply has no row in the new version. Regression-tested
+end-to-end in `test_admin_products.py::
+test_dropped_control_is_shown_removed_excluded_from_new_activations_and_orphans_nothing`.
 
-**Not started.** No design has been chosen; this entry exists so the
-choice gets made deliberately rather than by whichever option is easiest
-to bolt on under time pressure the next time this gap causes a real
-incident.
+**Option 1 (immutable baseline versions) chosen.** Option 3 (warn-only)
+was rejected for the reason flagged when this item was written: G.9's
+affected-org-count made the risk *visible*, which was correct as a first
+step, but a warning on an action that had become a routine weekly
+workflow (edit-after-import, re-runnable AI ingestion) is a warning
+reviewers learn to click past — it doesn't answer "what did version N
+actually claim," which is the question that matters months later.
+Option 2 (implicit pinning by timestamp/hash) was rejected for the reason
+already written here: it's option 1 with the versioning made implicit
+instead of a first-class, queryable table — harder to answer "which
+tenants are on which version" from, and this project's whole convention
+(`sprs_snapshot`, `audit_log`, `control_state_history`) is durable,
+explicit records, not derived-on-read state.
+
+The footprint matched this entry's own description, not materially
+larger: new `ProductBaselineVersion` table (`product_id`,
+`version_number` — no redundant "what changed" column; that answer lives
+in `audit_log`'s existing `product.import` action, whose `after_value`
+now carries `version_number`/`version_created`/`removed_controls`, per
+this item's own §3 instruction not to invent a parallel record);
+`Product.current_version_id`; `OrgProduct.baseline_version_id` (the pin);
+`BaselineControl.baseline_version_id` (NOT NULL, new unique constraint on
+`(baseline_version_id, control_id)` replacing the old per-product one).
+`seeds/baselines.py`/`baseline_import.py` rewritten so a reimport diffs
+against the *current* version's content and, only if anything actually
+differs, creates an entirely fresh version with new
+`BaselineControl`/`BaselineEvidenceSpec` rows (new UUIDs) — the previous
+version's rows are never mutated or deleted again. A no-op reimport
+(byte-identical content) is now a true no-op, including leaving
+`is_published` untouched — previously every reimport unconditionally
+forced `is_published → False` regardless of whether anything changed.
+`engine.py` gained `move_org_product_version` (below) and had `_run_loop`/
+`activate_org_product` updated to resolve `BaselineControl` by the
+pinned/target version, never by bare `product_id`. Two migrations:
+`0054_baseline_versioning` (schema + backfill) and `0055_footprint_version`
+(extends `auth.product_deployment_footprint()` with per-org
+`version_number`, since "which tenants are on which version" needs an
+answer from the UI).
+
+**A design assumption worth recording:** `bundle_service.py` needed *zero*
+changes. It already resolves baseline data exclusively through
+`ControlStateContributor.baseline_control_id` — never through bare
+`product_id` — so once `BaselineControl` rows stopped being mutated in
+place, point-in-time bundle correctness fell out for free. In practice
+today's bundle only renders `Product.name`/`key` (deliberately
+un-versioned identity, not a claim) through that join, not baseline free
+text (`provider_contribution`/`customer_action`/`note` are Tools-library-
+admin-only today) — so this is currently a correctness property of the
+*mechanism*, verified by reading and by the reimport tests below, rather
+than something with its own bundle-diff test. It matters the moment a
+future slice renders that text into the SSP (a plausible near-term
+addition per this file's own layer-5 description) — the join is already
+safe for that.
+
+**`ControlStateContributor` docstring correction (§0's own requirement):**
+its pre-existing docstring argued `baseline_control_id` should resolve
+*live* text because "if that baseline_control's own text is edited later
+... this row's explanation should reflect the live text, not a stale
+snapshot." That reasoning predates versioning and is now wrong about what
+"edited later" means: `BaselineControl` rows are immutable once created,
+so there is no live-edit case left for that join to resolve against — it
+was always going to show the text as it was at the version the pinning
+`OrgProduct.baseline_version_id` names. Corrected in place in
+`models.py`, not deleted, so the reasoning error is visible rather than
+silently replaced.
+
+**Publishing stays per-product, not per-version** — an explicit decision,
+not left implied per §4's instruction. There is no workflow in this app
+for two versions to be independently published at once: a reimport always
+targets a brand-new current version and (when it actually changes
+anything) already forces `is_published → False`, exactly as before.
+`Product.is_published` is unchanged as a column and unchanged in meaning;
+`Product.current_version_id` is the new "which version would a fresh
+activation use" pointer it now gates.
+
+**Version-move semantics** (`engine.py:move_org_product_version`, wired
+at `POST /orgs/{org_id}/assessments/{assessment_id}/products/{product_id}/move-version`):
+a deliberate, explicit, per-tenant action — never automatic on import.
+Diffs the org's currently-pinned version against the target version
+per objective: newly-covered objectives get a contributor added exactly
+like a first activation (`pending_evidence` or whatever
+`contributor_added_status` says); objectives whose coverage was dropped
+lose their contributor and land in `needs_review` (responsibility
+recomputed from any surviving contributor, same precedent
+`deactivate_org_product` already established); objectives whose
+classification changed have their contributor repointed at the new
+version's row and land in `needs_review`; objectives unchanged between
+the two versions are left completely untouched, including which specific
+(immutable) `BaselineControl` row their contributor points at. Unlike
+deactivation, evidence is never archived — evidence already collected
+survives a version move. New evidence specs the target version introduces
+are fanned into tasks via the same dedup path activation uses (factored
+out as `_fanout_evidence_tasks`, shared by both). Every touched objective
+gets a `control_state_history` row and a `control_state.update` audit
+entry; the move itself gets one `org_product.baseline_version_move` audit
+entry naming both version numbers. SPRS recomputes at the end. 12 tests in
+`test_baseline_version_move.py` cover gained/lost/changed/unchanged
+objectives, evidence survival, the audit/history trail, SPRS regression,
+and the three rejection paths (same version, inactive `OrgProduct`,
+version belonging to a different product).
+
+**Non-negotiables, verified:**
+- **Existing assessments unchanged**: migration 0054 backfills every
+  existing `Product` to version 1 and pins every existing `OrgProduct` to
+  it, verified against wl-util-1's real data (not just an empty test DB)
+  by restoring a `pg_dump` of the live database into an isolated copy,
+  running the migration, and diffing counts: 4 products → 4
+  `product_baseline_version` rows, all 103 `baseline_control` rows
+  versioned, both `org_product` rows pinned, zero orphaned
+  `control_state_contributor` rows.
+- **SPRS unaffected**: the same real-data copy's two assessments scored
+  −199 and −204 before the migration; identical after, both as the stored
+  column value and as a fresh `recompute_sprs()` call.
+- **"Which tenants are on which version" answerable from the UI**:
+  `GET /admin/products/{id}/footprint` now returns `version_number` per
+  org (verified against the real-data copy: Acme MSP shows `version 1`
+  for both RocketCyber and DattoRMM); `GET /admin/products/{id}/versions`
+  lists every version; `ToolDetailPanel.tsx`/`ToolsLibraryPanel.tsx`/
+  `ProductCard.tsx` render all of it, including a "Move to vN" action on
+  the assessment board's product card when an org's pin is behind the
+  product's current version.
+
+**Landed:** bench-verified on an isolated wl-util-1 Docker Compose project
+(1292 backend tests, ruff clean, 139 frontend tests, `tsc -b` clean, `vite
+build` clean) per `docs/bench-stack-verification.md`, merged to `main`
+(`fb23b453b5`), deployed to `dev.wingrc.us` with a pre-flight `pg_dump`
+backup (`/backups/pre-baseline-versioning-20260917_194732.dump` in the
+`backend_backups` volume) per `docs/deployment.md`'s `--no-deps` sequence,
+and re-verified against the real post-deploy database (SPRS scores
+identical, counts as above).
 
 ---
 
