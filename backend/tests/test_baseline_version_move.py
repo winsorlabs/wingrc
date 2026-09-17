@@ -256,10 +256,13 @@ def test_new_control_gets_first_contributor_and_evidence_task(db_session: Sessio
     assert contributor is not None
     assert contributor.baseline_control_id == ref["v2_sc"].id
 
-    task = db_session.scalars(
+    # Two tasks total: the one seeded by v1's activation (AC v1 export)
+    # plus the new one this move fanned out from v2's SC spec.
+    tasks = db_session.scalars(
         select(EvidenceTask).where(EvidenceTask.assessment_id == ref["assessment"].id)
-    ).one()
-    assert task.title == "SC v2 export"
+    ).all()
+    titles = {t.title for t in tasks}
+    assert titles == {"AC v1 export", "SC v2 export"}
 
 
 def test_unrelated_customer_owns_control_untouched(db_session: Session, ref: dict):
