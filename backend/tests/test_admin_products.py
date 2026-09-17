@@ -860,7 +860,9 @@ controls:
     assessment = start_assessment(
         db_session, org_id=org.id, framework_id=seed["fw"].id, name="Drop Test Assessment"
     )
-    activate_org_product(db_session, org_id=org.id, product_id=product.id, assessment_id=assessment.id)
+    activate_org_product(
+        db_session, org_id=org.id, product_id=product.id, assessment_id=assessment.id
+    )
     db_session.flush()
 
     cs_b = db_session.scalars(
