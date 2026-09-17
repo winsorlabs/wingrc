@@ -10,10 +10,13 @@ Endpoints:
   POST   /admin/products/import/apply                 Write a validated import (is_published=False)
   POST   /admin/products/import/from-documents        AI-drafted candidate from vendor documents
   POST   /admin/products/{product_id}/research/suggest-urls
-                                                        AI-suggested documentation URLs (proposals only)
-  POST   /admin/products/{product_id}/research/fetch  Fetch admin-approved URLs, store as ProductDocuments
+                                                        AI-suggested documentation URLs (proposals
+                                                        only)
+  POST   /admin/products/{product_id}/research/fetch  Fetch admin-approved URLs, store as
+                                                        ProductDocuments
   POST   /admin/products/{product_id}/import/from-documents-with-research
-                                                        Re-run ingestion with fetched research pages added
+                                                        Re-run ingestion with fetched research
+                                                        pages added
   POST   /admin/products/{product_id}/publish         Expose to tenants
   POST   /admin/products/{product_id}/unpublish       Hide from tenants
   GET    /admin/products/{product_id}/documents       List attached documents
