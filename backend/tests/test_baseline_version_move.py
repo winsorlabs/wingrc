@@ -125,7 +125,8 @@ def ref(db_session: Session) -> dict:
     )
     v1_ia = BaselineControl(
         product_id=product.id, baseline_version_id=v1.id, control_id=ia.id,
-        objectives=["a"], classification="customer_owns", candidate_state="not_satisfied_by_product",
+        objectives=["a"], classification="customer_owns",
+        candidate_state="not_satisfied_by_product",
     )
     db_session.add_all([v1_ac, v1_au, v1_ia])
     db_session.flush()
@@ -154,7 +155,8 @@ def ref(db_session: Session) -> dict:
 
     v2_ac = BaselineControl(
         product_id=product.id, baseline_version_id=v2.id, control_id=ac.id,
-        objectives=["a", "b"], classification="provider_satisfies", candidate_state="pending_evidence",
+        objectives=["a", "b"], classification="provider_satisfies",
+        candidate_state="pending_evidence",
         provider_contribution="v2 AC text",
     )
     v2_sc = BaselineControl(
@@ -163,7 +165,8 @@ def ref(db_session: Session) -> dict:
     )
     v2_ia = BaselineControl(
         product_id=product.id, baseline_version_id=v2.id, control_id=ia.id,
-        objectives=["a"], classification="customer_owns", candidate_state="not_satisfied_by_product",
+        objectives=["a"], classification="customer_owns",
+        candidate_state="not_satisfied_by_product",
     )
     db_session.add_all([v2_ac, v2_sc, v2_ia])
     db_session.flush()
@@ -282,7 +285,8 @@ def test_evidence_survives_the_move(db_session: Session, ref: dict):
     ac_a_state = _state(db_session, ref["assessment"].id, ref["ac_a"].id)
     ev = Evidence(
         org_id=ref["org"].id, title="AC v1 evidence", artifact_type="export",
-        kind="reference", reference_location="http://example.com/ac", collected_at=datetime.now(UTC),
+        kind="reference", reference_location="http://example.com/ac",
+        collected_at=datetime.now(UTC),
     )
     db_session.add(ev)
     db_session.flush()
