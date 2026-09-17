@@ -955,7 +955,11 @@ def fetch_research_urls(
     for url in urls:
         fetched = fetch_url_safely(url)
         if not fetched.ok or fetched.content is None:
-            results.append(FetchResultOut(url=url, final_url=fetched.final_url, ok=False, error=fetched.error))
+            results.append(
+                FetchResultOut(
+                    url=url, final_url=fetched.final_url, ok=False, error=fetched.error
+                )
+            )
             continue
 
         text, title = extract_web_text(fetched.content, fetched.content_type)
@@ -993,7 +997,10 @@ def fetch_research_urls(
             action="product_document.upload",
             entity_type="product_document",
             entity_id=doc.id,
-            after_value={"product_id": str(product_id), "title": doc.title, "kind": "web_research", "url": url},
+            after_value={
+                "product_id": str(product_id), "title": doc.title,
+                "kind": "web_research", "url": url,
+            },
             context={"via": "api", "feature": "ai_research"},
             actor=str(current_user.id),
             actor_type=actor_type_for(current_user),
@@ -1114,7 +1121,8 @@ async def import_from_documents_with_research(
                 )
             if not _verify_magic_bytes(data, mime):
                 raise HTTPException(
-                    status_code=415, detail=f"File bytes do not match declared Content-Type {mime!r}"
+                    status_code=415,
+                    detail=f"File bytes do not match declared Content-Type {mime!r}",
                 )
             path = os.path.join(tmp_dir, raw_name)
             with open(path, "wb") as fh:

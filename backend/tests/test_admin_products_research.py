@@ -49,7 +49,9 @@ class InMemoryStorageClient(StorageClient):
     def upload_file(self, key: str, data: bytes, content_type: str) -> None:
         self.files[key] = data
 
-    def presigned_url(self, key: str, expires_in: int = 300, download_filename: str | None = None) -> str:
+    def presigned_url(
+        self, key: str, expires_in: int = 300, download_filename: str | None = None
+    ) -> str:
         return f"http://fake-storage/{key}"
 
     def delete_file(self, key: str) -> None:
@@ -152,7 +154,8 @@ _SUGGEST_RESPONSE = json.dumps({
 
 def test_suggest_urls_returns_proposals_only(admin_client, db_session):
     seed = _seed_product(db_session)
-    with patch("app.routers.admin_products.get_ai_provider", return_value=_StubProvider(_SUGGEST_RESPONSE)):
+    stub = _StubProvider(_SUGGEST_RESPONSE)
+    with patch("app.routers.admin_products.get_ai_provider", return_value=stub):
         r = admin_client.post(f"/admin/products/{seed['product'].id}/research/suggest-urls")
     assert r.status_code == 200
     body = r.json()
@@ -162,7 +165,8 @@ def test_suggest_urls_returns_proposals_only(admin_client, db_session):
 
 
 def test_suggest_urls_404_for_unknown_product(admin_client):
-    with patch("app.routers.admin_products.get_ai_provider", return_value=_StubProvider(_SUGGEST_RESPONSE)):
+    stub = _StubProvider(_SUGGEST_RESPONSE)
+    with patch("app.routers.admin_products.get_ai_provider", return_value=stub):
         r = admin_client.post(f"/admin/products/{uuid.uuid4()}/research/suggest-urls")
     assert r.status_code == 404
 
@@ -230,7 +234,9 @@ def test_fetch_stores_successful_pages_as_web_research_documents(admin_client, d
     assert storage.files[doc.storage_key] is not None  # the raw HTML is retrievable
 
 
-def test_fetch_reports_per_url_failure_without_aborting_the_batch(admin_client, db_session, storage):
+def test_fetch_reports_per_url_failure_without_aborting_the_batch(
+    admin_client, db_session, storage
+):
     seed = _seed_product(db_session)
 
     def mixed_fetch(url):
@@ -304,7 +310,8 @@ def _stub_primary_response(control_id: str, *, also_disclaim: str | None = None)
             "note": "Customer's IdP owns identity.",
             "evidence": [],
         })
-    return json.dumps({"product": {"name": "Research Tool", "provider": "Vendor Inc"}, "controls": controls})
+    product = {"name": "Research Tool", "provider": "Vendor Inc"}
+    return json.dumps({"product": product, "controls": controls})
 
 
 def _stub_web_response_proposing(control_id: str, classification: str) -> str:
@@ -326,7 +333,9 @@ _STUB_EXTRACTED_TEXT = (
 )
 
 
-def _seed_web_research_document(db_session, storage, product_id, *, url: str, html: bytes) -> ProductDocument:
+def _seed_web_research_document(
+    db_session, storage, product_id, *, url: str, html: bytes
+) -> ProductDocument:
     doc_id = uuid.uuid4()
     key = f"products/{product_id}/{doc_id}/{doc_id}.html"
     storage.upload_file(key, html, "text/html")
