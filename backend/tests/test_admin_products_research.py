@@ -256,6 +256,35 @@ def test_fetch_reports_per_url_failure_without_aborting_the_batch(
     assert "private" in results_by_url["https://docs.vendor.com/bad"]["error"].lower()
 
 
+def test_fetch_refuses_to_store_a_near_empty_page(admin_client, db_session, storage):
+    """Confirmed live (2026-09-17): a JavaScript-rendered documentation
+    page extracts to 0 characters through this fetcher's static parser.
+    Must be refused before storage, not silently stored as an empty
+    ProductDocument an ingestion run would later feed to the AI."""
+    seed = _seed_product(db_session)
+
+    def empty_fetch(url):
+        return FetchResult(
+            url=url, final_url=url, ok=True, status_code=200,
+            content=b"<html><body><div id='app'></div></body></html>",
+            content_type="text/html", error=None,
+        )
+
+    with patch("app.routers.admin_products.fetch_url_safely", side_effect=empty_fetch):
+        r = admin_client.post(
+            f"/admin/products/{seed['product'].id}/research/fetch",
+            json={"urls": ["https://docs.vendor.com/js-app"]},
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["pages_fetched"] == 0
+    assert body["results"][0]["ok"] is False
+    assert "javascript" in body["results"][0]["error"].lower()
+    assert db_session.query(ProductDocument).filter(
+        ProductDocument.product_id == seed["product"].id
+    ).count() == 0
+
+
 def test_fetch_rejects_more_urls_than_the_per_run_cap(admin_client, db_session):
     seed = _seed_product(db_session)
     urls = [f"https://docs.vendor.com/{i}" for i in range(11)]

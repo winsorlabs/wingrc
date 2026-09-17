@@ -295,6 +295,37 @@ def test_ingest_web_page_rejects_oversized_page():
         )
 
 
+def test_ingest_web_page_rejects_near_empty_page_without_calling_ai():
+    """Confirmed live (2026-09-17, the real datto-rmm test run): a page
+    that renders its content via client-side JavaScript extracts to 0
+    characters, and an AI call given that little input still confidently
+    fabricated 9 control proposals -- including control ids that don't
+    match this framework's own naming convention. Refused before the AI
+    is ever called, matching document.py's own extraction-hardening
+    guard."""
+    calls = []
+
+    class _CountingProvider(_StubWebAIProvider):
+        def complete(self, system, user, *, max_tokens=8192):
+            calls.append(user)
+            return super().complete(system, user, max_tokens=max_tokens)
+
+    with pytest.raises(ResearchIngestError, match="character"):
+        ingest_web_page(
+            "", source_url="https://docs.vendor.com/js-rendered",
+            ai_provider=_CountingProvider(_WEB_RESPONSE),
+        )
+    assert calls == [], "must never reach the AI call with near-empty input"
+
+
+def test_ingest_web_page_rejects_whitespace_only_page():
+    with pytest.raises(ResearchIngestError, match="character"):
+        ingest_web_page(
+            "   \n\n   ", source_url="https://docs.vendor.com/blank",
+            ai_provider=_StubWebAIProvider(_WEB_RESPONSE),
+        )
+
+
 def test_ingest_web_page_handles_malformed_json():
     with pytest.raises(ResearchIngestError):
         ingest_web_page(

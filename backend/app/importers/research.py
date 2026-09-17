@@ -77,6 +77,19 @@ MAX_PAGE_CHARS = 50_000
 MAX_PAGES_PER_RUN = 10
 MAX_TOTAL_WEB_CHARS = 200_000
 
+# Same guard, same reasoning, as importers/document.py's own
+# _MIN_EXTRACTED_TEXT_CHARS -- confirmed live, not hypothetical (2026-09-17,
+# the real datto-rmm test run): a documentation page that renders its real
+# content via client-side JavaScript extracts to 0 characters through this
+# module's static html.parser-based extraction, and an AI call given
+# essentially empty input still confidently returned 9 fabricated control
+# proposals, including control ids that don't even match this framework's
+# naming convention (e.g. "IA.L1-3.5.1" for a CMMC L2 catalog). A
+# "successful" fetch that yields almost nothing is worse than a clean
+# failure -- refused here, before ever reaching the AI, exactly as
+# document.py refuses an empty PDF rather than sending it to the model.
+MIN_PAGE_CHARS = 50
+
 _INGEST_MAX_TOKENS = 8192
 
 _WEB_SYSTEM_PROMPT = """\
@@ -259,6 +272,17 @@ def ingest_web_page(
     extracted text. Returns candidate ControlEntry rows, each stamped with
     source_url. Raises ResearchIngestError for any expected failure.
     """
+    stripped_len = len(text.strip())
+    if stripped_len < MIN_PAGE_CHARS:
+        raise ResearchIngestError(
+            f"{source_url}: extracted only {stripped_len} character(s) of text. "
+            "This usually means the page renders its real content via "
+            "client-side JavaScript, which this fetcher's static HTML parser "
+            "cannot see (confirmed live: an AI call given this little input "
+            "still returned fabricated control proposals). Try the page's "
+            "printable/plain-text version if one exists, or verify this "
+            "control's coverage by hand."
+        )
     if len(text) > MAX_PAGE_CHARS:
         raise ResearchIngestError(
             f"{source_url}: extracted text ({len(text):,} characters) exceeds the "

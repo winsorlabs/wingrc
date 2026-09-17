@@ -69,6 +69,7 @@ from ..importers.research import (
     MAX_PAGE_CHARS,
     MAX_PAGES_PER_RUN,
     MAX_TOTAL_WEB_CHARS,
+    MIN_PAGE_CHARS,
     ResearchIngestError,
     ingest_web_page,
     merge_research,
@@ -963,6 +964,26 @@ def fetch_research_urls(
             continue
 
         text, title = extract_web_text(fetched.content, fetched.content_type)
+
+        stripped_len = len(text.strip())
+        if stripped_len < MIN_PAGE_CHARS:
+            # Confirmed live (2026-09-17, the real datto-rmm test run): a
+            # page that renders its real content via client-side JavaScript
+            # extracts to 0 characters through this static parser, and an
+            # AI call given that little input still confidently fabricated
+            # control proposals. Refused here, before ever being stored,
+            # matching document.py's own "a successful-looking extraction
+            # that yields almost nothing is worse than a clean failure."
+            results.append(
+                FetchResultOut(
+                    url=url, final_url=fetched.final_url, ok=False,
+                    error=f"Extracted only {stripped_len} character(s) of text -- this "
+                    "usually means the page renders its content via JavaScript, which "
+                    "this fetcher cannot see. Not stored. Try the page's printable/"
+                    "plain-text version if one exists.",
+                )
+            )
+            continue
 
         if len(text) > MAX_PAGE_CHARS:
             results.append(
