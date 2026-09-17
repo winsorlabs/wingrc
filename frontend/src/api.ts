@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -253,6 +253,26 @@ export const api = {
     req<{ controls_flagged: number; tasks_archived: number; evidence_links_archived: number }>(
       `/orgs/${orgId}/assessments/${assessmentId}/products/${productId}/deactivate`,
       { method: "POST", body: JSON.stringify({}) }
+    ),
+
+  // Baseline versioning (roadmap item P): move an already-active product
+  // onto a different (normally newer) baseline version. See engine.py:
+  // move_org_product_version's own docstring for the needs_review/
+  // evidence-survives semantics this triggers.
+  moveProductVersion: (
+    orgId: string,
+    assessmentId: string,
+    productId: string,
+    targetVersionId: string
+  ) =>
+    req<{
+      controls_gained: number;
+      controls_lost: number;
+      controls_changed: number;
+      tasks_created: number;
+    }>(
+      `/orgs/${orgId}/assessments/${assessmentId}/products/${productId}/move-version`,
+      { method: "POST", body: JSON.stringify({ target_version_id: targetVersionId }) }
     ),
 
   getEvidenceTasks: (orgId: string, assessmentId: string) =>
@@ -799,6 +819,11 @@ export const api = {
 
   getToolFootprint: (productId: string) =>
     req<ProductFootprintRow[]>(`/admin/products/${productId}/footprint`),
+
+  // Baseline versioning (roadmap item P): every immutable version this
+  // product has ever had, newest first.
+  listProductVersions: (productId: string) =>
+    req<ProductVersionItem[]>(`/admin/products/${productId}/versions`),
 
   publishTool: (productId: string) =>
     req<ProductPublishState>(`/admin/products/${productId}/publish`, { method: "POST" }),

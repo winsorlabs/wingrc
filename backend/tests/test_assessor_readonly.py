@@ -49,6 +49,7 @@ from app.models import (
     Framework,
     Organization,
     Product,
+    ProductBaselineVersion,
     User,
 )
 from app.storage import StorageClient, get_storage_client
@@ -171,9 +172,17 @@ def _seed_scenario(db_session, *, org_id: uuid.UUID) -> dict:
     )
     db_session.add_all([product_active, product_inactive])
     db_session.flush()
+    version_active = ProductBaselineVersion(product_id=product_active.id, version_number=1)
+    version_inactive = ProductBaselineVersion(product_id=product_inactive.id, version_number=1)
+    db_session.add_all([version_active, version_inactive])
+    db_session.flush()
+    product_active.current_version_id = version_active.id
+    product_inactive.current_version_id = version_inactive.id
+    db_session.flush()
 
     bc_active = BaselineControl(
         product_id=product_active.id,
+        baseline_version_id=version_active.id,
         control_id=ctrl.id,
         objectives=["a"],
         classification="provider_satisfies",
@@ -182,6 +191,7 @@ def _seed_scenario(db_session, *, org_id: uuid.UUID) -> dict:
     )
     bc_inactive = BaselineControl(
         product_id=product_inactive.id,
+        baseline_version_id=version_inactive.id,
         control_id=ctrl.id,
         objectives=["a"],
         classification="provider_satisfies",

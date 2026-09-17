@@ -33,6 +33,7 @@ from app.models import (
     Organization,
     OrgProduct,
     Product,
+    ProductBaselineVersion,
 )
 
 pytestmark = pytest.mark.integration
@@ -111,8 +112,15 @@ def ref(db_session: Session) -> dict:
     db_session.add(product)
     db_session.flush()
 
+    version = ProductBaselineVersion(product_id=product.id, version_number=1)
+    db_session.add(version)
+    db_session.flush()
+    product.current_version_id = version.id
+    db_session.flush()
+
     bc_ac = BaselineControl(
         product_id=product.id,
+        baseline_version_id=version.id,
         control_id=ac.id,
         objectives=["a", "b"],
         classification="shared",
@@ -122,6 +130,7 @@ def ref(db_session: Session) -> dict:
     )
     bc_ia = BaselineControl(
         product_id=product.id,
+        baseline_version_id=version.id,
         control_id=ia.id,
         objectives=["a"],
         classification="customer_owns",
@@ -155,6 +164,7 @@ def ref(db_session: Session) -> dict:
         "ac_obj_b": ac_obj_b,
         "ia_obj_a": ia_obj_a,
         "product": product,
+        "version": version,
         "bc_ac": bc_ac,
         "bc_ia": bc_ia,
         "spec": spec,
@@ -423,6 +433,12 @@ def test_start_assessment_auto_fires_for_active_products(
     op = ref["org_product"]
     op.status = "active"  # OrgProductStatus.ACTIVE — StrEnum subclasses str
     op.configured = True
+    # Baseline versioning (roadmap item P): real activation always pins a
+    # version via activate_org_product; this test bypasses that call to
+    # set status directly, so it must set the pin itself -- an active
+    # OrgProduct with no baseline_version_id is a state start_assessment's
+    # loop now deliberately skips (see engine.py's own defensive comment).
+    op.baseline_version_id = ref["version"].id
     db_session.flush()
 
     # Now start an assessment — it should auto-fire the loop

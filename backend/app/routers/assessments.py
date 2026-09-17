@@ -16,6 +16,11 @@
   POST /orgs/{org_id}/assessments/{assessment_id}/products/{product_id}/activate
       Mark a product in-use and fire the magic loop for this assessment.
 
+  POST /orgs/{org_id}/assessments/{assessment_id}/products/{product_id}/move-version
+      Baseline versioning (roadmap item P): move an already-active product
+      onto a different baseline version. See engine.py:
+      move_org_product_version.
+
   GET  /orgs/{org_id}/assessments/{assessment_id}/control-states
       Return per-objective compliance state, optionally filtered by control family.
 """
@@ -37,6 +42,7 @@ from ..engine import (
     complete_assessment,
     copy_forward_raci,
     deactivate_org_product,
+    move_org_product_version,
     recompute_sprs,
     reopen_assessment,
     start_assessment,
@@ -56,6 +62,7 @@ from ..models import (
     ImplementationStatement,
     OrgProduct,
     Product,
+    ProductBaselineVersion,
 )
 from .objectives import ResolvedEditorOut, _resolve_editor
 
@@ -146,6 +153,17 @@ class ProductOut(BaseModel):
     customer_system_count: int
     assists_count: int
     platform_only_count: int
+    # Baseline versioning (roadmap item P). pinned_version_number is the
+    # version this org's OrgProduct is actually pinned to (None if never
+    # activated). current_version_number is the product's latest version
+    # right now. The coverage counts above are computed from whichever one
+    # actually governs -- the pin if there is one, otherwise the current
+    # version (what activating today would pin to). is_on_latest_version
+    # is False only when pinned and behind -- the UI's cue to offer
+    # "move to the newer version" (engine.py:move_org_product_version).
+    pinned_version_number: int | None = None
+    current_version_number: int | None = None
+    is_on_latest_version: bool = True
 
 
 _VALID_STATUSES = frozenset(
@@ -220,6 +238,17 @@ class DeactivateOut(BaseModel):
     controls_flagged: int
     tasks_archived: int
     evidence_links_archived: int
+
+
+class MoveVersionIn(BaseModel):
+    target_version_id: uuid.UUID
+
+
+class MoveVersionOut(BaseModel):
+    controls_gained: int
+    controls_lost: int
+    controls_changed: int
+    tasks_created: int
 
 
 class EvidenceTaskStateRef(BaseModel):
@@ -593,36 +622,6 @@ def list_products_for_assessment(
 
     product_ids = [p.id for p in products]
 
-    # Aggregate classification counts per product in one query
-    coverage_rows = session.execute(
-        select(
-            BaselineControl.product_id,
-            BaselineControl.classification,
-            func.count().label("cnt"),
-        )
-        .where(BaselineControl.product_id.in_(product_ids))
-        .group_by(BaselineControl.product_id, BaselineControl.classification)
-    ).all()
-    coverage: dict[uuid.UUID, dict[str, int]] = {}
-    for row in coverage_rows:
-        coverage.setdefault(row.product_id, {})[row.classification] = row.cnt
-
-    # Aggregate coverage_basis counts (non-customer_owns only — basis is
-    # only meaningful for controls where the vendor claims involvement)
-    basis_rows = session.execute(
-        select(
-            BaselineControl.product_id,
-            BaselineControl.coverage_basis,
-            func.count().label("cnt"),
-        )
-        .where(BaselineControl.product_id.in_(product_ids))
-        .where(BaselineControl.classification != "customer_owns")
-        .group_by(BaselineControl.product_id, BaselineControl.coverage_basis)
-    ).all()
-    basis: dict[uuid.UUID, dict[str, int]] = {}
-    for row in basis_rows:
-        basis.setdefault(row.product_id, {})[row.coverage_basis] = row.cnt
-
     # Per-org activation status
     org_products = {
         op.product_id: op
@@ -634,11 +633,76 @@ def list_products_for_assessment(
         ).all()
     }
 
+    # Baseline versioning (roadmap item P): coverage counts must reflect
+    # whichever version actually governs for THIS org -- the pin if this
+    # org has one, otherwise the product's current version (what
+    # activating today would pin to). Never a bare product_id-wide sum,
+    # which would blend every historical version's rows together once a
+    # product has been reimported more than once.
+    version_id_for_product: dict[uuid.UUID, uuid.UUID] = {}
+    for p in products:
+        op = org_products.get(p.id)
+        pinned = op.baseline_version_id if op is not None else None
+        vid = pinned if pinned is not None else p.current_version_id
+        if vid is not None:
+            version_id_for_product[p.id] = vid
+    governing_version_ids = list(version_id_for_product.values())
+
+    coverage: dict[uuid.UUID, dict[str, int]] = {}
+    basis: dict[uuid.UUID, dict[str, int]] = {}
+    if governing_version_ids:
+        coverage_rows = session.execute(
+            select(
+                BaselineControl.product_id,
+                BaselineControl.classification,
+                func.count().label("cnt"),
+            )
+            .where(BaselineControl.baseline_version_id.in_(governing_version_ids))
+            .group_by(BaselineControl.product_id, BaselineControl.classification)
+        ).all()
+        for row in coverage_rows:
+            coverage.setdefault(row.product_id, {})[row.classification] = row.cnt
+
+        # non-customer_owns only — basis is only meaningful for controls
+        # where the vendor claims involvement
+        basis_rows = session.execute(
+            select(
+                BaselineControl.product_id,
+                BaselineControl.coverage_basis,
+                func.count().label("cnt"),
+            )
+            .where(BaselineControl.baseline_version_id.in_(governing_version_ids))
+            .where(BaselineControl.classification != "customer_owns")
+            .group_by(BaselineControl.product_id, BaselineControl.coverage_basis)
+        ).all()
+        for row in basis_rows:
+            basis.setdefault(row.product_id, {})[row.coverage_basis] = row.cnt
+
+    version_numbers: dict[uuid.UUID, int] = {}
+    all_version_ids = set(governing_version_ids) | {
+        p.current_version_id for p in products if p.current_version_id
+    }
+    if all_version_ids:
+        for pbv_id, num in session.execute(
+            select(ProductBaselineVersion.id, ProductBaselineVersion.version_number).where(
+                ProductBaselineVersion.id.in_(all_version_ids)
+            )
+        ).all():
+            version_numbers[pbv_id] = num
+
     out: list[ProductOut] = []
     for p in products:
         op = org_products.get(p.id)
         c = coverage.get(p.id, {})
         b = basis.get(p.id, {})
+        pinned_number = (
+            version_numbers.get(op.baseline_version_id)
+            if op is not None and op.baseline_version_id is not None
+            else None
+        )
+        current_number = (
+            version_numbers.get(p.current_version_id) if p.current_version_id else None
+        )
         out.append(
             ProductOut(
                 id=p.id,
@@ -655,6 +719,11 @@ def list_products_for_assessment(
                 customer_system_count=b.get("customer_system", 0),
                 assists_count=b.get("assists", 0),
                 platform_only_count=b.get("platform_only", 0),
+                pinned_version_number=pinned_number,
+                current_version_number=current_number,
+                is_on_latest_version=(
+                    pinned_number is None or pinned_number == current_number
+                ),
             )
         )
     return out
@@ -925,6 +994,42 @@ def deactivate_product(
     )
     session.commit()
     return DeactivateOut(**result)
+
+
+@router.post(
+    "/assessments/{assessment_id}/products/{product_id}/move-version",
+    response_model=MoveVersionOut,
+)
+def move_product_version(
+    org_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    product_id: uuid.UUID,
+    body: MoveVersionIn,
+    session: Session = Depends(get_session),
+) -> MoveVersionOut:
+    """Baseline versioning (roadmap item P): move an already-active
+    OrgProduct onto a different (normally newer) baseline version. See
+    engine.py:move_org_product_version's own docstring for the full
+    needs_review/evidence-survives semantics. A deliberate, explicit
+    action -- never triggered by an import.
+    """
+    assessment = session.get(Assessment, assessment_id)
+    if assessment is None or assessment.org_id != org_id:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+
+    try:
+        result = move_org_product_version(
+            session,
+            org_id=org_id,
+            product_id=product_id,
+            assessment_id=assessment_id,
+            target_version_id=body.target_version_id,
+        )
+    except ValueError as e:
+        session.rollback()
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    session.commit()
+    return MoveVersionOut(**result)
 
 
 @router.patch(

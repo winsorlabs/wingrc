@@ -40,6 +40,7 @@ function makeLibraryItem(overrides: Partial<ProductLibraryItem> = {}): ProductLi
     is_published: true,
     control_count: 3,
     objective_count: 6,
+    current_version_number: 1,
     ...overrides,
   };
 }
@@ -58,6 +59,7 @@ function makeDetail(overrides: Partial<ProductDetail> = {}): ProductDetail {
     source_docs: ["RocketCyber_SIEM_and_SOC_Baseline.docx"],
     ai_generated_at: null,
     ai_generated_model: null,
+    current_version_number: 1,
     baseline_controls: [
       {
         control_id: "3.14.6",
@@ -114,7 +116,7 @@ describe("ToolsLibraryPanel — detail", () => {
     vi.mocked(api.listToolsLibrary).mockResolvedValue([makeLibraryItem()]);
     vi.mocked(api.getToolDetail).mockResolvedValue(makeDetail());
     vi.mocked(api.getToolFootprint).mockResolvedValue([
-      { org_id: "org1", org_name: "Acme Corp", status: "active" },
+      { org_id: "org1", org_name: "Acme Corp", status: "active", version_number: 1 },
     ]);
 
     render(<ToolsLibraryPanel />);

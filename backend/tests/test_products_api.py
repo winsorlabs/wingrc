@@ -24,6 +24,7 @@ from app.models import (
     Framework,
     Organization,
     Product,
+    ProductBaselineVersion,
 )
 from tests.conftest import _app_session, _authed, _grant
 
@@ -39,6 +40,18 @@ def client(db_session, fake_msp_admin):
 # ---------------------------------------------------------------------------
 # Shared seed helpers
 # ---------------------------------------------------------------------------
+
+
+def _new_version(db_session, product: Product) -> ProductBaselineVersion:
+    """Test helper: create version 1 for a freshly-flushed product and pin
+    Product.current_version_id to it -- baseline_control now requires a
+    non-null baseline_version_id (roadmap item P, migration 0054)."""
+    version = ProductBaselineVersion(product_id=product.id, version_number=1)
+    db_session.add(version)
+    db_session.flush()
+    product.current_version_id = version.id
+    db_session.flush()
+    return version
 
 
 def _seed_empty(db_session, *, org_id: uuid.UUID | None = None, fake_msp_admin=None) -> dict:
@@ -149,10 +162,12 @@ def _seed_rocketcyber(
     )
     db_session.add(product)
     db_session.flush()
+    version = _new_version(db_session, product)
 
     # AU: RocketCyber is the authoritative SIEM
     bc_au = BaselineControl(
         product_id=product.id,
+        baseline_version_id=version.id,
         control_id=au_ctrl.id,
         objectives=["a"],
         classification="provider_satisfies",
@@ -162,6 +177,7 @@ def _seed_rocketcyber(
     # IA: RocketCyber explicitly disclaims identity management
     bc_ia = BaselineControl(
         product_id=product.id,
+        baseline_version_id=version.id,
         control_id=ia_ctrl.id,
         objectives=["a"],
         classification="customer_owns",
@@ -396,14 +412,17 @@ def test_platform_only_controls_excluded_from_activation(client, db_session, fak
     )
     db_session.add(product)
     db_session.flush()
+    version = _new_version(db_session, product)
 
     bc_au = BaselineControl(
-        product_id=product.id, control_id=au_ctrl.id, objectives=["a"],
+        product_id=product.id, baseline_version_id=version.id, control_id=au_ctrl.id,
+        objectives=["a"],
         classification="provider_satisfies", coverage_basis="customer_system",
         candidate_state="pending_evidence",
     )
     bc_ac = BaselineControl(
-        product_id=product.id, control_id=ac_ctrl.id, objectives=["a"],
+        product_id=product.id, baseline_version_id=version.id, control_id=ac_ctrl.id,
+        objectives=["a"],
         classification="provider_satisfies", coverage_basis="platform_only",
         candidate_state="pending_evidence",
     )
@@ -478,25 +497,30 @@ def test_coverage_basis_counts_in_product_list(client, db_session, fake_msp_admi
     )
     db_session.add(product)
     db_session.flush()
+    version = _new_version(db_session, product)
 
     # 2 customer_system, 1 platform_only, 1 customer_owns (no coverage_basis)
     db_session.add(BaselineControl(
-        product_id=product.id, control_id=ctrls[0].id, objectives=["a"],
+        product_id=product.id, baseline_version_id=version.id, control_id=ctrls[0].id,
+        objectives=["a"],
         classification="provider_satisfies", coverage_basis="customer_system",
         candidate_state="pending_evidence",
     ))
     db_session.add(BaselineControl(
-        product_id=product.id, control_id=ctrls[1].id, objectives=["a"],
+        product_id=product.id, baseline_version_id=version.id, control_id=ctrls[1].id,
+        objectives=["a"],
         classification="provider_satisfies", coverage_basis="customer_system",
         candidate_state="pending_evidence",
     ))
     db_session.add(BaselineControl(
-        product_id=product.id, control_id=ctrls[2].id, objectives=["a"],
+        product_id=product.id, baseline_version_id=version.id, control_id=ctrls[2].id,
+        objectives=["a"],
         classification="provider_satisfies", coverage_basis="platform_only",
         candidate_state="pending_evidence",
     ))
     db_session.add(BaselineControl(
-        product_id=product.id, control_id=ctrls[3].id, objectives=["a"],
+        product_id=product.id, baseline_version_id=version.id, control_id=ctrls[3].id,
+        objectives=["a"],
         classification="customer_owns", candidate_state="not_satisfied_by_product",
     ))
     db_session.flush()

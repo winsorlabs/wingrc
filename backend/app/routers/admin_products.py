@@ -4,7 +4,8 @@
 Endpoints:
   GET    /admin/products                              Library view
   GET    /admin/products/{product_id}                 Tool detail (baseline mapping, read-only)
-  GET    /admin/products/{product_id}/footprint       Which orgs have it, at what status
+  GET    /admin/products/{product_id}/footprint       Which orgs have it, at what status/version
+  GET    /admin/products/{product_id}/versions         Every immutable baseline version (item P)
   POST   /admin/products/import/dry-run               Validate + preview a baseline YAML upload
   POST   /admin/products/import/dry-run-structured    Same, JSON body in/out -- no YAML round-trip
   POST   /admin/products/import/apply                 Write a validated import (is_published=False)
@@ -81,6 +82,7 @@ from ..models import (
     Control,
     Framework,
     Product,
+    ProductBaselineVersion,
     ProductDocument,
 )
 from ..routers.evidence import (
@@ -130,6 +132,7 @@ class ProductLibraryOut(BaseModel):
     is_published: bool
     control_count: int
     objective_count: int
+    current_version_number: int | None = None
 
 
 class EvidenceSpecOut(BaseModel):
@@ -182,6 +185,7 @@ class ProductDetailOut(BaseModel):
     # rather than a dismissible flag.
     ai_generated_at: datetime | None = None
     ai_generated_model: str | None = None
+    current_version_number: int | None = None
     baseline_controls: list[BaselineControlOut]
     documents: list[ProductDocumentOut]
 
@@ -190,6 +194,14 @@ class FootprintRowOut(BaseModel):
     org_id: uuid.UUID
     org_name: str
     status: str
+    version_number: int | None = None
+
+
+class VersionOut(BaseModel):
+    id: uuid.UUID
+    version_number: int
+    created_at: datetime
+    is_current: bool
 
 
 class ControlChangeOut(BaseModel):
@@ -228,6 +240,11 @@ class ImportPreviewOut(BaseModel):
     # Advisory only -- never affects `problems`/whether Apply is enabled.
     # See baseline_import.py:DisclaimFlag's own docstring.
     disclaim_flags: list[DisclaimFlagOut] = Field(default_factory=list)
+    # Baseline versioning (roadmap item P) -- see BaselineImportPreview's
+    # own docstring in baseline_import.py.
+    current_version_number: int | None = None
+    next_version_number: int = 1
+    has_changes: bool = True
 
 
 class ImportApplyOut(BaseModel):
@@ -235,6 +252,9 @@ class ImportApplyOut(BaseModel):
     product_key: str
     baseline_controls: int
     evidence_specs: int
+    version_number: int | None = None
+    version_created: bool = False
+    removed_controls: list[str] = Field(default_factory=list)
 
 
 class EvidenceDraftOut(BaseModel):
@@ -381,30 +401,46 @@ def list_products(session: Session = Depends(get_session)) -> list[ProductLibrar
     products = session.scalars(select(Product).order_by(Product.name)).all()
     if not products:
         return []
-    product_ids = [p.id for p in products]
     fw_names = {
         f.id: f.name
         for f in session.scalars(
             select(Framework).where(Framework.id.in_({p.framework_id for p in products}))
         )
     }
-    control_counts = dict(
-        session.execute(
-            select(BaselineControl.product_id, func.count())
-            .where(BaselineControl.product_id.in_(product_ids))
-            .group_by(BaselineControl.product_id)
-        ).all()
-    )
-    objective_counts = dict(
-        session.execute(
-            select(
-                BaselineControl.product_id,
-                func.coalesce(func.sum(func.jsonb_array_length(BaselineControl.objectives)), 0),
+    # Scoped to each product's CURRENT version only (roadmap item P) --
+    # product_id alone would sum every historical version's rows too once
+    # a product has been reimported more than once.
+    current_version_ids = [p.current_version_id for p in products if p.current_version_id]
+    control_counts: dict[uuid.UUID, int] = {}
+    objective_counts: dict[uuid.UUID, int] = {}
+    if current_version_ids:
+        control_counts = dict(
+            session.execute(
+                select(BaselineControl.product_id, func.count())
+                .where(BaselineControl.baseline_version_id.in_(current_version_ids))
+                .group_by(BaselineControl.product_id)
+            ).all()
+        )
+        objective_counts = dict(
+            session.execute(
+                select(
+                    BaselineControl.product_id,
+                    func.coalesce(
+                        func.sum(func.jsonb_array_length(BaselineControl.objectives)), 0
+                    ),
+                )
+                .where(BaselineControl.baseline_version_id.in_(current_version_ids))
+                .group_by(BaselineControl.product_id)
+            ).all()
+        )
+    version_numbers: dict[uuid.UUID, int] = {}
+    if current_version_ids:
+        for pbv_id, num in session.execute(
+            select(ProductBaselineVersion.id, ProductBaselineVersion.version_number).where(
+                ProductBaselineVersion.id.in_(current_version_ids)
             )
-            .where(BaselineControl.product_id.in_(product_ids))
-            .group_by(BaselineControl.product_id)
-        ).all()
-    )
+        ).all():
+            version_numbers[pbv_id] = num
     return [
         ProductLibraryOut(
             id=p.id,
@@ -417,6 +453,9 @@ def list_products(session: Session = Depends(get_session)) -> list[ProductLibrar
             is_published=p.is_published,
             control_count=control_counts.get(p.id, 0),
             objective_count=int(objective_counts.get(p.id, 0)),
+            current_version_number=(
+                version_numbers.get(p.current_version_id) if p.current_version_id else None
+            ),
         )
         for p in products
     ]
@@ -427,9 +466,16 @@ def get_product_detail(
     product_id: uuid.UUID, session: Session = Depends(get_session)
 ) -> ProductDetailOut:
     product = _get_product(session, product_id)
-    bcs = session.scalars(
-        select(BaselineControl).where(BaselineControl.product_id == product_id)
-    ).all()
+    current_version_number: int | None = None
+    bcs: list[BaselineControl] = []
+    if product.current_version_id is not None:
+        current_version = session.get(ProductBaselineVersion, product.current_version_id)
+        current_version_number = current_version.version_number if current_version else None
+        bcs = session.scalars(
+            select(BaselineControl).where(
+                BaselineControl.baseline_version_id == product.current_version_id
+            )
+        ).all()
     controls = {
         c.id: c
         for c in session.scalars(
@@ -495,6 +541,7 @@ def get_product_detail(
         source_docs=product.source_docs or [],
         ai_generated_at=product.ai_generated_at,
         ai_generated_model=product.ai_generated_model,
+        current_version_number=current_version_number,
         baseline_controls=baseline_out,
         documents=[_document_out(d) for d in docs],
     )
@@ -512,10 +559,45 @@ def get_product_footprint(
     """
     _get_product(session, product_id)
     rows = session.execute(
-        text("SELECT org_id, org_name, status FROM auth.product_deployment_footprint(:pid)"),
+        text(
+            "SELECT org_id, org_name, status, version_number "
+            "FROM auth.product_deployment_footprint(:pid)"
+        ),
         {"pid": product_id},
     ).all()
-    return [FootprintRowOut(org_id=r.org_id, org_name=r.org_name, status=r.status) for r in rows]
+    return [
+        FootprintRowOut(
+            org_id=r.org_id, org_name=r.org_name, status=r.status, version_number=r.version_number
+        )
+        for r in rows
+    ]
+
+
+@router.get("/{product_id}/versions", response_model=list[VersionOut])
+def list_product_versions(
+    product_id: uuid.UUID, session: Session = Depends(get_session)
+) -> list[VersionOut]:
+    """Baseline versioning (roadmap item P): every immutable version this
+    product has ever had, newest first -- what a move-version action
+    (routers/assessments.py's /move-version) picks a target_version_id
+    from, and what an admin reviewing footprint/versions together answers
+    "which tenants are on which version" from.
+    """
+    product = _get_product(session, product_id)
+    versions = session.scalars(
+        select(ProductBaselineVersion)
+        .where(ProductBaselineVersion.product_id == product_id)
+        .order_by(ProductBaselineVersion.version_number.desc())
+    ).all()
+    return [
+        VersionOut(
+            id=v.id,
+            version_number=v.version_number,
+            created_at=v.created_at,
+            is_current=v.id == product.current_version_id,
+        )
+        for v in versions
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -532,6 +614,9 @@ def _empty_preview(problem: str) -> ImportPreviewOut:
         control_changes=[],
         affected_org_count=0,
         affected_org_names=[],
+        current_version_number=None,
+        next_version_number=1,
+        has_changes=False,
     )
 
 
@@ -601,6 +686,13 @@ async def import_apply(
             "baseline_controls": result["baseline_controls"],
             "evidence_specs": result["evidence_specs"],
             "is_published": product.is_published,
+            # Baseline versioning (roadmap item P): the "what changed
+            # between version N and N+1, when, and who applied it" answer
+            # lives here rather than a parallel record -- see
+            # ProductBaselineVersion's own docstring.
+            "version_number": result["version_number"],
+            "version_created": result["version_created"],
+            "removed_controls": result["removed"],
         },
         context={"via": "api"},
         actor=str(current_user.id),
@@ -612,6 +704,9 @@ async def import_apply(
         product_key=product.key,
         baseline_controls=result["baseline_controls"],
         evidence_specs=result["evidence_specs"],
+        version_number=result["version_number"],
+        version_created=result["version_created"],
+        removed_controls=result["removed"],
     )
 
 
@@ -641,6 +736,9 @@ def _preview_out(preview) -> ImportPreviewOut:
             DisclaimFlagOut(row_index=f.row_index, message=f.message)
             for f in preview.disclaim_flags
         ],
+        current_version_number=preview.current_version_number,
+        next_version_number=preview.next_version_number,
+        has_changes=preview.has_changes,
     )
 
 

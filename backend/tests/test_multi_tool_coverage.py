@@ -48,6 +48,7 @@ from app.models import (
     Organization,
     OrgProduct,
     Product,
+    ProductBaselineVersion,
 )
 
 pytestmark = pytest.mark.integration
@@ -93,13 +94,23 @@ def overlap_ref(db_session: Session) -> dict:
     db_session.add_all([product_a, product_b])
     db_session.flush()
 
+    version_a = ProductBaselineVersion(product_id=product_a.id, version_number=1)
+    version_b = ProductBaselineVersion(product_id=product_b.id, version_number=1)
+    db_session.add_all([version_a, version_b])
+    db_session.flush()
+    product_a.current_version_id = version_a.id
+    product_b.current_version_id = version_b.id
+    db_session.flush()
+
     bc_a = BaselineControl(
-        product_id=product_a.id, control_id=ctrl.id, objectives=["a"],
+        product_id=product_a.id, baseline_version_id=version_a.id, control_id=ctrl.id,
+        objectives=["a"],
         classification="provider_satisfies", candidate_state="pending_evidence",
         provider_contribution="Product A fully manages this.",
     )
     bc_b = BaselineControl(
-        product_id=product_b.id, control_id=ctrl.id, objectives=["a"],
+        product_id=product_b.id, baseline_version_id=version_b.id, control_id=ctrl.id,
+        objectives=["a"],
         classification="shared", candidate_state="pending_evidence",
         provider_contribution="Product B assists.",
         customer_action="Customer reviews Product B's alert triage weekly.",
@@ -361,8 +372,13 @@ def _three_product_ref(db_session: Session) -> dict:
         )
         db_session.add(p)
         db_session.flush()
+        pv = ProductBaselineVersion(product_id=p.id, version_number=1)
+        db_session.add(pv)
+        db_session.flush()
+        p.current_version_id = pv.id
+        db_session.flush()
         bc = BaselineControl(
-            product_id=p.id, control_id=ctrl.id, objectives=["a"],
+            product_id=p.id, baseline_version_id=pv.id, control_id=ctrl.id, objectives=["a"],
             classification="provider_satisfies", candidate_state="pending_evidence",
         )
         db_session.add(bc)

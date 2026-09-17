@@ -161,20 +161,32 @@ export function ToolDetailPanel({ productId, onBack, onChanged }: Props) {
         </div>
       )}
 
-      <h3>Deployment footprint</h3>
+      <h3>
+        Deployment footprint
+        {detail.current_version_number != null && (
+          <span className="field-hint"> — current version v{detail.current_version_number}</span>
+        )}
+      </h3>
       {footprint.length === 0 ? (
         <div className="empty">No org has activated this product.</div>
       ) : (
         <div className="table-scroll">
           <table className="contacts-table">
             <thead>
-              <tr><th>Org</th><th>Status</th></tr>
+              <tr><th>Org</th><th>Status</th><th>Version</th></tr>
             </thead>
             <tbody>
               {footprint.map((row) => (
                 <tr key={row.org_id}>
                   <td>{row.org_name}</td>
                   <td>{row.status}</td>
+                  <td>
+                    {row.version_number == null
+                      ? "—"
+                      : row.version_number === detail.current_version_number
+                        ? `v${row.version_number}`
+                        : `v${row.version_number} (behind)`}
+                  </td>
                 </tr>
               ))}
             </tbody>

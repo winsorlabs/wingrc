@@ -54,6 +54,7 @@ from .models import (
     Organization,
     OrgProduct,
     Product,
+    ProductBaselineVersion,
     RaciAssignment,
     SprsSnapshot,
 )
@@ -203,7 +204,15 @@ def start_assessment(
         )
     ).all()
     for op in active_products:
-        _run_loop(session, org_id, op.product_id, assessment.id)
+        if op.baseline_version_id is None:
+            # Defensive only -- activate_org_product always pins a version
+            # on activation, and the migration 0054 backfill pinned every
+            # pre-existing row. An active OrgProduct with no pin would mean
+            # it was created some other way; skip rather than crash so one
+            # bad row can't break every other product's magic loop on
+            # assessment creation.
+            continue
+        _run_loop(session, org_id, op.product_id, op.baseline_version_id, assessment.id)
 
     recompute_sprs(session, assessment.id)
     return assessment
@@ -496,20 +505,23 @@ def activate_org_product(
         the MSP keeps their artifacts but must re-confirm coverage is still current.
     On first activation (no archived evidence), behaviour is the same as before.
 
+    Baseline versioning (roadmap item P): a FIRST activation (no OrgProduct
+    row yet, or one that's never been activated before) pins
+    OrgProduct.baseline_version_id to the product's CURRENT version and is
+    gated on Product.is_published, exactly as before. A REACTIVATION
+    (an OrgProduct row that already has a pinned version from a prior
+    activation) reuses that pinned version regardless of the product's
+    current publish state -- the tenant already adopted a specific,
+    reviewed version; a later reimport unpublishing the product's newest
+    mapping must not block them from resuming their own historical one.
+    Moving an already-active tenant onto a newer version is a separate,
+    deliberate action -- see move_org_product_version.
+
     Returns {"objectives_updated": N, "tasks_created": N}.
     """
     product_check = session.get(Product, product_id)
     if product_check is None:
         raise ValueError(f"Product {product_id} not found")
-    if not product_check.is_published:
-        # G.9: is_published is the deliberate act that exposes a reviewed
-        # baseline mapping to tenants. Blocking activation here, not just
-        # filtering the tenant's own product list, is what makes "cannot
-        # be activated by any path, including direct API calls" actually
-        # true -- a client that already knows product_id (e.g. from
-        # before it was unpublished, or by guessing) must not be able to
-        # activate it by calling this endpoint directly.
-        raise ValueError(f"Product {product_id} is not published")
 
     op = session.scalars(
         select(OrgProduct).where(
@@ -517,12 +529,32 @@ def activate_org_product(
             OrgProduct.product_id == product_id,
         )
     ).first()
+    is_first_activation = op is None or op.baseline_version_id is None
+
+    if is_first_activation:
+        if not product_check.is_published:
+            # G.9: is_published is the deliberate act that exposes a
+            # reviewed baseline mapping to tenants. Blocking activation
+            # here, not just filtering the tenant's own product list, is
+            # what makes "cannot be activated by any path, including
+            # direct API calls" actually true -- a client that already
+            # knows product_id (e.g. from before it was unpublished, or
+            # by guessing) must not be able to activate it by calling
+            # this endpoint directly.
+            raise ValueError(f"Product {product_id} is not published")
+        if product_check.current_version_id is None:
+            raise ValueError(f"Product {product_id} has no baseline version to activate")
+        target_version_id = product_check.current_version_id
+    else:
+        target_version_id = op.baseline_version_id
+
     if op is None:
         op = OrgProduct(org_id=org_id, product_id=product_id)
         session.add(op)
     op.status = OrgProductStatus.ACTIVE
     op.configured = True
     op.activated_at = datetime.now(UTC)
+    op.baseline_version_id = target_version_id
     if configuration_notes is not None:
         op.configuration_notes = configuration_notes
     session.flush()
@@ -542,7 +574,7 @@ def activate_org_product(
         .where(
             EvidenceTask.assessment_id == assessment_id,
             EvidenceTask.org_id == org_id,
-            BaselineControl.product_id == product_id,
+            BaselineControl.baseline_version_id == target_version_id,
             EvidenceTask.is_archived.is_(True),
         )
     ).all()
@@ -594,7 +626,7 @@ def activate_org_product(
 
     session.flush()
 
-    result = _run_loop(session, org_id, product_id, assessment_id)
+    result = _run_loop(session, org_id, product_id, target_version_id, assessment_id)
 
     # States that regained archived evidence need human re-confirmation, not pending.
     if restored_cs_ids:
@@ -673,23 +705,29 @@ def _run_loop(
     session: Session,
     org_id: uuid.UUID,
     product_id: uuid.UUID,
+    baseline_version_id: uuid.UUID,
     assessment_id: uuid.UUID,
 ) -> dict:
     """Core magic-loop logic: update states, write history, seed tasks.
 
     Separated from activate_org_product so start_assessment can call it for
     each pre-existing active product without repeating the OrgProduct update.
+
+    baseline_version_id (roadmap item P): the tenant's OrgProduct.
+    baseline_version_id pin -- the ONE version's claims this run evaluates,
+    never "whatever the product's current version happens to be." Callers
+    resolve the pin before calling this; it is never re-derived here.
     """
     product = session.get(Product, product_id)
     if product is None:
         raise ValueError(f"Product {product_id} not found")
 
-    # --- baseline controls for this product ---
+    # --- baseline controls for this product's PINNED version ---
     # Exclude customer_owns (vendor disclaims) and platform_only (vendor covers
     # its own platform, not the customer's CUI systems).
     baseline_controls = session.scalars(
         select(BaselineControl)
-        .where(BaselineControl.product_id == product_id)
+        .where(BaselineControl.baseline_version_id == baseline_version_id)
         .where(BaselineControl.classification != "customer_owns")
         .where(BaselineControl.coverage_basis != "platform_only")
     ).all()
@@ -731,9 +769,9 @@ def _run_loop(
         if bc.control_id in ctrl_uuid_to_str
     ]
 
-    # bc has at most one row per control_id for this product (DB unique
-    # constraint uq_baseline_control_identity on (product_id, control_id)),
-    # so this lookup is always unambiguous.
+    # bc has at most one row per control_id within this version (DB unique
+    # constraint uq_baseline_control_version_identity on (baseline_version_id,
+    # control_id)), so this lookup is always unambiguous.
     bc_by_control_str: dict[str, BaselineControl] = {
         ctrl_uuid_to_str[bc.control_id]: bc
         for bc in baseline_controls
@@ -839,19 +877,47 @@ def _run_loop(
     session.add_all(history_rows)
     session.flush()
 
-    # --- seed evidence tasks (deduplicated, multi-objective links) ---
-    #
-    # Dedup strategy:
-    #   1. By baseline_spec_id: a previously seeded spec never creates a new task
-    #      (idempotency on re-activation).
-    #   2. By (title.lower(), artifact_type): if two specs describe the same
-    #      artifact, they share one task (evidence minimisation across controls).
-    #   3. Within-run: new tasks created this call are tracked so a second spec
-    #      with the same artifact key reuses rather than duplicates.
-    #
-    # Existing task status is NEVER modified — a 'collected' task stays collected.
-    # Only new control_state links are added for gaps.
+    tasks_created = _fanout_evidence_tasks(
+        session,
+        org_id=org_id,
+        assessment_id=assessment_id,
+        product=product,
+        baseline_controls=baseline_controls,
+        ctrl_uuid_to_str=ctrl_uuid_to_str,
+        objective_lookup=objective_lookup,
+        existing_states=existing_states,
+    )
+    return {"objectives_updated": objectives_updated, "tasks_created": tasks_created}
 
+
+def _fanout_evidence_tasks(
+    session: Session,
+    *,
+    org_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    product: Product,
+    baseline_controls: list[BaselineControl],
+    ctrl_uuid_to_str: dict[uuid.UUID, str],
+    objective_lookup: dict[tuple[str, str], str],
+    existing_states: dict[uuid.UUID, ControlState],
+) -> int:
+    """Seed evidence tasks from baseline_controls' evidence specs
+    (deduplicated, multi-objective links). Shared by _run_loop (first
+    activation / reactivation) and move_org_product_version (roadmap item
+    P: a version move can introduce baseline_control rows -- and their
+    evidence specs -- this org_product has never seen before).
+
+    Dedup strategy:
+      1. By baseline_spec_id: a previously seeded spec never creates a new task
+         (idempotency on re-activation, and on repeat version moves).
+      2. By (title.lower(), artifact_type): if two specs describe the same
+         artifact, they share one task (evidence minimisation across controls).
+      3. Within-run: new tasks created this call are tracked so a second spec
+         with the same artifact key reuses rather than duplicates.
+
+    Existing task status is NEVER modified — a 'collected' task stays collected.
+    Only new control_state links are added for gaps. Returns tasks_created.
+    """
     existing_tasks = session.scalars(
         select(EvidenceTask).where(
             EvidenceTask.assessment_id == assessment_id,
@@ -935,7 +1001,7 @@ def _run_loop(
                     existing_link_keys.add(link_key)
 
     session.flush()
-    return {"objectives_updated": objectives_updated, "tasks_created": tasks_created}
+    return tasks_created
 
 
 def deactivate_org_product(
@@ -1181,6 +1247,362 @@ def deactivate_org_product(
         "controls_flagged": controls_flagged,
         "tasks_archived": tasks_archived,
         "evidence_links_archived": evidence_links_archived,
+    }
+
+
+def move_org_product_version(
+    session: Session,
+    org_id: uuid.UUID,
+    product_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    target_version_id: uuid.UUID,
+) -> dict:
+    """Move an already-active tenant's OrgProduct from its currently
+    pinned baseline version to a different one (normally newer).
+
+    Roadmap item P (baseline versioning): the deliberate, per-tenant,
+    human action §3 requires for "how does a tenant move to a new
+    version." Never automatic on import -- OrgProduct.baseline_version_id
+    only ever changes here or on first activation (engine.py:
+    activate_org_product).
+
+    Same precedent as deactivate_org_product's "losing a tool is exactly
+    when a coverage claim deserves a second look": every objective whose
+    claim actually differs between the old and new version lands in
+    needs_review, never silently met/pending_evidence. An objective whose
+    claim is IDENTICAL in both versions (same classification, same
+    objective-key coverage) is left completely untouched -- its
+    ControlStateContributor row keeps pointing at the OLD version's
+    baseline_control row, which is fine and permanent (that row is
+    immutable and its text is identical to the new version's equivalent
+    row for that control by definition of "unchanged"); there is nothing
+    to gain and real blast-radius to lose by force-touching it.
+
+    Per objective, one of four things happens:
+      - Newly covered (old version didn't claim it, new one does): a
+        contributor row is added exactly as first activation would add
+        one -- contributor_added_status/resolve_contributor_responsibility
+        against the full current contributor set.
+      - Coverage dropped (old version claimed it, new one doesn't): the
+        contributor row is removed; if other products still cover it,
+        responsibility is recomputed from them (same as
+        deactivate_org_product's multi-contributor case); status ->
+        needs_review either way.
+      - Classification changed (both claim it, differently): the
+        contributor row is repointed to the new version's baseline_control
+        row and responsibility is recomputed from the full current set;
+        status -> needs_review.
+      - Unchanged: left alone entirely (see above).
+
+    Evidence survives throughout -- nothing here archives an
+    evidence_state_link or an evidence_task (contrast
+    deactivate_org_product, which does both). New evidence specs the new
+    version introduces (for newly-covered or reclassified controls) are
+    fanned into tasks via the same _fanout_evidence_tasks used by
+    activation; anything already collected under the old version's specs
+    is untouched and still linked.
+
+    Returns {"controls_gained": N, "controls_lost": N, "controls_changed": N,
+    "tasks_created": N}.
+    """
+    op = session.scalars(
+        select(OrgProduct).where(
+            OrgProduct.org_id == org_id, OrgProduct.product_id == product_id
+        )
+    ).first()
+    if op is None or op.status != OrgProductStatus.ACTIVE:
+        raise ValueError("Active OrgProduct not found")
+    if op.baseline_version_id == target_version_id:
+        raise ValueError("OrgProduct is already on this baseline version")
+
+    target_version = session.get(ProductBaselineVersion, target_version_id)
+    if target_version is None or target_version.product_id != product_id:
+        raise ValueError(f"Version {target_version_id} does not belong to product {product_id}")
+
+    product = session.get(Product, product_id)
+    if product is None:
+        raise ValueError(f"Product {product_id} not found")
+
+    from_version_id = op.baseline_version_id
+    from_version = (
+        session.get(ProductBaselineVersion, from_version_id) if from_version_id else None
+    )
+    from_number = from_version.version_number if from_version else None
+    to_number = target_version.version_number
+
+    move_ctx = {
+        "via": "baseline_version_move",
+        "product_name": product.name,
+        "product_key": product.key,
+        "assessment_id": str(assessment_id),
+        "from_version": from_number,
+        "to_version": to_number,
+    }
+
+    def _claimed(version_id: uuid.UUID | None) -> dict[uuid.UUID, BaselineControl]:
+        if version_id is None:
+            return {}
+        return {
+            bc.control_id: bc
+            for bc in session.scalars(
+                select(BaselineControl)
+                .where(BaselineControl.baseline_version_id == version_id)
+                .where(BaselineControl.classification != "customer_owns")
+                .where(BaselineControl.coverage_basis != "platform_only")
+            )
+        }
+
+    old_claims = _claimed(from_version_id)
+    new_claims = _claimed(target_version_id)
+    all_control_ids = set(old_claims) | set(new_claims)
+
+    controls = (
+        session.scalars(select(Control).where(Control.id.in_(all_control_ids))).all()
+        if all_control_ids
+        else []
+    )
+    ctrl_uuid_to_str: dict[uuid.UUID, str] = {c.id: c.control_id for c in controls}
+
+    objectives = (
+        session.scalars(
+            select(AssessmentObjective).where(
+                AssessmentObjective.control_id.in_(all_control_ids)
+            )
+        ).all()
+        if all_control_ids
+        else []
+    )
+    objective_lookup: dict[tuple[str, str], uuid.UUID] = {
+        (ctrl_uuid_to_str[o.control_id], o.objective_key): o.id
+        for o in objectives
+        if o.control_id in ctrl_uuid_to_str
+    }
+    obj_ids_needed = set(objective_lookup.values())
+    control_states_by_obj: dict[uuid.UUID, ControlState] = {
+        cs.objective_id: cs
+        for cs in (
+            session.scalars(
+                select(ControlState).where(
+                    ControlState.assessment_id == assessment_id,
+                    ControlState.objective_id.in_(list(obj_ids_needed)),
+                )
+            ).all()
+            if obj_ids_needed
+            else []
+        )
+    }
+
+    cs_ids = [cs.id for cs in control_states_by_obj.values()]
+    # (product_id, contributor_row_id, classification) per control_state --
+    # every CURRENT contributor (any product), to resolve responsibility
+    # against the full set, same reasoning _run_loop uses.
+    contributors_by_cs: dict[uuid.UUID, list[tuple[uuid.UUID, uuid.UUID, str]]] = {}
+    if cs_ids:
+        for cs_id, contrib_id, contrib_product_id, classification in session.execute(
+            select(
+                ControlStateContributor.control_state_id,
+                ControlStateContributor.id,
+                ControlStateContributor.product_id,
+                BaselineControl.classification,
+            )
+            .join(
+                BaselineControl,
+                ControlStateContributor.baseline_control_id == BaselineControl.id,
+            )
+            .where(ControlStateContributor.control_state_id.in_(cs_ids))
+        ).all():
+            contributors_by_cs.setdefault(cs_id, []).append(
+                (contrib_product_id, contrib_id, classification)
+            )
+
+    history_rows: list[ControlStateHistory] = []
+    new_contributor_rows: list[ControlStateContributor] = []
+    contributor_ids_to_delete: list[uuid.UUID] = []
+    bcs_needing_fanout: dict[uuid.UUID, BaselineControl] = {}
+    controls_gained = 0
+    controls_lost = 0
+    controls_changed = 0
+
+    for ctrl_id in all_control_ids:
+        old_bc = old_claims.get(ctrl_id)
+        new_bc = new_claims.get(ctrl_id)
+        ctrl_str = ctrl_uuid_to_str.get(ctrl_id)
+        if ctrl_str is None:
+            continue
+        old_objs = set(old_bc.objectives or []) if old_bc else set()
+        new_objs = set(new_bc.objectives or []) if new_bc else set()
+
+        for obj_key in old_objs | new_objs:
+            obj_id = objective_lookup.get((ctrl_str, obj_key))
+            if obj_id is None:
+                continue
+            cs = control_states_by_obj.get(obj_id)
+            if cs is None:
+                continue
+
+            current = contributors_by_cs.get(cs.id, [])
+            this_contributor = next((c for c in current if c[0] == product_id), None)
+            in_old, in_new = obj_key in old_objs, obj_key in new_objs
+
+            if in_old and not in_new:
+                if this_contributor is None:
+                    continue
+                _, contrib_row_id, _ = this_contributor
+                contributor_ids_to_delete.append(contrib_row_id)
+                remaining = [c for c in current if c[0] != product_id]
+                prev_status, prev_resp = cs.status, cs.responsibility
+                cs.status = ControlStatus.NEEDS_REVIEW
+                if remaining:
+                    cs.responsibility = resolve_contributor_responsibility(
+                        [cls for _, _, cls in remaining]
+                    )
+                    reason = (
+                        f"Version move ({from_number}->{to_number}): {product.name} no "
+                        "longer covers this (still covered by other tool(s))"
+                    )
+                else:
+                    reason = (
+                        f"Version move ({from_number}->{to_number}): {product.name} no "
+                        "longer covers this"
+                    )
+                history_rows.append(
+                    ControlStateHistory(
+                        control_state_id=cs.id,
+                        previous_status=prev_status,
+                        new_status=cs.status,
+                        previous_responsibility=prev_resp,
+                        new_responsibility=cs.responsibility,
+                        change_reason=reason,
+                    )
+                )
+                controls_lost += 1
+
+            elif not in_old and in_new:
+                if this_contributor is not None:
+                    continue
+                had_prior = bool(current)
+                prev_status, prev_resp = cs.status, cs.responsibility
+                new_contributor_rows.append(
+                    ControlStateContributor(
+                        control_state_id=cs.id,
+                        product_id=product_id,
+                        baseline_control_id=new_bc.id,
+                    )
+                )
+                all_classes = [cls for _, _, cls in current] + [new_bc.classification]
+                cs.status = contributor_added_status(prev_status, not had_prior)
+                cs.responsibility = resolve_contributor_responsibility(all_classes)
+                history_rows.append(
+                    ControlStateHistory(
+                        control_state_id=cs.id,
+                        previous_status=prev_status,
+                        new_status=cs.status,
+                        previous_responsibility=prev_resp,
+                        new_responsibility=cs.responsibility,
+                        change_reason=(
+                            f"Version move ({from_number}->{to_number}): {product.name} "
+                            "now covers this"
+                        ),
+                    )
+                )
+                bcs_needing_fanout[ctrl_id] = new_bc
+                controls_gained += 1
+
+            elif this_contributor is not None and old_bc.classification != new_bc.classification:
+                _, contrib_row_id, _ = this_contributor
+                contrib = session.get(ControlStateContributor, contrib_row_id)
+                contrib.baseline_control_id = new_bc.id
+                new_classes = [
+                    new_bc.classification if pid == product_id else cls
+                    for pid, _, cls in current
+                ]
+                prev_status, prev_resp = cs.status, cs.responsibility
+                cs.status = ControlStatus.NEEDS_REVIEW
+                cs.responsibility = resolve_contributor_responsibility(new_classes)
+                history_rows.append(
+                    ControlStateHistory(
+                        control_state_id=cs.id,
+                        previous_status=prev_status,
+                        new_status=cs.status,
+                        previous_responsibility=prev_resp,
+                        new_responsibility=cs.responsibility,
+                        change_reason=(
+                            f"Version move ({from_number}->{to_number}): {product.name}'s "
+                            "mapping changed for this control"
+                        ),
+                    )
+                )
+                bcs_needing_fanout[ctrl_id] = new_bc
+                controls_changed += 1
+            # else: unchanged claim for this objective -- left alone (see
+            # this function's own docstring for why).
+
+    if contributor_ids_to_delete:
+        for row in session.scalars(
+            select(ControlStateContributor).where(
+                ControlStateContributor.id.in_(contributor_ids_to_delete)
+            )
+        ):
+            session.delete(row)
+    session.add_all(new_contributor_rows)
+    session.add_all(history_rows)
+    session.flush()
+
+    # Only control_states this move actually touched -- history_rows is
+    # already exactly that set (unchanged claims never append one).
+    cs_by_id = {cs.id: cs for cs in control_states_by_obj.values()}
+    for h in history_rows:
+        cs = cs_by_id.get(h.control_state_id)
+        if cs is None:
+            continue
+        log_event(
+            session,
+            org_id=org_id,
+            action="control_state.update",
+            entity_type="control_state",
+            entity_id=cs.id,
+            before_value={
+                "status": h.previous_status, "responsibility": h.previous_responsibility
+            },
+            after_value={"status": h.new_status, "responsibility": h.new_responsibility},
+            context={**move_ctx, "change_reason": h.change_reason},
+        )
+
+    op.baseline_version_id = target_version_id
+    session.flush()
+
+    log_event(
+        session,
+        org_id=org_id,
+        action="org_product.baseline_version_move",
+        entity_type="org_product",
+        entity_id=op.id,
+        before_value={"baseline_version_id": str(from_version_id) if from_version_id else None,
+                       "version_number": from_number},
+        after_value={"baseline_version_id": str(target_version_id), "version_number": to_number},
+        context=move_ctx,
+    )
+
+    tasks_created = 0
+    if bcs_needing_fanout:
+        tasks_created = _fanout_evidence_tasks(
+            session,
+            org_id=org_id,
+            assessment_id=assessment_id,
+            product=product,
+            baseline_controls=list(bcs_needing_fanout.values()),
+            ctrl_uuid_to_str=ctrl_uuid_to_str,
+            objective_lookup={k: str(v) for k, v in objective_lookup.items()},
+            existing_states=control_states_by_obj,
+        )
+
+    recompute_sprs(session, assessment_id)
+
+    return {
+        "controls_gained": controls_gained,
+        "controls_lost": controls_lost,
+        "controls_changed": controls_changed,
+        "tasks_created": tasks_created,
     }
 
 

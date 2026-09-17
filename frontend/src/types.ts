@@ -181,6 +181,13 @@ export interface ProductRow {
   provider_satisfies_count: number;
   shared_count: number;
   customer_owns_count: number;
+  // Baseline versioning (roadmap item P). pinned_version_number is null
+  // until first activation. is_on_latest_version is false only when
+  // pinned and a newer version has since been imported -- the cue to
+  // offer "move to the newer version".
+  pinned_version_number: number | null;
+  current_version_number: number | null;
+  is_on_latest_version: boolean;
 }
 
 export interface EvidenceTaskStateRef {
@@ -726,6 +733,10 @@ export interface ProductLibraryItem {
   is_published: boolean;
   control_count: number;
   objective_count: number;
+  // Baseline versioning (roadmap item P): the version these counts are
+  // computed from. null only for a product with no version yet (should
+  // not occur once the library has been seeded/imported at least once).
+  current_version_number: number | null;
 }
 
 export interface BaselineEvidenceSpecItem {
@@ -782,6 +793,7 @@ export interface ProductDetail {
   // null means hand-authored.
   ai_generated_at: string | null;
   ai_generated_model: string | null;
+  current_version_number: number | null;
   baseline_controls: BaselineControlItem[];
   documents: ProductDocumentItem[];
 }
@@ -790,6 +802,16 @@ export interface ProductFootprintRow {
   org_id: string;
   org_name: string;
   status: string;
+  // Baseline versioning (roadmap item P): which version this org's
+  // activation is pinned to -- null for a candidate row never activated.
+  version_number: number | null;
+}
+
+export interface ProductVersionItem {
+  id: string;
+  version_number: number;
+  created_at: string;
+  is_current: boolean;
 }
 
 export interface BaselineControlChange {
@@ -832,6 +854,12 @@ export interface BaselineImportPreview {
   affected_org_names: string[];
   row_problems: RowProblem[];
   disclaim_flags: DisclaimFlag[];
+  // Baseline versioning (roadmap item P). has_changes false means Apply
+  // is a true no-op: the existing version is reused, nothing is written,
+  // is_published is left exactly as it is.
+  current_version_number: number | null;
+  next_version_number: number;
+  has_changes: boolean;
 }
 
 export interface BaselineEvidenceDraft {
@@ -879,6 +907,10 @@ export interface BaselineImportResult {
   product_key: string;
   baseline_controls: number;
   evidence_specs: number;
+  // Baseline versioning (roadmap item P).
+  version_number: number | null;
+  version_created: boolean;
+  removed_controls: string[];
 }
 
 export interface ProductPublishState {

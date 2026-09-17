@@ -427,6 +427,18 @@ class Product(Base):
     ai_generated_model: Mapped[str | None] = mapped_column(
         String(80), nullable=True
     )
+    # Baseline versioning (roadmap item P, migration 0054): the "latest,
+    # potentially publishable" version new activations resolve against.
+    # is_published above stays exactly what it always was -- a per-product
+    # decision, not moved onto ProductBaselineVersion -- because a reimport
+    # always targets a brand new current_version_id and already forces
+    # is_published back to False (G.9's existing behavior); there is no
+    # workflow in this app for two versions to be independently published
+    # at once. Nullable only because a Product row is flushed before its
+    # first version can exist; always populated once seeding completes.
+    current_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("product_baseline_version.id"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -435,18 +447,77 @@ class Product(Base):
     )
 
 
+class ProductBaselineVersion(Base):
+    """One immutable snapshot of a product's baseline mapping (roadmap item P).
+
+    Every import (CLI seed of baselines/*.yaml, or the G.9 admin upload
+    screen) that actually changes the mapping creates a NEW row here plus
+    entirely fresh BaselineControl/BaselineEvidenceSpec rows (new UUIDs) --
+    it never mutates the previous version's rows. A no-op reimport (content
+    identical to the current version) reuses the existing version instead
+    of minting an empty one; see seeds/baselines.py:_seed_product.
+
+    This is the fix for the bug this same slice found: seed_baselines used
+    to upsert BaselineControl in place by (product_id, control_id), so
+    editing or removing a control in the source YAML retroactively changed
+    -- or for removal, silently never changed at all -- the justification
+    behind every tenant's already-activated control_state. Under
+    versioning, OrgProduct.baseline_version_id pins a tenant to the exact
+    version active when they activated; a newer version never touches
+    them until someone explicitly moves them
+    (engine.py:move_org_product_version).
+
+    No RLS -- deployment-wide like Product and BaselineControl themselves
+    (see seeds/baselines.py's own module docstring: the baseline library is
+    never org-scoped).
+
+    What changed between version N and N+1, when, and who applied it is
+    answered from audit_log's existing "product.import" action (its
+    after_value carries the new version_number and a control-level
+    changed/new/removed summary), not a parallel record kept here --
+    version_number is purely the identity/ordering anchor.
+    """
+
+    __tablename__ = "product_baseline_version"
+    __table_args__ = (
+        UniqueConstraint(
+            "product_id", "version_number", name="uq_product_baseline_version_identity"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("product.id"), index=True
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class BaselineControl(Base):
-    """Per-control entry from the baseline library for a specific product.
+    """Per-control entry from one immutable version of a product's baseline.
 
     Normalized from the YAML loader's ControlEntry: batch entries (one YAML
     row covering a whole control family) become multiple rows here — one per
     control_id — linked by the same batch_group_id for UI grouping.
+
+    Belongs to exactly one ProductBaselineVersion (baseline_version_id) and
+    is never mutated or deleted once created — see that class's own
+    docstring for why. product_id is kept alongside baseline_version_id
+    (denormalized, always equal to the version's own product_id) purely so
+    the many existing "every baseline_control for this product regardless
+    of version" queries don't all need an extra join; the version is what
+    actually scopes a live query (engine.py's magic loop, evidence-task
+    fan-out) to the one set of claims a specific OrgProduct is pinned to.
     """
 
     __tablename__ = "baseline_control"
     __table_args__ = (
         UniqueConstraint(
-            "product_id", "control_id", name="uq_baseline_control_identity"
+            "baseline_version_id", "control_id", name="uq_baseline_control_version_identity"
         ),
         CheckConstraint(
             "classification IN ('provider_satisfies', 'shared', 'customer_owns')",
@@ -467,6 +538,9 @@ class BaselineControl(Base):
     )
     product_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("product.id"), index=True
+    )
+    baseline_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("product_baseline_version.id"), index=True
     )
     control_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("control.id"), index=True
@@ -609,6 +683,15 @@ class OrgProduct(Base):
     )
     product_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("product.id"), index=True
+    )
+    # Which version of the product's baseline this tenant's activation
+    # rests on (roadmap item P, migration 0054). NULL until first
+    # activation -- a candidate row hasn't claimed anything yet, so there
+    # is nothing to pin. Set once at activation (engine.py:activate_org_
+    # product) and left untouched by every later reimport; changes only
+    # via the deliberate engine.py:move_org_product_version action.
+    baseline_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("product_baseline_version.id"), nullable=True
     )
     status: Mapped[str] = mapped_column(String(20), default="candidate")
     configured: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -756,14 +839,23 @@ class ControlStateContributor(Base):
     baseline_control_id is NOT NULL and is the real answer to "why does
     this product cover this control" -- it is the specific baseline_control
     row (classification, provider_contribution, customer_action, note)
-    engine.py's magic loop matched to reach this state, not a denormalized
-    copy of its fields: if that baseline_control's own text is edited
-    later (the edit-baseline-mapping feature), this row's explanation
-    should reflect the live text, not a stale snapshot frozen at
-    activation time -- consistent with how every other join in this
-    codebase works (nothing here snapshots except bundle export, which
-    snapshots everything on purpose at render time; see BundleSnapshot's
-    own docstring).
+    engine.py's magic loop matched to reach this state.
+
+    CORRECTION (2026-09-17, roadmap item P / baseline versioning,
+    migration 0054): this row's text is NOT live anymore, and was never
+    meant to be -- the reasoning above predates baseline versioning and
+    was wrong about what "the mapping is edited later" actually means.
+    BaselineControl rows are now immutable once created: an edit to a
+    product's baseline creates a brand new ProductBaselineVersion with
+    entirely new BaselineControl rows, it never mutates the row this FK
+    already points at. So baseline_control_id resolving through a live
+    join was always going to show the text as it was AT THE VERSION this
+    row's OrgProduct.baseline_version_id was pinned to -- there was no
+    real "later edit" case for it to reflect, because nothing upstream of
+    it can change in place anymore. This is consistent with how every
+    other join in this codebase works precisely because nothing here
+    snapshots a COPY of the text -- it points at an immutable original,
+    which is a stronger guarantee than a copy would be, not a looser one.
 
     Rows are inserted by engine.py's _run_loop when a product's magic loop
     first claims an objective, and DELETED by deactivate_org_product when

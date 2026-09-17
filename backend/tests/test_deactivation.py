@@ -62,6 +62,7 @@ from app.models import (
     Organization,
     OrgProduct,
     Product,
+    ProductBaselineVersion,
 )
 from tests.conftest import _app_session, _authed, _grant
 
@@ -109,13 +110,19 @@ def ref(db_session: Session, fake_msp_admin) -> dict:
     db_session.add(product)
     db_session.flush()
 
+    version = ProductBaselineVersion(product_id=product.id, version_number=1)
+    db_session.add(version)
+    db_session.flush()
+    product.current_version_id = version.id
+    db_session.flush()
+
     bc_ac = BaselineControl(
-        product_id=product.id, control_id=ac.id,
+        product_id=product.id, baseline_version_id=version.id, control_id=ac.id,
         objectives=["a"], classification="shared",
         candidate_state="pending_evidence",
     )
     bc_ia = BaselineControl(
-        product_id=product.id, control_id=ia.id,
+        product_id=product.id, baseline_version_id=version.id, control_id=ia.id,
         objectives=["a"], classification="customer_owns",
         candidate_state="not_satisfied_by_product",
     )
@@ -138,7 +145,7 @@ def ref(db_session: Session, fake_msp_admin) -> dict:
     return {
         "org": org, "fw": fw, "ac": ac, "ia": ia,
         "ac_obj": ac_obj, "ia_obj": ia_obj,
-        "product": product, "bc_ac": bc_ac, "spec": spec, "org_product": op,
+        "product": product, "version": version, "bc_ac": bc_ac, "spec": spec, "org_product": op,
     }
 
 

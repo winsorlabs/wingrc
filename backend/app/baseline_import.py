@@ -31,7 +31,15 @@ import yaml
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from .models import AssessmentObjective, BaselineControl, Control, Framework, Product
+from .models import (
+    AssessmentObjective,
+    BaselineControl,
+    BaselineEvidenceSpec,
+    Control,
+    Framework,
+    Product,
+    ProductBaselineVersion,
+)
 from .seeds.baselines import _seed_product, normalize_product_key
 
 _VALID_CLASSIFICATIONS = frozenset({"provider_satisfies", "shared", "customer_owns"})
@@ -92,6 +100,14 @@ _DISCLAIM_PHRASES = (
     "cannot configure",
     "does not have access to",
 )
+
+
+def _evidence_sort_key(t: tuple[str, str, str | None]) -> tuple[str, str, str]:
+    """Sort key for an (artifact, type, kb) evidence tuple. kb can be None;
+    coercing it to "" avoids "'<' not supported between NoneType and str"
+    the moment two specs share artifact+type and the comparison reaches
+    the kb element."""
+    return (t[0], t[1], t[2] or "")
 
 
 def _disclaims_coverage(*texts: str | None) -> bool:
@@ -361,11 +377,15 @@ def validate(session: Session, data: dict, ctrl_lookup: dict[str, Control]) -> l
 @dataclass
 class BaselineControlChange:
     control_id: str
-    change_type: str  # "new" | "changed" | "unchanged"
+    change_type: str  # "new" | "changed" | "unchanged" | "removed"
     # classification/coverage_basis can be None here now that rows are built
     # for every structurally-parseable entry, not just once the whole file
     # is clean -- an unset/invalid value IS the thing a reviewer is being
-    # shown this row to fix.
+    # shown this row to fix. For change_type="removed" these carry the
+    # control's LAST value (from the version being replaced) since there is
+    # no incoming row to read them from -- roadmap item P's §1 bug fix:
+    # a control dropped from the YAML used to vanish from this diff
+    # entirely and silently keep being honored by the magic loop forever.
     classification: str | None
     coverage_basis: str | None
     field_diffs: dict[str, tuple[Any, Any]] = field(default_factory=dict)
@@ -434,6 +454,16 @@ class BaselineImportPreview:
     row_problems: list[ValidationProblem] = field(default_factory=list)
     control_rows: list[ControlEntryDraft] = field(default_factory=list)
     disclaim_flags: list[DisclaimFlag] = field(default_factory=list)
+    # Baseline versioning (roadmap item P): the version number Apply will
+    # create if anything actually differs, and whether it would differ at
+    # all -- current_version_number is None for a brand new product (there
+    # is no "current" yet). has_changes False means Apply is a true no-op:
+    # the existing version is reused, nothing is written, is_published is
+    # left exactly as it is. See seeds/baselines.py:_seed_product for the
+    # same diff this mirrors.
+    current_version_number: int | None = None
+    next_version_number: int = 1
+    has_changes: bool = True
 
 
 def _coerce_evidence_drafts(raw: Any) -> list[EvidenceSpecDraft]:
@@ -480,14 +510,34 @@ def build_preview(
         else None
     )
 
+    # Scoped to the product's CURRENT version only -- product_id alone
+    # would also pull in every historical version's rows once a product
+    # has been reimported more than once, which would make every one of
+    # their controls look "unchanged" against whichever historical row
+    # happened to share a control_id (roadmap item P: only the current
+    # version is "what an admin might disturb by reimporting").
+    current_version: ProductBaselineVersion | None = None
     existing_bcs: dict[uuid.UUID, BaselineControl] = {}
-    if product is not None:
+    existing_specs_by_bc: dict[uuid.UUID, list[BaselineEvidenceSpec]] = {}
+    if product is not None and product.current_version_id is not None:
+        current_version = session.get(ProductBaselineVersion, product.current_version_id)
         existing_bcs = {
             bc.control_id: bc
             for bc in session.scalars(
-                select(BaselineControl).where(BaselineControl.product_id == product.id)
+                select(BaselineControl).where(
+                    BaselineControl.baseline_version_id == current_version.id
+                )
             )
         }
+        if existing_bcs:
+            for s in session.scalars(
+                select(BaselineEvidenceSpec).where(
+                    BaselineEvidenceSpec.baseline_control_id.in_(
+                        [bc.id for bc in existing_bcs.values()]
+                    )
+                )
+            ):
+                existing_specs_by_bc.setdefault(s.baseline_control_id, []).append(s)
 
     # Row-building iterates every dict-shaped entry in data["controls"]
     # directly -- NOT parsed_entries (validate_structured()'s first pass),
@@ -505,6 +555,7 @@ def build_preview(
     changes: list[BaselineControlChange] = []
     control_rows: list[ControlEntryDraft] = []
     disclaim_flags: list[DisclaimFlag] = []
+    seen_control_uuids: set[uuid.UUID] = set()
     for idx, entry in enumerate(data.get("controls") or []):
         if not isinstance(entry, dict):
             continue
@@ -574,10 +625,17 @@ def build_preview(
                 )
             )
 
+        evidence_tuples = [
+            (ev.get("artifact"), ev.get("type"), ev.get("kb"))
+            for ev in (entry.get("evidence") or [])
+            if isinstance(ev, dict)
+        ]
+
         for cid in ctrl_ids:
             ctrl = ctrl_lookup.get(cid)
             if ctrl is None:
                 continue
+            seen_control_uuids.add(ctrl.id)
             existing = existing_bcs.get(ctrl.id)
             if existing is None:
                 changes.append(
@@ -593,6 +651,26 @@ def build_preview(
                 diffs["candidate_state"] = (existing.candidate_state, candidate_state)
             if sorted(existing.objectives or []) != sorted(objectives):
                 diffs["objectives"] = (existing.objectives, objectives)
+            if (existing.provider_contribution or None) != (provider_contribution or None):
+                diffs["provider_contribution"] = (
+                    existing.provider_contribution, provider_contribution
+                )
+            if (existing.customer_action or None) != (customer_action or None):
+                diffs["customer_action"] = (existing.customer_action, customer_action)
+            if (existing.note or None) != (note or None):
+                diffs["note"] = (existing.note, note)
+            if (existing.scope_note or None) != (scope_note or None):
+                diffs["scope_note"] = (existing.scope_note, scope_note)
+            existing_evidence = sorted(
+                (
+                    (s.artifact_description, s.evidence_type, s.kb_reference)
+                    for s in existing_specs_by_bc.get(existing.id, [])
+                ),
+                key=_evidence_sort_key,
+            )
+            new_evidence = sorted(evidence_tuples, key=_evidence_sort_key)
+            if existing_evidence != new_evidence:
+                diffs["evidence"] = (existing_evidence, new_evidence)
             changes.append(
                 BaselineControlChange(
                     cid,
@@ -603,6 +681,25 @@ def build_preview(
                 )
             )
 
+    # A control the current version claims but this import no longer
+    # lists -- roadmap item P's §1 bug: previously silent, now a visible
+    # "removed" row so a reviewer sees exactly what Apply is about to stop
+    # honoring going forward (existing tenants pinned to the current
+    # version are unaffected either way -- see ProductBaselineVersion's
+    # own docstring).
+    uuid_to_control_str = {c.id: cid for cid, c in ctrl_lookup.items()}
+    for ctrl_uuid, existing in existing_bcs.items():
+        if ctrl_uuid in seen_control_uuids:
+            continue
+        changes.append(
+            BaselineControlChange(
+                uuid_to_control_str.get(ctrl_uuid, str(ctrl_uuid)),
+                "removed",
+                existing.classification,
+                existing.coverage_basis,
+            )
+        )
+
     affected_org_names: list[str] = []
     if product is not None:
         rows = session.execute(
@@ -610,6 +707,17 @@ def build_preview(
             {"pid": product.id},
         ).all()
         affected_org_names = [r.org_name for r in rows if r.status in _LIVE_ORG_PRODUCT_STATUSES]
+
+    current_version_number = current_version.version_number if current_version else None
+    # Mirrors seeds/baselines.py:_seed_product's own needs_new_version test
+    # exactly: a brand new product (no current version yet) always creates
+    # version 1 regardless of how many control rows it lists.
+    has_changes = current_version is None or any(
+        c.change_type != "unchanged" for c in changes
+    )
+    next_version_number = (current_version_number or 0) + 1 if has_changes else (
+        current_version_number or 1
+    )
 
     return BaselineImportPreview(
         problems=problems,
@@ -622,6 +730,9 @@ def build_preview(
         row_problems=problems_structured,
         control_rows=control_rows,
         disclaim_flags=disclaim_flags,
+        current_version_number=current_version_number,
+        next_version_number=next_version_number,
+        has_changes=has_changes,
     )
 
 

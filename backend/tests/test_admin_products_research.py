@@ -33,6 +33,7 @@ from app.models import (
     Control,
     Framework,
     Product,
+    ProductBaselineVersion,
     ProductDocument,
 )
 from app.storage import StorageClient, get_storage_client
@@ -109,16 +110,23 @@ def _seed_product(db_session, *, disclaimed_control: bool = False) -> dict:
     )
     db_session.add(product)
     db_session.flush()
+    version = ProductBaselineVersion(product_id=product.id, version_number=1)
+    db_session.add(version)
+    db_session.flush()
+    product.current_version_id = version.id
+    db_session.flush()
 
     bc = BaselineControl(
-        product_id=product.id, control_id=ctrl.id, objectives=["a"],
+        product_id=product.id, baseline_version_id=version.id, control_id=ctrl.id,
+        objectives=["a"],
         classification="shared", coverage_basis="customer_system",
         candidate_state="pending_evidence",
     )
     db_session.add(bc)
     if disclaimed_control:
         bc_ia = BaselineControl(
-            product_id=product.id, control_id=disclaimed_ctrl.id, objectives=["a"],
+            product_id=product.id, baseline_version_id=version.id, control_id=disclaimed_ctrl.id,
+            objectives=["a"],
             classification="customer_owns", candidate_state="not_satisfied_by_product",
             note="Customer's IdP owns identity.",
         )

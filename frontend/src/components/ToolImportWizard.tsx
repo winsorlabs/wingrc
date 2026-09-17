@@ -5,6 +5,7 @@ import type {
   BaselineControlDraft,
   BaselineEvidenceDraft,
   BaselineImportPreview,
+  BaselineImportResult,
   FetchUrlResult,
   ProductDetail,
   ProductMetaDraft,
@@ -132,7 +133,7 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
   const [checking, setChecking] = useState(false);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [applied, setApplied] = useState<{ baseline_controls: number; evidence_specs: number } | null>(null);
+  const [applied, setApplied] = useState<BaselineImportResult | null>(null);
 
   // AI research of vendor platform documentation (edit-existing-product
   // flow only -- see backend/app/routers/admin_products.py's own note on
@@ -496,10 +497,26 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
 
           {applied ? (
             <div className="wizard-complete-msg">
-              {editProductId ? "Saved" : "Imported"} {applied.baseline_controls} baseline control
-              {applied.baseline_controls === 1 ? "" : "s"} and {applied.evidence_specs} evidence spec
-              {applied.evidence_specs === 1 ? "" : "s"}. The product is now <strong>unpublished</strong> — publish
-              it again from the detail view once you've reviewed the mapping.
+              {applied.version_created ? (
+                <>
+                  {editProductId ? "Saved" : "Imported"} {applied.baseline_controls} baseline control
+                  {applied.baseline_controls === 1 ? "" : "s"} and {applied.evidence_specs} evidence spec
+                  {applied.evidence_specs === 1 ? "" : "s"} as version {applied.version_number}.
+                  {applied.removed_controls.length > 0 && (
+                    <> {applied.removed_controls.length} control{applied.removed_controls.length === 1 ? "" : "s"} no
+                      longer appear{applied.removed_controls.length === 1 ? "s" : ""} in this version:{" "}
+                      {applied.removed_controls.join(", ")}.</>
+                  )}{" "}
+                  Orgs already on an earlier version are unaffected until someone explicitly moves them. The
+                  product is now <strong>unpublished</strong> — publish it again from the detail view once
+                  you've reviewed the mapping.
+                </>
+              ) : (
+                <>
+                  Nothing in this file differs from version {applied.version_number} — no new version was
+                  created, and the product's publish state is unchanged.
+                </>
+              )}
             </div>
           ) : editLoading ? (
             <div className="loading">Loading current mapping…</div>
@@ -991,11 +1008,31 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
                   </div>
 
                   {preview.affected_org_count > 0 && (
-                    <div className="form-error">
-                      ⚠ {preview.affected_org_count} org{preview.affected_org_count === 1 ? "" : "s"} already{" "}
-                      {preview.affected_org_count === 1 ? "has" : "have"} this product active or candidate:{" "}
-                      {preview.affected_org_names.join(", ")}. Re-importing changes the compliance mapping those
-                      orgs' control states were set under.
+                    <div className="field-hint">
+                      {preview.has_changes ? (
+                        <>
+                          {preview.affected_org_count} org{preview.affected_org_count === 1 ? "" : "s"} already{" "}
+                          {preview.affected_org_count === 1 ? "has" : "have"} this product active or candidate:{" "}
+                          {preview.affected_org_names.join(", ")}. Applying creates version{" "}
+                          {preview.next_version_number} -- those orgs stay pinned to{" "}
+                          {preview.current_version_number != null ? `v${preview.current_version_number}` : "their current version"}{" "}
+                          until someone explicitly moves them.
+                        </>
+                      ) : (
+                        <>
+                          {preview.affected_org_count} org{preview.affected_org_count === 1 ? "" : "s"} already{" "}
+                          {preview.affected_org_count === 1 ? "has" : "have"} this product active or candidate, but
+                          nothing in this file differs from the current version (v{preview.current_version_number}) --
+                          Apply will be a no-op.
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {!preview.has_changes && preview.affected_org_count === 0 && preview.current_version_number != null && (
+                    <div className="field-hint">
+                      Nothing in this file differs from the current version (v{preview.current_version_number}) --
+                      Apply will be a no-op.
                     </div>
                   )}
 
@@ -1014,9 +1051,12 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
                         </thead>
                         <tbody>
                           {preview.control_changes.map((c) => (
-                            <tr key={c.control_id}>
+                            <tr
+                              key={c.control_id}
+                              className={c.change_type === "removed" ? "baseline-change-removed" : undefined}
+                            >
                               <td>{c.control_id}</td>
-                              <td>{c.change_type}</td>
+                              <td>{c.change_type === "removed" ? "removed (dropped from this import)" : c.change_type}</td>
                               <td>{c.classification}</td>
                               <td className={c.coverage_basis === "platform_only" ? "coverage-basis-platform-only" : undefined}>
                                 {c.coverage_basis}
