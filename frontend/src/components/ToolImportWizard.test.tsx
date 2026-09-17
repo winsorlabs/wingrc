@@ -81,6 +81,7 @@ function makeControlRow(overrides: Partial<BaselineControlDraft> = {}): Baseline
     evidence: [],
     note: null,
     scope_note: null,
+    source: null,
     ...overrides,
   };
 }

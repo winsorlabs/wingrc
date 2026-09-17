@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UserDirectoryEntry, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -865,6 +865,57 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(draft),
     });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<DocumentIngestResult>;
+  },
+
+  // AI research of vendor platform documentation (§1: propose, then
+  // approve, then fetch). suggestResearchUrls only ever proposes; nothing
+  // is fetched until fetchResearchUrls is called with an explicit approved
+  // list, which may include URLs typed in directly rather than suggested.
+  suggestResearchUrls: async (productId: string): Promise<UrlSuggestion[]> => {
+    const r = await fetch(`${BASE}/admin/products/${productId}/research/suggest-urls`, {
+      method: "POST",
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+    const data = (await r.json()) as { suggestions: UrlSuggestion[] };
+    return data.suggestions;
+  },
+
+  fetchResearchUrls: async (productId: string, urls: string[]): Promise<FetchUrlsResult> => {
+    const r = await fetch(`${BASE}/admin/products/${productId}/research/fetch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ urls }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<FetchUrlsResult>;
+  },
+
+  // Re-runs document ingestion for an EXISTING product with the given
+  // already-fetched research documents (see fetchResearchUrls) added.
+  // Writes nothing -- same dry-run discipline as ingestBaselineFromDocuments.
+  ingestBaselineWithResearch: async (
+    productId: string,
+    files: File[],
+    researchDocumentIds: string[]
+  ): Promise<DocumentIngestResult> => {
+    const form = new FormData();
+    for (const f of files) form.append("files", f);
+    form.append("research_document_ids", researchDocumentIds.join(","));
+    const r = await fetch(
+      `${BASE}/admin/products/${productId}/import/from-documents-with-research`,
+      { method: "POST", body: form }
+    );
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
       throw new Error(body.detail ?? `${r.status} ${r.statusText}`);

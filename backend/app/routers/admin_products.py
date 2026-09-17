@@ -9,6 +9,11 @@ Endpoints:
   POST   /admin/products/import/dry-run-structured    Same, JSON body in/out -- no YAML round-trip
   POST   /admin/products/import/apply                 Write a validated import (is_published=False)
   POST   /admin/products/import/from-documents        AI-drafted candidate from vendor documents
+  POST   /admin/products/{product_id}/research/suggest-urls
+                                                        AI-suggested documentation URLs (proposals only)
+  POST   /admin/products/{product_id}/research/fetch  Fetch admin-approved URLs, store as ProductDocuments
+  POST   /admin/products/{product_id}/import/from-documents-with-research
+                                                        Re-run ingestion with fetched research pages added
   POST   /admin/products/{product_id}/publish         Expose to tenants
   POST   /admin/products/{product_id}/unpublish       Hide from tenants
   GET    /admin/products/{product_id}/documents       List attached documents
@@ -36,6 +41,7 @@ import mimetypes
 import os
 import shutil
 import tempfile
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -56,6 +62,15 @@ from ..baseline_import import build_preview, parse_yaml, validate
 from ..crypto import CredentialCipherError
 from ..db import get_session
 from ..importers.document import DocumentIngestError, ingest_document
+from ..importers.research import (
+    MAX_PAGE_CHARS,
+    MAX_PAGES_PER_RUN,
+    MAX_TOTAL_WEB_CHARS,
+    ResearchIngestError,
+    ingest_web_page,
+    merge_research,
+    suggest_documentation_urls,
+)
 from ..models import (
     BaselineControl,
     BaselineEvidenceSpec,
@@ -73,6 +88,7 @@ from ..routers.evidence import (
 )
 from ..seeds.baselines import _FRAMEWORK_KEY, normalize_product_key
 from ..storage import StorageClient, download_filename, get_storage_client
+from ..web_fetch import extract_web_text, fetch_url_safely
 
 router = APIRouter(
     prefix="/admin/products",
@@ -235,6 +251,9 @@ class ControlEntryOut(BaseModel):
     evidence: list[EvidenceDraftOut]
     note: str | None
     scope_note: str | None
+    # None = from the uploaded CRM/baseline document(s); a URL = proposed by
+    # AI research over that fetched page. See baseline.py:ControlEntry.source.
+    source: str | None = None
 
 
 class ProductMetaOut(BaseModel):
@@ -251,6 +270,20 @@ class ProductMetaOut(BaseModel):
     ai_generated_model: str | None = None
 
 
+class ResearchCostOut(BaseModel):
+    """§5 -- surfaced so a reviewer sees the cost/latency impact of adding
+    research, not just the resulting mapping. `None` on a plain
+    (non-research) ingestion -- there is nothing to report."""
+
+    pages_included: int
+    total_web_characters: int
+    estimated_added_tokens: int
+    ai_calls_added: int
+    elapsed_seconds: float
+    controls_added_from_web: int
+    conflicts_flagged: int
+
+
 class DocumentIngestOut(BaseModel):
     yaml: str
     preview: ImportPreviewOut
@@ -261,6 +294,37 @@ class DocumentIngestOut(BaseModel):
     # re-serialized fresh from whatever was just validated.
     product: ProductMetaOut
     controls: list[ControlEntryOut]
+    research: ResearchCostOut | None = None
+
+
+class UrlSuggestionOut(BaseModel):
+    url: str
+    rationale: str
+
+
+class SuggestUrlsOut(BaseModel):
+    suggestions: list[UrlSuggestionOut]
+
+
+class FetchUrlsIn(BaseModel):
+    urls: list[str]
+
+
+class FetchResultOut(BaseModel):
+    url: str
+    final_url: str
+    ok: bool
+    title: str | None = None
+    characters: int | None = None
+    document_id: uuid.UUID | None = None
+    error: str | None = None
+
+
+class FetchUrlsOut(BaseModel):
+    results: list[FetchResultOut]
+    pages_fetched: int
+    total_characters: int
+    estimated_added_tokens: int
 
 
 class PublishOut(BaseModel):
@@ -611,6 +675,7 @@ def _control_rows_out(rows: list) -> list[ControlEntryOut]:
             ],
             note=r.note,
             scope_note=r.scope_note,
+            source=r.source,
         )
         for r in rows
     ]
@@ -798,6 +863,364 @@ async def import_from_documents(
         preview=_preview_out(preview),
         product=_product_meta_out(data_dict.get("product") or {}),
         controls=_control_rows_out(preview.control_rows),
+    )
+
+
+# ---------------------------------------------------------------------------
+# AI research of vendor platform documentation (2026-09-17)
+#
+# Scoped to an EXISTING product only (product_id required), not the
+# from-scratch new-product flow above -- ProductDocument.product_id is a
+# real, NOT NULL foreign key, and there is no product row yet for a fetched
+# page to attach to before the very first Apply of a brand-new product.
+# Extending this to new-product creation would mean either inventing an
+# orphan/pending-document concept or deferring attachment to apply-time the
+# way ingestFiles already are in the frontend (ToolImportWizard.tsx) -- a
+# reasonable follow-up, out of scope here. This also matches the ticket's
+# own real verification target exactly: re-running research against an
+# EXISTING product (datto-rmm).
+#
+# Propose -> approve -> fetch (§1): suggest_documentation_urls() only ever
+# proposes; nothing is fetched until an admin calls /research/fetch with an
+# explicit approved list (which may include URLs the admin typed in
+# directly -- suggestion and approval are deliberately two different
+# calls, never a "trust what was suggested" shortcut).
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{product_id}/research/suggest-urls", response_model=SuggestUrlsOut)
+async def suggest_research_urls(
+    product_id: uuid.UUID, session: Session = Depends(get_session)
+) -> SuggestUrlsOut:
+    """Ask the AI for candidate documentation URLs for this product --
+    proposals only. Nothing is fetched here; see /research/fetch."""
+    product = _get_product(session, product_id)
+    try:
+        ai_provider = get_ai_provider(session)
+    except CredentialCipherError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        suggestions = suggest_documentation_urls(
+            product_name=product.name, provider=product.provider, ai_provider=ai_provider
+        )
+    except ResearchIngestError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return SuggestUrlsOut(
+        suggestions=[UrlSuggestionOut(url=s.url, rationale=s.rationale) for s in suggestions]
+    )
+
+
+@router.post("/{product_id}/research/fetch", response_model=FetchUrlsOut)
+def fetch_research_urls(
+    product_id: uuid.UUID,
+    body: FetchUrlsIn,
+    session: Session = Depends(get_session),
+    storage: StorageClient = Depends(get_storage_client),
+    current_user: CurrentUser = Depends(require_role("msp_admin", "consultant_admin")),
+) -> FetchUrlsOut:
+    """Fetch every URL in `body.urls` -- and ONLY those; no crawling, no
+    following links found in a fetched page's own content (see
+    web_fetch.py's module docstring for the full SSRF defense this runs
+    under) -- and store each successful one as a real ProductDocument
+    (kind='web_research'), exactly like an uploaded file, so a compliance
+    claim sourced from it is reproducible later even if the live page
+    changes.
+
+    §5: caps the page count per call and reports total size/estimated
+    token cost in the response BEFORE any ingestion AI call is ever made --
+    fetching costs nothing but a few HTTP requests; only the subsequent
+    /import/from-documents-with-research call spends API budget.
+    """
+    _get_product(session, product_id)
+    urls = [u.strip() for u in body.urls if u.strip()]
+    if not urls:
+        raise HTTPException(status_code=422, detail="At least one URL is required.")
+    if len(urls) > MAX_PAGES_PER_RUN:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{len(urls)} URLs requested; at most {MAX_PAGES_PER_RUN} may be "
+            "fetched in one call.",
+        )
+
+    results: list[FetchResultOut] = []
+    total_characters = 0
+
+    for url in urls:
+        fetched = fetch_url_safely(url)
+        if not fetched.ok or fetched.content is None:
+            results.append(FetchResultOut(url=url, final_url=fetched.final_url, ok=False, error=fetched.error))
+            continue
+
+        text, title = extract_web_text(fetched.content, fetched.content_type)
+
+        if len(text) > MAX_PAGE_CHARS:
+            results.append(
+                FetchResultOut(
+                    url=url, final_url=fetched.final_url, ok=False,
+                    error=f"Extracted text ({len(text):,} characters) exceeds the "
+                    f"{MAX_PAGE_CHARS:,}-character per-page limit -- not stored.",
+                )
+            )
+            continue
+
+        doc_id = uuid.uuid4()
+        ext = ".html"
+        storage_key = f"products/{product_id}/{doc_id}/{doc_id}{ext}"
+        storage.upload_file(storage_key, fetched.content, "text/html")
+
+        doc = ProductDocument(
+            id=doc_id,
+            product_id=product_id,
+            title=title or url,
+            kind="web_research",
+            source_docs_ref=url,
+            storage_key=storage_key,
+            mime_type="text/html",
+            file_size_bytes=len(fetched.content),
+            sha256_hash=hashlib.sha256(fetched.content).hexdigest(),
+        )
+        session.add(doc)
+        log_event(
+            session,
+            org_id=None,
+            action="product_document.upload",
+            entity_type="product_document",
+            entity_id=doc.id,
+            after_value={"product_id": str(product_id), "title": doc.title, "kind": "web_research", "url": url},
+            context={"via": "api", "feature": "ai_research"},
+            actor=str(current_user.id),
+            actor_type=actor_type_for(current_user),
+        )
+        total_characters += len(text)
+        results.append(
+            FetchResultOut(
+                url=url, final_url=fetched.final_url, ok=True, title=title,
+                characters=len(text), document_id=doc_id,
+            )
+        )
+
+    session.commit()
+
+    return FetchUrlsOut(
+        results=results,
+        pages_fetched=sum(1 for r in results if r.ok),
+        total_characters=total_characters,
+        estimated_added_tokens=total_characters // 4,
+    )
+
+
+@router.post(
+    "/{product_id}/import/from-documents-with-research", response_model=DocumentIngestOut
+)
+async def import_from_documents_with_research(
+    product_id: uuid.UUID,
+    files: list[UploadFile] = File(...),
+    research_document_ids: str = Form(""),
+    category: str = Form("ESP"),
+    asset_type: str = Form("SPA"),
+    framework: str = Form("NIST 800-171 Rev 2 / CMMC L2"),
+    session: Session = Depends(get_session),
+    storage: StorageClient = Depends(get_storage_client),
+) -> DocumentIngestOut:
+    """Re-run document ingestion for an EXISTING product with AI research
+    of already-fetched, already-approved documentation pages added.
+
+    §0, non-negotiable: web research may propose ADDITIONAL coverage; it
+    may never override a CRM disclaim. Enforced in code by
+    importers/research.py:merge_research(), not by prompting either AI
+    call to behave -- see that function's own docstring for the exact
+    per-control merge rule.
+
+    Writes nothing (same discipline as /import/from-documents above) --
+    this is a dry-run preview; /import/apply is still the only write path.
+    The web pages named by research_document_ids were already written as
+    ProductDocument rows by /research/fetch, which is a deliberate,
+    immediate action (attaching a document), not part of this dry-run/
+    apply distinction -- identical to how an uploaded file already becomes
+    a stored document independent of whether any particular ingestion run
+    that follows gets applied.
+
+    At least one CRM/baseline document is required -- "attached documents
+    first, web as a supplement" (§0) means web research supplements a real
+    document-based conclusion, it does not substitute for one. Running
+    with zero uploaded documents would mean nothing exists for a web
+    proposal to ever conflict with, silently defeating the very check this
+    endpoint exists to enforce.
+    """
+    product = _get_product(session, product_id)
+    if not (1 <= len(files) <= _MAX_INGEST_FILES):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Upload 1 to {_MAX_INGEST_FILES} documents (CRM and/or MSP baseline) -- "
+            "web research supplements a document-based conclusion, it cannot replace one.",
+        )
+
+    doc_ids = [s.strip() for s in research_document_ids.split(",") if s.strip()]
+    research_docs: list[ProductDocument] = []
+    if doc_ids:
+        try:
+            parsed_ids = [uuid.UUID(s) for s in doc_ids]
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid document id: {exc}") from exc
+        research_docs = session.scalars(
+            select(ProductDocument).where(
+                ProductDocument.id.in_(parsed_ids),
+                ProductDocument.product_id == product_id,
+                ProductDocument.kind == "web_research",
+            )
+        ).all()
+        if len(research_docs) != len(parsed_ids):
+            raise HTTPException(
+                status_code=422,
+                detail="One or more research_document_ids were not found for this product "
+                "(or are not web_research documents).",
+            )
+
+    start = time.monotonic()
+
+    tmp_dir = tempfile.mkdtemp()
+    tmp_paths: list[str] = []
+    used_names: set[str] = set()
+    try:
+        for f in files:
+            raw_name = _safe_filename(f.filename or "upload")
+            if raw_name in used_names:
+                stem, dupe_ext = os.path.splitext(raw_name)
+                raw_name = f"{stem}-{sum(1 for n in used_names if n.startswith(stem))}{dupe_ext}"
+            used_names.add(raw_name)
+            ext = os.path.splitext(raw_name)[1].lower()
+            if ext not in _INGEST_ALLOWED_EXTENSIONS:
+                raise HTTPException(
+                    status_code=415,
+                    detail=f"File extension {ext!r} not permitted. "
+                    f"Allowed: {sorted(_INGEST_ALLOWED_EXTENSIONS)}",
+                )
+            data = await f.read()
+            if len(data) > _MAX_FILE_BYTES:
+                raise HTTPException(status_code=413, detail="File exceeds 50 MB limit")
+            mime = f.content_type or mimetypes.guess_type(raw_name)[0] or "application/octet-stream"
+            if mime not in _INGEST_ALLOWED_MIME_TYPES:
+                raise HTTPException(
+                    status_code=415,
+                    detail=f"Content-Type {mime!r} not permitted. "
+                    f"Allowed: {sorted(_INGEST_ALLOWED_MIME_TYPES)}",
+                )
+            if not _verify_magic_bytes(data, mime):
+                raise HTTPException(
+                    status_code=415, detail=f"File bytes do not match declared Content-Type {mime!r}"
+                )
+            path = os.path.join(tmp_dir, raw_name)
+            with open(path, "wb") as fh:
+                fh.write(data)
+            tmp_paths.append(path)
+
+        try:
+            ai_provider = get_ai_provider(session)
+        except CredentialCipherError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        try:
+            primary = ingest_document(
+                *tmp_paths,
+                product_key=product.key,
+                ai_provider=ai_provider,
+                category=category,
+                asset_type=asset_type,
+                framework=framework,
+            )
+        except DocumentIngestError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # --- web-research pass: one AI call per approved, already-fetched page ---
+    web_entries = []
+    total_web_chars = 0
+    pages_included = 0
+    if research_docs:
+        total_web_chars_check = 0
+        page_texts: list[tuple[str, str]] = []  # (url, text)
+        for doc in research_docs:
+            raw = storage.get_bytes(doc.storage_key)
+            text, _title = extract_web_text(raw, doc.mime_type)
+            total_web_chars_check += len(text)
+            page_texts.append((doc.source_docs_ref or doc.title, text))
+        if total_web_chars_check > MAX_TOTAL_WEB_CHARS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Combined web-research text ({total_web_chars_check:,} characters) "
+                f"exceeds the {MAX_TOTAL_WEB_CHARS:,}-character total limit for one "
+                "ingestion run. Approve fewer pages.",
+            )
+        for url, text in page_texts:
+            try:
+                entries = ingest_web_page(text, source_url=url, ai_provider=ai_provider)
+            except ResearchIngestError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            web_entries.extend(entries)
+            total_web_chars += len(text)
+            pages_included += 1
+
+    if web_entries or research_docs:
+        data_dict, extra_flags, merge_summary = merge_research(primary, web_entries)
+        # Keep the YAML's existing source_docs convention working (§2):
+        # list every fetched URL alongside the uploaded document filenames
+        # already there, so a reader sees both at a glance -- a bare URL
+        # already reads unambiguously differently from a filename, no
+        # extra formatting needed to tell them apart.
+        source_docs = list(data_dict.get("product", {}).get("source_docs") or [])
+        for doc in research_docs:
+            if doc.source_docs_ref and doc.source_docs_ref not in source_docs:
+                source_docs.append(doc.source_docs_ref)
+        data_dict.setdefault("product", {})["source_docs"] = source_docs
+    else:
+        data_dict = to_yaml_dict(primary)
+        extra_flags = []
+        merge_summary = None
+
+    data_dict.setdefault("product", {})["ai_generated_at"] = datetime.now(UTC).isoformat()
+    data_dict["product"]["ai_generated_model"] = ai_provider.identity
+
+    fw, ctrl_lookup = _load_framework_and_controls(session)
+    if fw is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Framework '{_FRAMEWORK_KEY}' not found -- run 'wingrc seed-catalog' first.",
+        )
+    preview = build_preview(session, data_dict, ctrl_lookup)
+    # The disclaim-contradiction check already ran INSIDE build_preview()
+    # over every row, including the newly-added web ones (§6) -- extend
+    # with the cross-source CRM-vs-web conflicts merge_research() found,
+    # which build_preview() has no way to know about on its own.
+    preview.disclaim_flags = preview.disclaim_flags + extra_flags
+
+    elapsed = time.monotonic() - start
+    research_out = (
+        ResearchCostOut(
+            pages_included=pages_included,
+            total_web_characters=total_web_chars,
+            estimated_added_tokens=total_web_chars // 4,
+            ai_calls_added=pages_included,
+            elapsed_seconds=round(elapsed, 1),
+            controls_added_from_web=merge_summary.controls_added_from_web if merge_summary else 0,
+            conflicts_flagged=merge_summary.conflicts_flagged if merge_summary else 0,
+        )
+        if research_docs
+        else None
+    )
+
+    return DocumentIngestOut(
+        yaml=_yaml.safe_dump(data_dict, sort_keys=False),
+        preview=_preview_out(preview),
+        product=_product_meta_out(data_dict.get("product") or {}),
+        controls=_control_rows_out(preview.control_rows),
+        research=research_out,
     )
 
 

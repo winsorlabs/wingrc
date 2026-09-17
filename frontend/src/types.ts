@@ -855,6 +855,9 @@ export interface BaselineControlDraft {
   evidence: BaselineEvidenceDraft[];
   note: string | null;
   scope_note: string | null;
+  // null = from the uploaded CRM/baseline document(s); a URL = proposed by
+  // AI research over that fetched page.
+  source: string | null;
 }
 
 export interface ProductMetaDraft {
@@ -883,6 +886,18 @@ export interface ProductPublishState {
   is_published: boolean;
 }
 
+// §5 -- cost/latency impact of adding AI research, surfaced alongside the
+// resulting mapping. Absent (undefined) on a plain, non-research ingestion.
+export interface ResearchCost {
+  pages_included: number;
+  total_web_characters: number;
+  estimated_added_tokens: number;
+  ai_calls_added: number;
+  elapsed_seconds: number;
+  controls_added_from_web: number;
+  conflicts_flagged: number;
+}
+
 export interface DocumentIngestResult {
   // The latest server-serialized YAML for whatever was just validated --
   // never hand-edited; Apply submits this as-is via the existing
@@ -891,6 +906,29 @@ export interface DocumentIngestResult {
   preview: BaselineImportPreview;
   product: ProductMetaDraft;
   controls: BaselineControlDraft[];
+  research?: ResearchCost | null;
+}
+
+export interface UrlSuggestion {
+  url: string;
+  rationale: string;
+}
+
+export interface FetchUrlResult {
+  url: string;
+  final_url: string;
+  ok: boolean;
+  title: string | null;
+  characters: number | null;
+  document_id: string | null;
+  error: string | null;
+}
+
+export interface FetchUrlsResult {
+  results: FetchUrlResult[];
+  pages_fetched: number;
+  total_characters: number;
+  estimated_added_tokens: number;
 }
 
 // Mirrors backend/app/connectors/__init__.py's ConfigFieldOption. Field
