@@ -4177,6 +4177,224 @@ coverage) — no placeholders or partial scaffolding added for either.
 
 ---
 
+### AI research of vendor platform documentation ✅ DONE (2026-09-17)
+
+Jarrod: "I DO want AI to research each product via online platform
+documentation (not sales or marketing slicks) and determine what controls
+could be covered." Attached documents come first; web research
+supplements them, and can never override what they say.
+
+**§0 — the rule, non-negotiable, enforced in code:** web content may
+propose additional coverage; it may never override a disclaim in the
+vendor's CRM. This is the same discipline as the evidence-minimization
+rules and the disclaim-flag check from the previous two slices — a
+confused model is not trusted to police this itself via a prompt
+instruction, since that's precisely the failure mode a real RocketCyber
+ingestion run already produced once.
+
+**Design: two AI passes, one code-enforced merge.** Pass 1
+(`importers/document.py:ingest_document()`) is completely unchanged — the
+existing CRM/baseline pipeline, same prompt, same call shape, verified by
+its own full pre-existing test suite passing unmodified. Pass 2
+(`importers/research.py:ingest_web_page()`) runs one AI call PER approved,
+already-fetched page — never combined — so per-claim source attribution
+(`baseline.py:ControlEntry.source`, new field, `None` for document-sourced
+rows) is a code-level guarantee, not something trusted from a model's own
+JSON. `merge_research()` is the actual §0 enforcement point: expands
+Pass 1's own output into a per-control-id lookup; a Pass-2 proposal for a
+control Pass 1 never mentions is genuinely new coverage and gets added; a
+control Pass 1 already covers without disclaiming needs nothing added; a
+control Pass 1 disclaims (`customer_owns`, or its own text reads as a
+disclaim per the existing `_disclaims_coverage()` check) is **never**
+upgraded — a `DisclaimFlag` is raised instead, reusing the exact
+mechanism the disclaim-flag slice built, extended here to a cross-source
+conflict rather than a single entry's internal self-contradiction.
+
+**§1 — propose, then approve, then fetch.** New
+`POST /admin/products/{id}/research/suggest-urls` asks the AI for
+candidate documentation URLs with a one-line rationale each — proposals
+only, never fetched from this call. An admin approves a subset (or pastes
+URLs directly, e.g. when they already know the right admin guide) and
+calls `POST /admin/products/{id}/research/fetch`, which is the only call
+that ever touches the network, and only for exactly the URLs in that
+request — no crawling, no following links found in a fetched page's own
+content (only HTTP redirects, a different thing, each hop re-validated).
+Scoped to **existing products only**: `ProductDocument.product_id` is a
+real NOT NULL FK, and there's no product row yet for a fetched page to
+attach to during from-scratch product creation — extending this would
+mean deferring document creation to Apply time (mirroring how uploaded
+CRM/baseline files already defer for that flow), a reasonable follow-up,
+out of scope here. Matches the ticket's own real verification target
+exactly (re-running research against the existing `datto-rmm` product).
+
+**§2 — provenance.** Fetched pages become real `ProductDocument` rows
+(`kind='web_research'`, migration 0053 — the existing `crm`/`baseline_doc`/
+`kb_export`/`other` kinds gain a sibling, no new columns needed: `title`
+is the page's own `<title>`, `source_docs_ref` holds the exact URL,
+`uploaded_at` already IS the retrieval timestamp) so a compliance claim
+sourced from a live page stays reproducible after the page changes — the
+whole reason this isn't "just add a fetcher." The merged mapping's
+`product.source_docs` lists fetched URLs alongside uploaded filenames,
+keeping the YAML's existing convention working; a bare URL already reads
+unambiguously differently from a filename with no extra formatting needed.
+
+**§3 — per-claim source attribution.** `ControlEntry.source` (`None` =
+from the uploaded document(s); a URL = from that fetched page) flows
+through to `ControlEntryDraft`/`ControlEntryOut` and renders as a new
+Source column in the review table (a "web research" badge linking to the
+URL, or "Document" for the existing case) — the review presentation the
+edit-baseline-mapping slice built, extended, not redesigned.
+
+**§4 — fetch safety, `web_fetch.py`, reported explicitly as required:**
+- **HTTPS only** — enforced at the top of every fetch and every redirect
+  hop; `http://`/`file://`/`gopher://` all refused before any connection
+  attempt.
+- **Private/special-use address space blocked** — hostname resolved via
+  `socket.getaddrinfo`, every resolved address checked (`ipaddress`'s
+  `is_private`/`is_loopback`/`is_link_local`/`is_multicast`/`is_reserved`/
+  `is_unspecified`, plus explicit unwrapping of IPv4-mapped IPv6 addresses
+  like `::ffff:10.0.0.1`, a known filter-bypass trick if left unhandled)
+  before any connection. The connection is then **pinned** to the
+  validated address(es) via a custom `http.client.HTTPSConnection`
+  subclass — resolving once to check and then letting a normal client
+  re-resolve at connect time is a textbook DNS-rebinding TOCTOU, closed
+  here by construction, not by convention.
+- **Every redirect hop re-validated from scratch** (scheme, resolution,
+  address check) before being followed, capped at 5 hops.
+- **Timeouts and a hard response-size cap** (20s socket timeout, 30s total
+  wall-clock budget, 5MB response cap), enforced while streaming, not
+  just checked against a Content-Length header a hostile server can lie
+  about.
+- **No credentials of any kind are ever attached** — there is no code
+  path that reads a WinGRC session/cookie/Authorization header into an
+  outbound request; the request is built from nothing but the URL and a
+  fixed identifying User-Agent.
+- **robots.txt honored** before every fetch (not just the first), with a
+  permissive default on any failure to fetch/parse it (standard
+  behavior — robots.txt narrows a well-behaved fetcher, it isn't the
+  security boundary; the checks above are what's load-bearing).
+- HTML-to-text extraction uses stdlib `html.parser.HTMLParser` only — no
+  new dependency, and no XXE surface since it's a non-validating tag
+  scanner, not an XML parser evaluating DTDs.
+
+**A real bug found and fixed via live deploy verification, not by unit
+tests alone:** the first implementation resolved a hostname and pinned
+the connection to exactly one arbitrary address (via `set` iteration). A
+real public site (`example.com`) resolves to both IPv4 and IPv6
+addresses; wl-util-1's Docker network has no IPv6 route, so a fetch
+picking the IPv6 address failed "Network is unreachable" on a completely
+ordinary, legitimate site. Fixed: `_resolve_and_pin()` now returns every
+validated address in the resolver's own preference order, and the pinned
+connection tries each in turn, falling back on failure — the same
+multi-address handling a normal, non-pinned client already gets for free
+from `socket.create_connection`. The SSRF validation itself (every
+address checked before any connection attempt) was never affected; this
+was a pure reachability bug. Caught, fixed, re-verified, and redeployed
+before the real end-to-end test below ran.
+
+**A second real gap found the same way:** re-running research against
+the actual `datto-rmm` product, one AI-suggested documentation URL
+(`help.datto.com/s/article/...`) fetched successfully (HTTP 200) but
+rendered its real content via client-side JavaScript, extracting to 0
+characters through this module's static parser. An AI call given that
+near-empty input still confidently returned 9 fabricated control
+proposals, including control ids that don't even match this framework's
+own naming convention (e.g. `IA.L1-3.5.1` against a CMMC L2 catalog) —
+concrete proof of exactly the hallucination risk §0 exists to guard
+against, just via a different vector (empty input) than the CRM-conflict
+one. Fixed with the same guard `importers/document.py` already has for
+this exact failure mode (`_MIN_EXTRACTED_TEXT_CHARS`): a new
+`MIN_PAGE_CHARS` (50 chars) refuses the page — before it's even stored,
+and again defensively inside `ingest_web_page()` — with a message
+explaining the likely JavaScript-rendering cause, rather than silently
+handing the model near-nothing and trusting whatever it invents.
+
+**§5 — cost and size**, reported per run:
+- `MAX_PAGES_PER_RUN = 10` (also the practical cap on how many additional
+  AI calls one run can add, one per page).
+- `MAX_PAGE_CHARS = 50,000` per page, `MAX_TOTAL_WEB_CHARS = 200,000`
+  combined per ingestion run.
+- `/research/fetch`'s response reports page count, total characters, and
+  estimated tokens **before** any AI call is spent (fetching costs only
+  HTTP requests) — the "surface cost before the run" requirement.
+- `/import/from-documents-with-research`'s response adds pages included,
+  characters, estimated tokens, additional AI calls, elapsed seconds,
+  controls added, and conflicts flagged — the actual before/after cost
+  figures once the run completes.
+- Real figures from the live `datto-rmm` run: 8 URLs suggested, 6 failed
+  (404 — the model guessing plausible-looking but non-existent
+  documentation paths, a known limitation of suggestion without live
+  browsing — this is exactly why §1's paste-a-URL-directly path exists),
+  1 refused (the empty-page guard above), 1 successfully analyzed
+  (4,010 characters, one additional AI call) and correctly proposed
+  **zero** additional controls because its actual content didn't support
+  any — an honest "no reliable coverage found" result, not a forced one.
+
+**§6 — everything the existing pipeline enforces still applies,
+unweakened:** confirmed by the full pre-existing test suite (document
+ingestion, evidence-minimization, coverage_basis-left-unset, disclaim-flag)
+passing completely unmodified. The disclaim-contradiction check
+(`build_preview`'s own self-contradiction scan) runs over the merged
+output automatically, with zero new code, since the merge happens before
+`build_preview()` is ever called.
+
+**Known, deliberate limitation, out of scope for this slice**: URL
+suggestion has no live web-browsing capability, so a meaningful fraction
+of suggested URLs will be plausible-looking guesses that 404 (confirmed
+live: 6 of 8 for a real product) — mitigated, not eliminated, by the
+paste-URL-directly path and the fact that a failed fetch is always
+reported per-URL, never silently treated as success.
+
+**Bench-verified** across three rounds (the slice itself, then each of
+the two bugs found live): 1278/1278 backend tests, `ruff check .` clean,
+139/139 vitest, `tsc -b` clean, `vite build` clean each round. SSRF
+defenses directly exercised against the REAL (unmocked) implementation,
+live, in both the bench and the production containers: `127.0.0.1`,
+`169.254.169.254`, an RFC 1918 address, and plain `http://` all refused;
+a real public fetch succeeds.
+
+**Deployed** 2026-09-17 per `docs/deployment.md` §7 with `--no-deps` and a
+pre-deploy backup (§7a — migration 0053 touches `product_document`'s
+check constraint): backup verified (456 TOC entries) before rebuild;
+`db`/`minio` confirmed untouched; migration applied clean. The two live
+bugs above were each found, fixed, bench-verified, and redeployed in
+sequence before the real `datto-rmm` test was considered final. Procedural
+note: the two post-deploy bug fixes were committed directly to `main`
+rather than through their own feature branches first — a deviation from
+this project's own "verify on a branch before main" discipline, caught
+and corrected by bench-verifying each fix immediately afterward and
+before its own redeploy, but the branch-first order itself should have
+held regardless of how fast the fix was.
+
+**Real test, exactly as asked**: re-ran ingestion on the real, live
+`datto-rmm` product (documents.py's `ingest_document()` plus the research
+pass) via direct function calls against the real AI provider and the real
+CRM PDF already attached to the product — a genuine dry-run, nothing
+applied, nothing written. Document-only Pass 1 alone: 30 controls. With
+research added: still 30 controls, 0 added, 0 conflicts — the one
+documentation page that actually rendered usable content didn't describe
+anything the CRM hadn't already covered. Noted in passing: Pass 1's own
+output was not byte-identical between two runs of the same PDF minutes
+apart (`AC.L2-3.1.12` came back `customer_owns` once and `shared` once) —
+ordinary AI non-determinism that predates this slice and applies equally
+to the existing single-pass pipeline; not something this slice changes or
+could fix.
+
+**Not done this round**: a live browser walkthrough of the new research
+panel in `ToolImportWizard.tsx` — this session's browser context had no
+saved WinGRC credentials to complete a login, and re-prompting for them
+was out of scope for finishing this slice. The panel is exercised by the
+frontend's automated test suite and compiles cleanly under `tsc -b`;
+Jarrod can try it live from the `datto-rmm` product's "Edit Baseline
+Mapping" screen ("🔬 Add web research").
+
+**Explicitly not started, per this slice's own scope boundary**: OCR for
+scanned documents (unchanged, known gap); autonomous crawling or link-
+following beyond approved URLs; any change to how the magic loop or
+multi-tool coverage works; baseline versioning (next slice).
+
+---
+
 ## Planned
 
 ### N. Document Library
