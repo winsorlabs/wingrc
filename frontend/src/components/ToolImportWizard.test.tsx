@@ -103,6 +103,7 @@ function makeProductDetail(overrides: Partial<ProductDetail> = {}): ProductDetai
     source_docs: [],
     ai_generated_at: null,
     ai_generated_model: null,
+    current_version_number: 1,
     baseline_controls: [
       {
         control_id: "AC.L2-3.1.1",
