@@ -144,6 +144,78 @@ def test_resolve_and_pin_reports_dns_failure_clearly(monkeypatch):
         web_fetch._resolve_and_pin("nonexistent.example.test", 443)
 
 
+def test_resolve_and_pin_returns_every_validated_address_in_order(monkeypatch):
+    """Regression test for a real bug caught live on deploy (2026-09-17):
+    a hostname with both A and AAAA records (example.com, in this exact
+    case) failed "Network is unreachable" because a naive single-address
+    pin landed on an IPv6 address in a container with no IPv6 route. All
+    validated addresses must be returned, in the resolver's own preference
+    order, so the connection layer can fall back."""
+
+    def fake_getaddrinfo(host, port, **kwargs):
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("104.20.23.154", port)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("172.66.147.243", port)),
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2606:4700:10::1", port, 0, 0)),
+        ]
+
+    monkeypatch.setattr(web_fetch.socket, "getaddrinfo", fake_getaddrinfo)
+    addresses = web_fetch._resolve_and_pin("multi.example.test", 443)
+    assert addresses == ["104.20.23.154", "172.66.147.243", "2606:4700:10::1"]
+
+
+def test_resolve_and_pin_deduplicates_repeated_addresses(monkeypatch):
+    def fake_getaddrinfo(host, port, **kwargs):
+        # A resolver can legitimately return the same address twice (once
+        # per socket type it's willing to hand back, e.g. SOCK_STREAM and
+        # SOCK_DGRAM) -- must not be tried twice.
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", port)),
+            (socket.AF_INET, socket.SOCK_DGRAM, 17, "", ("8.8.8.8", port)),
+        ]
+
+    monkeypatch.setattr(web_fetch.socket, "getaddrinfo", fake_getaddrinfo)
+    assert web_fetch._resolve_and_pin("dup.example.test", 443) == ["8.8.8.8"]
+
+
+def test_pinned_connection_falls_back_to_next_address_on_failure(monkeypatch):
+    """The other half of the same regression: given multiple validated
+    addresses, a failure connecting to the first must fall back to the
+    next, not fail the whole fetch outright."""
+    attempted = []
+
+    def fake_create_connection(addr, timeout):
+        attempted.append(addr[0])
+        if addr[0] == "10.0.0.1":  # a stand-in for "the unreachable one"
+            raise OSError("Network is unreachable")
+        return object()
+
+    class _FakeContext:
+        def wrap_socket(self, sock, server_hostname):
+            return "wrapped-socket"
+
+    monkeypatch.setattr(web_fetch.socket, "create_connection", fake_create_connection)
+    conn = web_fetch._PinnedHTTPSConnection(
+        "example.com", ["10.0.0.1", "10.0.0.2"], port=443, timeout=5
+    )
+    conn._context = _FakeContext()
+    conn.connect()
+    assert attempted == ["10.0.0.1", "10.0.0.2"]
+    assert conn.sock == "wrapped-socket"
+
+
+def test_pinned_connection_raises_only_when_every_address_fails(monkeypatch):
+    def fake_create_connection(addr, timeout):
+        raise OSError(f"unreachable: {addr[0]}")
+
+    monkeypatch.setattr(web_fetch.socket, "create_connection", fake_create_connection)
+    conn = web_fetch._PinnedHTTPSConnection(
+        "example.com", ["10.0.0.1", "10.0.0.2"], port=443, timeout=5
+    )
+    with pytest.raises(OSError, match="10.0.0.2"):
+        conn.connect()
+
+
 # ---------------------------------------------------------------------------
 # Redirects: every hop is re-validated from scratch, including one that
 # starts public and redirects to a private address.

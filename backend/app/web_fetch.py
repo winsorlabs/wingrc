@@ -104,10 +104,25 @@ def _is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return False
 
 
-def _resolve_and_pin(hostname: str, port: int) -> str:
+def _resolve_and_pin(hostname: str, port: int) -> list[str]:
     """Resolve `hostname`, refuse if ANY resolved address is blocked (fail
-    closed rather than picking only the first one someone might expect),
-    and return one validated address to connect to."""
+    closed rather than validating only the one address that ends up used),
+    and return EVERY validated address, in the resolver's own order.
+
+    Returning all of them (not just one) matters for real reachability,
+    not just security: a hostname with both A and AAAA records resolves
+    to a mix of IPv4/IPv6 addresses, and a host or container without a
+    working IPv6 route will fail to connect to an IPv6 address even
+    though it's perfectly legitimate and unblocked -- confirmed live
+    (2026-09-17): example.com resolved to two IPv4 and two IPv6
+    addresses, and a naive single-address pin landed on IPv6 in a
+    container with no IPv6 egress, failing "Network is unreachable" on a
+    totally ordinary public site. getaddrinfo's own ordering already
+    implements RFC 6724 preference; _PinnedHTTPSConnection.connect()
+    below tries each in that order and only fails if all of them do,
+    mirroring what a normal (non-pinned) client already does for free via
+    socket.create_connection's own multi-address fallback.
+    """
     try:
         infos = socket.getaddrinfo(hostname, port, proto=socket.IPPROTO_TCP)
     except socket.gaierror as exc:
@@ -115,8 +130,13 @@ def _resolve_and_pin(hostname: str, port: int) -> str:
     if not infos:
         raise WebFetchError(f"{hostname!r} resolved to no addresses.")
 
-    addresses = {info[4][0] for info in infos}
-    for addr_str in addresses:
+    addresses: list[str] = []
+    seen: set[str] = set()
+    for info in infos:
+        addr_str = info[4][0]
+        if addr_str in seen:
+            continue
+        seen.add(addr_str)
         raw = addr_str.split("%", 1)[0]  # strip an IPv6 zone id (fe80::1%eth0)
         ip = ipaddress.ip_address(raw)
         if _is_blocked_ip(ip):
@@ -124,26 +144,43 @@ def _resolve_and_pin(hostname: str, port: int) -> str:
                 f"{hostname!r} resolves to {addr_str}, a private or special-use "
                 "address -- refusing to fetch it."
             )
-    return next(iter(addresses))
+        addresses.append(addr_str)
+    return addresses
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
-    """An HTTPSConnection that connects to a pre-validated IP address
-    instead of re-resolving `host` itself, while still sending the correct
-    SNI/Host for `host` so certificate validation is unaffected. This is
-    what makes the resolve-then-check in _resolve_and_pin() actually
-    binding rather than advisory -- without pinning, the OS could resolve
-    `host` again at connect time and land on a different (attacker-
-    controlled, freshly-published) address than the one just checked."""
+    """An HTTPSConnection that connects to one of a pre-validated set of IP
+    addresses instead of re-resolving `host` itself, while still sending
+    the correct SNI/Host for `host` so certificate validation is
+    unaffected. This is what makes the resolve-then-check in
+    _resolve_and_pin() actually binding rather than advisory -- without
+    pinning, the OS could resolve `host` again at connect time and land on
+    a different (attacker-controlled, freshly-published) address than the
+    ones just checked.
 
-    def __init__(self, host: str, pinned_ip: str, port: int, timeout: float):
+    Tries each candidate in order (the resolver's own preference order,
+    e.g. IPv4 before IPv6), falling back to the next on a connection
+    failure -- the same multi-address fallback socket.create_connection
+    already gives a normal, non-pinned client for free -- and only raises
+    once every candidate has failed.
+    """
+
+    def __init__(self, host: str, pinned_ips: list[str], port: int, timeout: float):
         super().__init__(host, port=port, timeout=timeout)
-        self._pinned_ip = pinned_ip
+        self._pinned_ips = pinned_ips
 
     def connect(self) -> None:
-        sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
-        context = self._context or ssl.create_default_context()
-        self.sock = context.wrap_socket(sock, server_hostname=self.host)
+        last_exc: OSError | None = None
+        for ip in self._pinned_ips:
+            try:
+                sock = socket.create_connection((ip, self.port), self.timeout)
+            except OSError as exc:
+                last_exc = exc
+                continue
+            context = self._context or ssl.create_default_context()
+            self.sock = context.wrap_socket(sock, server_hostname=self.host)
+            return
+        raise last_exc or OSError(f"No address succeeded for {self.host}")
 
 
 def _read_capped(resp: http.client.HTTPResponse, max_bytes: int) -> bytes:
@@ -177,9 +214,9 @@ def _raw_get(url: str, *, timeout: float, max_bytes: int) -> tuple[int, dict[str
         raise WebFetchError(f"URL has no hostname: {url}")
 
     port = parsed.port or 443
-    pinned_ip = _resolve_and_pin(parsed.hostname, port)
+    pinned_ips = _resolve_and_pin(parsed.hostname, port)
 
-    conn = _PinnedHTTPSConnection(parsed.hostname, pinned_ip, port=port, timeout=timeout)
+    conn = _PinnedHTTPSConnection(parsed.hostname, pinned_ips, port=port, timeout=timeout)
     try:
         path = parsed.path or "/"
         if parsed.query:
