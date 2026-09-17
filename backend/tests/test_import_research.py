@@ -258,9 +258,17 @@ _WEB_RESPONSE = """
 """
 
 
+# Long enough to clear MIN_PAGE_CHARS -- matches test_document_ingest.py's
+# own _STUB_TEXT convention exactly (that guard's real-world counterpart).
+_STUB_PAGE_TEXT = (
+    "Stub extracted page text, long enough to clear the minimum-extracted-"
+    "text guard so these tests exercise what they're actually testing."
+)
+
+
 def test_ingest_web_page_stamps_source_on_every_entry():
     entries = ingest_web_page(
-        "some page text about logging", source_url="https://docs.vendor.com/logging",
+        _STUB_PAGE_TEXT, source_url="https://docs.vendor.com/logging",
         ai_provider=_StubWebAIProvider(_WEB_RESPONSE),
     )
     assert len(entries) == 1  # the customer_owns one is dropped
@@ -270,7 +278,7 @@ def test_ingest_web_page_stamps_source_on_every_entry():
 
 def test_ingest_web_page_never_proposes_customer_owns():
     entries = ingest_web_page(
-        "text", source_url="https://docs.vendor.com/x",
+        _STUB_PAGE_TEXT, source_url="https://docs.vendor.com/x",
         ai_provider=_StubWebAIProvider(_WEB_RESPONSE),
     )
     assert all(e.classification != Classification.CUSTOMER_OWNS for e in entries)
@@ -278,7 +286,7 @@ def test_ingest_web_page_never_proposes_customer_owns():
 
 def test_ingest_web_page_applies_evidence_minimization():
     entries = ingest_web_page(
-        "text", source_url="https://docs.vendor.com/x",
+        _STUB_PAGE_TEXT, source_url="https://docs.vendor.com/x",
         ai_provider=_StubWebAIProvider(_WEB_RESPONSE),
     )
     au = entries[0]
@@ -327,9 +335,9 @@ def test_ingest_web_page_rejects_whitespace_only_page():
 
 
 def test_ingest_web_page_handles_malformed_json():
-    with pytest.raises(ResearchIngestError):
+    with pytest.raises(ResearchIngestError, match="JSON"):
         ingest_web_page(
-            "text", source_url="https://docs.vendor.com/x",
+            _STUB_PAGE_TEXT, source_url="https://docs.vendor.com/x",
             ai_provider=_StubWebAIProvider("not json at all"),
         )
 
@@ -343,7 +351,8 @@ def test_ingest_web_page_ignores_malformed_control_entries_without_failing():
         ]
     })
     entries = ingest_web_page(
-        "text", source_url="https://docs.vendor.com/x", ai_provider=_StubWebAIProvider(response)
+        _STUB_PAGE_TEXT, source_url="https://docs.vendor.com/x",
+        ai_provider=_StubWebAIProvider(response),
     )
     assert entries == []
 

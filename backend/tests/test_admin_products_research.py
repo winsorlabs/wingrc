@@ -177,10 +177,16 @@ def test_suggest_urls_404_for_unknown_product(admin_client):
 
 
 def _fake_fetch_ok(url: str) -> FetchResult:
+    # Body text is long enough to clear MIN_PAGE_CHARS -- a too-short
+    # fixture here is exactly what caught a real bug (2026-09-17): a
+    # near-empty page must be refused, and a fixture shorter than that
+    # threshold can't tell the two paths apart.
     return FetchResult(
         url=url, final_url=url, ok=True, status_code=200,
         content=b"<html><head><title>Security Admin Guide</title></head>"
-        b"<body><p>Configure RBAC here.</p></body></html>",
+        b"<body><p>Configure role-based access control (RBAC) here in the "
+        b"admin console. Assign roles, set permissions, and review the "
+        b"audit log for access changes on a regular schedule.</p></body></html>",
         content_type="text/html", error=None,
     )
 
@@ -393,7 +399,12 @@ def test_with_research_requires_at_least_one_document(admin_client, db_session, 
 
 def test_with_research_new_control_is_added_and_reported(admin_client, db_session, storage):
     seed = _seed_product(db_session)
-    web_html = b"<html><body>Audit logging documented here.</body></html>"
+    web_html = (
+        b"<html><body>Audit logging is documented here: the platform records "
+        b"every authentication event and administrative action, retains logs "
+        b"for 90 days, and lets admins export the audit trail on demand."
+        b"</body></html>"
+    )
     doc = _seed_web_research_document(
         db_session, storage, seed["product"].id,
         url="https://docs.vendor.com/logging", html=web_html,
@@ -451,7 +462,12 @@ def test_with_research_disclaimed_control_is_flagged_not_upgraded(
 ):
     """THE §0 headline test, exercised through the real HTTP endpoint."""
     seed = _seed_product(db_session, disclaimed_control=True)
-    web_html = b"<html><body>Our SSO handles identity for you.</body></html>"
+    web_html = (
+        b"<html><body>Our SSO integration handles identity for you: connect "
+        b"your identity provider via SAML and the platform delegates all "
+        b"authentication and user identification to it automatically."
+        b"</body></html>"
+    )
     doc = _seed_web_research_document(
         db_session, storage, seed["product"].id,
         url="https://docs.vendor.com/sso", html=web_html,
