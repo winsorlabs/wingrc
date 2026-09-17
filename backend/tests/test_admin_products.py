@@ -27,6 +27,7 @@ from app.models import (
     BaselineEvidenceSpec,
     Control,
     ControlState,
+    ControlStateContributor,
     EvidenceTask,
     Framework,
     Organization,
@@ -774,6 +775,176 @@ controls:
         "a reimport must never sever an existing EvidenceTask's pointer to "
         "the spec it was actually collected against -- that spec still "
         "exists, unmodified, under the version this task's org is pinned to"
+    )
+
+
+def test_dropped_control_is_shown_removed_excluded_from_new_activations_and_orphans_nothing(
+    admin_client, db_session, fake_msp_admin
+):
+    """Roadmap item P's §1 bug, end to end: before this slice,
+    seed_baselines/_seed_product upserted by (product_id, control_id) and
+    never deleted an unmatched row, so dropping a control from the YAML
+    and re-applying was a silent no-op -- the old baseline_control row
+    stayed in place forever and the magic loop kept honoring it.
+
+    Proves all three things §6 asks for:
+      1. The dry-run preview shows the drop as change_type="removed".
+      2. Apply excludes the dropped control from the new version, so a
+         NEW activation never claims it.
+      3. An org already activated on the OLD version keeps its existing
+         control_state_contributor row for the dropped control -- nothing
+         is orphaned or crashes.
+    """
+    seed = _seed_framework_and_control(db_session)
+    ctrl_a = seed["ctrl"]
+    ctrl_b = Control(
+        framework_id=seed["fw"].id,
+        control_id=f"AC.TEST-B-{uuid.uuid4().hex[:6]}",
+        family="AC",
+        title="Second test control",
+        requirement_text="Do the other thing.",
+        sprs_weight=1,
+        sequence_order=2,
+    )
+    db_session.add(ctrl_b)
+    db_session.flush()
+    obj_b = AssessmentObjective(control_id=ctrl_b.id, objective_key="a", text="Objective b.")
+    db_session.add(obj_b)
+    db_session.flush()
+
+    product_key = f"drop-test-{uuid.uuid4().hex[:8]}"
+
+    def _yaml(*, include_b: bool) -> bytes:
+        controls = f"""  - control: {ctrl_a.control_id}
+    objectives: [a]
+    classification: provider_satisfies
+    coverage_basis: customer_system
+    candidate_state: pending_evidence
+    evidence:
+      - {{artifact: "Config export", type: export}}
+"""
+        if include_b:
+            controls += f"""  - control: {ctrl_b.control_id}
+    objectives: [a]
+    classification: provider_satisfies
+    coverage_basis: customer_system
+    candidate_state: pending_evidence
+"""
+        return f"""
+product:
+  key: {product_key}
+  name: Drop Test Product
+  provider: Acme
+  category: ESP
+  asset_type: SPA
+  role: A test product.
+controls:
+{controls}""".encode()
+
+    # 1. Initial import covers both controls.
+    r = admin_client.post(
+        "/admin/products/import/apply",
+        files={"file": ("v1.yaml", _yaml(include_b=True), "application/x-yaml")},
+    )
+    assert r.status_code == 201
+    assert r.json()["version_number"] == 1
+    product = db_session.scalars(select(Product).where(Product.key == product_key)).one()
+    product.is_published = True
+    db_session.flush()
+
+    # An org activates while both controls are in the mapping.
+    org = Organization(id=fake_msp_admin.org_id, name=f"DropTestOrg-{uuid.uuid4().hex[:6]}")
+    db_session.add(org)
+    db_session.flush()
+    _grant(db_session, fake_msp_admin, org_id=org.id)
+    assessment = start_assessment(
+        db_session, org_id=org.id, framework_id=seed["fw"].id, name="Drop Test Assessment"
+    )
+    activate_org_product(db_session, org_id=org.id, product_id=product.id, assessment_id=assessment.id)
+    db_session.flush()
+
+    cs_b = db_session.scalars(
+        select(ControlState).where(
+            ControlState.assessment_id == assessment.id, ControlState.objective_id == obj_b.id
+        )
+    ).one()
+    assert cs_b.status == "pending_evidence"
+    contributor_b = db_session.scalars(
+        select(ControlStateContributor).where(ControlStateContributor.control_state_id == cs_b.id)
+    ).one()
+    old_bc_b_id = contributor_b.baseline_control_id
+
+    # 2. Dry-run preview on the file that drops ctrl_b shows it as removed.
+    preview_r = admin_client.post(
+        "/admin/products/import/dry-run",
+        files={"file": ("v2.yaml", _yaml(include_b=False), "application/x-yaml")},
+    )
+    assert preview_r.status_code == 200
+    preview = preview_r.json()
+    removed_rows = [c for c in preview["control_changes"] if c["change_type"] == "removed"]
+    assert len(removed_rows) == 1
+    assert removed_rows[0]["control_id"] == ctrl_b.control_id
+    assert preview["has_changes"] is True
+
+    # 3. Apply the drop.
+    apply_r = admin_client.post(
+        "/admin/products/import/apply",
+        files={"file": ("v2.yaml", _yaml(include_b=False), "application/x-yaml")},
+    )
+    assert apply_r.status_code == 201
+    apply_result = apply_r.json()
+    assert apply_result["version_number"] == 2
+    assert apply_result["removed_controls"] == [ctrl_b.control_id]
+
+    # New version excludes ctrl_b entirely.
+    db_session.refresh(product)
+    new_version_control_ids = set(
+        db_session.scalars(
+            select(BaselineControl.control_id).where(
+                BaselineControl.baseline_version_id == product.current_version_id
+            )
+        )
+    )
+    assert ctrl_b.id not in new_version_control_ids
+    assert ctrl_a.id in new_version_control_ids
+
+    # 4. Existing contributor for the org already on version 1 is untouched
+    # -- still there, still pointing at the old (now non-current) row, no
+    # orphan/crash.
+    db_session.refresh(contributor_b)
+    assert contributor_b.baseline_control_id == old_bc_b_id
+    old_bc_b = db_session.get(BaselineControl, old_bc_b_id)
+    assert old_bc_b is not None
+    assert old_bc_b.control_id == ctrl_b.id
+    db_session.refresh(cs_b)
+    assert cs_b.status == "pending_evidence", (
+        "an existing tenant's assessment must not change just because a "
+        "later import drops a control -- they stay pinned to version 1"
+    )
+
+    # 5. A brand-new org activating now (pinned to version 2) never claims
+    # the dropped control -- the actual behavioral fix, not just visibility.
+    product.is_published = True
+    db_session.flush()
+    org2 = Organization(name=f"DropTestOrg2-{uuid.uuid4().hex[:6]}")
+    db_session.add(org2)
+    db_session.flush()
+    assessment2 = start_assessment(
+        db_session, org_id=org2.id, framework_id=seed["fw"].id, name="Drop Test Assessment 2"
+    )
+    activate_org_product(
+        db_session, org_id=org2.id, product_id=product.id, assessment_id=assessment2.id
+    )
+    db_session.flush()
+    cs_b_org2 = db_session.scalars(
+        select(ControlState).where(
+            ControlState.assessment_id == assessment2.id, ControlState.objective_id == obj_b.id
+        )
+    ).one()
+    assert cs_b_org2.status == "not_met", (
+        "a fresh activation on the version that dropped this control must "
+        "never claim it -- this is the actual §1 bug the old upsert-in-"
+        "place code silently failed to fix"
     )
 
 
