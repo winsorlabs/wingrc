@@ -576,7 +576,58 @@ controls:
     )
 
 
-def test_reimport_resets_is_published_to_false(admin_client, db_session):
+def test_reimport_with_real_change_resets_is_published_to_false(admin_client, db_session):
+    """Baseline versioning (roadmap item P): a reimport that actually
+    changes the mapping creates a new version and forces a fresh review --
+    unchanged from G.9's original behavior, just now gated on there being
+    a real diff. See test_noop_reimport_leaves_is_published_untouched
+    right below for the new case this slice added: a byte-identical
+    reimport is now a true no-op, including for is_published."""
+    product = _seed_product(db_session, published=True)
+    bc = db_session.scalars(
+        select(BaselineControl).where(BaselineControl.product_id == product.id)
+    ).first()
+    ctrl_row = db_session.get(Control, bc.control_id)
+    # Same control, but a genuinely different provider_contribution --
+    # a real compliance-claim change, not a no-op.
+    yaml_bytes = f"""
+product:
+  key: {product.key}
+  name: Test Product
+  provider: Acme
+  category: ESP
+  asset_type: SPA
+  role: A test product.
+controls:
+  - control: {ctrl_row.control_id}
+    objectives: [a]
+    classification: provider_satisfies
+    coverage_basis: customer_system
+    candidate_state: pending_evidence
+    provider_contribution: "Updated provider contribution text."
+    evidence:
+      - {{artifact: "Config export", type: export}}
+""".encode()
+    r = admin_client.post(
+        "/admin/products/import/apply",
+        files={"file": ("reimport.yaml", yaml_bytes, "application/x-yaml")},
+    )
+    assert r.status_code == 201
+    assert r.json()["version_created"] is True
+    db_session.refresh(product)
+    assert product.is_published is False, (
+        "re-importing an already-published product with a real change must "
+        "force a fresh review, not silently carry the old publish decision forward"
+    )
+
+
+def test_noop_reimport_leaves_is_published_untouched(admin_client, db_session):
+    """Baseline versioning (roadmap item P): a reimport whose content is
+    byte-identical to the current version is a true no-op -- no new
+    version, and (new in this slice) is_published is left exactly as it
+    was, since there is no "changed compliance mapping" to force a
+    re-review of. Before this slice every reimport unconditionally forced
+    is_published back to False regardless of whether anything changed."""
     product = _seed_product(db_session, published=True)
     bc = db_session.scalars(
         select(BaselineControl).where(BaselineControl.product_id == product.id)
@@ -588,10 +639,11 @@ def test_reimport_resets_is_published_to_false(admin_client, db_session):
         files={"file": ("reimport.yaml", yaml_bytes, "application/x-yaml")},
     )
     assert r.status_code == 201
+    assert r.json()["version_created"] is False
     db_session.refresh(product)
-    assert product.is_published is False, (
-        "re-importing an already-published product must force a fresh review, "
-        "not silently carry the old publish decision forward"
+    assert product.is_published is True, (
+        "a byte-identical reimport must not disturb an already-published "
+        "product's publish state"
     )
 
 
@@ -642,11 +694,21 @@ def test_reimport_with_unchanged_evidence_keeps_spec_id_and_task_link(admin_clie
     )
 
 
-def test_reimport_with_changed_evidence_replaces_spec_and_nulls_task_link(admin_client, db_session):
+def test_reimport_with_changed_evidence_creates_new_version_and_preserves_old_task_link(
+    admin_client, db_session
+):
+    """Baseline versioning (roadmap item P) superseded the old delete-and-
+    null-the-FK behavior this test used to check: a changed evidence spec
+    no longer mutates bc's row or deletes anything. It creates a NEW
+    version with a NEW baseline_control (new id) and a NEW spec; the OLD
+    baseline_control and its OLD spec are untouched forever, so an
+    EvidenceTask created against the old spec keeps its pointer -- evidence
+    survives a reimport, per this slice's non-negotiables."""
     product = _seed_product(db_session, published=True)
     bc = db_session.scalars(
         select(BaselineControl).where(BaselineControl.product_id == product.id)
     ).first()
+    old_bc_id = bc.id
     old_spec = db_session.scalars(
         select(BaselineEvidenceSpec).where(BaselineEvidenceSpec.baseline_control_id == bc.id)
     ).one()
@@ -681,17 +743,37 @@ controls:
         files={"file": ("reimport.yaml", yaml_bytes, "application/x-yaml")},
     )
     assert r.status_code == 201
+    assert r.json()["version_created"] is True
 
-    remaining = db_session.scalars(
-        select(BaselineEvidenceSpec).where(BaselineEvidenceSpec.baseline_control_id == bc.id)
+    # The OLD baseline_control row (and its spec) is untouched -- still
+    # exists, still exactly what it always was.
+    old_spec_still_there = db_session.scalars(
+        select(BaselineEvidenceSpec).where(BaselineEvidenceSpec.baseline_control_id == old_bc_id)
     ).all()
-    assert len(remaining) == 1
-    assert remaining[0].id != old_spec_id
-    assert remaining[0].artifact_description == "A totally different export"
+    assert len(old_spec_still_there) == 1
+    assert old_spec_still_there[0].id == old_spec_id
+    assert old_spec_still_there[0].artifact_description == "Config export"
+
+    # The NEW current version has its own new baseline_control + spec.
+    db_session.refresh(product)
+    new_bc = db_session.scalars(
+        select(BaselineControl).where(
+            BaselineControl.baseline_version_id == product.current_version_id
+        )
+    ).one()
+    assert new_bc.id != old_bc_id
+    new_spec = db_session.scalars(
+        select(BaselineEvidenceSpec).where(BaselineEvidenceSpec.baseline_control_id == new_bc.id)
+    ).one()
+    assert new_spec.id != old_spec_id
+    assert new_spec.artifact_description == "A totally different export"
+
+    # Evidence survives: the task's pointer to the OLD spec is untouched.
     db_session.refresh(task)
-    assert task.baseline_spec_id is None, (
-        "genuinely changed evidence must still sever the FK on the task "
-        "that pointed at the old, now-removed spec"
+    assert task.baseline_spec_id == old_spec_id, (
+        "a reimport must never sever an existing EvidenceTask's pointer to "
+        "the spec it was actually collected against -- that spec still "
+        "exists, unmodified, under the version this task's org is pinned to"
     )
 
 

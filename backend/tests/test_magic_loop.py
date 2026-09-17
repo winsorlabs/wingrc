@@ -433,6 +433,12 @@ def test_start_assessment_auto_fires_for_active_products(
     op = ref["org_product"]
     op.status = "active"  # OrgProductStatus.ACTIVE — StrEnum subclasses str
     op.configured = True
+    # Baseline versioning (roadmap item P): real activation always pins a
+    # version via activate_org_product; this test bypasses that call to
+    # set status directly, so it must set the pin itself -- an active
+    # OrgProduct with no baseline_version_id is a state start_assessment's
+    # loop now deliberately skips (see engine.py's own defensive comment).
+    op.baseline_version_id = ref["version"].id
     db_session.flush()
 
     # Now start an assessment — it should auto-fire the loop
