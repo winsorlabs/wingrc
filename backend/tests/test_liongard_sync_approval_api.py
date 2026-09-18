@@ -167,7 +167,9 @@ def test_sync_now_persists_pending_review_result(client, db_session, fake_msp_ad
     ).all()
     assert len(rows) == 1
     changes = db_session.scalars(
-        select(LiongardSyncResultChange).where(LiongardSyncResultChange.sync_result_id == rows[0].id)
+        select(LiongardSyncResultChange).where(
+            LiongardSyncResultChange.sync_result_id == rows[0].id
+        )
     ).all()
     assert len(changes) == 2
     assert all(c.resolution == "pending" for c in changes)
@@ -188,7 +190,9 @@ def test_sync_now_never_writes_scope_entity(client, db_session, fake_msp_admin):
     assert rows == []
 
 
-def test_no_actionable_changes_marks_no_changes_status(client, db_session, fake_msp_admin, _stub_liongard):
+def test_no_actionable_changes_marks_no_changes_status(
+    client, db_session, fake_msp_admin, _stub_liongard
+):
     org = _mapped_org(client, db_session, fake_msp_admin)
     _stub_liongard["devices"] = []
     _stub_liongard["identities"] = []
@@ -306,7 +310,9 @@ def test_approving_twice_422s(client, db_session, fake_msp_admin):
     assert client.post(url, json={}).status_code == 422
 
 
-def test_resolving_the_last_pending_change_marks_result_reviewed(client, db_session, fake_msp_admin):
+def test_resolving_the_last_pending_change_marks_result_reviewed(
+    client, db_session, fake_msp_admin
+):
     org = _mapped_org(client, db_session, fake_msp_admin)
     body = _sync_now(client, org)
     device_change = _new_change(client, org, body["id"], "device")
@@ -327,7 +333,9 @@ def test_resolving_the_last_pending_change_marks_result_reviewed(client, db_sess
     assert db_session.get(LiongardSyncResult, uuid.UUID(body["id"])).status == "reviewed"
 
 
-def test_re_sync_after_rejection_does_not_re_flag_as_new(client, db_session, fake_msp_admin, _stub_liongard):
+def test_re_sync_after_rejection_does_not_re_flag_as_new(
+    client, db_session, fake_msp_admin, _stub_liongard
+):
     """Rejection is sticky -- the device exists in scope now (in_boundary=
     False), so the next sync reconciles it as unchanged/changed, never
     'new' again."""
@@ -371,7 +379,9 @@ def test_checklist_confirmations_snapshot_activated_products(client, db_session,
     )
     approval_id = uuid.UUID(r.json()["id"])
     items = db_session.scalars(
-        select(AssetApprovalChecklistItem).where(AssetApprovalChecklistItem.approval_id == approval_id)
+        select(AssetApprovalChecklistItem).where(
+            AssetApprovalChecklistItem.approval_id == approval_id
+        )
     ).all()
     assert len(items) == 1
     assert items[0].product_key == product.key
@@ -400,11 +410,15 @@ def test_c3pao_assessor_cannot_approve(db_session, fake_msp_admin):
 # ---------------------------------------------------------------------------
 
 
-def test_notify_candidates_includes_security_officer_and_it_admin(client, db_session, fake_msp_admin):
+def test_notify_candidates_includes_security_officer_and_it_admin(
+    client, db_session, fake_msp_admin
+):
     org = _mapped_org(client, db_session, fake_msp_admin)
     so = Contact(org_id=org.id, name="Sam SO", email="sam@example.com", affiliation="customer")
     it = Contact(org_id=org.id, name="Ivy IT", email="ivy@example.com", affiliation="msp")
-    other = Contact(org_id=org.id, name="Other Contact", email="other@example.com", affiliation="msp")
+    other = Contact(
+        org_id=org.id, name="Other Contact", email="other@example.com", affiliation="msp"
+    )
     db_session.add_all([so, it, other])
     db_session.flush()
     db_session.add_all([
