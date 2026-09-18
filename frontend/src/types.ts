@@ -1082,3 +1082,63 @@ export interface MembershipGrantResult {
   // idempotent, this isn't a failure.
   granted: boolean;
 }
+
+// ── D.3 second half: daily Liongard sync + asset/user onboarding
+// approval — mirrors backend/app/routers/liongard_sync.py's schemas
+// field-for-field.
+export interface LiongardSyncResultRow {
+  id: string;
+  org_id: string;
+  liongard_environment_id: number;
+  liongard_environment_name: string | null;
+  pulled_at: string;
+  status: string;
+  summary: Record<string, number>;
+  warnings: string[];
+  created_at: string;
+}
+
+export interface LiongardSyncResultChangeRow {
+  id: string;
+  change_type: string;
+  entity_type: string;
+  natural_key: string;
+  field_diffs: Record<string, [unknown, unknown]>;
+  // The full frozen CanonicalEntity this change would write -- null only
+  // for change_type="missing". Already carries status="pending_approval"
+  // for a brand-new entity.
+  incoming: {
+    entity_type: string;
+    natural_key: string;
+    attributes: Record<string, unknown>;
+    scope_category: string | null;
+    status: string;
+    in_boundary: boolean;
+    source: string;
+    source_ref: string | null;
+  } | null;
+  warnings: string[];
+  // Only meaningful for change_type="new" -- null for "changed"/"missing".
+  resolution: string | null;
+  resolved_at: string | null;
+  resolved_by: string | null;
+}
+
+export interface ChecklistProduct {
+  product_key: string;
+  product_name: string;
+}
+
+export interface LiongardSyncResultDetail extends LiongardSyncResultRow {
+  changes: LiongardSyncResultChangeRow[];
+  checklist_products: ChecklistProduct[];
+}
+
+export interface AssetApprovalResult {
+  id: string;
+  scope_entity_id: string;
+  decision: string;
+  decided_by_name: string;
+  decided_at: string;
+  rejection_reason: string | null;
+}

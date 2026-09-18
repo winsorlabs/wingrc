@@ -8,6 +8,7 @@ import { AssetsPanel } from "./components/AssetsPanel";
 import { AuditLogPanel } from "./components/AuditLogPanel";
 import { ContactsPanel } from "./components/ContactsPanel";
 import { InviteAcceptPage } from "./components/InviteAcceptPage";
+import { LiongardSyncPanel } from "./components/LiongardSyncPanel";
 import { LoginPage } from "./components/LoginPage";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 import { OrgDashboard } from "./components/OrgDashboard";
@@ -310,6 +311,9 @@ export function App() {
                   currentUserId={user.id}
                   currentUserRole={user.role}
                 />
+              )}
+              {scopeTab === "liongard-sync" && (
+                <LiongardSyncPanel orgId={org.id} />
               )}
             </div>
           )}

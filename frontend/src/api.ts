@@ -1,4 +1,4 @@
-import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow } from "./types";
+import type { ApiTokenRow, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow } from "./types";
 
 const BASE = "/api";
 
@@ -1049,6 +1049,39 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ note }),
     }),
+
+  // ── Daily Liongard sync + asset/user onboarding approval (D.3 second
+  // half) — org-scoped (backend/app/routers/liongard_sync.py). Every
+  // route is open to any org member with write access -- the org's
+  // Security Officer/IT contact is exactly who approves here, same
+  // reasoning as review-cycles' attest/flag/read gate above. ───────────
+  syncLiongardNow: (orgId: string) =>
+    req<LiongardSyncResultRow>(`/orgs/${orgId}/liongard-sync-results/sync-now`, {
+      method: "POST",
+    }),
+
+  listLiongardSyncResults: (orgId: string) =>
+    req<LiongardSyncResultRow[]>(`/orgs/${orgId}/liongard-sync-results`),
+
+  getLiongardSyncResult: (orgId: string, syncResultId: string) =>
+    req<LiongardSyncResultDetail>(`/orgs/${orgId}/liongard-sync-results/${syncResultId}`),
+
+  approveLiongardChange: (
+    orgId: string,
+    syncResultId: string,
+    changeId: string,
+    checklistConfirmations: Record<string, boolean>
+  ) =>
+    req<AssetApprovalResult>(
+      `/orgs/${orgId}/liongard-sync-results/${syncResultId}/changes/${changeId}/approve`,
+      { method: "POST", body: JSON.stringify({ checklist_confirmations: checklistConfirmations }) }
+    ),
+
+  rejectLiongardChange: (orgId: string, syncResultId: string, changeId: string, reason: string) =>
+    req<AssetApprovalResult>(
+      `/orgs/${orgId}/liongard-sync-results/${syncResultId}/changes/${changeId}/reject`,
+      { method: "POST", body: JSON.stringify({ reason }) }
+    ),
 
   // ── Scheduled jobs (job scheduler, D.3's second infrastructure
   // prerequisite) — deployment-wide, not org-scoped; msp_admin only
