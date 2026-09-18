@@ -182,7 +182,8 @@ def upgrade() -> None:
             "id", UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")
         ),
         sa.Column(
-            "approval_id", UUID(as_uuid=True), sa.ForeignKey("asset_approval.id", ondelete="CASCADE"),
+            "approval_id", UUID(as_uuid=True),
+            sa.ForeignKey("asset_approval.id", ondelete="CASCADE"),
             nullable=False,
         ),
         sa.Column("org_id", UUID(as_uuid=True), sa.ForeignKey("organization.id"), nullable=False),
@@ -205,7 +206,9 @@ def upgrade() -> None:
     # auth.orgs_due_for_review_cycle_open()'s exact precedent (0046).
     op.execute("""
         CREATE FUNCTION auth.orgs_with_liongard_mapping()
-        RETURNS TABLE (org_id UUID, liongard_environment_id INTEGER, liongard_environment_name VARCHAR)
+        RETURNS TABLE (
+            org_id UUID, liongard_environment_id INTEGER, liongard_environment_name VARCHAR
+        )
         SECURITY DEFINER
         SET search_path = public, pg_catalog
         LANGUAGE sql STABLE AS $$

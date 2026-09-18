@@ -148,7 +148,9 @@ def sync_now(
 
 
 @router.get("", response_model=list[SyncResultOut])
-def list_sync_results(org_id: uuid.UUID, session: Session = Depends(get_session)) -> list[SyncResultOut]:
+def list_sync_results(
+    org_id: uuid.UUID, session: Session = Depends(get_session)
+) -> list[SyncResultOut]:
     rows = liongard_sync.list_sync_results(session, org_id)
     session.commit()
     return [_sync_result_out(r) for r in rows]

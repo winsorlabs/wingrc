@@ -63,7 +63,6 @@ from .models import (
     OrgLiongardEnvironment,
     OrgProduct,
     Product,
-    ScopeEntity,
 )
 from .reconcile import reconcile
 
@@ -226,7 +225,9 @@ def _entity_from_jsonb(data: dict) -> CanonicalEntity:
         entity_type=EntityType(data["entity_type"]),
         natural_key=data["natural_key"],
         attributes=dict(data.get("attributes") or {}),
-        scope_category=ScopeCategory(data["scope_category"]) if data.get("scope_category") else None,
+        scope_category=(
+            ScopeCategory(data["scope_category"]) if data.get("scope_category") else None
+        ),
         status=EntityStatus(data["status"]),
         in_boundary=data.get("in_boundary", True),
         source=Source(data["source"]),
