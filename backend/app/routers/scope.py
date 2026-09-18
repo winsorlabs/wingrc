@@ -64,7 +64,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from .. import repo
+from .. import liongard_sync, repo
 from ..audit import log_event
 from ..auth import require_org_access, require_write
 from ..catalog import VIEWS_BY_ID
@@ -80,7 +80,6 @@ from ..domain import (
     Source,
     normalize_mac_address,
 )
-from ..importers.liongard import build_source_ref, devices_to_canonical, identities_to_canonical
 from ..importers.workbook import parse_workbook, resolve_canonical_device_attributes
 from ..models import IntegrationConnection, OrgLiongardEnvironment, ScopeEntity
 from ..reconcile import reconcile
@@ -1050,74 +1049,36 @@ def liongard_sync_dry_run(
     list is ambiguous (nothing found vs. nothing changed vs. everything
     still Discovery-state and filtered out), and this is what resolves it
     for the caller instead of leaving that read on the raw numbers.
+
+    D.3 second half: the actual pull-and-reconcile computation now lives
+    in liongard_sync.py:pull_and_reconcile, shared with the scheduled
+    daily sync job -- this endpoint is a thin wrapper that formats the
+    same result for the interactive dry-run response. A brand-new
+    entity's `incoming.status` already comes back as `pending_approval`
+    from that shared function -- see its own docstring for why that
+    applies here too, not just the scheduled path.
     """
-    mapping = get_liongard_mapping(session, org_id)
-    if mapping is None:
-        raise HTTPException(
-            status_code=400,
-            detail="No Liongard Environment is mapped to this org yet -- set one first.",
-        )
-    config, credential = get_liongard_credential(session)
-
-    pulled_at = datetime.now(UTC).isoformat()
-    source_ref = build_source_ref(
-        mapping.liongard_environment_id, mapping.liongard_environment_name, pulled_at
-    )
-
     try:
-        device_pull = liongard_connector.pull_device_profiles(
-            config, credential, mapping.liongard_environment_id
-        )
-        identity_pull = liongard_connector.pull_identities(
-            config, credential, mapping.liongard_environment_id
-        )
+        pull = liongard_sync.pull_and_reconcile(session, org_id)
+    except liongard_sync.LiongardSyncError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except liongard_connector.LiongardAPIError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
 
-    devices, device_warnings = devices_to_canonical(device_pull.records, source_ref)
-    identities, identity_warnings = identities_to_canonical(identity_pull.records, source_ref)
-    incoming = devices + identities
-
-    row_warnings: dict[tuple[str, str], list[str]] = {}
-    pull_level_warnings: list[str] = []
-    for warnings_by_key in (device_warnings, identity_warnings):
-        for key, messages in warnings_by_key.items():
-            if key == ("_skipped", "_skipped"):
-                pull_level_warnings.extend(messages)
-            else:
-                row_warnings.setdefault(key, []).extend(messages)
-
-    current = repo.list_entities(session, org_id)
-    result = reconcile(current, incoming)
-
-    changed_by_type: dict[str, int] = {}
-    for c in result.changes:
-        if c.change_type.value in ("new", "changed"):
-            changed_by_type[c.entity_type.value] = changed_by_type.get(c.entity_type.value, 0) + 1
+    result = pull.reconcile_result
+    row_warnings = pull.row_warnings
+    pull_level_warnings = pull.pull_level_warnings
 
     pull_status = [
         LiongardPullStatus(
-            entity_label="devices",
-            total_found=device_pull.total_count,
-            inventory_count=device_pull.inventory_count,
+            entity_label=ps.entity_label,
+            total_found=ps.total_found,
+            inventory_count=ps.inventory_count,
             message=_describe_liongard_pull(
-                "devices",
-                device_pull.total_count,
-                device_pull.inventory_count,
-                changed_by_type.get(EntityType.DEVICE.value, 0),
+                ps.entity_label, ps.total_found, ps.inventory_count, ps.changed_count
             ),
-        ),
-        LiongardPullStatus(
-            entity_label="identities",
-            total_found=identity_pull.total_count,
-            inventory_count=identity_pull.inventory_count,
-            message=_describe_liongard_pull(
-                "identities",
-                identity_pull.total_count,
-                identity_pull.inventory_count,
-                changed_by_type.get(EntityType.PERSON.value, 0),
-            ),
-        ),
+        )
+        for ps in pull.pull_statuses
     ]
 
     return DryRunOut(

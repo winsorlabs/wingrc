@@ -11,16 +11,18 @@ audit boundary. A tool whose job is protecting CUI must not leak
 CUI-adjacent detail through its own notifications — that would be a
 self-inflicted finding in the exact domain the product exists to serve.
 This module has no way to enforce that on a caller's `subject`/`body`
-strings; every call site is reviewed for it instead. Five exist today:
+strings; every call site is reviewed for it instead. Six exist today:
 routers/users.py's invite/reset (the original two); scheduler.py's
 sprs_annual_reminder job — "an annual SPRS submission is coming due,
 sign in to WinGRC," identical regardless of which or how many orgs are
-actually due; and scheduler.py's review_cycle_open/review_cycle_sweep
-jobs (routers/review_cycles.py's periodic user/device review) — "a
-review is awaiting you" / "reminder: review needed," naming no org, no
-user, no device, no control id, and not distinguishing MSP from client
-recipients in content (only in the recipient list itself). Anyone adding
-a sixth must hold the same line.
+actually due; scheduler.py's review_cycle_open/review_cycle_sweep jobs
+(routers/review_cycles.py's periodic user/device review) — "a review is
+awaiting you" / "reminder: review needed," naming no org, no user, no
+device, no control id, and not distinguishing MSP from client recipients
+in content (only in the recipient list itself); and scheduler.py's
+liongard_daily_sync job (D.3's asset/user onboarding approval) — "new
+assets or users... awaiting your approval," naming no org, no device
+count, no natural key. Anyone adding a seventh must hold the same line.
 
 **Fails clearly and safely when email is not configured.** A fresh
 deployment has no SMTP set up, and most of this app works fine without
