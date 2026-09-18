@@ -410,6 +410,41 @@ def test_c3pao_assessor_cannot_approve(db_session, fake_msp_admin):
 # ---------------------------------------------------------------------------
 
 
+def test_pending_approval_and_decided_assets_never_touch_sprs(client, db_session, fake_msp_admin):
+    """§2's own explicit instruction: assert this directly, not just by
+    architectural argument. compute_sprs (assessment.py) takes only
+    control_weights/objectives_by_control/objective_statuses -- no
+    scope_entity involvement at all -- but a sync/approve/reject flow that
+    accidentally touched assessment/control_state would still be a real
+    regression this test would catch."""
+    from app.engine import start_assessment
+    from app.models import Framework
+
+    org = _mapped_org(client, db_session, fake_msp_admin)
+    fw = Framework(key=f"fw-sprs-{uuid.uuid4().hex[:6]}", name="Test FW", version="r2")
+    db_session.add(fw)
+    db_session.flush()
+    assessment = start_assessment(db_session, org.id, fw.id, "SPRS Isolation Test")
+    db_session.commit()
+    before_score = assessment.sprs_score
+
+    body = _sync_now(client, org)  # asset sits pending_approval
+    change = _new_change(client, org, body["id"], "device")
+    client.post(
+        f"/orgs/{org.id}/liongard-sync-results/{body['id']}/changes/{change['id']}/approve",
+        json={},
+    )
+    other_change = _new_change(client, org, body["id"], "person")
+    client.post(
+        f"/orgs/{org.id}/liongard-sync-results/{body['id']}/changes/{other_change['id']}/reject",
+        json={"reason": "Not authorized."},
+    )
+
+    db_session.expire_all()
+    assessment = db_session.get(type(assessment), assessment.id)
+    assert assessment.sprs_score == before_score
+
+
 def test_notify_candidates_includes_security_officer_and_it_admin(
     client, db_session, fake_msp_admin
 ):
