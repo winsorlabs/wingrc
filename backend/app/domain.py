@@ -50,6 +50,18 @@ class ScopeCategory(StrEnum):
 class EntityStatus(StrEnum):
     ACTIVE = "active"
     DECOMMISSIONED = "decommissioned"
+    # D.3 second half: a connector-observed entity WinGRC has not yet had
+    # a human formally accept into the CUI boundary. Set only by
+    # liongard_sync.py's pull path for a brand-new entity -- never by
+    # workbook import (human-reviewed at upload time already) and never
+    # written directly by the scheduled sync job itself (which never
+    # touches scope_entity at all -- see liongard_sync.py's own module
+    # docstring). Cleared to ACTIVE on approval, left at ACTIVE with
+    # in_boundary=False on rejection (see AssetApproval's own docstring
+    # for why rejection asserts "not in boundary," not "gone" -- the
+    # device exists on the network either way; WinGRC has no authority to
+    # assert otherwise).
+    PENDING_APPROVAL = "pending_approval"
 
 
 class Source(StrEnum):

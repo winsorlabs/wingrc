@@ -20,7 +20,14 @@ export type NavCategory =
   | "tools"
   | "library"
   | "security";
-export type ScopeTab = "profile" | "system" | "contacts" | "assets" | "sprs" | "review-cycles";
+export type ScopeTab =
+  | "profile"
+  | "system"
+  | "contacts"
+  | "assets"
+  | "sprs"
+  | "review-cycles"
+  | "liongard-sync";
 // RACI is assessment-scoped data (docs/PLAN-gui-restructure.md G.7's
 // 2026-09-09 move note) — "board" is the existing per-control assessment
 // view, "roles" is the Roles/RACI matrix, both live under Assessments now.
@@ -112,6 +119,16 @@ export function SideNav({
               onClick={() => onSelectScopeTab("review-cycles")}
             >
               Periodic Review
+            </SideNavSubitem>
+            {/* D.3 second half: daily Liongard sync + asset/user onboarding
+                approval. Reachable by every org member with write access,
+                same as review-cycles above -- the org's Security Officer/
+                IT contact is exactly who approves here. */}
+            <SideNavSubitem
+              active={scopeTab === "liongard-sync"}
+              onClick={() => onSelectScopeTab("liongard-sync")}
+            >
+              Asset Approvals
             </SideNavSubitem>
             {/* G.6: no separate pages — the diagrams live inside the System
                 Description editor. These entries route there and ask it to

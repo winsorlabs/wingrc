@@ -2376,3 +2376,293 @@ class ReviewCycleFlag(Base):
     )
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     resolved_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# D.3 second half: daily Liongard sync + asset/user onboarding approval
+# ---------------------------------------------------------------------------
+
+
+class LiongardSyncResult(Base):
+    """One Liongard pull-and-reconcile attempt for one org, persisted --
+    the structural gap D.3's own spec didn't mention: before this, a
+    dry-run's diff only ever existed in an HTTP response (routers/scope.py:
+    liongard_sync_dry_run), carried between dry-run and apply by the
+    browser. A scheduled job has no browser, so "the job produces a
+    dry-run for review" needed something durable to produce, and this
+    table -- plus LiongardSyncResultChange below -- is it.
+
+    Same discipline as sprs_snapshot/audit_log/BundleSnapshot: append-only,
+    never re-rendered from live data once written. The approval page reads
+    LiongardSyncResultChange rows only, never re-pulls -- see
+    liongard_sync.py's own module docstring for why that matters.
+
+    status:
+      pending_review    -- has at least one change_type='new' row still
+                            awaiting a decision (see LiongardSyncResultChange
+                            .resolution).
+      reviewed          -- every 'new' row has been approved or rejected.
+      superseded        -- a later sync for this same org completed before
+                            this one was fully reviewed. Never deleted --
+                            still visible, greyed out, so a reviewer who
+                            opens it knows why (§0's explicit requirement:
+                            "that behavior is visible to the reviewer").
+      no_changes        -- the pull found nothing new/changed/missing;
+                            auto-closed, nothing to review.
+
+    Superseding, not merging or queueing, when a fresh sync lands before
+    the last is reviewed -- chosen because merging risks blending two
+    different observation times into one approval record (breaks the
+    point-in-time discipline every other row above uses this same
+    reasoning for), and queueing means a reviewer works through a backlog
+    of diffs against a device that's since changed again, most of it
+    noise by the time they get to it. "What's true as of the most recent
+    pull" is the more honest thing to hand a reviewer than an accumulating
+    queue.
+
+    job_run_id is nullable: a manual "Sync now" (still the existing HTTP
+    dry-run path) can also produce one of these, not only the scheduled
+    job -- see liongard_sync.py:persist_sync_result's own docstring for
+    why manual and scheduled syncs share one write path.
+    """
+
+    __tablename__ = "liongard_sync_result"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending_review', 'reviewed', 'superseded', 'no_changes')",
+            name="ck_liongard_sync_result_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    job_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("job_run.id", ondelete="SET NULL"), nullable=True
+    )
+    # Denormalized copy of OrgLiongardEnvironment at pull time -- the
+    # mapping can change later; this row records which Environment this
+    # specific pull actually came from, same reasoning
+    # ReviewCycle.cadence_months copies rather than reads live.
+    liongard_environment_id: Mapped[int] = mapped_column(nullable=False)
+    liongard_environment_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    pulled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'pending_review'")
+    )
+    # Small counts only (new/changed/missing per entity type) -- never the
+    # full diff; that's LiongardSyncResultChange's job. Matches JobSpec's
+    # own "small JSON-serializable summary" convention for job_run.result.
+    summary: Mapped[dict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    warnings: Mapped[list] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class LiongardSyncResultChange(Base):
+    """One entity's diff row within a LiongardSyncResult -- the same shape
+    routers/scope.py's ScopeChangeOut/ApplyIn already use for the
+    interactive dry-run -> apply flow, deliberately: `incoming` is a full
+    frozen CanonicalEntity snapshot (not just the diffed fields), so
+    approving a row can feed the *existing* apply machinery
+    (repo.upsert-equivalent) without a second write path being invented
+    for connector-sourced changes specifically.
+
+    Only change_type='new' rows go through the resolution/approval
+    workflow below (D.3 is an ONBOARDING approval gate, not a general
+    change-review tool). 'changed'/'missing' rows are persisted here for
+    visibility only -- a reviewer sees the whole pull, same as the
+    interactive dry-run always has -- and are actioned, if at all, through
+    the existing manual dry-run -> apply screen, not a second apply
+    mechanism built here. resolution stays NULL for those; only 'new' rows
+    ever get 'approved'/'rejected'.
+    """
+
+    __tablename__ = "liongard_sync_result_change"
+    __table_args__ = (
+        CheckConstraint(
+            "change_type IN ('new', 'changed', 'missing')",
+            name="ck_liongard_sync_result_change_type",
+        ),
+        CheckConstraint(
+            "resolution IN ('pending', 'approved', 'rejected')",
+            name="ck_liongard_sync_result_change_resolution",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    sync_result_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("liongard_sync_result.id", ondelete="CASCADE"), index=True
+    )
+    # Denormalized from liongard_sync_result.org_id -- RLS policy needs it
+    # directly on this table, same convention as ControlState.org_id/
+    # review_cycle_item.org_id (every RLS-enabled child table in this
+    # codebase carries its own copy, never relies on a join for the
+    # policy).
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    change_type: Mapped[str] = mapped_column(String(10), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    natural_key: Mapped[str] = mapped_column(String(400), nullable=False)
+    field_diffs: Mapped[dict] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    # The full CanonicalEntity this change would write, frozen at pull
+    # time -- null only for change_type='missing' (nothing incoming),
+    # matching ScopeChangeOut's own nullable `incoming`. Already carries
+    # status='pending_approval' for a brand-new entity -- see
+    # liongard_sync.py:pull_and_reconcile's own docstring for where that's
+    # set.
+    incoming: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    warnings: Mapped[list] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
+    # Only meaningful for change_type='new' -- see class docstring.
+    resolution: Mapped[str | None] = mapped_column(
+        String(10), nullable=True, server_default=text("'pending'")
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+
+class LiongardSyncNotification(Base):
+    """One notification attempt to one recipient for one LiongardSyncResult
+    -- same notified_at/notification_error tracking shape as
+    ReviewCycleReviewer (added there after a live wl-util-1 bug where a
+    failed/never-attempted send left no trace; not repeating that gap
+    here). One row per org contact holding security_officer or it_admin
+    (models.py:ContactDocumentationRole), one email per org per sync --
+    a digest naming the pending count and a link, never one email per
+    device (§3's notification-volume concern).
+
+    contact_id is nullable (ON DELETE SET NULL) so a later-deleted contact
+    doesn't take this notification record with it -- recipient_name/
+    recipient_email are denormalized at send time for exactly that reason,
+    same as ReviewCycleReviewer's reviewer_name/reviewer_email.
+    """
+
+    __tablename__ = "liongard_sync_notification"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    sync_result_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("liongard_sync_result.id", ondelete="CASCADE"), index=True
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    contact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contact.id", ondelete="SET NULL"), nullable=True
+    )
+    recipient_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    recipient_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    notification_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AssetApproval(Base):
+    """The formal acceptance (or rejection) record D.3 exists to produce --
+    who accepted which asset into the CUI environment, when, and what the
+    baseline checklist showed at that moment. This IS the evidentiary
+    artifact (per ROADMAP.md D.3's own framing); it is deliberately NOT
+    wired into Evidence/EvidenceStateLink -- creating one Evidence
+    artifact per approved asset would be evidence sprawl, exactly what
+    CLAUDE.md's evidence-minimization hard rule exists to prevent. "Who
+    approved this asset" is answerable from audit_log (real actor
+    attribution) plus this row; a future bundle section can render
+    straight from asset_approval, the same way the component inventory
+    already renders straight from scope_entity, if that's ever wanted.
+
+    decided_by/decided_by_name: the authenticated caller, never a
+    submitted name -- same reasoning review_cycles.attest() already
+    follows. decided_by is a string (user id), matching audit_log.actor's
+    own convention rather than a hard FK, so a later user anonymization
+    doesn't orphan this row's identity of record.
+
+    sync_result_change_id is nullable: an asset can, in principle, be
+    approved/rejected outside a sync-driven flow (e.g. a manually created
+    scope_entity someone wants a formal acceptance record for) -- when set,
+    it is EXACTLY the LiongardSyncResultChange this decision resolves, and
+    that row's own `resolution`/`resolved_at`/`resolved_by` are updated in
+    the same transaction (liongard_sync.py:approve_change/reject_change),
+    never left to drift apart.
+
+    checklist items live in AssetApprovalChecklistItem, not inline JSON,
+    matching ReviewCycleItem's own precedent for a point-in-time snapshot
+    that stays independently queryable.
+    """
+
+    __tablename__ = "asset_approval"
+    __table_args__ = (
+        CheckConstraint(
+            "decision IN ('approved', 'rejected')", name="ck_asset_approval_decision"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    scope_entity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("scope_entity.id", ondelete="CASCADE"), index=True
+    )
+    sync_result_change_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("liongard_sync_result_change.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    decision: Mapped[str] = mapped_column(String(10), nullable=False)
+    decided_by: Mapped[str] = mapped_column(String(100), nullable=False)
+    decided_by_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    # Required for decision='rejected' (enforced in liongard_sync.py, not
+    # a DB CHECK -- expressing "required iff X" as a CHECK constraint
+    # against a sibling column is exactly the kind of thing this codebase
+    # leaves to application validation elsewhere too, e.g. baseline_import
+    # .py's coverage_basis-required-for-non-customer_owns check).
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class AssetApprovalChecklistItem(Base):
+    """One product's row on the baseline checklist as it was shown at
+    decision time -- v1 checklist source is the org's ACTIVATED Tools
+    (OrgProduct/Product; deterministic, already exists, needs no AI and no
+    new Liongard capability). `confirmed` is the reviewer's own manual
+    tick, not an automated Liongard-metrics check -- no per-device agent-
+    presence pull exists in connectors/liongard.py today (only device-
+    profile/identity inventory), and this codebase's own hard-won lesson
+    about this connector (the undocumented required `Sorting` field, found
+    only by testing live) is not to guess at an unverified API surface.
+    Automated per-device verification is a real, separate future slice
+    against a live tenant, not built here -- see docs/roadmap.md's D.3
+    entry for the explicit scope line.
+    """
+
+    __tablename__ = "asset_approval_checklist_item"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    approval_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("asset_approval.id", ondelete="CASCADE"), index=True
+    )
+    # Denormalized from asset_approval.org_id -- see LiongardSyncResultChange
+    # .org_id's own comment for why every RLS-enabled child table carries
+    # its own copy.
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    product_key: Mapped[str] = mapped_column(String(60), nullable=False)
+    product_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

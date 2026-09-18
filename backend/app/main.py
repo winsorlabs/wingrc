@@ -27,6 +27,7 @@ from .routers import (
     evidence,
     frameworks,
     integrations,
+    liongard_sync,
     objectives,
     orgs,
     raci,
@@ -79,6 +80,7 @@ app.include_router(admin_users.router)
 app.include_router(scheduled_jobs.router)
 app.include_router(sprs_submissions.router)
 app.include_router(review_cycles.router)
+app.include_router(liongard_sync.router)
 
 
 @app.get("/health")

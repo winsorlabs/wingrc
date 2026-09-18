@@ -72,12 +72,14 @@ timestamp-expiry guess about how long is "too long."
 **Overlap policy: skip, don't queue.** If a job is still running when its
 next tick comes due, `pg_try_advisory_lock` simply fails for that tick and
 the caller moves on (`outcome: "skipped_running_elsewhere"`) -- no
-retry-in-place, no pile-up. For both jobs registered as of this writing,
+retry-in-place, no pile-up. For every job registered as of this writing,
 skipping a tick has no consequence beyond a slightly later effective
-run: `expire_stale_invites` just sweeps a little later, and
+run: `expire_stale_invites` just sweeps a little later,
 `sprs_annual_reminder`'s own idempotency (migration 0044 -- keyed to the
 submission, not the tick) means a skipped daily due-check simply gets
-picked up on the very next one, never a lost or duplicated reminder. A
+picked up on the very next one, and `review_cycle_open`/`review_cycle_
+sweep`/`liongard_daily_sync` are all per-org due-checks re-evaluated fresh
+on the next tick regardless -- never a lost or duplicated reminder/sync. A
 future job where a skipped tick is NOT harmless should say so explicitly
 when it's added.
 
@@ -91,12 +93,16 @@ JobSpec-level "check daily"), not "fire on the anniversary" -- the actual
 condition evaluated on every daily tick, which is a fine substitute for
 "fire once a year, on the day" for a reminder (a day's slop either side
 of the true anniversary is immaterial) but would NOT be for something
-needing an exact local calendar date. Neither registered job needs true
-cron scheduling, and getting that right (storing an IANA zone name, not
-a raw UTC offset, so DST doesn't silently walk the run time) is real
-design work that has no job to justify it yet. D.3's daily Liongard sync
-will likely want exactly that; add it there, against a real requirement,
-not speculatively here.
+needing an exact local calendar date. **D.3's daily Liongard sync landed
+(migration 0056) without needing true cron scheduling after all** -- "a
+daily due-check, evaluated fresh every tick" turned out to be exactly the
+right shape for it too (`liongard_daily_sync`'s own interval is
+`timedelta(hours=24)`, same as every other job here), not the exact-
+local-calendar-date case this section originally anticipated it might be.
+No registered job needs true cron scheduling as of this writing, and
+getting that right (storing an IANA zone name, not a raw UTC offset, so
+DST doesn't silently walk the run time) remains real design work with no
+job to justify it yet.
 
 **RLS.** `job_run` itself is deployment-wide, like
 `integration_connection`/`deployment_settings` -- no org_id, no RLS (see
@@ -134,11 +140,12 @@ from sqlalchemy import create_engine, select, text, update
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
-from . import email_service, review_cycles
+from . import email_service, liongard_sync, review_cycles
 from .audit import log_event
 from .config import get_settings
+from .connectors import liongard as liongard_connector
 from .db import SessionLocal
-from .models import JobRun, ReviewCycle, ReviewCycleReviewer
+from .models import JobRun, LiongardSyncNotification, ReviewCycle, ReviewCycleReviewer
 from .storage import get_storage_client
 
 logger = logging.getLogger(__name__)
@@ -485,6 +492,137 @@ def _review_cycle_sweep(session: Session) -> dict:
     }
 
 
+_LIONGARD_DIGEST_SUBJECT = "New assets/users awaiting approval in WinGRC"
+_LIONGARD_DIGEST_BODY = (
+    "New assets or users have been discovered and are awaiting your approval "
+    "in WinGRC.\n\nSign in to review: {link}\n"
+)
+
+
+def _liongard_daily_sync(session: Session) -> dict:
+    """D.3 second half: per-org loop over every org with a live Liongard
+    Environment mapping (auth.orgs_with_liongard_mapping(), migration
+    0056 -- org_liongard_environment is RLS-protected, so this cross-org
+    discovery step needs the same SECURITY DEFINER mechanism as
+    auth.orgs_due_for_review_cycle_open()). For each: pull + reconcile +
+    persist (liongard_sync.py:pull_and_reconcile/persist_sync_result),
+    then a digest notification -- one email per org per recipient, never
+    one per device (§3's notification-volume concern), naming no org,
+    count, or item detail (email_service.py's own content rule: "something
+    needs your attention, sign in to WinGRC" plus a link, nothing
+    CUI-adjacent) -- to every contact holding security_officer or it_admin.
+
+    **Never writes scope_entity.** persist_sync_result() only ever writes
+    liongard_sync_result/liongard_sync_result_change rows -- this is the
+    hard constraint this module's own docstring says every job must honor
+    ("a scheduled job may produce a dry-run for review, never apply one
+    unattended"). scope_entity is touched for the first time only by an
+    authenticated human via liongard_sync.py:approve_change/reject_change.
+
+    A per-org pull failure (LiongardAPIError -- credential revoked,
+    Environment deleted in Liongard, network blip) is caught and counted,
+    never lets one org's failure stop the rest of the sweep -- matching
+    _run_one's own "one job failing never stops the others" discipline,
+    applied here at the per-org granularity this job actually has.
+
+    job_run_id is left unset on the persisted sync results this writes --
+    JobRun and this job's own output cross-reference by time/org, not a
+    shared key, same as JobRun's own docstring already establishes for
+    audit_log (JobSpec.run's signature takes only a Session, not this
+    run's own id).
+
+    No org_id-keyed idempotency guard beyond the scheduler's own 24h
+    due-check: a sync that finds nothing new is cheap (persist_sync_result
+    writes a 'no_changes' result and returns), and a sync that finds the
+    same still-pending devices it found yesterday correctly supersedes
+    yesterday's result rather than leaving two pending reviews open for
+    the same device -- see LiongardSyncResult's own docstring.
+    """
+    mappings = session.execute(
+        text(
+            "SELECT org_id, liongard_environment_id, liongard_environment_name "
+            "FROM auth.orgs_with_liongard_mapping()"
+        )
+    ).all()
+    orgs_synced = 0
+    orgs_with_new = 0
+    orgs_with_no_contact = 0
+    notifications_sent = 0
+    errors = 0
+
+    for org_id, _env_id, _env_name in mappings:
+        session.execute(
+            text("SELECT set_config('app.current_org', :org_id, true)"),
+            {"org_id": str(org_id)},
+        )
+        try:
+            pull = liongard_sync.pull_and_reconcile(session, org_id)
+        except (liongard_sync.LiongardSyncError, liongard_connector.LiongardAPIError) as e:
+            # pull_and_reconcile performs no writes at all (credential/
+            # mapping reads, the external HTTP pull, a read-only reconcile)
+            # -- nothing to roll back here, and a session.rollback() would
+            # be actively harmful: it ends the current transaction, which
+            # in production costs nothing (SessionLocal() is fresh per
+            # scheduler run) but is exactly the kind of broad side effect
+            # a per-org failure handler should not reach for when it isn't
+            # needed.
+            logger.warning("Liongard daily sync failed: org=%s error=%s", org_id, e)
+            errors += 1
+            continue
+
+        result = liongard_sync.persist_sync_result(session, org_id=org_id, pull=pull)
+        session.commit()
+        orgs_synced += 1
+
+        if result.status != "pending_review":
+            continue
+        orgs_with_new += 1
+
+        candidates = liongard_sync.notify_candidates_for_org(session, org_id)
+        if not candidates:
+            result.warnings = [
+                *(result.warnings or []),
+                "No contact holds security_officer or it_admin for this org -- "
+                "no notification sent.",
+            ]
+            session.commit()
+            orgs_with_no_contact += 1
+            continue
+
+        link, link_error = _review_link_or_error()
+        for cand in candidates:
+            notification = LiongardSyncNotification(
+                sync_result_id=result.id, org_id=org_id, contact_id=cand.contact_id,
+                recipient_name=cand.name, recipient_email=cand.email,
+            )
+            session.add(notification)
+            session.flush()
+            if link is None:
+                liongard_sync.record_notification_result(
+                    session, notification=notification, sent=False, error=link_error
+                )
+                continue
+            body = _LIONGARD_DIGEST_BODY.format(link=link)
+            r = email_service.send(
+                session, to=cand.email, subject=_LIONGARD_DIGEST_SUBJECT, body=body,
+                template="liongard_sync_digest",
+            )
+            liongard_sync.record_notification_result(
+                session, notification=notification, sent=r.sent, error=r.error
+            )
+            if r.sent:
+                notifications_sent += 1
+        session.commit()
+
+    return {
+        "orgs_synced": orgs_synced,
+        "orgs_with_new": orgs_with_new,
+        "orgs_with_no_contact": orgs_with_no_contact,
+        "notifications_sent": notifications_sent,
+        "errors": errors,
+    }
+
+
 JOB_REGISTRY: dict[str, JobSpec] = {
     spec.name: spec
     for spec in (
@@ -518,6 +656,16 @@ JOB_REGISTRY: dict[str, JobSpec] = {
             # in migration 0044's SQL, not here.
             interval=timedelta(hours=24),
             run=_sprs_annual_reminder,
+        ),
+        JobSpec(
+            name="liongard_daily_sync",
+            # "Daily" per D.3's own spec -- a fixed 24h due-check is
+            # exactly the timezone-agnostic shape this scheduler already
+            # supports (module docstring's Timezone section); no exact
+            # local-calendar-date requirement here the way a true cron
+            # schedule would need.
+            interval=timedelta(hours=24),
+            run=_liongard_daily_sync,
         ),
     )
 }
