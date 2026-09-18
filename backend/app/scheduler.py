@@ -558,8 +558,15 @@ def _liongard_daily_sync(session: Session) -> dict:
         try:
             pull = liongard_sync.pull_and_reconcile(session, org_id)
         except (liongard_sync.LiongardSyncError, liongard_connector.LiongardAPIError) as e:
+            # pull_and_reconcile performs no writes at all (credential/
+            # mapping reads, the external HTTP pull, a read-only reconcile)
+            # -- nothing to roll back here, and a session.rollback() would
+            # be actively harmful: it ends the current transaction, which
+            # in production costs nothing (SessionLocal() is fresh per
+            # scheduler run) but is exactly the kind of broad side effect
+            # a per-org failure handler should not reach for when it isn't
+            # needed.
             logger.warning("Liongard daily sync failed: org=%s error=%s", org_id, e)
-            session.rollback()
             errors += 1
             continue
 

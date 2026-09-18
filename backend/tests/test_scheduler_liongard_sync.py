@@ -125,8 +125,8 @@ def _add_contact(db_session, org_id, *, role: str, email: str) -> Contact:
 
 
 def test_syncs_every_org_with_a_mapping(db_session, sent_emails):
-    org_a = _seed_org_with_mapping(db_session, name="OrgA")
-    org_b = _seed_org_with_mapping(db_session, name="OrgB")
+    org_a = _seed_org_with_mapping(db_session, env_id=8815, name="OrgA")
+    org_b = _seed_org_with_mapping(db_session, env_id=9999, name="OrgB")
     result = scheduler._liongard_daily_sync(db_session)
     assert result["orgs_synced"] == 2
 
