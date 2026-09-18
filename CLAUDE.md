@@ -470,12 +470,21 @@ reasoning and the open question D.4 tracks for a future *hosted* WinGRC.
 **D.2 ✅ DONE (2026-09-11)** — the actual `scope_entity` pull
 (`importers/liongard.py`), routed through the same dry-run/apply review
 flow the workbook importer uses. See `docs/roadmap.md`'s Done entry for
-the full writeup. **D.3's first half — periodic review & attestation —
-✅ DONE (2026-09-13)**, `backend/app/review_cycles.py` +
-`routers/review_cycles.py`; see `docs/roadmap.md`'s Done entry. D.3's
-second half, the daily Liongard sync itself, is not built yet — sequenced
-after the review/attestation half since the Liongard connector has only
-ever been verified against a mock server, never a live tenant.
+the full writeup. **D.3, both halves, ✅ DONE.** First half — periodic
+review & attestation — shipped 2026-09-13, `backend/app/review_cycles.py`
++ `routers/review_cycles.py`. Second half — daily Liongard sync +
+asset/user onboarding approval — shipped 2026-09-18:
+`backend/app/liongard_sync.py` + `routers/liongard_sync.py` +
+`scheduler.py:_liongard_daily_sync`, migration 0056. A brand-new
+Liongard-observed entity lands `pending_approval` (`domain.py:
+EntityStatus`), never silently active — a human approves (→ `active`) or
+rejects (→ `active`, `in_boundary=false`) through an authenticated
+session; the checklist shown at approval is the org's activated Tools,
+reviewer-confirmed by hand (no per-device Liongard-metrics pull exists in
+`connectors/liongard.py` — that's a separate, explicitly deferred future
+slice, not guessed at). See `docs/roadmap.md`'s Done entry and root
+`ROADMAP.md`'s D.3 section (amended in place) for the full design
+writeup.
 
 ### 9. Evidence task enhancements
 

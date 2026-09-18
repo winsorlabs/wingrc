@@ -4396,6 +4396,134 @@ multi-tool coverage works; baseline versioning (next slice).
 
 ---
 
+**Daily Liongard sync + asset/user onboarding approval (D.3's second
+half).** Root `ROADMAP.md`'s D.3 entry is the spec and carries the full
+amendment with every design decision's reasoning; this entry is the
+session log.
+
+**§0 — the structural gap the spec didn't mention, found before building
+anything:** no persisted dry-run existed. `routers/scope.py:
+liongard_sync_dry_run` computed a diff and returned it over HTTP; nothing
+was stored, so a scheduled job (no browser to carry that diff to an apply
+call) had nothing durable to produce for review — directly colliding with
+the scheduler's own hard constraint ("a scheduled job may produce a
+dry-run for review, never apply one unattended," `scheduler.py`'s own
+module docstring). Closed with `liongard_sync_result`/
+`liongard_sync_result_change` (migration 0056), the same append-only,
+point-in-time discipline as `sprs_snapshot`/`audit_log`/`BundleSnapshot`.
+A second sync landing before the first is reviewed marks the first
+**superseded** (not merged, not queued) — chosen because merging risks
+blending two observation times into one approval record, and queueing
+means a reviewer works through a backlog of diffs against a device that's
+since drifted again. The interactive dry-run → apply path
+(`liongard_sync_dry_run`) is unchanged in shape — `pull_and_reconcile()`
+was extracted out of it so both callers share one implementation, not two
+that could drift.
+
+**§1 (the task's numbering, not a code bug this time): pending-by-default
+applies to the manual "Sync now" flow too, not just the scheduled job.**
+A brand-new Liongard-observed entity's `incoming.status` is forced to
+`pending_approval` in the one shared `pull_and_reconcile()` function, so
+an admin clicking through the existing interactive flow gets the same
+gate as the daily job. The alternative — manual apply straight to
+`active`, only the scheduler's output gated — would give one connector
+two different trust levels depending on who clicked what, exactly the
+inconsistency "candidates, never auto-met" exists to prevent. A narrower
+related bug found and fixed in the same pass: `reconcile.py`'s diff never
+compares `status` (attributes only), and a fresh pull's `CanonicalEntity`
+defaults to `status=active` regardless of what's actually stored — so a
+mere attribute update (a hostname rename) to an already-pending device,
+applied through the *existing* workbook-apply path, would have silently
+promoted it to `active` with no approval ever having happened. Fixed in
+`pull_and_reconcile()`: once a device is `pending_approval`, it stays
+`pending_approval` through attribute-only syncs until an explicit
+approve/reject.
+
+**Pending assets in the SSP inventory — resolved by an existing
+precedent, not a new decision.** `bundle_service.py`'s component
+inventory already includes every device/software row "regardless of
+status or in_boundary... flagged via its Status/Boundary columns, never
+silently dropped" — checked directly before assuming an answer.
+`pending_approval` gets exactly the same treatment every other status
+value already gets (`decommissioned` already renders unfiltered too);
+nothing new needed. `render_view`/`repo.list_entities` (the CMMC list
+exports) have no status filter at all either, same existing behavior,
+untouched.
+
+**Rejection asserts `in_boundary=false`, never decommissioned.** The
+device exists on the network either way; WinGRC has no authority to
+assert it's gone, only that a human decided it isn't part of the CUI
+boundary. Sticky: the row now exists in scope, so a later sync reconciles
+it as unchanged/changed, never `new` again — verified directly
+(`test_re_sync_after_rejection_does_not_re_flag_as_new`).
+
+**Notification: one digest email per org per recipient per sync, never
+one per device.** Reuses `review_cycles.py`'s exact `notified_at`/
+`notification_error` delivery-tracking shape (a new
+`liongard_sync_notification` row per recipient) and its retry-on-next-
+tick pattern. Content follows `email_service.py`'s existing rule (no org
+name, no count, no device detail) — extended that module's own docstring
+to name this as the sixth reviewed call site. "No contact holds
+security_officer/it_admin" is recorded on the sync result's own
+`warnings`, not silently dropped — confirmed live (see below).
+
+**Checklist: v1 is the org's activated Tools, reviewer-confirmed, not
+Liongard-metrics-verified.** Found while grounding the build, not assumed
+going in: `connectors/liongard.py` has no per-device agent/metrics pull
+at all — only `pull_device_profiles`/`pull_identities` (inventory), never
+anything resembling "is DUO installed on this specific device." This
+project's own precedent about that same connector (the undocumented
+required `Sorting` field, only found by testing live against a real
+tenant) argued directly against guessing at an unbuilt, undocumented API
+surface from a session with no live-tenant access to verify it against.
+Reported to Jarrod before building rather than assumed; his call was to
+ship the workflow now with a manually-confirmed checklist
+(`asset_approval_checklist_item`, one row per activated product, ticked
+by the reviewer) and leave real per-device metric verification as its own
+future slice. The checklist source (`OrgProduct`/`Product`) needs no new
+connector work at all.
+
+**Re-approval: shipped onboarding-only**, taking the roadmap's own
+recommended default. `asset_approval` carries no re-approval mechanism in
+this slice, but nothing about its shape needs to change to add one later
+— a chained re-approval is additive, not a rewrite.
+
+**SPRS unaffected — asserted directly, not just architecturally.**
+`compute_sprs` (assessment.py) takes only `control_weights`/
+`objectives_by_control`/`objective_statuses`; there is no scope_entity
+read path in it at all. Tested end-to-end anyway
+(`test_pending_approval_and_decided_assets_never_touch_sprs`): a real
+assessment's `sprs_score` is identical before and after a sync +
+approve + reject sequence.
+
+**Verified live against Jarrod's real WinsorLabs Liongard tenant on
+first deploy** (not just the bench stack): the scheduled `liongard_daily_
+sync` job's first production run found one new device, correctly
+recorded "No contact holds security_officer or it_admin for this org —
+no notification sent" rather than silently sending nothing or crashing,
+and — checked directly by SQL — wrote **zero** `scope_entity` rows,
+confirming the scheduler's hard constraint holds in production, not just
+in tests.
+
+Bench-verified on an isolated wl-util-1 Docker Compose project (1316
+backend tests, ruff clean, 144 frontend tests, `tsc -b` clean, `vite
+build` clean) — including restoring a real snapshot of the live database
+into an isolated copy and confirming migration 0056 applies cleanly with
+existing SPRS scores unchanged, same discipline as the baseline-
+versioning slice immediately before this one. Merged to `main`
+(`1da4f0f62f`), deployed to `dev.wingrc.us` with a pre-flight `pg_dump`
+backup (`/backups/pre-liongard-sync-20260918_142107.dump`).
+
+**Explicitly not built, per this slice's own scope boundary:** real
+per-device Liongard-metrics verification of the checklist (above);
+continuous re-approval / conformance monitoring (roadmap item G); a
+direct-by-scope-entity-id approval path for an asset not tied to a
+persisted sync change row (the onboarding flow — sync-then-approve — is
+the only path built; a manually-created `pending_approval` row has no
+approval entry point yet, a narrow edge case).
+
+---
+
 ## Planned
 
 ### N. Document Library
@@ -4645,7 +4773,11 @@ import", for the correction and the real dependency.)
   section, "D.2 — Liongard device/user pull into scope_entity" entry.
   Datto RMM was not built (Liongard only); a Datto connector, if wanted
   later, is a fresh item, not a reopening of this one.
-- **Asset & user onboarding approval workflow — daily Liongard sync (D.3's second half only; the periodic review/attestation half shipped 2026-09-13, see this file's own Done entry).** Daily Liongard sync; new devices/users land pending, notify the org's `security_officer` and `it_admin` contacts, approval page shows a baseline checklist (DUO/Evo, FenixPyre, RoboShadow, RocketCyber…) evaluated from Liongard metrics, Security Officer + IT formally accept the asset into the environment. Specified in root `ROADMAP.md` **D.3**. Added 2026-09-08 (Jarrod). Depends on D.1 + D.2 and, as of 2026-09-08, on **two things that don't exist in this codebase yet**: outbound email and any job scheduler for the daily run. **Both shipped 2026-09-12** — see this file's own Done entries ("Outbound email" and "Job scheduler") — so this half is now actionable; neither prerequisite is a blocker anymore. Still needs a `pending_approval` state on `domain.py:EntityStatus` (today only `active`/`decommissioned`), and is not built here — the job scheduler slice explicitly excluded any job that writes `scope_entity`/`control_state`; a scheduled job may produce a dry-run for review, never apply one unattended, so this sync must still route through the existing dry-run → review → apply path, not bypass it via the scheduler. Hard constraint recorded in D.3: email notifies, but approval requires an authenticated session — no one-click approve links in email. Sequenced after the review/attestation half deliberately: the Liongard connector (`connectors/liongard.py`) has only ever been verified against a mock server, never a live tenant, so it's the riskier of the two D.3 halves and was left for a dedicated slice rather than bundled in.
+- ~~**Asset & user onboarding approval workflow — daily Liongard sync**
+  (D.3's second half; the periodic review/attestation half shipped
+  2026-09-13, see this file's own Done entry).~~ **Shipped 2026-09-18 —
+  no longer deferred.** See this file's own Done section entry ("Daily
+  Liongard sync + asset/user onboarding approval") for the full writeup.
 - ~~**Evidence download hardening** — replace presigned direct-to-MinIO
   download URLs with the backend streaming evidence bytes itself.~~
   **Shipped 2026-09-14 — no longer deferred.** See this file's own Done

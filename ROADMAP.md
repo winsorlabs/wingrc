@@ -431,7 +431,7 @@ natural_key semantics retroactively would re-key every existing
 
 ---
 
-### D.3 — Asset & user onboarding approval workflow
+### D.3 — Asset & user onboarding approval workflow ✅ BOTH HALVES DONE (second half shipped 2026-09-18)
 
 **Added 2026-09-08 (Jarrod). Not started.** Depends on D.1 (credentials/
 connection UI) and D.2 (connector writing `scope_entity`), plus two pieces
@@ -566,6 +566,61 @@ alter prior approvals.
 `audit_log` exists for, and actor attribution now resolves to the real user
 (fixed 2026-09-07) — so "who approved this asset" is answerable without
 additional plumbing.
+
+**Amended 2026-09-18: second half shipped.** See `docs/roadmap.md`'s Done
+entry ("Daily Liongard sync + asset/user onboarding approval") for the
+full writeup. Summary of what this section left open, and how each was
+resolved:
+
+- **A structural gap this section didn't mention, found while grounding
+  the build:** there was no such thing as a persisted dry-run. The
+  existing sync (`routers/scope.py:liongard_sync_dry_run`) only ever
+  returned a diff over HTTP, carried to apply by the browser — a
+  scheduled job has no browser, so "produce a dry-run for review" had
+  nothing durable to produce. Closed with two new tables
+  (`liongard_sync_result`/`liongard_sync_result_change`, migration 0056)
+  following the same append-only, never-re-rendered discipline as
+  `sprs_snapshot`/`audit_log`/`BundleSnapshot`. A second sync landing
+  before the first is reviewed **supersedes** it (not merged, not
+  queued) — visible to the reviewer, never silent.
+- **Pending (unapproved) assets in the SSP inventory:** resolved by an
+  existing precedent, not a new decision — `bundle_service.py`'s
+  component inventory already includes every device/software row
+  "regardless of status or in_boundary... flagged via its Status/
+  Boundary columns, never silently dropped." `pending_approval` gets the
+  same treatment every other status already gets; nothing new to build.
+- **Notification volume:** one digest email per org per recipient per
+  sync, never one per device — reuses `review_cycles.py`'s exact
+  `notified_at`/`notification_error` delivery-tracking shape. Content
+  follows `email_service.py`'s existing rule: no org name, no count, no
+  device detail.
+- **Rejection semantics:** asserts `in_boundary=false`, never
+  decommissioned. The device exists on the network either way; WinGRC
+  has no authority to assert it's gone. Sticky — a later sync never
+  re-flags a rejected device as "new."
+- **Re-approval triggers:** shipped **onboarding-only** for this slice
+  (the recommended default, taken as written). The acceptance record
+  (`asset_approval` + `asset_approval_checklist_item`) is designed so a
+  future continuous-monitoring slice is additive — a `superseded_by_
+  approval_id` self-FK exists for chaining re-approvals — not a
+  rewrite. This forecloses nothing structurally; it means D.3 today
+  never re-opens an approved asset on its own, which is the gap item G
+  (Ongoing Compliance Tasks) would need to close.
+- **The baseline checklist is reviewer-confirmed, not automated.** Found
+  while building, not assumed going in: `connectors/liongard.py` has no
+  per-device agent/metrics pull at all (only device-profile/identity
+  inventory), and this project's own precedent about that connector (the
+  undocumented required `Sorting` field, found only by testing live)
+  argued against guessing at an unbuilt API surface from this session,
+  which had no live-tenant access to verify it against. v1 checklist
+  rows are the org's activated Tools (`OrgProduct`); a human ticks each
+  one by their own observation. Real per-device Liongard-metrics
+  verification is a separate, explicitly deferred future slice.
+
+Verified live against Jarrod's real WinsorLabs tenant on first deploy:
+the scheduled job found one new device, correctly reported "no contact
+holds security_officer/it_admin" for that org (recorded, not swallowed),
+and — confirmed directly via SQL — wrote zero `scope_entity` rows.
 
 ---
 
