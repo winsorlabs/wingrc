@@ -44,7 +44,7 @@ from app.importers.document import (
 )
 
 ROCKETCYBER_YAML = (
-    Path(__file__).resolve().parents[1] / "baselines" / "rocketcyber.yaml"
+    Path(__file__).resolve().parents[2] / "baselines" / "rocketcyber.yaml"
 )
 
 # ---------------------------------------------------------------------------

@@ -1,8 +1,9 @@
 """Validate, preview, and apply an admin-uploaded baseline library YAML
 (G.9's Tools import screen) -- the same schema seeds/baselines.py expects
-for the git-tracked files under backend/baselines/, but validated up front
-and reviewed via a dry-run diff before anything is written, since this is
-a runtime upload path rather than a deploy-time, git-reviewed one.
+for the git-tracked files under the repo-root baselines/ directory, but
+validated up front and reviewed via a dry-run diff before anything is
+written, since this is a runtime upload path rather than a deploy-time,
+git-reviewed one.
 
 Reuses seeds/baselines.py's _seed_product for the actual write (apply) --
 one upsert path, not a second one invented for this screen. See that

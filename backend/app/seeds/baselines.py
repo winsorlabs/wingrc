@@ -1,7 +1,8 @@
 """Idempotent seed for the product baseline library.
 
-Loads every *.yaml file in backend/baselines/ into product,
-product_baseline_version, baseline_control, and baseline_evidence_spec.
+Loads every *.yaml file in the repo-root baselines/ directory into
+product, product_baseline_version, baseline_control, and
+baseline_evidence_spec.
 
 Baseline versioning (roadmap item P, migration 0054): a control mapping is
 never mutated in place. Each call diffs the incoming YAML against the
@@ -52,9 +53,16 @@ from ..models import (
     ProductBaselineVersion,
 )
 
-# baselines/ lives alongside app/ inside the backend/ tree so it is
-# accessible inside the Docker container (./backend is mounted as /app).
-_BASELINES_DIR = Path(__file__).parents[2] / "baselines"
+# The repo-root baselines/ directory -- the one CLAUDE.md documents and
+# engineers actually edit. backend/Dockerfile COPYs it to /baselines (a
+# sibling of /app, since `COPY backend/ .` lands at /app); parents[3] from
+# backend/app/seeds/baselines.py reaches that same repo-root directory in
+# both a local checkout and the container (.../backend/app/seeds -> .../
+# backend/app -> .../backend -> repo root, or /app/app/seeds -> /app/app ->
+# /app -> / in the container). A parents[2] copy at backend/baselines/ used
+# to exist and silently diverged from the real one -- see the lifecycle
+# consolidation pass finding for the coverage_basis drift that caused.
+_BASELINES_DIR = Path(__file__).parents[3] / "baselines"
 _FRAMEWORK_KEY = "nist-800-171-r2"
 
 # Lowercase, hyphen-separated -- the shape every baseline already follows
