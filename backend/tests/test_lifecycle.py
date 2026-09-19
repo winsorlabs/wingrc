@@ -204,9 +204,15 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
         following call acts as."""
         app.dependency_overrides[get_current_user] = _authed(db_session, user)
 
-    msp_admin = _make_fake_user(role="msp_admin", display_name="MSP Engineer")
-    customer_poc = _make_fake_user(role="customer_poc", display_name="Client POC")
-    c3pao = _make_fake_user(role="c3pao_assessor", display_name="Assessor")
+    msp_admin = _make_fake_user(
+        role="msp_admin", display_name="MSP Engineer", email="msp-admin@lifecycle.example"
+    )
+    customer_poc = _make_fake_user(
+        role="customer_poc", display_name="Client POC", email="customer-poc@lifecycle.example"
+    )
+    c3pao = _make_fake_user(
+        role="c3pao_assessor", display_name="Assessor", email="c3pao@lifecycle.example"
+    )
 
     fw = _get(db_session, Framework, key="nist-800-171-r2")
     rocketcyber = _get(db_session, Product, key="rocketcyber")
