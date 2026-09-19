@@ -42,20 +42,45 @@ RocketCyber on AU.L2-3.3.1 (RocketCyber=provider_satisfies, Datto RMM=
 shared), the same overlap shape test_multi_tool_coverage.py already
 established as the real motivating case for that feature.
 
-**Four controls, four distinct concerns, deliberately not overlapping:**
+**Six controls, six distinct concerns, deliberately not overlapping.**
+rocketcyber.yaml carries an explicit coverage_basis per control (added
+2026-07-08, 6aa20cf10f, a deliberate reclassification with real
+reasoning -- "vendor self-attestation... cannot trigger false pending_
+evidence on controls the product does not perform in the customer's CUI
+environment"): only AU.L2-3.3.1/3.3.2/3.3.3/3.3.8, IR.L2-3.6.1, and
+SI.L2-3.14.6 are coverage_basis=customer_system. Every other control
+(AC.L2-3.1.1/1.2/1.5/1.11, AT.2.2, CM.3.4.2, MA.3.7.1, SC.13.15,
+SI.14.1) is platform_only and the magic loop excludes it completely --
+never pending_evidence, no evidence task, no ControlStateContributor
+row, ever. This matters here specifically: move_org_product_version's
+and _run_loop's own diffs (`_claimed()`/the baseline_controls query)
+both filter on `coverage_basis != platform_only`, so a "classification
+changed" or "dropped" scenario built on a platform_only control is
+inert -- there is no contributor row to touch, `controls_lost`/
+`controls_changed` read 0, and the scenario silently proves nothing.
+(An earlier draft of this test picked AC.L2-3.1.11 -- platform_only --
+as its evidence-collected-to-met anchor and AC.L2-3.1.1/1.2/MA.3.7.1 --
+also all platform_only -- for the reimport mutations; every one of
+those was a no-op it took a live run to catch. Worse, chasing the
+resulting StopIteration through what looked like a stale-seed-path bug
+nearly landed a "fix" that redirected seed_baselines() at the wrong,
+long-dead baselines/ duplicate and would have discarded Jarrod's actual
+July reclassification -- caught by `git log -p` before it merged; see
+the report for that near-miss.) Every control below is chosen from the
+six-control customer_system set instead:
   AU.L2-3.3.1   -- the multi-tool overlap (both products contribute).
-  AC.L2-3.1.11  -- evidence collected and marked met (the SPRS/bundle
+  IR.L2-3.6.1   -- evidence collected and marked met (the SPRS/bundle
                    point-in-time anchor).
-  AC.L2-3.1.1   -- classification changed in the reimport (shared ->
-                   provider_satisfies): this IS detected as "changed" by
-                   move_org_product_version.
-  AC.L2-3.1.2   -- provider_contribution text edited, classification and
+  AU.L2-3.3.2   -- classification changed in the reimport
+                   (provider_satisfies -> shared): this IS detected as
+                   "changed" by move_org_product_version.
+  AU.L2-3.3.3   -- provider_contribution text edited, classification and
                    objectives left alone: this is NOT detected as
                    "changed" by move_org_product_version (see the
                    surprise recorded in the walk itself, marked SURPRISE
                    below) -- its contributor keeps pointing at the OLD
                    version's row even after the tenant moves versions.
-  MA.L2-3.7.1   -- dropped entirely from the reimport (§1's old bug,
+  SI.L2-3.14.6  -- dropped entirely from the reimport (§1's old bug,
                    still worth a live regression check here even though
                    test_admin_products.py already covers it in isolation).
 
@@ -434,16 +459,16 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     ).first() is None, "confirms: promoted with no acceptance record at all"
 
     # ------------------------------------------------------------------ #
-    # Step 4 — Collect evidence until AC.L2-3.1.11 (both objectives)      #
+    # Step 4 — Collect evidence until IR.L2-3.6.1 (all seven objectives)  #
     # reaches met. Also collect for the AU.L2-3.3.1 overlap control --    #
     # this is what step 10's evidence-archival check needs real evidence  #
     # attached to.                                                        #
     # ------------------------------------------------------------------ #
     tasks = client.get(f"/orgs/{org.id}/assessments/{assessment_id}/evidence-tasks").json()
-    session_timeout_task = next(t for t in tasks if "Session timeout" in t["title"])
+    ir_anchor_task = next(t for t in tasks if "Managed SOC service description" in t["title"])
     au_task = next(t for t in tasks if "Defined event types" in t["title"])
 
-    for task in (session_timeout_task, au_task):
+    for task in (ir_anchor_task, au_task):
         r = client.post(
             f"/orgs/{org.id}/assessments/{assessment_id}/evidence-tasks/{task['id']}/collect",
             files={"file": ("evidence.txt", b"screenshot placeholder", "text/plain")},
@@ -451,7 +476,7 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
         )
         assert r.status_code == 201, r.text
 
-    for ref in session_timeout_task["linked_states"]:
+    for ref in ir_anchor_task["linked_states"]:
         r = client.patch(
             f"/orgs/{org.id}/assessments/{assessment_id}/control-states/{ref['control_state_id']}",
             json={"status": "met"},
@@ -459,9 +484,9 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
         assert r.status_code == 200, r.text
 
     states = client.get(f"/orgs/{org.id}/assessments/{assessment_id}/control-states").json()
-    ac_1111 = [s for s in states if s["control_id"] == "AC.L2-3.1.11"]
-    assert all(s["status"] == "met" for s in ac_1111), "the control this walk brings to met"
-    assert all(s["evidence_count"] >= 1 for s in ac_1111)
+    ir_61 = [s for s in states if s["control_id"] == "IR.L2-3.6.1"]
+    assert all(s["status"] == "met" for s in ir_61), "the control this walk brings to met"
+    assert all(s["evidence_count"] >= 1 for s in ir_61)
 
     au_cs_id = next(
         s["id"] for s in states
@@ -491,47 +516,31 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
 
     # ------------------------------------------------------------------ #
     # Step 7 — Import a changed baseline for RocketCyber: classification  #
-    # change (AC.L2-3.1.1), provider_contribution edit (AC.L2-3.1.2), a   #
-    # dropped control (MA.L2-3.7.1). AU.L2-3.3.1 (the overlap) is left    #
-    # untouched on purpose.                                               #
+    # change (AU.L2-3.3.2), provider_contribution edit (AU.L2-3.3.3), a   #
+    # dropped control (SI.L2-3.14.6). AU.L2-3.3.1 (the overlap) and       #
+    # IR.L2-3.6.1 (the evidence anchor) are left untouched on purpose.    #
     # ------------------------------------------------------------------ #
-    # FINDING, confirmed live here: the git-tracked rocketcyber.yaml has no
-    # explicit coverage_basis anywhere (seed_baselines()'s CLI path defaults
-    # it to "customer_system" silently), but this admin re-import path
-    # (baseline_import.py) deliberately REQUIRES it be explicit for every
-    # non-customer_owns control -- by design, per that file's own docstring
-    # ("nothing in a vendor doc reliably distinguishes the two without a
-    # human who knows the actual deployment"). The practical effect: the
-    # canonical git file cannot be re-imported through the admin UI as-is;
-    # an engineer bumping this baseline via that screen must add
-    # coverage_basis to every row by hand first, something never actually
-    # exercised until this walk. A real reviewer doing that would set
-    # "customer_system" everywhere here (RocketCyber has no platform_only
-    # rows in truth) -- reproduced below rather than silently working
-    # around the gate.
     from app.seeds.baselines import _BASELINES_DIR
     with open(_BASELINES_DIR / "rocketcyber.yaml", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
-    original_provider_contribution_312 = None
+    original_provider_contribution_333 = None
     new_controls = []
     for entry in raw["controls"]:
         ctrl = entry.get("control")
         ctrl_ids = [ctrl] if isinstance(ctrl, str) else ctrl
-        if entry.get("classification") != "customer_owns" and "coverage_basis" not in entry:
-            entry = {**entry, "coverage_basis": "customer_system"}
-        if ctrl_ids == ["AC.L2-3.1.1"]:
-            entry = {**entry, "classification": "provider_satisfies"}
-        elif ctrl_ids == ["AC.L2-3.1.2"]:
-            original_provider_contribution_312 = entry["provider_contribution"]
+        if ctrl_ids == ["AU.L2-3.3.2"]:
+            entry = {**entry, "classification": "shared"}
+        elif ctrl_ids == ["AU.L2-3.3.3"]:
+            original_provider_contribution_333 = entry["provider_contribution"]
             entry = {
                 **entry,
-                "provider_contribution": original_provider_contribution_312 + " (Edited.)",
+                "provider_contribution": original_provider_contribution_333 + " (Edited.)",
             }
-        elif ctrl_ids == ["MA.L2-3.7.1"]:
+        elif ctrl_ids == ["SI.L2-3.14.6"]:
             continue  # dropped
         new_controls.append(entry)
     raw["controls"] = new_controls
-    assert original_provider_contribution_312 is not None
+    assert original_provider_contribution_333 is not None
 
     yaml_bytes = yaml.safe_dump(raw).encode()
     r = client.post(
@@ -542,7 +551,7 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     apply_result = r.json()
     assert apply_result["version_created"] is True
     assert apply_result["version_number"] == 2
-    assert apply_result["removed_controls"] == ["MA.L2-3.7.1"], (
+    assert apply_result["removed_controls"] == ["SI.L2-3.14.6"], (
         "§1's old bug, checked live end to end here too: a dropped control "
         "must be visible in the apply result, not silently kept"
     )
@@ -588,9 +597,9 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     )
 
     # ------------------------------------------------------------------ #
-    # Step 9 — Move the tenant to the new version. AC.L2-3.1.1 (real      #
-    # classification change) and MA.L2-3.7.1 (dropped) must go to        #
-    # needs_review. AC.L2-3.1.2 (text-only edit) must NOT -- and its      #
+    # Step 9 — Move the tenant to the new version. AU.L2-3.3.2 (real      #
+    # classification change) and SI.L2-3.14.6 (dropped) must go to       #
+    # needs_review. AU.L2-3.3.3 (text-only edit) must NOT -- and its      #
     # contributor must still point at the OLD version's row. This is the #
     # SURPRISE this walk exists to catch: move_org_product_version's own  #
     # diff is classification/objective-key only, never provider_          #
@@ -610,44 +619,44 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     move_result = r.json()
     # Both counters are per-OBJECTIVE, matching _run_loop's own
     # objectives_updated granularity (see move_org_product_version's own
-    # docstring) -- MA.L2-3.7.1 has one objective ([a]); AC.L2-3.1.1 has
-    # six ([a]-[f]).
-    assert move_result["controls_lost"] == 1
-    assert move_result["controls_changed"] == 6
+    # docstring) -- SI.L2-3.14.6 has three objectives ([a]-[c]); AU.L2-3.3.2
+    # has two ([a]-[b]).
+    assert move_result["controls_lost"] == 3
+    assert move_result["controls_changed"] == 2
 
     states = client.get(f"/orgs/{org.id}/assessments/{assessment_id}/control-states").json()
     by_ctrl = {}
     for s in states:
         by_ctrl.setdefault(s["control_id"], []).append(s)
 
-    assert all(s["status"] == "needs_review" for s in by_ctrl["AC.L2-3.1.1"])
-    assert all(s["status"] == "needs_review" for s in by_ctrl["MA.L2-3.7.1"])
-    assert all(s["status"] == "pending_evidence" for s in by_ctrl["AC.L2-3.1.2"]), (
+    assert all(s["status"] == "needs_review" for s in by_ctrl["AU.L2-3.3.2"])
+    assert all(s["status"] == "needs_review" for s in by_ctrl["SI.L2-3.14.6"])
+    assert all(s["status"] == "pending_evidence" for s in by_ctrl["AU.L2-3.3.3"]), (
         "unchanged by the move -- it reached pending_evidence at step 2's "
         "activation and was never touched again; its classification never "
         "changed in the reimport either, only descriptive text "
         "move_org_product_version doesn't compare"
     )
-    ac_312_cs_id = by_ctrl["AC.L2-3.1.2"][0]["id"]
-    contributor_312 = db_session.scalars(
+    au_333_cs_id = by_ctrl["AU.L2-3.3.3"][0]["id"]
+    contributor_333 = db_session.scalars(
         select(ControlStateContributor).where(
-            ControlStateContributor.control_state_id == uuid.UUID(ac_312_cs_id)
+            ControlStateContributor.control_state_id == uuid.UUID(au_333_cs_id)
         )
     ).first()
-    contributor_bc_312 = db_session.get(BaselineControl, contributor_312.baseline_control_id)
-    assert contributor_bc_312.baseline_version_id != uuid.UUID(v2_id), (
-        "SURPRISE, confirmed live: AC.L2-3.1.2's contributor still points at "
+    contributor_bc_333 = db_session.get(BaselineControl, contributor_333.baseline_control_id)
+    assert contributor_bc_333.baseline_version_id != uuid.UUID(v2_id), (
+        "SURPRISE, confirmed live: AU.L2-3.3.3's contributor still points at "
         "version 1's row even after the tenant moved to version 2 -- the "
         "provider_contribution edit is real in the library but invisible to "
         "this tenant's own contributor pointer, permanently, unless something "
         "else about that control's classification ever changes too"
     )
-    assert contributor_bc_312.provider_contribution == original_provider_contribution_312
+    assert contributor_bc_333.provider_contribution == original_provider_contribution_333
 
     # Evidence survives a version move -- unlike deactivation.
-    ac_1111_after_move = [s for s in states if s["control_id"] == "AC.L2-3.1.11"]
-    assert all(s["status"] == "met" for s in ac_1111_after_move), (
-        "the move only touches objectives whose OWN claim changed -- AC.L2-3.1.11 "
+    ir_61_after_move = [s for s in states if s["control_id"] == "IR.L2-3.6.1"]
+    assert all(s["status"] == "met" for s in ir_61_after_move), (
+        "the move only touches objectives whose OWN claim changed -- IR.L2-3.6.1 "
         "wasn't part of this reimport at all and must be untouched"
     )
 
@@ -802,7 +811,7 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     ).all()
     assert len(snapshots) >= 5, "one per recompute_sprs call site this walk actually exercised"
     assert snapshots[-1].score == score_after_met, (
-        "no step after marking AC.L2-3.1.11 met should have changed the score again -- "
+        "no step after marking IR.L2-3.6.1 met should have changed the score again -- "
         "reimport, version move, deactivation (needs_review, not met, doesn't re-deduct "
         "since the control was already failing SPRS before), review cycle, and completion "
         "are all score-neutral for this specific set of steps"
