@@ -242,7 +242,7 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
         f"/orgs/{org.id}/system-description",
         json={
             "system_name": "Lifecycle Test System",
-            "system_type": "on_premise",
+            "system_type": "general_support_system",
             "operational_status": "operational",
             "cui_categories": ["Controlled Technical Information"],
         },
@@ -495,13 +495,30 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     # dropped control (MA.L2-3.7.1). AU.L2-3.3.1 (the overlap) is left    #
     # untouched on purpose.                                               #
     # ------------------------------------------------------------------ #
-    with open("baselines/rocketcyber.yaml", encoding="utf-8") as f:
+    # FINDING, confirmed live here: the git-tracked rocketcyber.yaml has no
+    # explicit coverage_basis anywhere (seed_baselines()'s CLI path defaults
+    # it to "customer_system" silently), but this admin re-import path
+    # (baseline_import.py) deliberately REQUIRES it be explicit for every
+    # non-customer_owns control -- by design, per that file's own docstring
+    # ("nothing in a vendor doc reliably distinguishes the two without a
+    # human who knows the actual deployment"). The practical effect: the
+    # canonical git file cannot be re-imported through the admin UI as-is;
+    # an engineer bumping this baseline via that screen must add
+    # coverage_basis to every row by hand first, something never actually
+    # exercised until this walk. A real reviewer doing that would set
+    # "customer_system" everywhere here (RocketCyber has no platform_only
+    # rows in truth) -- reproduced below rather than silently working
+    # around the gate.
+    from app.seeds.baselines import _BASELINES_DIR
+    with open(_BASELINES_DIR / "rocketcyber.yaml", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
     original_provider_contribution_312 = None
     new_controls = []
     for entry in raw["controls"]:
         ctrl = entry.get("control")
         ctrl_ids = [ctrl] if isinstance(ctrl, str) else ctrl
+        if entry.get("classification") != "customer_owns" and "coverage_basis" not in entry:
+            entry = {**entry, "coverage_basis": "customer_system"}
         if ctrl_ids == ["AC.L2-3.1.1"]:
             entry = {**entry, "classification": "provider_satisfies"}
         elif ctrl_ids == ["AC.L2-3.1.2"]:
@@ -605,9 +622,11 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
 
     assert all(s["status"] == "needs_review" for s in by_ctrl["AC.L2-3.1.1"])
     assert all(s["status"] == "needs_review" for s in by_ctrl["MA.L2-3.7.1"])
-    assert all(s["status"] == "not_met" for s in by_ctrl["AC.L2-3.1.2"]), (
-        "unchanged by the move -- its classification never changed, only "
-        "descriptive text move_org_product_version doesn't compare"
+    assert all(s["status"] == "pending_evidence" for s in by_ctrl["AC.L2-3.1.2"]), (
+        "unchanged by the move -- it reached pending_evidence at step 2's "
+        "activation and was never touched again; its classification never "
+        "changed in the reimport either, only descriptive text "
+        "move_org_product_version doesn't compare"
     )
     ac_312_cs_id = by_ctrl["AC.L2-3.1.2"][0]["id"]
     contributor_312 = db_session.scalars(
