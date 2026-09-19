@@ -69,7 +69,7 @@ import io
 import re
 import uuid
 import zipfile
-from datetime import UTC, date, datetime
+from datetime import date
 
 import pytest
 import yaml
@@ -125,7 +125,9 @@ class InMemoryStorageClient(StorageClient):
     def upload_file(self, key: str, data: bytes, content_type: str) -> None:
         self.files[key] = data
 
-    def presigned_url(self, key: str, expires_in: int = 300, download_filename: str | None = None) -> str:
+    def presigned_url(
+        self, key: str, expires_in: int = 300, download_filename: str | None = None
+    ) -> str:
         return f"http://fake/{key}"
 
     def delete_file(self, key: str) -> None:
@@ -223,7 +225,10 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
 
     r = client.patch(
         f"/orgs/{org.id}/profile",
-        json={"cage_code": "1A2B3", "uei": "ABCDEFGH1234", "city": "Norfolk", "state_or_province": "VA"},
+        json={
+            "cage_code": "1A2B3", "uei": "ABCDEFGH1234",
+            "city": "Norfolk", "state_or_province": "VA",
+        },
     )
     assert r.status_code == 200, r.text
 
@@ -244,7 +249,9 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     )
     assert r.status_code == 201, r.text
     so_contact_id = r.json()["id"]
-    r = client.post(f"/orgs/{org.id}/contacts/{so_contact_id}/roles", json={"role": "security_officer"})
+    r = client.post(
+        f"/orgs/{org.id}/contacts/{so_contact_id}/roles", json={"role": "security_officer"}
+    )
     assert r.status_code == 201, r.text
 
     r = client.post(
@@ -300,9 +307,13 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     ])
     db_session.commit()
 
-    r = client.post(f"/orgs/{org.id}/assessments/{assessment_id}/products/{rocketcyber.id}/activate", json={})
+    r = client.post(
+        f"/orgs/{org.id}/assessments/{assessment_id}/products/{rocketcyber.id}/activate", json={}
+    )
     assert r.status_code == 200, r.text
-    r = client.post(f"/orgs/{org.id}/assessments/{assessment_id}/products/{datto.id}/activate", json={})
+    r = client.post(
+        f"/orgs/{org.id}/assessments/{assessment_id}/products/{datto.id}/activate", json={}
+    )
     assert r.status_code == 200, r.text
 
     states = client.get(f"/orgs/{org.id}/assessments/{assessment_id}/control-states").json()
@@ -313,22 +324,29 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     )
     assert au_a["responsibility"] == "shared", (
         "mixed provider_satisfies + shared contributors resolve to the weakest "
-        "(most customer-inclusive) claim -- test_mixed_contributors_resolve_to_shared_weakest_wins's "
-        "own invariant, now proven end to end through real activation, not a unit-level call"
+        "(most customer-inclusive) claim -- test_mixed_contributors_resolve_to_shared_"
+        "weakest_wins's own invariant, now proven end to end through real activation, "
+        "not a unit-level call"
     )
-    score_after_two_products = client.get(f"/orgs/{org.id}/assessments").json()
-    score_after_two_products = next(a for a in score_after_two_products if a["id"] == assessment_id)["sprs_score"]
+    assessments = client.get(f"/orgs/{org.id}/assessments").json()
+    score_after_two_products = next(
+        a for a in assessments if a["id"] == assessment_id
+    )["sprs_score"]
 
     # ------------------------------------------------------------------ #
     # Step 3 — Liongard sync: run it, review, approve one, reject one.    #
     # ------------------------------------------------------------------ #
-    ciphertext, key_version = encrypt_credential('{"access_key_id": "AKID", "access_key_secret": "s3cr3t"}')
+    ciphertext, key_version = encrypt_credential(
+        '{"access_key_id": "AKID", "access_key_secret": "s3cr3t"}'
+    )
     db_session.add(IntegrationConnection(
         connector_key="liongard",
         config={"instance_url": "https://myinstance.app.liongard.com"},
         encrypted_credential=ciphertext, credential_key_version=key_version,
     ))
-    db_session.add(OrgLiongardEnvironment(org_id=org.id, liongard_environment_id=8815, liongard_environment_name="Lifecycle Env"))
+    db_session.add(OrgLiongardEnvironment(
+        org_id=org.id, liongard_environment_id=8815, liongard_environment_name="Lifecycle Env"
+    ))
     db_session.commit()
 
     mp = pytest.MonkeyPatch()
@@ -340,7 +358,9 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     )
     mp.setattr(
         liongard_module, "pull_identities",
-        lambda config, credential, environment_id: liongard_module.InventoryPull(records=[], total_count=0),
+        lambda config, credential, environment_id: liongard_module.InventoryPull(
+            records=[], total_count=0
+        ),
     )
     try:
         r = client.post(f"/orgs/{org.id}/liongard-sync-results/sync-now")
@@ -355,14 +375,16 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
         reject_change_id = changes_by_key["SN-LT-REJECT"]["id"]
 
         r = client.post(
-            f"/orgs/{org.id}/liongard-sync-results/{sync_result_id}/changes/{approve_change_id}/approve",
+            f"/orgs/{org.id}/liongard-sync-results/{sync_result_id}"
+            f"/changes/{approve_change_id}/approve",
             json={"checklist_confirmations": {}},
         )
         assert r.status_code == 200, r.text
         approved_entity_id = r.json()["scope_entity_id"]
 
         r = client.post(
-            f"/orgs/{org.id}/liongard-sync-results/{sync_result_id}/changes/{reject_change_id}/reject",
+            f"/orgs/{org.id}/liongard-sync-results/{sync_result_id}"
+            f"/changes/{reject_change_id}/reject",
             json={"reason": "Personal device, not authorized for CUI."},
         )
         assert r.status_code == 200, r.text
@@ -435,7 +457,10 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     assert all(s["status"] == "met" for s in ac_1111), "the control this walk brings to met"
     assert all(s["evidence_count"] >= 1 for s in ac_1111)
 
-    au_cs_id = next(s["id"] for s in states if s["control_id"] == "AU.L2-3.3.1" and s["objective_key"] == "a")
+    au_cs_id = next(
+        s["id"] for s in states
+        if s["control_id"] == "AU.L2-3.3.1" and s["objective_key"] == "a"
+    )
 
     # ------------------------------------------------------------------ #
     # Step 5 — SPRS snapshot: record the score.                          #
@@ -466,7 +491,6 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     # ------------------------------------------------------------------ #
     with open("baselines/rocketcyber.yaml", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
-    new_provider_contribution_311 = "SSO (KaseyaOne) + RBAC for portal access; agents scope reachable systems. (Updated per new SOC playbook.)"
     original_provider_contribution_312 = None
     new_controls = []
     for entry in raw["controls"]:
@@ -476,7 +500,10 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
             entry = {**entry, "classification": "provider_satisfies"}
         elif ctrl_ids == ["AC.L2-3.1.2"]:
             original_provider_contribution_312 = entry["provider_contribution"]
-            entry = {**entry, "provider_contribution": original_provider_contribution_312 + " (Edited.)"}
+            entry = {
+                **entry,
+                "provider_contribution": original_provider_contribution_312 + " (Edited.)",
+            }
         elif ctrl_ids == ["MA.L2-3.7.1"]:
             continue  # dropped
         new_controls.append(entry)
@@ -524,10 +551,14 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
         "a baseline reimport must never change what an already-generated bundle "
         "renders for a tenant still pinned to the old version"
     )
-    assert scoring_html_v2 == scoring_html_v1, "SPRS-visible content must be unaffected by the reimport"
+    assert scoring_html_v2 == scoring_html_v1, (
+        "SPRS-visible content must be unaffected by the reimport"
+    )
 
     score_after_reimport = client.get(f"/orgs/{org.id}/assessments").json()
-    score_after_reimport = next(a for a in score_after_reimport if a["id"] == assessment_id)["sprs_score"]
+    score_after_reimport = next(
+        a for a in score_after_reimport if a["id"] == assessment_id
+    )["sprs_score"]
     assert score_after_reimport == score_after_met, (
         "importing a new baseline version must never move an already-activated "
         "tenant's SPRS score by itself"
@@ -574,7 +605,9 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     )
     ac_312_cs_id = by_ctrl["AC.L2-3.1.2"][0]["id"]
     contributor_312 = db_session.scalars(
-        select(ControlStateContributor).where(ControlStateContributor.control_state_id == uuid.UUID(ac_312_cs_id))
+        select(ControlStateContributor).where(
+            ControlStateContributor.control_state_id == uuid.UUID(ac_312_cs_id)
+        )
     ).first()
     contributor_bc_312 = db_session.get(BaselineControl, contributor_312.baseline_control_id)
     assert contributor_bc_312.baseline_version_id != uuid.UUID(v2_id), (
@@ -606,11 +639,16 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     ).all()
     assert len(au_link_before) >= 1 and all(not lnk.is_archived for lnk in au_link_before)
 
-    r = client.post(f"/orgs/{org.id}/assessments/{assessment_id}/products/{datto.id}/deactivate", json={})
+    r = client.post(
+        f"/orgs/{org.id}/assessments/{assessment_id}/products/{datto.id}/deactivate", json={}
+    )
     assert r.status_code == 200, r.text
 
     states = client.get(f"/orgs/{org.id}/assessments/{assessment_id}/control-states").json()
-    au_a_after = next(s for s in states if s["control_id"] == "AU.L2-3.3.1" and s["objective_key"] == "a")
+    au_a_after = next(
+        s for s in states
+        if s["control_id"] == "AU.L2-3.3.1" and s["objective_key"] == "a"
+    )
     assert au_a_after["status"] == "needs_review", (
         "losing a contributing tool is exactly when a coverage claim deserves "
         "a second look, even though RocketCyber still covers it"
@@ -619,7 +657,9 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
         "the remaining contributor is still recorded"
     )
     history = db_session.scalars(
-        select(ControlStateHistory).where(ControlStateHistory.control_state_id == uuid.UUID(au_cs_id))
+        select(ControlStateHistory).where(
+            ControlStateHistory.control_state_id == uuid.UUID(au_cs_id)
+        )
     ).all()
     assert any("Datto RMM" in (h.change_reason or "") for h in history), (
         "which tool went away must be visible in the record, by name"
@@ -655,7 +695,9 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     cycle_id = r.json()["id"]
 
     _as(customer_poc)
-    r = client.post(f"/orgs/{org.id}/review-cycles/{cycle_id}/attest", json={"comment": "Confirmed."})
+    r = client.post(
+        f"/orgs/{org.id}/review-cycles/{cycle_id}/attest", json={"comment": "Confirmed."}
+    )
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "attested"
     assert r.json()["user_id"] == str(customer_poc.id)
@@ -687,7 +729,11 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     zf_v3 = zipfile.ZipFile(io.BytesIO(r.content))
     cover_name = next(n for n in zf_v3.namelist() if n.endswith("cover.html"))
     cover_html_v3 = _strip_stamp(zf_v3.read(cover_name))
-    assert "submitted" in cover_html_v3.lower() or "closed" in cover_html_v3.lower() or str(score_after_met) in cover_html_v3
+    assert (
+        "submitted" in cover_html_v3.lower()
+        or "closed" in cover_html_v3.lower()
+        or str(score_after_met) in cover_html_v3
+    )
 
     # ------------------------------------------------------------------ #
     # Separately — c3pao_assessor walks the read paths. Every mutation    #
@@ -695,7 +741,9 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     # ------------------------------------------------------------------ #
     _as(c3pao)
 
-    assert client.get(f"/orgs/{org.id}/assessments/{assessment_id}/control-states").status_code == 200
+    assert client.get(
+        f"/orgs/{org.id}/assessments/{assessment_id}/control-states"
+    ).status_code == 200
     assert client.get(f"/orgs/{org.id}/assessments/{assessment_id}/bundle").status_code == 200
     assert client.get(f"/orgs/{org.id}/liongard-sync-results").status_code == 200
     assert client.get(f"/orgs/{org.id}/review-cycles").status_code == 200
@@ -723,7 +771,9 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     assert client.get(f"/orgs/{other_org.id}/assessments").status_code == 403
 
     snapshots = db_session.scalars(
-        select(SprsSnapshot).where(SprsSnapshot.assessment_id == uuid.UUID(assessment_id)).order_by(SprsSnapshot.seq)
+        select(SprsSnapshot)
+        .where(SprsSnapshot.assessment_id == uuid.UUID(assessment_id))
+        .order_by(SprsSnapshot.seq)
     ).all()
     assert len(snapshots) >= 5, "one per recompute_sprs call site this walk actually exercised"
     assert snapshots[-1].score == score_after_met, (
