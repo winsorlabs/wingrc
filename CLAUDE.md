@@ -58,7 +58,7 @@ Violating these produces incorrect assessments. Enforce them in every review.
   text: if the product says "the customer's IdP does this" (e.g., the entire IA
   family for RocketCyber), classify it `customer_owns` and route it to the
   product that actually owns it — do NOT credit the vendor. See
-  `baselines/rocketcyber.yaml` for the worked example.
+  `backend/baselines/rocketcyber.yaml` for the worked example.
 
 - **Never credit `coverage_basis = platform_only`.** The magic loop
   (`engine.py:_run_loop`) explicitly excludes baseline controls where
@@ -133,7 +133,7 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
 | `backend/app/storage.py` | `StorageClient` ABC + `MinIOClient` + `NullStorageClient` |
 | `backend/app/audit.py` | `log_event()` — writes `AuditLog` rows |
 | `backend/app/migrations/` | Alembic migrations (currently 0001–0040) |
-| `baselines/` | YAML product baselines (`heimdal.yaml`, `rocketcyber.yaml`, …) |
+| `backend/baselines/` | YAML product baselines (`rocketcyber.yaml`, …) — not repo-root `baselines/`; `seeds/baselines.py:_BASELINES_DIR` resolves here, and a stale repo-root duplicate that drifted out of sync with a real coverage_basis reclassification was removed 2026-09-19 (see `docs/roadmap.md`'s tenant lifecycle consolidation pass entry) |
 | `docs/fips.md` | FIPS 140-2/140-3 crypto boundary documentation |
 | `docs/architecture.md` | Authoritative architecture description (the five layers) — companion to this file's terse session version |
 | `docs/deployment.md` | Generic deployment walkthrough: clone, configure, `docker compose up`, HTTPS |

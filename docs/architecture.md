@@ -24,7 +24,7 @@ Azure, GCC High, on-prem, or fully air-gapped.
   control: the objectives the product covers when configured correctly, the
   assumed configuration, the evidence spec, and the responsibility split. This
   is the moat — curated, shared across all orgs in a deployment, and vendor-sponsorable. See
-  `baselines/` for the format and the worked RocketCyber example.
+  `backend/baselines/` for the format and the worked RocketCyber example.
 
 ### 2. Org setup
 
@@ -78,7 +78,7 @@ classify each control:
 
 A naive "select tool → mark its controls met" importer credits the vendor for
 controls it disclaims — an assessment-failing error. The worked example in
-`baselines/rocketcyber.yaml` shows the IA family correctly held back.
+`backend/baselines/rocketcyber.yaml` shows the IA family correctly held back.
 
 When two docs are available (an MSP baseline that asserts authoritative coverage
 plus a vendor CRM with the responsibility split), cross-reference them: the

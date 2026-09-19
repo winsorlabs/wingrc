@@ -4141,6 +4141,10 @@ row-for-row.
   product provenance tracking — a genuinely new capability, out of scope
   for "record and reconcile multiple contributors." Flagged here
   deliberately rather than silently left for the next person to discover.
+  **Confirmed still present, live, 2026-09-19** by the tenant lifecycle
+  consolidation pass's own Done entry below (search "Evidence-link
+  archival on deactivation is per-`control_state`") — real evidence
+  attached, not just the theoretical case described above.
 
 **Visibility:** the assessment board shows every contributing product's
 badge per objective (`ObjectiveRow.tsx`, was a single badge). The CRM
@@ -4521,6 +4525,119 @@ direct-by-scope-entity-id approval path for an asset not tied to a
 persisted sync change row (the onboarding flow — sync-then-approve — is
 the only path built; a manually-created `pending_approval` row has no
 approval entry point yet, a narrow edge case).
+
+---
+
+### Tenant lifecycle consolidation pass ✅ DONE (2026-09-19)
+
+Not a feature slice — a consolidation pass. Two real bugs in the two
+weeks before this one (seed_baselines never deleting an unmatched
+BaselineControl; a fresh Liongard pull's default status=active silently
+promoting a pending_approval device) were both found by asking "what
+else writes this?", never by a test — because no test walked a tenant
+through more than one feature at once. `backend/tests/test_lifecycle.py`
+(`@pytest.mark.integration`, one narrative test, deliberately not split
+per-feature) closes that gap: one org, real HTTP throughout (RLS
+enforced, not bypassed), onboarding → two overlapping product
+activations (RocketCyber + a hand-built Datto RMM sharing AU.L2-3.3.1)
+→ Liongard sync with an approve and a reject → evidence collected to
+met → an SPRS snapshot → a bundle export kept for later comparison → a
+baseline reimport (classification change, text-only edit, dropped
+control) that leaves the still-pinned tenant's re-exported bundle byte-
+identical in substance to the first → a version move → a product
+deactivation → a review-cycle attestation → assessment completion → an
+SPRS submission → a final bundle export — then, separately, a
+`c3pao_assessor` walking every read path with every attempted mutation
+refused, plus a second, never-granted org confirmed invisible under RLS
+throughout.
+
+**What broke:** nothing in application code. The walk surfaced no new
+functional bug — a genuinely useful result in its own right (see the
+near-miss below for why "nothing broke" almost became "something got
+broken by the walk itself").
+
+**Report-only findings, confirmed live (not just by reading code),
+each a product decision rather than an obvious fix:**
+
+- **`patch_scope_entity` has no `pending_approval` guard.** The ordinary
+  manual scope PATCH endpoint (`routers/scope.py`) can flip a
+  `pending_approval` entity straight to `active` with no `AssetApproval`
+  row, no checklist, no approval-specific audit action — it has no
+  awareness of the approval workflow (D.3) at all. Confirmed live: a
+  `pending_approval` device PATCHed to `active` returns 200, and no
+  `AssetApproval` row is created. The right fix touches who is
+  authorized to admit an asset into the boundary and isn't a one-liner —
+  Jarrod's call.
+- **Evidence-link archival on deactivation is per-`control_state`, not
+  per-product.** Flagged during the multi-tool coverage slice, never
+  fixed; this pass confirms it still bites with real evidence attached.
+  Deactivating one of two products contributing to a shared control
+  (`AU.L2-3.3.1`: RocketCyber + Datto RMM) archives RocketCyber's own
+  already-collected evidence on that control too, even though
+  RocketCyber — not the product actually being deactivated — is the one
+  still covering it. `deactivate_org_product` needs product-scoped
+  archival, not blanket per-control_state.
+- **The `asset_approval` reversal gap is still real.** A device
+  rejected, then brought back into boundary through the ordinary scope
+  UI, still reads `rejected` in its acceptance record — nothing renders
+  that staleness anywhere today. Not exercised further in this pass
+  beyond confirming it's unchanged; same fix shape as the first finding
+  above (both are "the manual scope path doesn't know the approval
+  workflow exists").
+
+**A confirmed SURPRISE, not a bug:** `move_org_product_version`'s diff
+against the outgoing baseline version is classification/objective-key
+only — never `provider_contribution`/`note`/`scope_note` text, by that
+function's own design. A pure text edit is invisible to it, which also
+means it stays invisible *after* a tenant moves to the new version: the
+edited control's `ControlStateContributor` row keeps pointing at the
+OLD version's `BaselineControl` row, permanently, unless something
+about that control's classification also changes. No current bundle
+renders that text to a tenant, so there's no live consequence today —
+but it's a real, load-bearing fact about what "moved to the new
+version" actually means, worth having written down before it surprises
+someone building on top of it.
+
+**The near-miss, worth its own writeup because it's the same lesson the
+whole pass exists to teach, aimed at me instead of at the app:** the
+test's first draft picked `AC.L2-3.1.11` as its evidence-collected-to-
+met anchor, and `AC.L2-3.1.1`/`AC.L2-3.1.2`/`MA.L2-3.7.1` for the
+reimport-mutation controls. All four turned out to be
+`coverage_basis: platform_only` — a deliberate reclassification Jarrod
+made 2026-07-08 (`6aa20cf10f`, "vendor self-attestation... cannot
+trigger false pending_evidence on controls the product does not perform
+in the customer's CUI environment") that both `_run_loop` and
+`move_org_product_version`'s `_claimed()` exclude entirely: no
+`ControlStateContributor` row is ever created for them. Every assertion
+built on those four controls was silently exercising nothing. Chasing
+the resulting `StopIteration`, a wrong diagnosis nearly shipped: that
+`seeds/baselines.py`'s `_BASELINES_DIR` (`parents[2]`, resolving to
+`backend/baselines/`) was reading a "stale" directory and should instead
+read the repo-root `baselines/` directory CLAUDE.md's file table names
+without a `backend/` prefix. That diagnosis was backwards.
+`backend/baselines/` has been the actual, loaded-since-the-function-was-
+written directory the whole time (confirmed via `git log -p` on
+`_BASELINES_DIR` — it has always been `parents[2]`); the repo-root
+`baselines/rocketcyber.yaml` is a dead duplicate from the repo's initial
+commit that nothing has read since, and it had drifted out of sync with
+Jarrod's July reclassification by simply never receiving it. The wrong
+fix was committed, bench-verified (1317 tests passed — the full suite
+has no assertion that would have caught a data source being swapped for
+an equally-well-formed one), and only caught before merge by reading
+`git log -p -- backend/app/seeds/baselines.py` on a hunch after the
+coverage_basis values looked design-shaped rather than accidental. It
+was reverted (`9d2054644e`) in the same branch, never reached `main`.
+Two takeaways: a passing full test suite doesn't defend against a fix
+that's confidently wrong in a way nothing asserts against, and CLAUDE.md's
+own file table (`baselines/` — no `backend/` prefix) is itself now a
+known trap for the next reader who trusts it over `git log`.
+
+**Landed:** bench-verified on an isolated wl-util-1 Docker Compose
+project — 1317/1317 backend tests, `ruff check .` clean. No frontend
+changes in this pass (nothing here touches the frontend surface).
+Merged to `main` per the branch's own history (the wrong "fix" and its
+revert are both preserved in that history, not squashed away, since the
+near-miss itself is part of what this pass produced).
 
 ---
 
