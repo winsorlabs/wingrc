@@ -60,7 +60,6 @@ COPY --from=deps /usr/local/bin /usr/local/bin
 COPY backend/ .
 # Fixture data referenced by tests via parents[2] from /app/tests/
 COPY samples/ /samples/
-COPY baselines/ /baselines/
 # reset-dev's pre-flight pg_dump lands here (WINGRC_RESET_DEV_BACKUP_DIR
 # overrides for tests) — a dedicated, non-source directory so backup files
 # never land inside the bind-mounted, git-tracked ./backend on a dev box.

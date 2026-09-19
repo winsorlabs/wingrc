@@ -622,6 +622,17 @@ the scheduled job found one new device, correctly reported "no contact
 holds security_officer/it_admin" for that org (recorded, not swallowed),
 and — confirmed directly via SQL — wrote zero `scope_entity` rows.
 
+**Two gaps in this workflow confirmed still open, 2026-09-19, by the
+tenant lifecycle consolidation pass** (see `docs/roadmap.md`'s Done
+entry for the full writeup): the ordinary manual scope PATCH endpoint
+(`routers/scope.py:patch_scope_entity`) has no awareness of
+`pending_approval` at all and will promote one straight to `active`
+with no `AssetApproval` row created; and a device rejected, then
+brought back into boundary through that same ordinary scope UI, still
+reads `rejected` in its acceptance record with nothing rendering that
+staleness. Both are pre-existing gaps in this slice's own scope, not
+regressions — recorded here so neither needs rediscovering.
+
 ---
 
 ### D.4 — Multi-tenant credential safety for a hosted WinGRC
