@@ -791,6 +791,9 @@ def test_approved_device_shows_display_name_and_last_login_user(
         {**_device_row("WL-DT26"), "Alias": "Jarrods Desktop", "LastLoginUser": "jarrod"},
         {**_device_row("WL-LT26"), "Alias": None, "LastLoginUser": "WINSORLABS\\jarrod.winsor"},
     ]
+    # Isolate to devices -- the default identity fixture would otherwise
+    # also show as NEW and contaminate the approved-count assertion below.
+    _stub_liongard["identities"] = []
     dry_run = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
     assert _approve_all_new(client, org.id, dry_run["sync_result_id"]) == 2
 
