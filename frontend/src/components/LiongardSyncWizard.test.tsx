@@ -39,19 +39,24 @@ function makeMapping(overrides: Partial<LiongardEnvironmentMapping> = {}): Liong
 }
 
 function makeDryRun(overrides: Partial<DryRunResult> = {}): DryRunResult {
+  // Default shape is a CHANGED row, not NEW -- a NEW liongard row can't be
+  // applied at all post-2026-09-22 (see the dedicated "new rows" describe
+  // block below), so most of these tests exercise the still-applicable
+  // CHANGED path unless a test explicitly overrides `changes`.
   return {
-    summary: { new: 1, changed: 0, missing: 0, unchanged: 0 },
+    summary: { new: 0, changed: 1, missing: 0, unchanged: 0 },
     warnings: [],
+    sync_result_id: null,
     pull_status: [
       { entity_label: "devices", total_found: 1, inventory_count: 1, message: "1 devices in Inventory, 1 new or changed." },
       { entity_label: "identities", total_found: 0, inventory_count: 0, message: "Liongard returned no identities for this Environment." },
     ],
     changes: [
       {
-        change_type: "new",
+        change_type: "changed",
         entity_type: "device",
         natural_key: "SN-123",
-        field_diffs: {},
+        field_diffs: { hostname: ["OLD-NAME", "SN-123"] },
         incoming: {
           scope_category: null,
           status: "active",
@@ -188,6 +193,96 @@ describe("LiongardSyncWizard — mapped, sync + apply", () => {
     fireEvent.click(screen.getByRole("button", { name: /Sync Now/ }));
 
     await screen.findByText(/promote them from Discovery to Inventory/);
+  });
+});
+
+describe("LiongardSyncWizard — NEW rows go through Asset Approvals (2026-09-22 fix)", () => {
+  it("shows a NEW row for visibility but never lets it be applied", async () => {
+    vi.mocked(api.getLiongardEnvironmentMapping).mockResolvedValue(makeMapping());
+    vi.mocked(api.liongardSyncDryRun).mockResolvedValue(
+      makeDryRun({
+        summary: { new: 1, changed: 0, missing: 0, unchanged: 0 },
+        sync_result_id: "sync-result-1",
+        changes: [
+          {
+            change_type: "new",
+            entity_type: "device",
+            natural_key: "SN-WL-LT26",
+            field_diffs: {},
+            incoming: {
+              scope_category: null,
+              status: "pending_approval",
+              in_boundary: true,
+              source: "liongard",
+              source_ref: "liongard:environment=8815 (Acme Corp):pulled_at=2026-09-22",
+              attributes: {},
+            },
+            warnings: [],
+          },
+        ],
+      })
+    );
+
+    render(<LiongardSyncWizard orgId="org1" onClose={vi.fn()} onApplied={vi.fn()} />);
+    await screen.findByText(/Mapped to Liongard Environment/);
+    fireEvent.click(screen.getByRole("button", { name: /Sync Now/ }));
+
+    await screen.findByText("SN-WL-LT26");
+    expect(screen.getByText(/queued for review in Asset Approvals/i)).toBeTruthy();
+    expect(screen.getByText(/Queued — review in Asset Approvals/)).toBeTruthy();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.getByRole("button", { name: /Apply 0 Changes/ })).toHaveProperty("disabled", true);
+
+    fireEvent.click(screen.getByRole("button", { name: /Apply 0 Changes/ }));
+    expect(api.applyWorkbookImport).not.toHaveBeenCalled();
+  });
+
+  it("a mix of NEW and CHANGED only offers the CHANGED row for apply", async () => {
+    vi.mocked(api.getLiongardEnvironmentMapping).mockResolvedValue(makeMapping());
+    vi.mocked(api.liongardSyncDryRun).mockResolvedValue(
+      makeDryRun({
+        summary: { new: 1, changed: 1, missing: 0, unchanged: 0 },
+        sync_result_id: "sync-result-2",
+        changes: [
+          {
+            change_type: "new",
+            entity_type: "device",
+            natural_key: "SN-NEW-1",
+            field_diffs: {},
+            incoming: {
+              scope_category: null, status: "pending_approval", in_boundary: true,
+              source: "liongard", source_ref: "liongard:environment=8815", attributes: {},
+            },
+            warnings: [],
+          },
+          {
+            change_type: "changed",
+            entity_type: "device",
+            natural_key: "SN-CHANGED-1",
+            field_diffs: { hostname: ["OLD", "NEW"] },
+            incoming: {
+              scope_category: null, status: "active", in_boundary: true,
+              source: "liongard", source_ref: "liongard:environment=8815", attributes: {},
+            },
+            warnings: [],
+          },
+        ],
+      })
+    );
+    vi.mocked(api.applyWorkbookImport).mockResolvedValue({ applied: 1 });
+
+    render(<LiongardSyncWizard orgId="org1" onClose={vi.fn()} onApplied={vi.fn()} />);
+    await screen.findByText(/Mapped to Liongard Environment/);
+    fireEvent.click(screen.getByRole("button", { name: /Sync Now/ }));
+
+    await screen.findByText("SN-NEW-1");
+    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: /Apply 1 Change/ }));
+
+    await waitFor(() => expect(api.applyWorkbookImport).toHaveBeenCalled());
+    const appliedChanges = vi.mocked(api.applyWorkbookImport).mock.calls[0][1];
+    expect(appliedChanges).toHaveLength(1);
+    expect(appliedChanges[0].natural_key).toBe("SN-CHANGED-1");
   });
 });
 

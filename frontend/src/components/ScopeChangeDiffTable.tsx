@@ -15,9 +15,16 @@ interface Props {
   changes: ScopeChange[];
   excluded: Set<number>;
   onToggle: (idx: number) => void;
+  // LiongardSyncWizard only (2026-09-22 fix): a NEW row from this source
+  // can no longer be written via apply -- the backend refuses it
+  // (repo.PendingApprovalWriteError) because it must go through Asset
+  // Approvals instead. AssetImportWizard (workbook) never sets this --
+  // a workbook's NEW rows are already human-reviewed at upload time, a
+  // different trust boundary (see liongard_sync.py's own docstring).
+  newRequiresApproval?: boolean;
 }
 
-export function ScopeChangeDiffTable({ changes, excluded, onToggle }: Props) {
+export function ScopeChangeDiffTable({ changes, excluded, onToggle, newRequiresApproval }: Props) {
   return (
     <div className="table-scroll">
       <table className="contacts-table import-diff-table">
@@ -32,7 +39,8 @@ export function ScopeChangeDiffTable({ changes, excluded, onToggle }: Props) {
         </thead>
         <tbody>
           {changes.map((c, idx) => {
-            const applicable = c.change_type === "new" || c.change_type === "changed";
+            const newLocked = c.change_type === "new" && newRequiresApproval;
+            const applicable = (c.change_type === "new" && !newLocked) || c.change_type === "changed";
             const displayName = c.incoming
               ? assetDisplayName(c.incoming.attributes, c.natural_key)
               : c.natural_key;
@@ -62,6 +70,8 @@ export function ScopeChangeDiffTable({ changes, excluded, onToggle }: Props) {
                 <td>
                   {c.change_type === "missing" ? (
                     <span className="field-hint">Not touched — apply never deletes</span>
+                  ) : newLocked ? (
+                    <span className="field-hint">Queued — review in Asset Approvals</span>
                   ) : Object.keys(c.field_diffs).length > 0 ? (
                     Object.keys(c.field_diffs).join(", ")
                   ) : (

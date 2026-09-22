@@ -633,6 +633,19 @@ reads `rejected` in its acceptance record with nothing rendering that
 staleness. Both are pre-existing gaps in this slice's own scope, not
 regressions — recorded here so neither needs rediscovering.
 
+**The first of those two gaps is fixed, 2026-09-22** (see
+`docs/roadmap.md`'s "Liongard sync: two entry points, one gate" entry for
+the full writeup): the same live bug report that surfaced a second, worse
+instance of it — the Assets screen's own "Sync from Liongard" button
+writing a NEW liongard entity to `scope_entity` as `pending_approval` with
+no `liongard_sync_result_change` row behind it, permanently unresolvable —
+led to a structural fix at `repo.upsert()` rather than a per-endpoint patch:
+it now refuses to write `status=pending_approval` at all, and refuses to
+touch an existing `pending_approval` row through anything except
+`approve_change`/`reject_change`. `patch_scope_entity` (this gap) and the
+Assets-screen apply path (the worse one) are both closed by the same
+guard. The rejection-reversal gap is unrelated and still open.
+
 ---
 
 ### D.4 — Multi-tenant credential safety for a hosted WinGRC

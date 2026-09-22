@@ -73,6 +73,7 @@ from ..crypto import CredentialCipherError, decrypt_credential
 from ..db import get_session
 from ..domain import (
     CanonicalEntity,
+    ChangeType,
     DeviceSubtype,
     EntityStatus,
     EntityType,
@@ -84,6 +85,7 @@ from ..importers.workbook import parse_workbook, resolve_canonical_device_attrib
 from ..models import IntegrationConnection, OrgLiongardEnvironment, ScopeEntity
 from ..reconcile import reconcile
 from ..render import render_view
+from ..repo import PendingApprovalWriteError
 
 router = APIRouter(
     prefix="/orgs",
@@ -335,6 +337,12 @@ class DryRunOut(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     # Always empty for the workbook path -- see LiongardPullStatus above.
     pull_status: list[LiongardPullStatus] = Field(default_factory=list)
+    # Set only by liongard_sync_dry_run below, and only when the pull found
+    # at least one NEW entity -- the id of the LiongardSyncResult this call
+    # just persisted so the caller can jump straight to reviewing it (same
+    # row /liongard-sync-results/sync-now would have produced). None for
+    # the workbook path, and None for a Liongard pull with nothing new.
+    sync_result_id: uuid.UUID | None = None
 
 
 class ScopeChangeIn(BaseModel):
@@ -431,7 +439,10 @@ def create_scope_entity(
         source=Source.MANUAL,
         source_ref=None,
     )
-    row = repo.upsert(session, org_id, entity)
+    try:
+        row = repo.upsert(session, org_id, entity)
+    except PendingApprovalWriteError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     session.flush()
     log_event(
         session,
@@ -489,7 +500,10 @@ def patch_scope_entity(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    updated_row = repo.upsert(session, org_id, entity)
+    try:
+        updated_row = repo.upsert(session, org_id, entity)
+    except PendingApprovalWriteError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     session.flush()
     log_event(
         session,
@@ -604,6 +618,16 @@ def import_apply(
     exactly what it's handed. Only NEW/CHANGED rows are written -- MISSING
     rows (present in scope but absent from the workbook) are never
     auto-deleted, matching cli.py's own `seed --apply` behavior.
+
+    A NEW row whose `incoming.status` is pending_approval -- always a
+    Liongard-sourced entity; workbook rows are never pending_approval, see
+    ScopeChangeIncoming's own default -- is refused with 409
+    (repo.PendingApprovalWriteError). That entity must go through
+    /liongard-sync-results/{id}/changes/{id}/approve or /reject instead;
+    see liongard_sync_dry_run below for where it's queued. No row from this
+    call is committed if any row in the batch is refused (nothing commits
+    until every row in the batch has been written, and an uncaught
+    exception here leaves the session's flushes uncommitted).
     """
     applied = 0
     for c in body.changes:
@@ -634,7 +658,10 @@ def import_apply(
             source=Source(c.incoming.source),
             source_ref=c.incoming.source_ref,
         )
-        row = repo.upsert(session, org_id, entity)
+        try:
+            row = repo.upsert(session, org_id, entity)
+        except PendingApprovalWriteError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         session.flush()
         log_event(
             session,
@@ -1032,10 +1059,32 @@ def liongard_sync_dry_run(
     org_id: uuid.UUID, session: Session = Depends(get_session)
 ) -> DryRunOut:
     """Pull devices + identities from this org's mapped Liongard Environment
-    and return the reconcile diff. No writes -- same "confirmed diff before
-    mutation" contract as /imports/workbook/dry-run above; apply is the
-    identical POST /imports/workbook/apply endpoint, since its body doesn't
-    actually depend on the source being a workbook.
+    and return the reconcile diff. Never writes scope_entity -- same
+    "confirmed diff before mutation" contract as /imports/workbook/dry-run
+    above for CHANGED rows, whose apply is the identical
+    POST /imports/workbook/apply endpoint (its body doesn't actually depend
+    on the source being a workbook).
+
+    NEW rows are different (2026-09-22 fix -- see docs/roadmap.md's Liongard
+    sync entry for the incident this closes). This endpoint and
+    /liongard-sync-results/sync-now used to diverge for a brand-new
+    Liongard-observed entity: sync-now persists it into the asset-approval
+    queue and writes no scope_entity row until a human approves/rejects it;
+    this endpoint returned the identical NEW row for the caller to send
+    straight to /imports/workbook/apply, which wrote scope_entity directly
+    with status=pending_approval and no queue entry behind it -- a row that
+    reconciles as UNCHANGED or CHANGED on every later pull, never NEW again,
+    so it could never be approved or rejected. repo.upsert() now refuses
+    that write outright (repo.PendingApprovalWriteError, surfaced here as a
+    409 from import_apply) -- but refusing isn't enough on its own; the
+    entity still has to end up somewhere reviewable. So this endpoint now
+    persists exactly like sync-now does (liongard_sync.persist_sync_result)
+    whenever the pull contains at least one NEW row, before returning.
+    Both entry points converge on the same queue for NEW entities; only
+    CHANGED/MISSING rows keep this endpoint's own interactive dry-run/apply
+    review, unaffected by this change. `sync_result_id` on the response
+    names the row this call just created so a caller can jump straight to
+    reviewing it; it's None when nothing new was found.
 
     Both device-profiles and identities are pulled in one call (matching
     ROADMAP.md item D's own framing of Liongard as "populates scope lists
@@ -1069,6 +1118,21 @@ def liongard_sync_dry_run(
     row_warnings = pull.row_warnings
     pull_level_warnings = pull.pull_level_warnings
 
+    sync_result_id: uuid.UUID | None = None
+    if any(c.change_type == ChangeType.NEW for c in result.changes):
+        sync_result = liongard_sync.persist_sync_result(session, org_id=org_id, pull=pull)
+        log_event(
+            session,
+            org_id=org_id,
+            action="liongard_sync_result.create",
+            entity_type="liongard_sync_result",
+            entity_id=sync_result.id,
+            after_value={"status": sync_result.status, "summary": sync_result.summary},
+            context={"via": "api", "entry_point": "assets_sync_wizard"},
+        )
+        session.commit()
+        sync_result_id = sync_result.id
+
     pull_status = [
         LiongardPullStatus(
             entity_label=ps.entity_label,
@@ -1085,6 +1149,7 @@ def liongard_sync_dry_run(
         summary=result.summary(),
         warnings=pull_level_warnings,
         pull_status=pull_status,
+        sync_result_id=sync_result_id,
         changes=[
             ScopeChangeOut(
                 change_type=c.change_type.value,
