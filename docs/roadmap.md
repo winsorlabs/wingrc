@@ -4762,9 +4762,17 @@ applicable, a different trust boundary per `liongard_sync.py`'s own
 docstring); `LiongardSyncWizard` excludes NEW rows from `selectedChanges()`
 and shows a "queued for review in Asset Approvals" hint instead.
 
-Bench-verified on an isolated wl-util-1 Docker Compose project: full
-backend suite, `ruff check .`, full frontend suite (vitest + `tsc -b` +
-`vite build`). Merged to `main`, deployed to `dev.wingrc.us`.
+Bench-verified on an isolated wl-util-1 Docker Compose project (own
+project name, own volumes/network, no published ports, live `wingrc`
+project confirmed untouched before and after): 1320/1320 backend tests,
+`ruff check .` clean, 146/146 frontend tests (22 files, including
+`ScopeChangeDiffTable`'s and `LiongardSyncWizard`'s own suites), `tsc -b`
+clean, `vite build` clean. One test (`test_approved_device_shows_
+display_name_and_last_login_user`) needed a fix during this run — the
+default identity fixture wasn't isolated out, so it counted as a third
+NEW entity alongside the two devices and tripped an `==2` approval-count
+assertion; not a functional bug, a test-isolation miss caught by actually
+running it. Merged to `main`, deployed to `dev.wingrc.us`.
 
 ---
 
