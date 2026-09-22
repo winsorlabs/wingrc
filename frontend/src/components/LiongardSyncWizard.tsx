@@ -4,11 +4,17 @@ import type { DryRunResult, LiongardEnvironmentMapping, LiongardEnvironmentOptio
 import { ScopeChangeDiffTable } from "./ScopeChangeDiffTable";
 
 // D.2: pull devices + users from this org's mapped Liongard Environment.
-// Reuses the exact same dry-run -> review -> apply shape as
-// AssetImportWizard (workbook import) -- apply is literally the same
+// Reuses the same dry-run -> review -> apply shape as AssetImportWizard
+// (workbook import) for CHANGED rows -- apply is literally the same
 // endpoint (api.applyWorkbookImport), since its body doesn't depend on the
-// source. The only genuinely new step here is picking/confirming which
-// Liongard Environment this org syncs from before a pull can run at all.
+// source. NEW rows are different since the 2026-09-22 fix: the backend
+// refuses to apply one directly (it must go through Asset Approvals
+// instead, see routers/scope.py:liongard_sync_dry_run's own docstring for
+// the incident this closes), and this same dry-run call already queues
+// any NEW row into that same approval workflow behind the scenes -- see
+// `sync_result_id` on the dry-run response. So NEW rows here are shown
+// for visibility only (ScopeChangeDiffTable's newRequiresApproval), never
+// selectable for apply.
 
 interface Props {
   orgId: string;
@@ -125,10 +131,19 @@ export function LiongardSyncWizard({ orgId, onClose, onApplied }: Props) {
 
   function selectedChanges(): ScopeChange[] {
     if (!dryRun) return [];
+    // "new" is excluded here on purpose -- a NEW liongard-sourced row
+    // can't be applied directly (the backend refuses it, 409), only
+    // approved or rejected in Asset Approvals, where this same dry-run
+    // call already queued it (dryRun.sync_result_id).
     return dryRun.changes.filter((c, idx) => {
-      if (c.change_type !== "new" && c.change_type !== "changed") return false;
+      if (c.change_type !== "changed") return false;
       return !excluded.has(idx);
     });
+  }
+
+  function newEntityCount(): number {
+    if (!dryRun) return 0;
+    return dryRun.changes.filter((c) => c.change_type === "new").length;
   }
 
   async function handleApply() {
@@ -257,9 +272,17 @@ export function LiongardSyncWizard({ orgId, onClose, onApplied }: Props) {
                   : null}
               </div>
             )}
-            {dryRun.changes.length > 0 && (
+            {newEntityCount() > 0 && (
               <div className="field-hint">
-                Review the changes below. Uncheck any row you don't want applied, then confirm.
+                {newEntityCount()} new device{newEntityCount() === 1 ? "" : "s"}/identit
+                {newEntityCount() === 1 ? "y" : "ies"} queued for review in Asset Approvals —
+                they can't be applied from here.
+              </div>
+            )}
+            {dryRun.changes.some((c) => c.change_type === "changed") && (
+              <div className="field-hint">
+                Review the changed rows below. Uncheck any row you don't want applied, then
+                confirm.
               </div>
             )}
             {dryRun.warnings.length > 0 && (
@@ -270,7 +293,12 @@ export function LiongardSyncWizard({ orgId, onClose, onApplied }: Props) {
               </div>
             )}
             {dryRun.changes.length > 0 && (
-              <ScopeChangeDiffTable changes={dryRun.changes} excluded={excluded} onToggle={toggleExcluded} />
+              <ScopeChangeDiffTable
+                changes={dryRun.changes}
+                excluded={excluded}
+                onToggle={toggleExcluded}
+                newRequiresApproval
+              />
             )}
           </>
         )}

@@ -4559,7 +4559,7 @@ broken by the walk itself").
 **Report-only findings, confirmed live (not just by reading code),
 each a product decision rather than an obvious fix:**
 
-- **`patch_scope_entity` has no `pending_approval` guard.** The ordinary
+- **`patch_scope_entity` has no `pending_approval` guard.** ~~The ordinary
   manual scope PATCH endpoint (`routers/scope.py`) can flip a
   `pending_approval` entity straight to `active` with no `AssetApproval`
   row, no checklist, no approval-specific audit action — it has no
@@ -4567,7 +4567,9 @@ each a product decision rather than an obvious fix:**
   `pending_approval` device PATCHed to `active` returns 200, and no
   `AssetApproval` row is created. The right fix touches who is
   authorized to admit an asset into the boundary and isn't a one-liner —
-  Jarrod's call.
+  Jarrod's call.~~ **Fixed 2026-09-22** — see "Liongard sync: two entry
+  points, one gate" below for the full writeup (this same gap, plus a
+  worse sibling found live, both closed by one guard in `repo.upsert()`).
 - **Evidence-link archival on deactivation is per-`control_state`, not
   per-product.** Flagged during the multi-tool coverage slice, never
   fixed; this pass confirms it still bites with real evidence attached.
@@ -4638,6 +4640,139 @@ changes in this pass (nothing here touches the frontend surface).
 Merged to `main` per the branch's own history (the wrong "fix" and its
 revert are both preserved in that history, not squashed away, since the
 near-miss itself is part of what this pass produced).
+
+---
+
+### Liongard sync: two entry points, one gate ✅ DONE (2026-09-22)
+
+Found live on `dev.wingrc.us`: device `WL-LT26` (serial `PF3Y6K26`) sat in
+the Assets list at `pending_approval` with no way to approve or reject it
+anywhere in the UI — not even in Asset Approvals.
+
+**The mechanism, confirmed by reproducing it, not just by reading code.**
+Two Liongard sync entry points existed with different write behavior:
+
+- `POST /liongard-sync-results/sync-now` (Asset Approvals' own button) →
+  `pull_and_reconcile` → `persist_sync_result`. A NEW entity is forced to
+  `pending_approval` and queued as a `liongard_sync_result_change` row
+  (`resolution="pending"`). **Never writes `scope_entity`.**
+- The Assets screen's "Sync from Liongard" button →
+  `POST /integrations/liongard/sync/dry-run` (same `pull_and_reconcile`)
+  → `POST /imports/workbook/apply`. Apply took whatever `incoming.status`
+  the dry-run handed it — `pending_approval` for a NEW entity — and wrote
+  it **straight to `scope_entity`** via `repo.upsert()`, with no
+  `liongard_sync_result_change` row behind it at all.
+
+A device written this second way has no exit. `pull_and_reconcile` only
+forces `pending_approval` for a change it classifies `NEW`; once a
+`scope_entity` row already exists for that natural key, the next pull
+reconciles it as `UNCHANGED` (silently dropped before `persist_sync_result`
+ever sees it) or `CHANGED` (persisted, but `resolution` is only meaningful
+for `change_type="new"` — CHANGED rows are shown for visibility only,
+never resolvable). Never `NEW` again, so `approve_change`/`reject_change`
+— which both require `change_type="new"` — can never act on it.
+
+This is the fourth instance of one pattern in three weeks, three of the
+four on `scope_entity`: a slice adds a gate on a field (D.3's
+`pending_approval` review gate), and an older writer already routing
+around where that gate now sits keeps writing straight through it. (The
+other three: `seed_baselines` never deleting an unmatched `BaselineControl`;
+a fresh Liongard pull's `status=active` default promoting a pending device,
+fixed inside `pull_and_reconcile` itself during D.3; `patch_scope_entity`
+having no `pending_approval` awareness at all, documented as an open
+finding by the tenant lifecycle consolidation pass above, now closed by
+this same fix.)
+
+**Two options considered — (a) chosen.** (a): the Assets-screen entry
+point stops writing `scope_entity` for NEW entities, routing them into the
+same approval queue `sync-now` uses; CHANGED/MISSING rows keep their
+existing interactive dry-run/apply review, unaffected. (b): give the old
+path its own `persist_sync_result` call too, so both paths fully implement
+"what a Liongard pull produces" independently. (b) was rejected: it's
+exactly the shape that produced this bug and the three before it — two
+implementations of the same concept drift the moment one of them changes
+and the other doesn't. (a) makes "an asset only enters scope from an
+unresolved Liongard pull via approval" true by construction instead of by
+convention.
+
+**Where the invariant lives.** Not re-checked per endpoint — a single
+guard in `repo.upsert()` (`repo.PendingApprovalWriteError`), the one
+function every writer of `scope_entity` funnels through
+(`create_scope_entity`, `patch_scope_entity`, `import_apply`, `cli.py`'s
+`seed --apply`, and `liongard_sync.py`'s `approve_change`/`reject_change`
+itself):
+
+1. Refuses to write `status=pending_approval` at all, unconditionally. No
+   legitimate writer needs to — `pending_approval` lives only transiently
+   in a `LiongardSyncResultChange.incoming` JSONB blob; `approve_change`/
+   `reject_change` always resolve a change into a fresh `scope_entity` row
+   they themselves write as `active`, never as `pending_approval`.
+2. Refuses to change a row that's *already* `pending_approval`, to
+   anything, through this call. The only way out is `approve_change`/
+   `reject_change` calling `repo.upsert()` for the first time on a
+   natural key with no prior row — which is what normal operation always
+   looks like, since (1) means a `pending_approval` row can never
+   accumulate a later edit in the first place.
+
+Both checks fire before any write happens, so a batch `apply` call that
+hits one refused row commits nothing from that request (nothing commits
+until the whole batch succeeds; an uncaught exception here leaves the
+session's flushes unrolled-back-but-uncommitted, which `get_session`'s
+`finally: session.close()` discards).
+
+`routers/scope.py:liongard_sync_dry_run` additionally now calls the same
+`liongard_sync.persist_sync_result` `sync-now` uses whenever its pull
+contains at least one NEW row, before returning — so both entry points
+converge on the literal same queue, not just on refusing the bad write.
+The response carries the new `sync_result_id` field naming what it just
+created (`null` when nothing new was found, always `null` for the
+workbook dry-run path). `create_scope_entity`/`patch_scope_entity`/
+`import_apply` translate `PendingApprovalWriteError` to HTTP 409.
+
+**Stranded-row survey (§4).** Checked directly on the live `wingrc`
+database via a read-only query (`scope_entity` rows with
+`status='pending_approval'` and no corresponding `resolution='pending'`
+`liongard_sync_result_change` row): **exactly one row** — the reported
+`WL-LT26` — with zero others. No general cleanup tooling was built as a
+result; a one-row problem doesn't justify one, and Jarrod cleared it
+directly (delete + re-sync through Asset Approvals, which now correctly
+re-classifies it as NEW and lets it be approved). If this ever recurs at
+scale, the survey query above is the starting point for whatever tooling
+that would need.
+
+**Verification:** `backend/tests/test_liongard_sync_api.py` rewritten
+throughout — every test that used to apply a NEW liongard entity via
+`/imports/workbook/apply` now either asserts the 409 directly
+(`test_apply_of_a_new_liongard_entity_is_refused`) or goes through
+`sync-now`'s own approve endpoint instead
+(`test_new_entities_reach_scope_entity_only_via_approval_with_liongard_
+provenance`, `test_approved_device_shows_display_name_and_last_login_user`
+— the latter using the exact `WL-LT26`/`WL-DT26` devices from the live
+report). New coverage for the persist-on-dry-run behavior itself
+(`test_dry_run_with_new_entities_queues_them_for_approval`,
+`test_dry_run_without_new_entities_does_not_persist_a_sync_result`).
+`backend/tests/test_lifecycle.py` gains Step 3b, exercising the
+Assets-screen entry point for the first time in that file (Step 3 only
+ever exercised `sync-now`), and its own "SURPRISE candidate" block
+(finding 3, `patch_scope_entity`) now asserts the 409 refusal instead of
+documenting the gap, per that block's own stated update-not-delete
+instruction. Frontend: `ScopeChangeDiffTable` gains a `newRequiresApproval`
+prop (Liongard wizard only; the workbook wizard's own NEW rows stay fully
+applicable, a different trust boundary per `liongard_sync.py`'s own
+docstring); `LiongardSyncWizard` excludes NEW rows from `selectedChanges()`
+and shows a "queued for review in Asset Approvals" hint instead.
+
+Bench-verified on an isolated wl-util-1 Docker Compose project (own
+project name, own volumes/network, no published ports, live `wingrc`
+project confirmed untouched before and after): 1320/1320 backend tests,
+`ruff check .` clean, 146/146 frontend tests (22 files, including
+`ScopeChangeDiffTable`'s and `LiongardSyncWizard`'s own suites), `tsc -b`
+clean, `vite build` clean. One test (`test_approved_device_shows_
+display_name_and_last_login_user`) needed a fix during this run — the
+default identity fixture wasn't isolated out, so it counted as a third
+NEW entity alongside the two devices and tripped an `==2` approval-count
+assertion; not a functional bug, a test-isolation miss caught by actually
+running it. Merged to `main`, deployed to `dev.wingrc.us`.
 
 ---
 

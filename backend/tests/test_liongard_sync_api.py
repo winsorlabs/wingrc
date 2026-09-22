@@ -1,7 +1,16 @@
 """Integration tests for D.2's Liongard sync endpoints in routers/scope.py:
-environment mapping CRUD, the sync dry-run (pull + reconcile, no writes),
-and apply (reusing the existing POST /imports/workbook/apply endpoint
-unmodified -- see that router's module docstring for why).
+environment mapping CRUD, and the sync dry-run (pull + reconcile; never
+writes scope_entity).
+
+Apply (POST /imports/workbook/apply) is still reused unmodified for
+CHANGED/MISSING rows here -- see that router's module docstring. NEW rows
+are different since the 2026-09-22 fix: applying one directly now 409s
+(repo.PendingApprovalWriteError), and the dry-run call itself persists any
+NEW row into the same asset-approval queue /liongard-sync-results/sync-now
+uses (liongard_sync_dry_run's own docstring has the full incident writeup).
+Tests that need a NEW liongard entity to actually land in scope_entity go
+through that queue's approve endpoint, exactly like
+test_liongard_sync_approval_api.py's own tests do, not through apply.
 
 connectors/liongard.py's list_environments/pull_device_profiles/
 pull_identities are monkeypatched at the module level so these tests never
@@ -143,6 +152,25 @@ def _org(db_session, fake_msp_admin) -> Organization:
 def _set_credential(client):
     r = client.put("/integrations/liongard/credential", json=_CRED_BODY)
     assert r.status_code == 200
+
+
+def _approve_all_new(client, org_id, sync_result_id) -> int:
+    """Approve every still-pending NEW change on a persisted sync result --
+    the only way a NEW liongard entity reaches scope_entity post-fix.
+    Returns how many were approved.
+    """
+    detail = client.get(f"/orgs/{org_id}/liongard-sync-results/{sync_result_id}").json()
+    approved = 0
+    for c in detail["changes"]:
+        if c["change_type"] != "new" or c["resolution"] != "pending":
+            continue
+        r = client.post(
+            f"/orgs/{org_id}/liongard-sync-results/{sync_result_id}/changes/{c['id']}/approve",
+            json={"checklist_confirmations": {}},
+        )
+        assert r.status_code == 200, r.text
+        approved += 1
+    return approved
 
 
 # ---------------------------------------------------------------------------
@@ -457,6 +485,90 @@ def test_dry_run_classifies_new_device_and_person(client, db_session, fake_msp_a
         assert "liongard:environment=8815" in c["incoming"]["source_ref"]
 
 
+def test_dry_run_with_new_entities_queues_them_for_approval(client, db_session, fake_msp_admin):
+    """The 2026-09-22 fix's core behavior: a NEW entity found by this
+    entry point lands in the exact same asset-approval queue
+    /liongard-sync-results/sync-now produces, not just in the dry-run
+    response -- see liongard_sync_dry_run's own docstring for the incident
+    this closes (a stranded pending_approval scope_entity row with nothing
+    to resolve it).
+    """
+    org = _org(db_session, fake_msp_admin)
+    _set_credential(client)
+    client.put(
+        f"/orgs/{org.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    body = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
+    assert body["sync_result_id"] is not None
+
+    detail = client.get(f"/orgs/{org.id}/liongard-sync-results/{body['sync_result_id']}").json()
+    assert detail["status"] == "pending_review"
+    assert {c["entity_type"] for c in detail["changes"]} == {"device", "person"}
+    for c in detail["changes"]:
+        assert c["change_type"] == "new"
+        assert c["resolution"] == "pending"
+
+    # And -- the actual bug -- no scope_entity row exists yet at all.
+    assert db_session.scalars(select(ScopeEntity).where(ScopeEntity.org_id == org.id)).all() == []
+
+
+def test_dry_run_without_new_entities_does_not_persist_a_sync_result(
+    client, db_session, fake_msp_admin
+):
+    """No NEW rows -> nothing to queue -> no LiongardSyncResult at all, so
+    a routine no-op preview doesn't spam Asset Approvals' history. Uses
+    the CHANGED-only scenario test_first_sync_after_upgrade_... also uses:
+    a pre-existing device plus no identities.
+    """
+    org = _org(db_session, fake_msp_admin)
+    _set_credential(client)
+    client.put(
+        f"/orgs/{org.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    db_session.add(
+        ScopeEntity(
+            org_id=org.id, entity_type="device", natural_key="SN-SBX-Mini-01", source="liongard",
+        )
+    )
+    db_session.add(
+        ScopeEntity(
+            org_id=org.id, entity_type="person", natural_key="ahmed@coopsys.com", source="liongard",
+        )
+    )
+    db_session.commit()
+
+    body = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
+    assert body["sync_result_id"] is None
+    assert client.get(f"/orgs/{org.id}/liongard-sync-results").json() == []
+
+
+def test_apply_of_a_new_liongard_entity_is_refused(client, db_session, fake_msp_admin):
+    """The reported bug, reproduced directly: a NEW liongard-sourced
+    change can no longer be written to scope_entity via
+    /imports/workbook/apply -- it must go through approval instead. Before
+    the fix this call succeeded and left an unrecoverable pending_approval
+    row (see liongard_sync_dry_run's docstring).
+    """
+    org = _org(db_session, fake_msp_admin)
+    _set_credential(client)
+    client.put(
+        f"/orgs/{org.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    dry_run = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
+    assert all(c["change_type"] == "new" for c in dry_run["changes"])
+
+    r = client.post(f"/orgs/{org.id}/imports/workbook/apply", json={"changes": dry_run["changes"]})
+    assert r.status_code == 409
+    assert "pending" in r.text.lower()
+
+    assert db_session.scalars(select(ScopeEntity).where(ScopeEntity.org_id == org.id)).all() == []
+    # And it's still there, resolvable, in the queue this same dry-run created.
+    assert _approve_all_new(client, org.id, dry_run["sync_result_id"]) == 2
+
+
 # ---------------------------------------------------------------------------
 # Sync dry-run — Inventory-state pull visibility
 # ---------------------------------------------------------------------------
@@ -494,7 +606,9 @@ def test_dry_run_pull_status_distinguishes_no_changes_from_nothing_found(
         json={"liongard_environment_id": 8815},
     )
     first = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
-    client.post(f"/orgs/{org.id}/imports/workbook/apply", json={"changes": first["changes"]})
+    # Both rows are NEW -- must be approved to reach scope_entity, apply
+    # would 409 (see test_apply_of_a_new_liongard_entity_is_refused).
+    assert _approve_all_new(client, org.id, first["sync_result_id"]) == 2
 
     body = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
     by_label = {p["entity_label"]: p for p in body["pull_status"]}
@@ -554,7 +668,14 @@ def test_dry_run_pull_status_reports_liongard_returned_nothing_at_all(
     )
 
 
-def test_dry_run_performs_no_writes(client, db_session, fake_msp_admin):
+def test_dry_run_never_writes_scope_entity(client, db_session, fake_msp_admin):
+    """Still true after the 2026-09-22 fix even though this call now
+    persists a LiongardSyncResult for the NEW rows in the default fixture
+    (test_dry_run_with_new_entities_queues_them_for_approval covers that
+    write) -- scope_entity itself is untouched either way. That's the
+    actual invariant this endpoint's docstring calls "never writes
+    scope_entity", not "no writes at all".
+    """
     org = _org(db_session, fake_msp_admin)
     _set_credential(client)
     client.put(
@@ -606,11 +727,20 @@ def test_dry_run_surfaces_liongard_api_error_as_502(
 
 
 # ---------------------------------------------------------------------------
-# Apply (reuses POST /imports/workbook/apply unmodified)
+# NEW entities: refused by apply, written only via approval (2026-09-22)
 # ---------------------------------------------------------------------------
 
 
-def test_apply_writes_scope_entities_with_liongard_provenance(client, db_session, fake_msp_admin):
+def test_new_entities_reach_scope_entity_only_via_approval_with_liongard_provenance(
+    client, db_session, fake_msp_admin
+):
+    """Renamed from test_apply_writes_scope_entities_with_liongard_provenance:
+    that test's premise (apply writes a brand-new liongard entity) is
+    exactly the bug this fix closes -- see liongard_sync_dry_run's
+    docstring. Same coverage, correct mechanism: apply is refused, approve
+    is what actually writes scope_entity, and it must still carry the
+    right provenance.
+    """
     org = _org(db_session, fake_msp_admin)
     _set_credential(client)
     client.put(
@@ -619,31 +749,37 @@ def test_apply_writes_scope_entities_with_liongard_provenance(client, db_session
     )
     dry_run = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
 
-    r = client.post(f"/orgs/{org.id}/imports/workbook/apply", json={"changes": dry_run["changes"]})
-    assert r.status_code == 200
-    assert r.json()["applied"] == 2
+    blocked = client.post(
+        f"/orgs/{org.id}/imports/workbook/apply", json={"changes": dry_run["changes"]}
+    )
+    assert blocked.status_code == 409
+
+    assert _approve_all_new(client, org.id, dry_run["sync_result_id"]) == 2
 
     rows = db_session.scalars(select(ScopeEntity).where(ScopeEntity.org_id == org.id)).all()
     assert len(rows) == 2
     for row in rows:
+        assert row.status == "active"
         assert row.source == "liongard"
         assert row.source_ref is not None
         assert "liongard:environment=8815" in row.source_ref
 
     audit_entries = db_session.scalars(
-        select(AuditLog).where(AuditLog.action == "scope_entity.import_apply")
+        select(AuditLog).where(AuditLog.action == "asset_approval.approve")
     ).all()
     assert len(audit_entries) == 2
-    assert all(e.context["source"] == "liongard" for e in audit_entries)
 
 
-def test_applied_device_shows_display_name_and_last_login_user(
+def test_approved_device_shows_display_name_and_last_login_user(
     client, db_session, fake_msp_admin, _stub_liongard
 ):
-    """The actual feature this slice adds: display_name (Alias -> Hostname
-    -> natural_key) and last_login_user survive the real dry-run -> apply
-    -> DB round trip, through the deployed HTTP layer, not just the
-    importer's own unit tests.
+    """Renamed from test_applied_device_shows_display_name_and_last_login_user
+    for the same reason as the test above. WL-LT26 is the exact device
+    from the live bug report (dev.wingrc.us, 2026-09-22) -- display_name
+    (Alias -> Hostname -> natural_key) and last_login_user must survive
+    the real dry-run -> approve -> DB round trip through the deployed HTTP
+    layer, not just the importer's own unit tests, for the device that
+    actually got stranded.
     """
     org = _org(db_session, fake_msp_admin)
     _set_credential(client)
@@ -655,9 +791,11 @@ def test_applied_device_shows_display_name_and_last_login_user(
         {**_device_row("WL-DT26"), "Alias": "Jarrods Desktop", "LastLoginUser": "jarrod"},
         {**_device_row("WL-LT26"), "Alias": None, "LastLoginUser": "WINSORLABS\\jarrod.winsor"},
     ]
+    # Isolate to devices -- the default identity fixture would otherwise
+    # also show as NEW and contaminate the approved-count assertion below.
+    _stub_liongard["identities"] = []
     dry_run = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
-    r = client.post(f"/orgs/{org.id}/imports/workbook/apply", json={"changes": dry_run["changes"]})
-    assert r.status_code == 200
+    assert _approve_all_new(client, org.id, dry_run["sync_result_id"]) == 2
 
     devices = {
         row.natural_key: row
@@ -676,6 +814,7 @@ def test_applied_device_shows_display_name_and_last_login_user(
     assert unaliased.attributes["display_name"] == "WL-LT26"  # falls back to Hostname
     assert unaliased.attributes["last_login_user"] == "WINSORLABS\\jarrod.winsor"
     assert "responsible_contact_id" not in unaliased.attributes
+    assert unaliased.status == "active"
 
 
 def test_first_sync_after_upgrade_shows_changed_once_then_second_sync_is_clean(
@@ -774,14 +913,15 @@ def test_first_sync_after_upgrade_shows_changed_once_then_second_sync_is_clean(
     assert second["changes"] == []
 
 
-def test_second_dry_run_after_apply_reports_no_new_or_changed(
+def test_second_dry_run_after_approval_reports_no_new_or_changed(
     client, db_session, fake_msp_admin
 ):
-    """The re-run-after-apply check the task's own Verify section calls
-    for: applying a pull, then re-running the identical pull, must not
-    report spurious NEW/CHANGED rows -- that would mean either natural-key
-    matching or the mac_addresses order-insensitivity in reconcile.py
-    isn't actually wired through this path.
+    """The re-run-after-accept check the task's own Verify section calls
+    for: accepting a pull's entities, then re-running the identical pull,
+    must not report spurious NEW/CHANGED rows -- that would mean either
+    natural-key matching or the mac_addresses order-insensitivity in
+    reconcile.py isn't actually wired through this path. "Accepting" is
+    approval now, not apply -- both rows here are NEW.
     """
     org = _org(db_session, fake_msp_admin)
     _set_credential(client)
@@ -790,7 +930,7 @@ def test_second_dry_run_after_apply_reports_no_new_or_changed(
         json={"liongard_environment_id": 8815},
     )
     first = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
-    client.post(f"/orgs/{org.id}/imports/workbook/apply", json={"changes": first["changes"]})
+    assert _approve_all_new(client, org.id, first["sync_result_id"]) == 2
 
     second = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
     assert second["summary"]["new"] == 0

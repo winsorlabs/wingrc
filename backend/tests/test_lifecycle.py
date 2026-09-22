@@ -105,7 +105,6 @@ from app.auth import get_current_user
 from app.connectors import liongard as liongard_module
 from app.crypto import encrypt_credential
 from app.db import get_session
-from app.domain import CanonicalEntity, EntityStatus, EntityType, Source
 from app.main import app
 from app.models import (
     AssetApproval,
@@ -124,7 +123,6 @@ from app.models import (
     ScopeEntity,
     SprsSnapshot,
 )
-from app.repo import upsert as repo_upsert
 from app.seeds.baselines import seed_baselines
 from app.seeds.catalog import seed_catalog
 from app.storage import StorageClient, get_storage_client
@@ -432,31 +430,93 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
         "exists on the network either way"
     )
 
-    # SURPRISE candidate, checked directly: the ordinary manual scope PATCH
-    # has no awareness of pending_approval at all. Confirmed live here, not
-    # just by reading the code -- see the report for why this is left as a
-    # finding, not fixed in this pass (touches who is authorized to admit
-    # an asset into the boundary; the correct shape of a fix is a product
-    # decision, not an obvious one-liner).
-    bypass_row = repo_upsert(
-        db_session, org.id,
-        CanonicalEntity(
-            entity_type=EntityType.DEVICE, natural_key="SN-LT-BYPASS-CHECK",
-            status=EntityStatus.PENDING_APPROVAL, source=Source.LIONGARD,
+    # ------------------------------------------------------------------ #
+    # Step 3b — the OTHER Liongard entry point (Assets screen's "Sync      #
+    # from Liongard": dry-run + apply). Step 3 above only exercises        #
+    # sync-now (Asset Approvals' own button) -- this is the exact bug      #
+    # from dev.wingrc.us, 2026-09-22: a NEW device found through this      #
+    # entry point instead must reach scope_entity only via approval, the   #
+    # same as Step 3's devices, never directly through apply.              #
+    # ------------------------------------------------------------------ #
+    mp = pytest.MonkeyPatch()
+    mp.setattr(
+        liongard_module, "pull_device_profiles",
+        lambda config, credential, environment_id: liongard_module.InventoryPull(
+            records=[_device_row("LT-ASSETS-SCREEN")], total_count=1,
         ),
     )
+    mp.setattr(
+        liongard_module, "pull_identities",
+        lambda config, credential, environment_id: liongard_module.InventoryPull(
+            records=[], total_count=0
+        ),
+    )
+    try:
+        dry_run = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
+        assert dry_run["summary"]["new"] == 1
+        assert dry_run["sync_result_id"] is not None
+
+        blocked = client.post(
+            f"/orgs/{org.id}/imports/workbook/apply", json={"changes": dry_run["changes"]}
+        )
+        assert blocked.status_code == 409, (
+            "the Assets-screen entry point must not be able to write a NEW "
+            "liongard entity to scope_entity directly -- that's the exact bug"
+        )
+        assert db_session.scalars(
+            select(ScopeEntity).where(ScopeEntity.natural_key == "SN-LT-ASSETS-SCREEN")
+        ).first() is None, "the refused apply must not have written anything"
+
+        detail = client.get(
+            f"/orgs/{org.id}/liongard-sync-results/{dry_run['sync_result_id']}"
+        ).json()
+        change = next(c for c in detail["changes"] if c["natural_key"] == "SN-LT-ASSETS-SCREEN")
+        r = client.post(
+            f"/orgs/{org.id}/liongard-sync-results/{dry_run['sync_result_id']}"
+            f"/changes/{change['id']}/approve",
+            json={"checklist_confirmations": {}},
+        )
+        assert r.status_code == 200, r.text
+        assets_screen_entity_id = r.json()["scope_entity_id"]
+    finally:
+        mp.undo()
+
+    db_session.expire_all()
+    assets_screen_entity = db_session.get(ScopeEntity, uuid.UUID(assets_screen_entity_id))
+    assert assets_screen_entity.status == "active" and assets_screen_entity.in_boundary is True
+
+    # FIXED 2026-09-22 (was a documented FINDING, not a fix, in this same
+    # block): the ordinary manual scope PATCH had no awareness of
+    # pending_approval at all -- confirmed live, not just by reading the
+    # code. repo.upsert() now refuses to write status=pending_approval at
+    # all (so the row below can no longer be constructed through
+    # repo.upsert -- built as a raw ScopeEntity row instead, simulating a
+    # row already stranded in that state, e.g. from before this fix
+    # shipped) and refuses to touch an *existing* pending_approval row
+    # through anything except approve_change/reject_change. See
+    # repo.PendingApprovalWriteError and docs/roadmap.md's Liongard sync
+    # entry for the full incident this closes (findings 1 and 3).
+    db_session.add(ScopeEntity(
+        org_id=org.id, entity_type="device", natural_key="SN-LT-BYPASS-CHECK",
+        status="pending_approval", source="liongard",
+    ))
     db_session.commit()
+    bypass_row = db_session.scalars(
+        select(ScopeEntity).where(ScopeEntity.natural_key == "SN-LT-BYPASS-CHECK")
+    ).one()
+
     r = client.patch(f"/orgs/{org.id}/scope/{bypass_row.id}", json={"status": "active"})
-    assert r.status_code == 200, (
-        "FINDING: the ordinary scope PATCH endpoint has no guard against "
-        "promoting a pending_approval entity to active outside the approval "
-        "workflow -- no AssetApproval row, no checklist, no approval-specific "
-        "audit action. If this ever starts 422ing, the finding was fixed; "
-        "update this test to assert the refusal instead of documenting the gap."
+    assert r.status_code == 409, (
+        "the ordinary scope PATCH endpoint must refuse to promote a "
+        "pending_approval entity to active outside the approval workflow"
+    )
+    db_session.expire_all()
+    assert db_session.get(ScopeEntity, bypass_row.id).status == "pending_approval", (
+        "refused write must not have partially applied"
     )
     assert db_session.scalars(
         select(AssetApproval).where(AssetApproval.scope_entity_id == bypass_row.id)
-    ).first() is None, "confirms: promoted with no acceptance record at all"
+    ).first() is None, "confirms: nothing was promoted, no acceptance record either"
 
     # ------------------------------------------------------------------ #
     # Step 4 — Collect evidence until IR.L2-3.6.1 (all seven objectives)  #

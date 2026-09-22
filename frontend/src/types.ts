@@ -643,6 +643,10 @@ export interface DryRunResult {
   // already matches," and "found records but none are confirmed
   // (Inventory state) yet" apart; this can.
   pull_status: LiongardPullStatus[];
+  // Set only by the Liongard dry-run endpoint, and only when it found at
+  // least one NEW entity -- the LiongardSyncResult it just persisted for
+  // Asset Approvals (2026-09-22 fix). Always null for the workbook path.
+  sync_result_id: string | null;
 }
 
 export interface LiongardPullStatus {
