@@ -5018,8 +5018,11 @@ test that already exists twice.
 
 **Verification:** bench-stack on an isolated wl-util-1 Docker Compose
 project (live `wingrc` project confirmed untouched before and after) --
-NNNN/NNNN backend tests, `ruff check .` clean, NNN/NNN frontend tests,
-`tsc -b` clean, `vite build` clean. Merged to `main`, deployed to
+1344/1344 backend tests, `ruff check .` clean (one line-length fix needed
+during the run), 156/156 frontend tests (23 files, including
+`AssetDrawer.test.tsx` at 8/8 and `AssetsPanel.test.tsx` at 4/4), `tsc -b`
+clean, `vite build` clean. `test_revision_ids_fit_alembic_version_column`
+confirmed explicitly against `0058`. Merged to `main`, deployed to
 `dev.wingrc.us` -- migration `0058` re-keyed WinsorLabs' one affected row
 live, confirmed by direct query afterward.
 
