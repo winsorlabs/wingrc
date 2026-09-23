@@ -20,7 +20,13 @@ from app.db import get_session
 from app.domain import ChangeType
 from app.importers.workbook import parse_workbook, resolve_canonical_device_attributes
 from app.main import app
-from app.models import AssetApproval, AssetApprovalChecklistItem, AuditLog, Organization, ScopeEntity
+from app.models import (
+    AssetApproval,
+    AssetApprovalChecklistItem,
+    AuditLog,
+    Organization,
+    ScopeEntity,
+)
 from app.reconcile import reconcile
 from tests.conftest import _app_session, _authed, _grant, _make_fake_user
 
@@ -578,7 +584,9 @@ def test_approval_history_most_recent_first_never_hides_earlier_decisions(
     entity = _device(db_session, org)
     first = _approval(db_session, org, entity, decision="rejected", rejection_reason="Not yet.")
     db_session.commit()
-    second = _approval(db_session, org, entity, decision="approved", decided_by_name="Later Reviewer")
+    second = _approval(
+        db_session, org, entity, decision="approved", decided_by_name="Later Reviewer"
+    )
     db_session.commit()
 
     body = client.get(f"/orgs/{org.id}/scope/{entity.id}/approvals").json()
