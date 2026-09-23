@@ -199,16 +199,29 @@ def test_device_with_only_known_fields_produces_no_unknown_attribute_warning():
 
 def test_real_winsorlabs_device_produces_no_unknown_attribute_warning():
     """Against real, live-captured data (not a synthetic fixture) -- if
-    this ever starts warning, it means either Liongard changed its schema
-    (extend the known-field sets) or the known-field sets drifted from
-    reality. Also pins down display_name/natural_key against the exact
-    real record this whole slice was designed around.
+    this ever starts warning about an *unrecognized attribute*, it means
+    either Liongard changed its schema (extend the known-field sets) or
+    the known-field sets drifted from reality. Also pins down display_
+    name/natural_key against the exact real record this whole slice was
+    designed around.
+
+    natural_key/warnings updated 2026-09-24: this record's own
+    SerialNumber, "System Serial Number", is ASUS's BIOS placeholder, not
+    a real serial (docs/roadmap.md's device-identity entry has the full
+    finding -- this exact record is what surfaced it, confirmed live).
+    Before the fix, this asserted natural_key == "System Serial Number"
+    and warnings == [] -- both described the bug, not a scenario this
+    module should keep reproducing. It now falls through to Hostname, one
+    warning names why.
     """
     entity, warnings = device_profile_to_canonical(_REAL_WINSORLABS_DEVICE_RECORD, "liongard:test")
     assert entity is not None
-    assert warnings == []
-    assert entity.natural_key == "System Serial Number"
+    assert len(warnings) == 1
+    assert "System Serial Number" in warnings[0]
+    assert "placeholder" in warnings[0]
+    assert entity.natural_key == "WL-DT26"
     assert entity.attributes["display_name"] == "Jarrods Desktop"
+    assert entity.attributes["hostname"] == "WL-DT26"
     assert entity.attributes["last_login_user"] == "jarrod"
 
 
@@ -245,6 +258,61 @@ def test_device_with_neither_serial_nor_hostname_is_skipped():
     assert entity is None
     assert len(warnings) == 1
     assert "neither SerialNumber nor Hostname" in warnings[0]
+
+
+# ---------------------------------------------------------------------------
+# Placeholder serials (2026-09-24) -- an OEM/BIOS placeholder value must not
+# become the reconcile identity; see _PLACEHOLDER_SERIALS' own docstring for
+# the live finding this closes and docs/roadmap.md's device-identity entry
+# for the full collision-risk writeup.
+# ---------------------------------------------------------------------------
+
+
+def test_device_placeholder_serial_falls_through_to_hostname():
+    record = {**_DEVICE_RECORD, "SerialNumber": "System Serial Number"}
+    entity, warnings = device_profile_to_canonical(record, "liongard:test")
+    assert entity is not None
+    assert entity.natural_key == "SBX-Mini-01"
+    assert len(warnings) == 1
+    assert "placeholder" in warnings[0]
+
+
+def test_device_placeholder_serial_detection_is_case_insensitive_and_trimmed():
+    record = {**_DEVICE_RECORD, "SerialNumber": "  TO BE FILLED BY O.E.M.  "}
+    entity, _ = device_profile_to_canonical(record, "liongard:test")
+    assert entity is not None
+    assert entity.natural_key == "SBX-Mini-01"
+
+
+def test_device_placeholder_serial_with_no_hostname_is_skipped_not_keyed_on_placeholder():
+    record = {**_DEVICE_RECORD, "SerialNumber": "Not Applicable", "Hostname": None}
+    entity, warnings = device_profile_to_canonical(record, "liongard:test")
+    assert entity is None
+    assert any("placeholder" in w for w in warnings)
+    assert any("neither SerialNumber nor Hostname" in w for w in warnings)
+
+
+def test_two_devices_sharing_a_placeholder_serial_produce_two_distinct_entities():
+    """The actual bug, reproduced directly: before the fix, both of these
+    would key on the literal string "System Serial Number" and collide
+    onto one scope_entity row via reconcile.py's (entity_type,
+    natural_key) matching -- one device silently vanishing from the
+    boundary. Confirmed live: exactly this shape is why the fix exists
+    (docs/roadmap.md's device-identity entry has the survey).
+    """
+    device_a = {**_DEVICE_RECORD, "Hostname": "DESK-A", "SerialNumber": "System Serial Number"}
+    device_b = {**_DEVICE_RECORD, "Hostname": "DESK-B", "SerialNumber": "System Serial Number"}
+    entity_a, _ = device_profile_to_canonical(device_a, "liongard:test")
+    entity_b, _ = device_profile_to_canonical(device_b, "liongard:test")
+    assert entity_a is not None and entity_b is not None
+    assert entity_a.natural_key != entity_b.natural_key
+    assert {entity_a.natural_key, entity_b.natural_key} == {"DESK-A", "DESK-B"}
+
+
+def test_device_hostname_populates_the_new_canonical_attribute():
+    entity, _ = device_profile_to_canonical(_DEVICE_RECORD, "liongard:test")
+    assert entity is not None
+    assert entity.attributes["hostname"] == "SBX-Mini-01"
 
 
 def test_device_never_sets_responsible_contact_id():

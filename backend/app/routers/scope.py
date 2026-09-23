@@ -159,8 +159,12 @@ class DeviceSoftwareAttributes(BaseModel):
     # this field exists purely so the asset drawer can show it, clearly
     # labeled as an observed last login, not an owner.
     last_login_user: str | None = None
+    # Liongard's Hostname, alongside display_name rather than instead of
+    # it -- see domain.py:DEVICE_SOFTWARE_CANONICAL_ATTRIBUTES's own
+    # comment for why both are shown (2026-09-24).
+    hostname: str | None = None
 
-    @field_validator("asset_tag", "display_name", "last_login_user")
+    @field_validator("asset_tag", "display_name", "last_login_user", "hostname")
     @classmethod
     def _strip_optional_text(cls, v: str | None) -> str | None:
         if v is None:

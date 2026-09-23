@@ -828,6 +828,14 @@ def test_first_sync_after_upgrade_shows_changed_once_then_second_sync_is_clean(
     in telemetry, must be clean. The first run alone proves nothing (it's
     supposed to show a real diff); the second run is the actual proof this
     slice's fix works.
+
+    2026-09-24: `hostname` joined the canonical vocabulary the same way
+    `display_name` did in the original slice, so this same pre-existing
+    row (no `hostname` key at all, same as it once had no `display_name`
+    key) picks up a second one-time field on this same first pull --
+    checked directly here rather than assumed, per the device-identity
+    slice's own instruction to confirm this doesn't reintroduce diff
+    noise. Still exactly one CHANGED, still clean on the second pull.
     """
     org = _org(db_session, fake_msp_admin)
     _set_credential(client)
@@ -889,7 +897,7 @@ def test_first_sync_after_upgrade_shows_changed_once_then_second_sync_is_clean(
     assert first["summary"]["changed"] == 1
     change = first["changes"][0]
     assert change["change_type"] == "changed"
-    assert set(change["field_diffs"]) == {"display_name"}
+    assert set(change["field_diffs"]) == {"display_name", "hostname"}
     apply_result = client.post(
         f"/orgs/{org.id}/imports/workbook/apply", json={"changes": first["changes"]}
     )
@@ -911,6 +919,50 @@ def test_first_sync_after_upgrade_shows_changed_once_then_second_sync_is_clean(
     second = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
     assert second["summary"] == {"new": 0, "changed": 0, "missing": 0, "unchanged": 1}
     assert second["changes"] == []
+
+
+def test_hostname_unchanged_across_pulls_stays_clean(client, db_session, fake_msp_admin):
+    """Baseline noise check for hostname joining the comparable set
+    (2026-09-24): a device already carrying `hostname` (applied fresh,
+    not a pre-existing row) must not show CHANGED again on an identical
+    second pull -- hostname is stable data, not per-poll telemetry like
+    LastSeen/UpdatedOn, so it must never behave like the noise those
+    fields were excluded for."""
+    org = _org(db_session, fake_msp_admin)
+    _set_credential(client)
+    client.put(
+        f"/orgs/{org.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    first = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
+    assert _approve_all_new(client, org.id, first["sync_result_id"]) == 2
+
+    second = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
+    assert second["summary"]["changed"] == 0
+    assert second["changes"] == []
+
+
+def test_hostname_rename_shows_as_changed(client, db_session, fake_msp_admin, _stub_liongard):
+    """The B1 decision, checked directly: a hostname rename is a real,
+    meaningful change a reviewer should see -- not telemetry like
+    last_login_user, so it belongs in the comparable set, not excluded
+    from it."""
+    org = _org(db_session, fake_msp_admin)
+    _set_credential(client)
+    client.put(
+        f"/orgs/{org.id}/integrations/liongard/environment",
+        json={"liongard_environment_id": 8815},
+    )
+    _stub_liongard["identities"] = []
+    first = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
+    assert _approve_all_new(client, org.id, first["sync_result_id"]) == 1
+
+    _stub_liongard["devices"] = [{**_device_row("SBX-Mini-01"), "Hostname": "SBX-Mini-02"}]
+    second = client.post(f"/orgs/{org.id}/integrations/liongard/sync/dry-run").json()
+    assert second["summary"]["changed"] == 1
+    change = second["changes"][0]
+    assert change["change_type"] == "changed"
+    assert "hostname" in change["field_diffs"]
 
 
 def test_second_dry_run_after_approval_reports_no_new_or_changed(

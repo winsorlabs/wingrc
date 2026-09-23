@@ -37,6 +37,7 @@ from app.engine import start_assessment
 from app.main import app
 from app.models import (
     AssessmentObjective,
+    AssetApproval,
     AuditLog,
     BaselineControl,
     Contact,
@@ -48,6 +49,8 @@ from app.models import (
     EvidenceStateLink,
     Framework,
     ImplementationStatement,
+    LiongardSyncResult,
+    LiongardSyncResultChange,
     Organization,
     Product,
     ProductBaselineVersion,
@@ -1114,6 +1117,244 @@ def test_bundle_inventory_empty_org_shows_none_recorded(
         html = _inventory_html(zf)
 
     assert "None recorded." in html
+
+
+# ---------------------------------------------------------------------------
+# Pending assets and acceptance provenance (2026-09-24 -- the A1/A2 decision:
+# docs/roadmap.md's "component inventory and acceptance status" entry)
+# ---------------------------------------------------------------------------
+
+
+def _pending_change(
+    db_session, org_id: uuid.UUID, *, natural_key: str, entity_type: str = "device",
+    pulled_at: datetime | None = None, attributes: dict | None = None,
+) -> LiongardSyncResultChange:
+    """A still-unresolved change_type='new' row -- the only trace of a
+    Liongard-observed entity that has no scope_entity row at all
+    (repo.PendingApprovalWriteError). Mirrors liongard_sync.py's own
+    _entity_to_jsonb shape for `incoming`.
+    """
+    result = LiongardSyncResult(
+        org_id=org_id, liongard_environment_id=8815, liongard_environment_name="Test Env",
+        pulled_at=pulled_at or datetime(2026, 9, 20, tzinfo=UTC), status="pending_review",
+    )
+    db_session.add(result)
+    db_session.flush()
+    change = LiongardSyncResultChange(
+        sync_result_id=result.id, org_id=org_id, change_type="new", entity_type=entity_type,
+        natural_key=natural_key, resolution="pending",
+        incoming={
+            "entity_type": entity_type, "natural_key": natural_key,
+            "attributes": attributes or {}, "scope_category": None,
+            "status": "pending_approval", "in_boundary": True,
+            "source": "liongard", "source_ref": "liongard:environment=8815:pulled_at=now",
+        },
+    )
+    db_session.add(change)
+    db_session.flush()
+    return change
+
+
+@pytest.mark.integration
+def test_bundle_inventory_includes_pending_asset_marked_awaiting_acceptance(
+    client, db_session, storage, fake_msp_admin
+):
+    """A1's decision: a Liongard-observed device with no scope_entity row
+    at all (nobody has approved or rejected it yet) still appears in the
+    inventory, clearly marked -- it's physically on the network whether or
+    not anyone's clicked approve. Confirms the premise first: no
+    scope_entity row exists for this natural key at all.
+    """
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    _pending_change(
+        db_session, d["org"].id, natural_key="SN-PENDING-01",
+        attributes={"make_oem": "Dell", "model": "Latitude 5420"},
+    )
+    db_session.commit()
+
+    assert db_session.scalars(
+        select(ScopeEntity).where(ScopeEntity.natural_key == "SN-PENDING-01")
+    ).first() is None, "premise: a pending entity must have no scope_entity row at all"
+
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        html = _inventory_html(zf)
+
+    assert "SN-PENDING-01" in html
+    assert "Dell" in html
+    assert "Pending Approval" in html
+    assert "Pending</span>" in html
+
+
+@pytest.mark.integration
+def test_bundle_inventory_does_not_duplicate_pending_asset_across_superseded_syncs(
+    client, db_session, storage, fake_msp_admin
+):
+    """The same still-unresolved device can accumulate more than one 'new'
+    change row if a later sync supersedes the one that first found it
+    (persist_sync_result's own supersede policy) before anyone decides --
+    the inventory must show it once, from the most recently pulled row."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    _pending_change(
+        db_session, d["org"].id, natural_key="SN-SUPERSEDED-01",
+        pulled_at=datetime(2026, 9, 18, tzinfo=UTC), attributes={"model": "Old Pull"},
+    )
+    _pending_change(
+        db_session, d["org"].id, natural_key="SN-SUPERSEDED-01",
+        pulled_at=datetime(2026, 9, 20, tzinfo=UTC), attributes={"model": "New Pull"},
+    )
+    db_session.commit()
+
+    r = client.get(_bundle_url(d))
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        html = _inventory_html(zf)
+
+    assert html.count("SN-SUPERSEDED-01") == 1
+    assert "New Pull" in html
+    assert "Old Pull" not in html
+
+
+@pytest.mark.integration
+def test_bundle_inventory_shows_approver_name_and_timestamp(
+    client, db_session, storage, fake_msp_admin
+):
+    """A2: who accepted this device, and when -- from the stored
+    AssetApproval snapshot, rendered verbatim (never a live join, same
+    discipline as AssetDrawer)."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    entity = ScopeEntity(
+        org_id=d["org"].id, entity_type="device", natural_key="SN-ACCEPTED-01",
+        status="active", in_boundary=True, source="liongard", attributes={},
+    )
+    db_session.add(entity)
+    db_session.flush()
+    db_session.add(AssetApproval(
+        org_id=d["org"].id, scope_entity_id=entity.id, decision="approved",
+        decided_by=str(uuid.uuid4()), decided_by_name="Jane Reviewer",
+        decided_at=datetime(2026, 9, 20, 14, 30, tzinfo=UTC),
+    ))
+    db_session.commit()
+
+    r = client.get(_bundle_url(d))
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        html = _inventory_html(zf)
+
+    assert "SN-ACCEPTED-01" in html
+    assert "Jane Reviewer" in html
+    assert "2026-09-20 14:30 UTC" in html
+
+
+@pytest.mark.integration
+def test_bundle_inventory_approver_name_is_the_stored_snapshot(
+    client, db_session, storage, fake_msp_admin
+):
+    """Same discipline as AssetDrawer's own test: the stored decided_by_name
+    is rendered exactly as it was at decision time, never re-derived --
+    stored here under a name distinct from fake_msp_admin's own current
+    display_name, which is what must NOT appear."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    entity = ScopeEntity(
+        org_id=d["org"].id, entity_type="device", natural_key="SN-SNAPSHOT-01",
+        status="active", in_boundary=True, source="liongard", attributes={},
+    )
+    db_session.add(entity)
+    db_session.flush()
+    db_session.add(AssetApproval(
+        org_id=d["org"].id, scope_entity_id=entity.id, decision="approved",
+        decided_by=str(uuid.uuid4()), decided_by_name="Former Name Co-Worker",
+        decided_at=datetime(2026, 9, 20, tzinfo=UTC),
+    ))
+    db_session.commit()
+
+    r = client.get(_bundle_url(d))
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        html = _inventory_html(zf)
+
+    assert "Former Name Co-Worker" in html
+    assert fake_msp_admin.display_name not in html
+
+
+@pytest.mark.integration
+def test_bundle_inventory_asset_with_no_approval_record_shows_no_acceptance_data(
+    client, db_session, storage, fake_msp_admin
+):
+    """Manually-added / workbook-imported assets never went through
+    approval at all -- N/A, not a blank or misleading field, matching
+    AssetDrawer's own "shows nothing" rule for the same case."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    db_session.add(ScopeEntity(
+        org_id=d["org"].id, entity_type="device", natural_key="SN-MANUAL-01",
+        status="active", in_boundary=True, source="manual", attributes={},
+    ))
+    db_session.commit()
+
+    r = client.get(_bundle_url(d))
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        html = _inventory_html(zf)
+
+    assert "SN-MANUAL-01" in html
+    assert db_session.scalars(select(AssetApproval)).first() is None
+
+
+@pytest.mark.integration
+def test_bundle_inventory_uses_most_recent_approval_when_more_than_one_exists(
+    client, db_session, storage, fake_msp_admin
+):
+    """An asset can accumulate more than one asset_approval row (not
+    reachable through today's UI, per the previous slice's own finding) --
+    the inventory shows the most recent decision, same as AssetDrawer's
+    default view."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    entity = ScopeEntity(
+        org_id=d["org"].id, entity_type="device", natural_key="SN-HISTORY-01",
+        status="active", in_boundary=True, source="liongard", attributes={},
+    )
+    db_session.add(entity)
+    db_session.flush()
+    db_session.add(AssetApproval(
+        org_id=d["org"].id, scope_entity_id=entity.id, decision="rejected",
+        decided_by=str(uuid.uuid4()), decided_by_name="Earlier Reviewer",
+        decided_at=datetime(2026, 9, 1, tzinfo=UTC), rejection_reason="Not yet.",
+    ))
+    db_session.add(AssetApproval(
+        org_id=d["org"].id, scope_entity_id=entity.id, decision="approved",
+        decided_by=str(uuid.uuid4()), decided_by_name="Later Reviewer",
+        decided_at=datetime(2026, 9, 20, tzinfo=UTC),
+    ))
+    db_session.commit()
+
+    r = client.get(_bundle_url(d))
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        html = _inventory_html(zf)
+
+    assert "Later Reviewer" in html
+    assert "Earlier Reviewer" not in html
+
+
+@pytest.mark.integration
+def test_bundle_inventory_pending_asset_does_not_affect_sprs(
+    client, db_session, storage, fake_msp_admin
+):
+    """Scope entities never feed compute_sprs (assessment.py takes only
+    control_weights/objectives_by_control/objective_statuses) -- asserted
+    directly anyway, same discipline as test_pending_approval_and_decided_
+    assets_never_touch_sprs in test_liongard_sync_approval_api.py."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+    db_session.expire_all()
+    before_score = db_session.get(type(d["assessment"]), d["assessment"].id).sprs_score
+
+    _pending_change(db_session, d["org"].id, natural_key="SN-SPRS-CHECK-01")
+    db_session.commit()
+
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+    db_session.expire_all()
+    after_score = db_session.get(type(d["assessment"]), d["assessment"].id).sprs_score
+
+    assert after_score == before_score
 
 
 @pytest.mark.integration
