@@ -2612,8 +2612,11 @@ class AssetApproval(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("organization.id"), index=True
     )
+    # RESTRICT, not CASCADE (migration 0057) -- deleting an asset must not
+    # be able to silently take its own acceptance record with it. See that
+    # migration's own docstring for why RESTRICT was chosen over SET NULL.
     scope_entity_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("scope_entity.id", ondelete="CASCADE"), index=True
+        UUID(as_uuid=True), ForeignKey("scope_entity.id", ondelete="RESTRICT"), index=True
     )
     sync_result_change_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),

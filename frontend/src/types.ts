@@ -612,6 +612,24 @@ export interface ScopeEntity {
   attributes: Record<string, unknown>;
 }
 
+export interface AssetApprovalChecklistItem {
+  product_key: string;
+  product_name: string;
+  confirmed: boolean;
+}
+
+export interface AssetApproval {
+  id: string;
+  decision: "approved" | "rejected";
+  // The reviewer's name as stored at decision time -- render this
+  // verbatim, never re-derive it from a live user lookup (see
+  // AssetApproval's own backend docstring).
+  decided_by_name: string;
+  decided_at: string;
+  rejection_reason: string | null;
+  checklist: AssetApprovalChecklistItem[];
+}
+
 export interface ScopeChangeIncoming {
   scope_category: string | null;
   status: string;

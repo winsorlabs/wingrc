@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Contact, ScopeEntity } from "../types";
+import type { AssetApproval, Contact, ScopeEntity } from "../types";
+
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString();
+}
 
 const ASSET_TYPES = [
   { value: "device", label: "Device" },
@@ -82,6 +86,33 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Acceptance record (2026-09-23) -- read-only, display only. null while
+  // loading/not applicable (a brand-new asset has no id to fetch), [] once
+  // loaded with no rows (manual entry, workbook import -- a normal case,
+  // rendered as nothing, not an empty state).
+  const [approvals, setApprovals] = useState<AssetApproval[] | null>(null);
+  const [showApprovalHistory, setShowApprovalHistory] = useState(false);
+  const [showChecklist, setShowChecklist] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setShowApprovalHistory(false);
+    setShowChecklist(new Set());
+    if (!asset) {
+      setApprovals(null);
+      return;
+    }
+    api.getScopeEntityApprovals(orgId, asset.id).then(setApprovals).catch(() => setApprovals([]));
+  }, [orgId, asset]);
+
+  function toggleChecklist(approvalId: string) {
+    setShowChecklist((prev) => {
+      const next = new Set(prev);
+      if (next.has(approvalId)) next.delete(approvalId);
+      else next.add(approvalId);
+      return next;
+    });
+  }
 
   useEffect(() => {
     api.getContacts(orgId).then(setContacts).catch(() => {});
@@ -194,6 +225,44 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
     setMacAddresses((prev) => prev.filter((_, i) => i !== index));
   }
 
+  function renderApprovalEntry(a: AssetApproval) {
+    const confirmedCount = a.checklist.filter((c) => c.confirmed).length;
+    return (
+      <div key={a.id}>
+        <span
+          className={`status-badge ${a.decision === "approved" ? "status-active" : "status-warning"}`}
+        >
+          {a.decision === "approved" ? "Approved" : "Rejected"}
+        </span>{" "}
+        by {a.decided_by_name} on {formatDateTime(a.decided_at)}
+        {a.decision === "rejected" && a.rejection_reason && (
+          <div className="field-hint">{a.rejection_reason}</div>
+        )}
+        {a.checklist.length > 0 && (
+          <div>
+            <button
+              type="button"
+              className="btn-ghost btn-xs"
+              onClick={() => toggleChecklist(a.id)}
+            >
+              {showChecklist.has(a.id) ? "Hide" : "Show"} checklist ({confirmedCount}/
+              {a.checklist.length} confirmed)
+            </button>
+            {showChecklist.has(a.id) && (
+              <ul className="field-hint">
+                {a.checklist.map((c) => (
+                  <li key={c.product_key}>
+                    {c.confirmed ? "✓" : "—"} {c.product_name}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   const showSpecializedAssetHint =
     entityType === "device" &&
     SPECIALIZED_ASSET_SUBTYPES.has(deviceSubtype) &&
@@ -208,6 +277,32 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
         </div>
         <div className="drawer-body">
           {error && <div className="form-error">{error}</div>}
+
+          {approvals && approvals.length > 0 && (
+            <div className="form-field">
+              <label>Approval</label>
+              {renderApprovalEntry(approvals[0])}
+              {approvals.length > 1 && (
+                <button
+                  type="button"
+                  className="btn-ghost btn-xs"
+                  onClick={() => setShowApprovalHistory((v) => !v)}
+                >
+                  {showApprovalHistory ? "Hide" : "View"} full history ({approvals.length})
+                </button>
+              )}
+              {showApprovalHistory && (
+                <div
+                  style={{
+                    display: "flex", flexDirection: "column", gap: "0.5rem",
+                    borderTop: "1px solid var(--border)", paddingTop: "0.5rem", marginTop: "0.25rem",
+                  }}
+                >
+                  {approvals.slice(1).map((a) => renderApprovalEntry(a))}
+                </div>
+              )}
+            </div>
+          )}
 
           <fieldset className="fieldset-reset" disabled={!canWrite}>
             <div className="form-grid">

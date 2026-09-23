@@ -4776,6 +4776,90 @@ running it. Merged to `main`, deployed to `dev.wingrc.us`.
 
 ---
 
+### Show the acceptance record on the asset itself ✅ DONE (2026-09-23)
+
+Small slice, asked for after running the approval workflow end to end on
+`dev.wingrc.us`: "in the Asset itself a spot that has the approved date
+and time and who approved the device." `AssetApproval` already stored
+everything (`decision`, `decided_by_name`, `decided_at`,
+`rejection_reason`) — this is display, not new state.
+
+**What shipped.** New `GET /orgs/{org_id}/scope/{entity_id}/approvals`
+(`routers/scope.py`) returns every `asset_approval` row for that asset,
+most recent first, with its `asset_approval_checklist_item` snapshot
+nested in. `AssetDrawer` renders it read-only, right under the header: the
+decision badge, reviewer name, and timestamp inline; a rejected asset also
+shows the reason. An asset with no approval record (manually added,
+workbook-imported — the common case) renders nothing, not an empty state.
+The checklist snapshot sits behind a "Show checklist" toggle so it never
+clutters the row.
+
+**§3 decision: most-recent inline, full history behind a toggle — taken
+as recommended.** An asset can accumulate more than one `asset_approval`
+row (the schema allows it; a future re-approval slice will produce it,
+not reachable through today's UI). Only `approvals[0]` renders by
+default; a "View full history (N)" toggle reveals the rest when there's
+more than one. Verified directly (`test_approval_history_most_recent_
+first_never_hides_earlier_decisions`, constructing a second row directly
+since the API can't produce one yet): a second decision never removes the
+first from the response, only from the default view.
+
+**§2 verified directly, not just architecturally.**
+`test_approval_name_is_the_stored_snapshot_not_a_live_join` stores an
+approval under a name different from the authenticated test user's own
+current `display_name` and asserts the stored name comes back — proving
+`decided_by_name` is never re-derived from a live user lookup, matching
+`AssetApproval`'s own docstring reasoning for why `decided_by` is a string
+rather than a hard FK.
+
+**§4a taken: `asset_approval.scope_entity_id` is now `ON DELETE RESTRICT`,
+not `CASCADE`** (migration `0057_asset_approval_restrict`). Once the
+record is visible on the asset, deleting the asset silently taking its
+own acceptance record with it became the obvious next question.
+`delete_scope_entity` catches the resulting `IntegrityError` and returns
+409 with a real message instead of a raw 500. `SET NULL` (the other
+option in the same request) was considered and rejected: it needs
+`scope_entity_id` to become nullable plus a denormalized natural_key/
+entity_type captured at approve/reject time so an orphaned row still
+identifies what it was about — a real schema change and a new write path
+in `liongard_sync.py`, not a small one. RESTRICT needed neither.
+
+**Migration-length near-miss, worth recording because this project has
+hit it before:** the first revision id tried, `0057_asset_approval_
+restrict_delete` (35 chars), crash-looped the backend container on the
+bench run — `alembic_version.version_num` is `VARCHAR(32)`. This is the
+exact same class of bug `docs/bench-stack-verification.md`'s own history
+already names ("a 40-char alembic revision id exceeding a column").
+Caught by actually starting the container, not by review; renamed to
+`0057_asset_approval_restrict` (28 chars) before merge.
+
+**§4b (bundle export) — considered, deferred, not built.** "Who accepted
+this device, and when" is exactly what an assessor reads the component
+inventory to find out, and would be cheap if `_component_inventory_body`
+were a simple per-row renderer — it isn't. `ScopeEntitySnap`/
+`BundleSnapshot` are frozen dataclasses shared by both the ZIP export and
+the consolidated PDF SSP renderer (`bundle_service.py`); adding approval
+data means extending the snapshot, a new query in `snapshot_bundle`, and
+template changes in both renderers plus their own tests. Not a small
+change — left for Jarrod to decide whether it's worth a slice of its own.
+
+**Verification:** bench-stack on an isolated wl-util-1 Docker Compose
+project (live `wingrc` project confirmed untouched before and after):
+1330/1330 backend tests, `ruff check .` clean, 152/152 frontend tests (23
+files, including the new `AssetDrawer.test.tsx`), `tsc -b` clean, `vite
+build` clean. Two more test bugs found and fixed during this same run,
+beyond the migration-length one above: a c3pao_assessor test reused
+`fake_msp_admin`'s default email under the same org, tripping the
+`(home_org_id, email)` unique constraint on `user`; and the history-
+ordering test relied on `decided_at`'s server-default `now()` to differ
+between two rows created in the same test, but `db_session` wraps each
+test in one transaction (see its own docstring) so `now()` is fixed for
+both — set `decided_at` explicitly instead, the same fix
+`test_audit_log.py` already uses for the identical reason. Merged to
+`main`, deployed to `dev.wingrc.us`.
+
+---
+
 ## Planned
 
 ### N. Document Library
