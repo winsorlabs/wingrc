@@ -61,4 +61,33 @@ describe("AssetsPanel — Name column", () => {
     await screen.findByText("SN-DT26");
     expect(screen.getAllByText("SN-DT26")).toHaveLength(1);
   });
+
+  it("shows the hostname beneath the alias-derived name instead of the natural key (2026-09-24)", async () => {
+    vi.mocked(api.getScope).mockImplementation((_orgId: string, entityType?: string) =>
+      Promise.resolve(
+        entityType === "device"
+          ? [makeDevice({ attributes: { display_name: "Jarrods Desktop", hostname: "WL-DT26" } })]
+          : []
+      )
+    );
+
+    render(<AssetsPanel orgId="org1" canWrite={false} />);
+
+    await screen.findByText("Jarrods Desktop");
+    expect(screen.getByText("WL-DT26")).toBeTruthy();
+    expect(screen.queryByText("SN-DT26")).toBeNull();
+  });
+
+  it("falls back to the natural key when hostname is unset (workbook/manual assets)", async () => {
+    vi.mocked(api.getScope).mockImplementation((_orgId: string, entityType?: string) =>
+      Promise.resolve(
+        entityType === "device" ? [makeDevice({ attributes: { display_name: "Jarrods Desktop" } })] : []
+      )
+    );
+
+    render(<AssetsPanel orgId="org1" canWrite={false} />);
+
+    await screen.findByText("Jarrods Desktop");
+    expect(screen.getByText("SN-DT26")).toBeTruthy();
+  });
 });

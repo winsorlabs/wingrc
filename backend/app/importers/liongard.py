@@ -153,7 +153,39 @@ _DEVICE_CANONICAL_FIELDS: dict[str, str] = {
     # key (rather than left as the raw LastLoginUser for readers to know
     # about) so the asset drawer can surface it labeled correctly.
     "last_login_user": "LastLoginUser",
+    # Alongside display_name, not instead of it (2026-09-24) -- see
+    # domain.py:DEVICE_SOFTWARE_CANONICAL_ATTRIBUTES's own comment.
+    "hostname": "Hostname",
 }
+
+# BIOS/OEM placeholder values a manufacturer ships when no real serial was
+# ever programmed into the board -- "System Serial Number" (ASUS) is the
+# one confirmed live (WinsorLabs' WL-DT26, 2026-09-24: see
+# docs/roadmap.md's device-identity entry for the full survey), but this
+# is a known, common OEM-firmware quirk across vendors generally, not a
+# closed set specific to this one tenant. Treated as "no serial at all"
+# (falls through to Hostname in _device_natural_key below) rather than a
+# real identity: the natural key is the reconcile identity, so two
+# devices sharing one of these would otherwise collide onto a single
+# scope_entity row and one would silently vanish from the boundary --
+# exactly the failure this product exists to prevent. Expected to grow as
+# real tenants turn up more of them -- add to it freely, here, in one
+# place a human can find, same shape as baseline_import.py's
+# _DISCLAIM_PHRASES.
+_PLACEHOLDER_SERIALS = frozenset(
+    {
+        "system serial number",
+        "to be filled by o.e.m.",
+        "default string",
+        "none",
+        "0123456789",
+        "not applicable",
+    }
+)
+
+
+def _is_placeholder_serial(value: str) -> bool:
+    return value.strip().lower() in _PLACEHOLDER_SERIALS
 
 # Unlike _DEVICE_EXTRA_KNOWN_RAW_FIELDS, there's no independently-verified
 # supplementary "real fields observed on a live identity record beyond the
@@ -287,8 +319,15 @@ def _unrecognized_device_attributes(attributes: dict[str, Any]) -> list[str]:
 
 
 def _device_natural_key(record: dict[str, Any]) -> str:
+    """SerialNumber preferred, Hostname fallback -- except a known BIOS/OEM
+    placeholder value (_PLACEHOLDER_SERIALS above) is treated as no serial
+    at all, falling through to Hostname exactly like a blank SerialNumber
+    already does. Two devices reporting the same placeholder would
+    otherwise collide onto one scope_entity row (2026-09-24 finding,
+    confirmed live -- docs/roadmap.md's device-identity entry).
+    """
     serial = record.get("SerialNumber")
-    if serial and str(serial).strip():
+    if serial and str(serial).strip() and not _is_placeholder_serial(str(serial)):
         return str(serial).strip()
     return str(record.get("Hostname") or "").strip()
 
@@ -345,11 +384,18 @@ def device_profile_to_canonical(
     """
     natural_key = _device_natural_key(record)
     warnings: list[str] = []
+    raw_serial = record.get("SerialNumber")
+    if raw_serial and str(raw_serial).strip() and _is_placeholder_serial(str(raw_serial)):
+        warnings.append(
+            f"SerialNumber {str(raw_serial).strip()!r} is a manufacturer placeholder, "
+            "not a real serial -- keyed on Hostname instead."
+        )
     if not natural_key:
-        return None, [
+        warnings.append(
             "Liongard device record has neither SerialNumber nor Hostname -- skipped "
             f"(EnvironmentID={record.get('EnvironmentID')!r})."
-        ]
+        )
+        return None, warnings
 
     attributes: dict[str, Any] = dict(record)
     attributes["display_name"] = _device_display_name(record, natural_key)

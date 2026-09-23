@@ -4860,6 +4860,171 @@ both — set `decided_at` explicitly instead, the same fix
 
 ---
 
+### Component inventory and acceptance status, plus device identity ✅ DONE (2026-09-24)
+
+Two parts, landed together because Part A touches the same shared
+rendering pipeline (`ScopeEntitySnap`/`_component_inventory_body`) the
+previous slice deferred for exactly that reason.
+
+#### Part A — the component inventory and acceptance status
+
+**A0: the premise was checked, not assumed.** D.3's original open
+question ("do pending assets appear in the SSP inventory?") was marked
+resolved by a since-retired justification — see `ROADMAP.md`'s D.3
+section (amended in place) for the full retraction: it held only via the
+interactive path that wrote `pending_approval` straight into
+`scope_entity`, the exact bug the 2026-09-22 Liongard sync fix closed.
+Confirmed directly before building anything
+(`test_bundle_inventory_includes_pending_asset_marked_awaiting_acceptance`'s
+own premise assertion): a pending entity has no `scope_entity` row at
+all, so it could not have appeared in the inventory the old way.
+
+**A1 decision: include pending assets, clearly marked — taken as
+recommended.** AC.L2-3.1.1[c] is about devices being *identified*; an
+assessor comparing the inventory against the network floor will find an
+unapproved device whether or not anyone's clicked approve, and an honest
+"Pending Approval" marker is a stronger artifact than an inventory that
+quietly omits known hardware. `snapshot_bundle` (`bundle_service.py`) now
+also queries `liongard_sync_result_change` for unresolved
+`change_type='new'` rows, deduped by `(entity_type, natural_key)` keeping
+the most recently pulled one (a device can accumulate more than one such
+row if a later sync supersedes the one that first found it, before
+anyone decides — persist_sync_result's own supersede policy).
+`ScopeEntitySnap.pending: bool` carries the flag; `status`/`in_boundary`
+are meaningless and unread for a pending row. **Cost, stated plainly as
+asked:** one more query per bundle export, one more dataclass field, and
+the renderer branches on `pending` for two columns (Status, Boundary) --
+did not distort the pipeline meaningfully; the existing "regardless of
+status" convention already meant the table had to handle arbitrary
+badges.
+
+**A2: acceptance provenance.** "Accepted By" column added to the
+inventory table, reading the stored `AssetApproval` snapshot
+(`decided_by_name`/`decided_at`, most recent when more than one exists,
+same precedent as `AssetDrawer`) — never a live join, same discipline as
+the drawer's own docstring. An asset with no approval record (manual
+entry, workbook import) or a still-pending one shows nothing there,
+matching "shows nothing rather than an empty or misleading field."
+
+**Point-in-time, extended not duplicated.** `test_lifecycle.py`'s
+existing three-export comparison (Steps 6/8/13, previously only
+`impl_html`/`scoring_html`) now also captures and compares
+`inventory_html` — a new Step 5b leaves one Liongard-observed device
+deliberately unresolved so there's something pending to compare, and the
+devices approved in Steps 3/3b give it real "Accepted By" content too.
+`inventory_html_v2 == inventory_html_v1` and `inventory_html_v3 ==
+inventory_html_v1` hold across a baseline reimport and everything after
+it (evidence collection, SPRS snapshot, review-cycle attestation,
+assessment completion, SPRS submission) — none of it touches
+scope_entity or asset_approval, so none of it may move the inventory.
+
+SPRS unaffected (`test_bundle_inventory_pending_asset_does_not_affect_sprs`,
+same direct-assertion discipline as the prior slice's `test_pending_
+approval_and_decided_assets_never_touch_sprs`) and `c3pao_assessor`'s
+read paths are untouched (bundle export's own permission model wasn't
+touched by this change).
+
+#### Part B — device identity
+
+**B1: Hostname shown alongside Alias, as Liongard itself shows them.**
+`hostname` joins `domain.py:DEVICE_SOFTWARE_CANONICAL_ATTRIBUTES` (and,
+by subtraction, `DEVICE_SOFTWARE_COMPARABLE_ATTRIBUTES` — a hostname
+rename is a real, reviewer-visible change, not telemetry like
+`last_login_user`) and `routers/scope.py:DeviceSoftwareAttributes`, kept
+in sync by the existing `test_domain_attribute_vocabulary.py` set-equality
+check with no changes needed to that test itself.
+`importers/liongard.py:_DEVICE_CANONICAL_FIELDS` gains `"hostname":
+"Hostname"`, populated by the same generic mapping loop
+`device_profile_to_canonical` already runs — no new code path.
+`display_name`'s Alias-first resolution is unchanged. AssetsPanel's Name
+column now shows Hostname beneath the Alias-derived name (falling back to
+the natural key when Hostname is unset, unchanged for workbook/manual
+assets); AssetDrawer shows Hostname read-only, same pattern as Last Login
+User.
+
+**Diff-noise check, done not assumed.** Confirmed directly
+(`test_first_sync_after_upgrade_shows_changed_once_then_second_sync_is_
+clean`, updated; `test_hostname_unchanged_across_pulls_stays_clean`,
+new): a pre-existing row missing the new `hostname` key shows CHANGED
+exactly once (the same one-time transition cost `display_name`'s own
+2026-09-17 rollout paid), then clean forever after — hostname is stable
+data, not per-poll telemetry, so it never behaves like the fields the
+comparable-attribute allowlist excludes.
+`test_hostname_rename_shows_as_changed` confirms the B1 decision's other
+half: a genuine rename does show CHANGED.
+
+**B2: the placeholder-serial bug, found while grounding B1.**
+`_device_natural_key()` preferred `SerialNumber` over `Hostname` with no
+defense against BIOS/OEM placeholder values a manufacturer ships when no
+real serial was ever programmed — confirmed live on WinsorLabs' own
+tenant: `WL-DT26` ("Jarrods Desktop") is keyed on the literal string
+`"System Serial Number"` (ASUS's placeholder). The natural key is the
+reconcile identity, so two devices sharing a placeholder would collide
+onto one `scope_entity` row and one would silently vanish from the
+boundary — the exact failure this product exists to prevent.
+
+`_PLACEHOLDER_SERIALS` (`importers/liongard.py`) is a module-level
+frozenset — `"system serial number"`, `"to be filled by o.e.m."`,
+`"default string"`, `"none"`, `"0123456789"`, `"not applicable"` —
+case-insensitive, trimmed, same shape as `baseline_import.py`'s
+`_DISCLAIM_PHRASES` ("expected to grow... add to it freely, here, in one
+place a human can find"). A placeholder serial is treated as no serial at
+all, falling through to Hostname exactly like a blank one already did.
+`device_profile_to_canonical` also emits a one-line warning naming the
+placeholder, surfaced through the existing per-row warnings channel.
+`test_two_devices_sharing_a_placeholder_serial_produce_two_distinct_
+entities` is the actual collision-prevention proof B2 asked for.
+
+**Collision survey, run before any change** (read-only query against the
+live `wingrc` database, `wl-util-1`): zero rows anywhere share a natural
+key (`uq_scope_entity_identity` — a real DB constraint, not just
+application discipline, would have refused a second one). Exactly one
+row is keyed on a known placeholder: `WL-DT26`. Its audit-log history
+shows two `import_apply` writes (2026-09-14, 2026-09-15), both under the
+same placeholder key — consistent with the same physical device being
+re-applied twice, not two different devices colliding. **No data has
+been silently overwritten.** This is a preventive fix for a risk that's
+real at MSP fleet scale, not a repair of already-lost data — the
+"stop and ask" condition for a confirmed prior overwrite did not fire.
+
+**Re-keying migration** (`0058_rekey_placeholder_serial`): a straight
+`UPDATE scope_entity SET natural_key = <hostname>` for the one affected
+row. Safe by construction, not just by care: `asset_approval`/
+`review_cycle_item` reference the row by `scope_entity_id` (a stable
+UUID), never by `natural_key`, and `liongard_sync_result_change` isn't a
+persisted FK to `scope_entity` at all — a natural-key text match computed
+fresh at pull time — so re-keying cannot orphan an acceptance record or
+re-queue an already-decided device; the next pull computes the same
+corrected key via the B2 code fix and reconciles the row as
+CHANGED/UNCHANGED, never NEW again. `uq_scope_entity_identity` makes a
+collision with some other existing row a hard migration failure, not
+silent corruption, if one somehow exists — mirrors the RESTRICT FK's own
+fail-loudly property from the previous slice. A row with no usable
+Hostname to fall back to makes the migration raise rather than guess;
+confirmed live this doesn't happen today.
+
+**The alembic-revision-length test asked for already exists.**
+`test_revision_ids_fit_alembic_version_column`
+(`backend/tests/test_migrations.py`) was added after `alembic_version`'s
+*original* incident (migration 0025, `bfa354e51c`) and walks every
+migration script's revision id against the real 32-char column width —
+it would have caught both of this session's own `0057` misses (the
+35-char first attempt, and would catch `0058` here) had it been run
+before pushing. It wasn't, in either case, because this environment has
+no local Python/pytest -- the bench-stack run (SSH to `wl-util-1`) is the
+earliest point in this workflow it actually executes. No new test added;
+folding it in means routing bench verification earlier, not writing a
+test that already exists twice.
+
+**Verification:** bench-stack on an isolated wl-util-1 Docker Compose
+project (live `wingrc` project confirmed untouched before and after) --
+NNNN/NNNN backend tests, `ruff check .` clean, NNN/NNN frontend tests,
+`tsc -b` clean, `vite build` clean. Merged to `main`, deployed to
+`dev.wingrc.us` -- migration `0058` re-keyed WinsorLabs' one affected row
+live, confirmed by direct query afterward.
+
+---
+
 ## Planned
 
 ### N. Document Library

@@ -143,6 +143,18 @@ DEVICE_SOFTWARE_CANONICAL_ATTRIBUTES: frozenset[str] = frozenset(
         "mac_addresses",
         "display_name",
         "last_login_user",
+        # Liongard's Hostname, kept alongside display_name (Alias-first --
+        # see importers/liongard.py:_device_display_name's own docstring,
+        # unchanged by this) rather than replacing it, so both are visible
+        # (2026-09-24, Jarrod's own live example: WinGRC showed "Jarrods
+        # Desktop" over a BIOS placeholder serial with the Hostname
+        # nowhere to be found; Liongard itself shows both DEVICE ALIAS and
+        # HOST NAME as separate fields). Comparable, not just canonical --
+        # falls into DEVICE_SOFTWARE_COMPARABLE_ATTRIBUTES below by
+        # subtraction, deliberately: a hostname rename is a real,
+        # meaningful change a reviewer should see as CHANGED, unlike
+        # last_login_user telemetry.
+        "hostname",
     }
 )
 

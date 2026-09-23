@@ -129,14 +129,24 @@ export function AssetsPanel({ orgId, canWrite }: Props) {
             <tbody>
               {assets.map((a) => {
                 const displayName = assetDisplayName(a.attributes, a.natural_key);
+                // Hostname beneath the alias-derived name, matching how
+                // Liongard itself shows DEVICE ALIAS and HOST NAME as
+                // separate fields (2026-09-24) -- falls back to the
+                // natural key (asset tag/serial) for workbook/manual
+                // assets, which never set hostname, unchanged from before.
+                const hostname = a.attributes.hostname as string | null | undefined;
+                const subLabel =
+                  hostname && hostname !== displayName
+                    ? hostname
+                    : displayName !== a.natural_key
+                      ? a.natural_key
+                      : null;
                 return (
                   <tr key={a.id}>
                     <td><span className="affiliation-badge">{TYPE_LABELS[a.entity_type] ?? a.entity_type}</span></td>
                     <td>
                       <div className="contact-name">{displayName}</div>
-                      {displayName !== a.natural_key && (
-                        <div className="contact-sub">{a.natural_key}</div>
-                      )}
+                      {subLabel && <div className="contact-sub">{subLabel}</div>}
                     </td>
                     <td>
                       {a.attributes.device_subtype === "other"

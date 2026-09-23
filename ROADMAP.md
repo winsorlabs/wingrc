@@ -583,12 +583,25 @@ resolved:
   `sprs_snapshot`/`audit_log`/`BundleSnapshot`. A second sync landing
   before the first is reviewed **supersedes** it (not merged, not
   queued) — visible to the reviewer, never silent.
-- **Pending (unapproved) assets in the SSP inventory:** resolved by an
+- **Pending (unapproved) assets in the SSP inventory:** ~~resolved by an
   existing precedent, not a new decision — `bundle_service.py`'s
   component inventory already includes every device/software row
   "regardless of status or in_boundary... flagged via its Status/
   Boundary columns, never silently dropped." `pending_approval` gets the
-  same treatment every other status already gets; nothing new to build.
+  same treatment every other status already gets; nothing new to build.~~
+  **That reasoning was retired 2026-09-24, and never actually held**: it
+  was true only via the interactive path that used to write
+  `pending_approval` straight into `scope_entity` — the exact bug the
+  2026-09-22 Liongard sync fix closed (see that entry above). Since then
+  a pending entity has no `scope_entity` row at all until approved or
+  rejected, so it could not have appeared in the inventory this way.
+  Re-decided on the real premise, same conclusion, real implementation
+  this time — see `docs/roadmap.md`'s "component inventory and
+  acceptance status" entry for the full writeup: pending entities are
+  synthesized from `liongard_sync_result_change` directly into the
+  rendered inventory, clearly marked, alongside the acceptance
+  provenance (`asset_approval`) an assessor also needs from this
+  section.
 - **Notification volume:** one digest email per org per recipient per
   sync, never one per device — reuses `review_cycles.py`'s exact
   `notified_at`/`notification_error` delivery-tracking shape. Content

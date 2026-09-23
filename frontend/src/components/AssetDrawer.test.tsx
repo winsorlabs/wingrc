@@ -180,3 +180,43 @@ describe("AssetDrawer — acceptance record", () => {
     expect(screen.getByText("Not yet.")).toBeTruthy();
   });
 });
+
+describe("AssetDrawer — Hostname (2026-09-24)", () => {
+  it("shows the Hostname field, read-only, alongside Display Name", async () => {
+    vi.mocked(api.getContacts).mockResolvedValue([]);
+    vi.mocked(api.getScopeEntityApprovals).mockResolvedValue([]);
+
+    render(
+      <AssetDrawer
+        orgId="org1"
+        asset={makeAsset({ attributes: { display_name: "Jarrods Desktop", hostname: "WL-DT26" } })}
+        canWrite={true}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    );
+
+    await screen.findByText("Hostname");
+    expect(screen.getByText("WL-DT26")).toBeTruthy();
+    // Read-only: no text input for it, unlike Display Name.
+    expect(screen.queryByDisplayValue("WL-DT26")).toBeNull();
+  });
+
+  it("hides the Hostname field entirely when unset", async () => {
+    vi.mocked(api.getContacts).mockResolvedValue([]);
+    vi.mocked(api.getScopeEntityApprovals).mockResolvedValue([]);
+
+    render(
+      <AssetDrawer
+        orgId="org1"
+        asset={makeAsset()}
+        canWrite={true}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />
+    );
+
+    await screen.findByText("Edit Asset");
+    expect(screen.queryByText("Hostname")).toBeNull();
+  });
+});

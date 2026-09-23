@@ -409,6 +409,17 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
                     />
                   </div>
                 )}
+                {asset?.attributes.hostname != null && (
+                  <div className="form-field">
+                    <label>Hostname</label>
+                    <div>{asset.attributes.hostname as string}</div>
+                    <div className="field-hint">
+                      Reported by Liongard, shown alongside Display Name above rather than
+                      replacing it — Display Name still prefers the Liongard device Alias when one
+                      is set. Read-only here; only Liongard sets this today.
+                    </div>
+                  </div>
+                )}
                 {asset?.attributes.last_login_user != null && (
                   <div className="form-field">
                     <label>Last Login User</label>

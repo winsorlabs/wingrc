@@ -36,6 +36,7 @@ from .engine import recompute_sprs
 from .models import (
     Assessment,
     AssessmentObjective,
+    AssetApproval,
     BaselineControl,
     Contact,
     ContactDocumentationRole,
@@ -48,6 +49,8 @@ from .models import (
     EvidenceTaskStateLink,
     Finding,
     ImplementationStatement,
+    LiongardSyncResult,
+    LiongardSyncResultChange,
     Organization,
     Product,
     RaciAssignment,
@@ -87,6 +90,7 @@ _CSS = (
     ".s-decommissioned{background:#f3f4f6;color:#6b7280}"
     ".s-in_boundary{background:#dcfce7;color:#166534}"
     ".s-out_of_boundary{background:#f3f4f6;color:#6b7280}"
+    ".s-pending_approval{background:#ffedd5;color:#9a3412}"
     ".obj{margin:.6rem 0;padding:.5rem .75rem;border-left:3px solid #e5e7eb;background:#fafafa}"
     ".obj-k{font-weight:700;color:#374151;display:inline-block;min-width:2rem}"
     ".no-stmt{color:#9ca3af;font-style:italic}"
@@ -338,6 +342,25 @@ class ScopeEntitySnap:
     responsible_contact_id attributes the template asks for (see
     routers/scope.py's DeviceSoftwareAttributes) -- PERSON/PROCESS/
     EXTERNAL_SERVICE/etc. rows are out of scope for this section.
+
+    pending=True rows have NO scope_entity row at all (2026-09-23 decision
+    -- see docs/roadmap.md's "component inventory and acceptance status"
+    entry): a NEW Liongard-observed entity is queued in
+    liongard_sync_result_change, not written to scope_entity, until
+    approved or rejected (repo.PendingApprovalWriteError). snapshot_bundle
+    synthesizes one of these per still-unresolved change so the inventory
+    stays a complete listing of what's physically on the network, not just
+    what's been accepted into it -- AC.L2-3.1.1[c] is about devices being
+    *identified*, not about who's clicked approve. status/in_boundary are
+    meaningless for a pending row (nothing's been decided) and are not
+    read by the renderer in that case.
+
+    approved_by_name/approved_at are the stored AssetApproval snapshot
+    (most recent decision, same "most recent inline" precedent as
+    AssetDrawer) -- None for a pending row (nothing decided yet) and for
+    an asset with no approval record at all (manually added, workbook-
+    imported). Rendered verbatim, never a live join -- same discipline as
+    the drawer.
     """
 
     entity_type: str
@@ -351,6 +374,9 @@ class ScopeEntitySnap:
     asset_tag: str | None
     responsible_contact_name: str | None
     responsible_contact_affiliation: str | None
+    pending: bool = False
+    approved_by_name: str | None = None
+    approved_at: datetime | None = None
 
 
 @dataclass
@@ -673,6 +699,12 @@ def snapshot_bundle(
     # DEVICE/SOFTWARE carry the make/model/version/responsible fields the
     # template asks for; PERSON/PROCESS/EXTERNAL_SERVICE/etc. rows belong to
     # Personnel or a future section, not this one.
+    #
+    # Also includes still-pending Liongard-observed entities (2026-09-23 --
+    # see ScopeEntitySnap's own docstring) -- a device Liongard has observed
+    # but nobody has approved/rejected has no scope_entity row to query
+    # here at all, so it's synthesized separately, below, from
+    # liongard_sync_result_change.
     contacts_by_id: dict[uuid.UUID, Contact] = {c.id: c for c in contact_rows}
     entity_rows = session.scalars(
         select(ScopeEntity)
@@ -682,6 +714,22 @@ def snapshot_bundle(
         )
         .order_by(ScopeEntity.entity_type, ScopeEntity.natural_key)
     ).all()
+
+    # Most recent asset_approval per scope_entity_id -- same "most recent
+    # inline" precedent as AssetDrawer. An entity with no approval record
+    # at all (manual entry, workbook import) is simply absent from this
+    # map; a pending entity has no scope_entity row yet to be a key here.
+    approval_rows = session.scalars(
+        select(AssetApproval)
+        .where(
+            AssetApproval.org_id == org_id,
+            AssetApproval.scope_entity_id.in_([e.id for e in entity_rows]),
+        )
+        .order_by(AssetApproval.scope_entity_id, AssetApproval.decided_at.desc())
+    ).all()
+    latest_approval_by_entity: dict[uuid.UUID, AssetApproval] = {}
+    for a in approval_rows:
+        latest_approval_by_entity.setdefault(a.scope_entity_id, a)
 
     scope_entities: list[ScopeEntitySnap] = []
     for e in entity_rows:
@@ -697,6 +745,7 @@ def snapshot_bundle(
             if contact is not None:
                 responsible_contact_name = contact.name
                 responsible_contact_affiliation = contact.affiliation
+        approval = latest_approval_by_entity.get(e.id)
         scope_entities.append(
             ScopeEntitySnap(
                 entity_type=e.entity_type,
@@ -710,8 +759,59 @@ def snapshot_bundle(
                 asset_tag=attrs.get("asset_tag"),
                 responsible_contact_name=responsible_contact_name,
                 responsible_contact_affiliation=responsible_contact_affiliation,
+                approved_by_name=approval.decided_by_name if approval else None,
+                approved_at=approval.decided_at if approval else None,
             )
         )
+
+    # Still-pending Liongard-observed entities: change_type='new' rows
+    # nobody has approved or rejected yet. Deduped by (entity_type,
+    # natural_key), keeping the most recently pulled row per key -- a
+    # device can accumulate more than one 'new' change across separate
+    # sync results if it's still unresolved when a later sync supersedes
+    # the one that first found it (persist_sync_result's own supersede
+    # policy), and all of them stay resolution='pending' since only the
+    # decision resolves a row, not being superseded.
+    pending_rows = session.execute(
+        select(LiongardSyncResultChange, LiongardSyncResult.pulled_at)
+        .join(LiongardSyncResult, LiongardSyncResultChange.sync_result_id == LiongardSyncResult.id)
+        .where(
+            LiongardSyncResultChange.org_id == org_id,
+            LiongardSyncResultChange.change_type == "new",
+            LiongardSyncResultChange.resolution == "pending",
+            LiongardSyncResultChange.entity_type.in_(["device", "software"]),
+        )
+        .order_by(
+            LiongardSyncResultChange.entity_type,
+            LiongardSyncResultChange.natural_key,
+            LiongardSyncResult.pulled_at.desc(),
+        )
+    ).all()
+    seen_pending_keys: set[tuple[str, str]] = set()
+    for change, _pulled_at in pending_rows:
+        key = (change.entity_type, change.natural_key.strip().lower())
+        if key in seen_pending_keys:
+            continue
+        seen_pending_keys.add(key)
+        incoming = change.incoming or {}
+        attrs = incoming.get("attributes") or {}
+        scope_entities.append(
+            ScopeEntitySnap(
+                entity_type=change.entity_type,
+                natural_key=change.natural_key,
+                scope_category=incoming.get("scope_category"),
+                status="active",
+                in_boundary=True,
+                make_oem=attrs.get("make_oem"),
+                model=attrs.get("model"),
+                version=attrs.get("version"),
+                asset_tag=attrs.get("asset_tag"),
+                responsible_contact_name=None,
+                responsible_contact_affiliation=None,
+                pending=True,
+            )
+        )
+    scope_entities.sort(key=lambda s: (s.entity_type, s.natural_key))
 
     # --- control tree: states + objectives + controls + impl statements ---
     ctrl_rows = session.execute(
@@ -1530,7 +1630,24 @@ def _component_inventory_body(snapshot: BundleSnapshot) -> str:
     status or in_boundary -- a decommissioned or out-of-boundary asset is
     flagged via the Status/Boundary columns, never silently dropped, so the
     listing stays defensible as "complete and accurate" to a C3PAO.
+
+    A still-pending Liongard-observed entity (ScopeEntitySnap.pending;
+    2026-09-23 decision, docs/roadmap.md's "component inventory and
+    acceptance status" entry) is included too, clearly marked, rather than
+    omitted -- it's still physically on the network whether or not anyone
+    has clicked approve, and AC.L2-3.1.1[c] is about devices being
+    identified, not accepted. Status/Boundary read "Pending Approval"/
+    "Pending" instead of the ordinary badges, since nothing's been decided.
     """
+
+    def _pending_badge(label: str) -> str:
+        return f'<span class="s s-pending_approval">{_esc(label)}</span>'
+
+    def _approved_cell(r: ScopeEntitySnap) -> str:
+        if r.pending or r.approved_by_name is None:
+            return f"<td>{_esc(_na(None))}</td>"
+        ts = r.approved_at.strftime("%Y-%m-%d %H:%M UTC") if r.approved_at else ""
+        return f"<td>{_esc(r.approved_by_name)}<br><span class='s-tag'>{_esc(ts)}</span></td>"
 
     def _table(rows: list[ScopeEntitySnap]) -> str:
         if not rows:
@@ -1543,23 +1660,30 @@ def _component_inventory_body(snapshot: BundleSnapshot) -> str:
             f"<td>{_esc(_na(r.model))}</td>"
             f"<td>{_esc(_na(r.version))}</td>"
             f"<td>{_esc(_na(r.scope_category))}</td>"
-            f"<td>{_status_badge(r.status)}</td>"
-            f"<td>{_status_badge('in_boundary' if r.in_boundary else 'out_of_boundary')}</td>"
-            f"<td>{_esc(_na(r.responsible_contact_name))}"
+            + (
+                f"<td>{_pending_badge('Pending Approval')}</td><td>{_pending_badge('Pending')}</td>"
+                if r.pending
+                else (
+                    f"<td>{_status_badge(r.status)}</td>"
+                    f"<td>{_status_badge('in_boundary' if r.in_boundary else 'out_of_boundary')}</td>"
+                )
+            )
+            + f"<td>{_esc(_na(r.responsible_contact_name))}"
             + (
                 f" ({_esc(r.responsible_contact_affiliation)})"
                 if r.responsible_contact_name and r.responsible_contact_affiliation
                 else ""
             )
             + "</td>"
-            "</tr>"
+            + _approved_cell(r)
+            + "</tr>"
             for r in rows
         )
         return (
             '<table class="inv-table"><tr><th>Identifier</th><th>Asset Tag</th>'
             "<th>Make/OEM</th><th>Model</th>"
             "<th>Version</th><th>Category</th><th>Status</th>"
-            "<th>Boundary</th><th>Responsible</th></tr>"
+            "<th>Boundary</th><th>Responsible</th><th>Accepted By</th></tr>"
             f"{body_rows}</table>"
         )
 
@@ -1570,7 +1694,8 @@ def _component_inventory_body(snapshot: BundleSnapshot) -> str:
         '<h1 id="ssp-inventory">Component/Asset Inventory</h1>'
         '<p style="font-size:.85rem;color:#6b7280">Complete listing of hardware '
         "and software components tracked in the scope graph, including "
-        "out-of-boundary and decommissioned items — flagged via the Status "
+        "out-of-boundary and decommissioned items, and devices observed but "
+        "not yet accepted into the CUI boundary — flagged via the Status "
         "and Boundary columns below, not omitted, so this listing stays "
         "defensible as complete.</p>"
         "<h2>4.1 Hardware (Devices)</h2>"
