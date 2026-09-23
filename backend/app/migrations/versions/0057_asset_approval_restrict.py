@@ -19,9 +19,17 @@ routers/scope.py:delete_scope_entity now catches and turns into a 409
 telling the caller an approval record exists. No column changes, no new
 migration for existing rows -- an unconditional ALTER of the one FK.
 
-Revision ID: 0057_asset_approval_restrict_delete
+Revision ID: 0057_asset_approval_restrict
 Revises: 0056_liongard_sync_approval
 Create Date: 2026-09-23
+
+Kept to 28 characters on purpose -- alembic_version.version_num is
+VARCHAR(32) (migration 0001), and this project has hit that exact wall
+before (docs/roadmap.md's own "a 40-char alembic revision id exceeding a
+column" incident). Confirmed live on this session's own bench run: the
+first name tried here, "0057_asset_approval_restrict_delete" (35 chars),
+crash-looped the backend container on startup with a StringDataRightTruncation
+before this fix.
 """
 from __future__ import annotations
 
@@ -29,7 +37,7 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0057_asset_approval_restrict_delete"
+revision: str = "0057_asset_approval_restrict"
 down_revision: str | None = "0056_liongard_sync_approval"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
