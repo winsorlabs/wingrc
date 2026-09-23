@@ -1665,7 +1665,9 @@ def _component_inventory_body(snapshot: BundleSnapshot) -> str:
                 if r.pending
                 else (
                     f"<td>{_status_badge(r.status)}</td>"
-                    f"<td>{_status_badge('in_boundary' if r.in_boundary else 'out_of_boundary')}</td>"
+                    "<td>"
+                    f"{_status_badge('in_boundary' if r.in_boundary else 'out_of_boundary')}"
+                    "</td>"
                 )
             )
             + f"<td>{_esc(_na(r.responsible_contact_name))}"
