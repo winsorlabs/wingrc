@@ -62,6 +62,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import liongard_sync, repo
@@ -82,7 +83,13 @@ from ..domain import (
     normalize_mac_address,
 )
 from ..importers.workbook import parse_workbook, resolve_canonical_device_attributes
-from ..models import IntegrationConnection, OrgLiongardEnvironment, ScopeEntity
+from ..models import (
+    AssetApproval,
+    AssetApprovalChecklistItem,
+    IntegrationConnection,
+    OrgLiongardEnvironment,
+    ScopeEntity,
+)
 from ..reconcile import reconcile
 from ..render import render_view
 from ..repo import PendingApprovalWriteError
@@ -281,6 +288,27 @@ class ScopeEntityOut(BaseModel):
     source: str
     source_ref: str | None
     attributes: dict[str, Any]
+
+
+class AssetApprovalChecklistItemOut(BaseModel):
+    product_key: str
+    product_name: str
+    confirmed: bool
+
+
+class AssetApprovalOut(BaseModel):
+    """One acceptance record from asset_approval, snapshot fields only --
+    see AssetApproval's own docstring for why decided_by_name is rendered
+    exactly as stored (the reviewer's name at decision time) rather than
+    joined live against the user table.
+    """
+
+    id: uuid.UUID
+    decision: str
+    decided_by_name: str
+    decided_at: datetime
+    rejection_reason: str | None
+    checklist: list[AssetApprovalChecklistItemOut]
 
 
 class ScopeChangeIncoming(BaseModel):
@@ -525,6 +553,14 @@ def delete_scope_entity(
     entity_id: uuid.UUID,
     session: Session = Depends(get_session),
 ) -> None:
+    """Deletes one scope entity. Refused with 409 if it has any
+    asset_approval row (migration 0057 -- ON DELETE RESTRICT, not CASCADE):
+    an asset's approval/rejection is a compliance acceptance record, and a
+    delete must not be able to make it disappear silently. There is no
+    override here -- an operator who genuinely needs to remove such an
+    asset does so at the database level, deliberately, not through this
+    endpoint.
+    """
     row = _get_scope_entity(session, org_id, entity_id)
     log_event(
         session,
@@ -536,7 +572,75 @@ def delete_scope_entity(
         context={"via": "api"},
     )
     session.delete(row)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This asset has an approval record and cannot be deleted -- it is part "
+                "of the compliance acceptance history."
+            ),
+        ) from exc
+
+
+@router.get(
+    "/{org_id}/scope/{entity_id}/approvals", response_model=list[AssetApprovalOut]
+)
+def get_scope_entity_approvals(
+    org_id: uuid.UUID,
+    entity_id: uuid.UUID,
+    session: Session = Depends(get_session),
+) -> list[AssetApprovalOut]:
+    """The asset's own acceptance history -- who approved or rejected it
+    into the CUI boundary, and when. Most recent first; an asset can
+    accumulate more than one row over time (a future re-approval slice),
+    and the caller decides how much of the list to show -- nothing here
+    collapses it. Empty for an asset with no approval record at all
+    (manually added, workbook-imported) -- that's a normal, common case,
+    not an error.
+
+    A GET, so this is reachable by every role including c3pao_assessor
+    (require_write() only gates non-idempotent methods) -- reading who
+    accepted an asset is not the privileged action; approve/reject
+    (routers/liongard_sync.py) is.
+    """
+    _get_scope_entity(session, org_id, entity_id)
+    approvals = session.scalars(
+        select(AssetApproval)
+        .where(AssetApproval.org_id == org_id, AssetApproval.scope_entity_id == entity_id)
+        .order_by(AssetApproval.decided_at.desc())
+    ).all()
+    if not approvals:
+        return []
+
+    checklist_items = session.scalars(
+        select(AssetApprovalChecklistItem).where(
+            AssetApprovalChecklistItem.approval_id.in_([a.id for a in approvals])
+        )
+    ).all()
+    checklist_by_approval: dict[uuid.UUID, list[AssetApprovalChecklistItemOut]] = {}
+    for item in checklist_items:
+        checklist_by_approval.setdefault(item.approval_id, []).append(
+            AssetApprovalChecklistItemOut(
+                product_key=item.product_key,
+                product_name=item.product_name,
+                confirmed=item.confirmed,
+            )
+        )
+
+    return [
+        AssetApprovalOut(
+            id=a.id,
+            decision=a.decision,
+            decided_by_name=a.decided_by_name,
+            decided_at=a.decided_at,
+            rejection_reason=a.rejection_reason,
+            checklist=checklist_by_approval.get(a.id, []),
+        )
+        for a in approvals
+    ]
 
 
 # ---------------------------------------------------------------------------

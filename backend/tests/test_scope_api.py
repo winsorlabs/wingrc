@@ -20,9 +20,9 @@ from app.db import get_session
 from app.domain import ChangeType
 from app.importers.workbook import parse_workbook, resolve_canonical_device_attributes
 from app.main import app
-from app.models import Organization, ScopeEntity
+from app.models import AssetApproval, AssetApprovalChecklistItem, AuditLog, Organization, ScopeEntity
 from app.reconcile import reconcile
-from tests.conftest import _app_session, _authed, _grant
+from tests.conftest import _app_session, _authed, _grant, _make_fake_user
 
 SAMPLE = Path(__file__).resolve().parents[2] / "samples" / "authorized-entities.example.xlsx"
 
@@ -442,3 +442,213 @@ def test_apply_ignores_missing_rows(client, db_session, fake_msp_admin):
 
     listed = {e["id"]: e for e in client.get(f"/orgs/{org.id}/scope").json()}
     assert pre_existing["id"] in listed  # still present -- never auto-deleted
+
+
+# ---------------------------------------------------------------------------
+# Acceptance record on the asset (2026-09-23): GET .../scope/{id}/approvals
+# ---------------------------------------------------------------------------
+
+
+def _device(db_session, org: Organization, natural_key: str = "SN-APPROVAL-TEST") -> ScopeEntity:
+    row = ScopeEntity(
+        org_id=org.id, entity_type="device", natural_key=natural_key, source="liongard",
+    )
+    db_session.add(row)
+    db_session.flush()
+    return row
+
+
+def _approval(
+    db_session, org: Organization, entity: ScopeEntity, *,
+    decision: str = "approved", decided_by_name: str = "Jane Reviewer",
+    rejection_reason: str | None = None,
+) -> AssetApproval:
+    approval = AssetApproval(
+        org_id=org.id, scope_entity_id=entity.id, decision=decision,
+        decided_by=str(uuid.uuid4()), decided_by_name=decided_by_name,
+        rejection_reason=rejection_reason,
+    )
+    db_session.add(approval)
+    db_session.flush()
+    return approval
+
+
+@pytest.mark.integration
+def test_approvals_empty_for_asset_with_no_record(client, db_session, fake_msp_admin):
+    org = _org(db_session, fake_msp_admin)
+    entity = _device(db_session, org)
+    db_session.commit()
+
+    r = client.get(f"/orgs/{org.id}/scope/{entity.id}/approvals")
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+@pytest.mark.integration
+def test_approvals_404_for_unknown_asset(client, db_session, fake_msp_admin):
+    org = _org(db_session, fake_msp_admin)
+    r = client.get(f"/orgs/{org.id}/scope/{uuid.uuid4()}/approvals")
+    assert r.status_code == 404
+
+
+@pytest.mark.integration
+def test_approved_asset_shows_reviewer_and_timestamp(client, db_session, fake_msp_admin):
+    org = _org(db_session, fake_msp_admin)
+    entity = _device(db_session, org)
+    _approval(db_session, org, entity, decision="approved", decided_by_name="Jane Reviewer")
+    db_session.commit()
+
+    r = client.get(f"/orgs/{org.id}/scope/{entity.id}/approvals")
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body) == 1
+    assert body[0]["decision"] == "approved"
+    assert body[0]["decided_by_name"] == "Jane Reviewer"
+    assert body[0]["decided_at"] is not None
+    assert body[0]["rejection_reason"] is None
+
+
+@pytest.mark.integration
+def test_rejected_asset_shows_the_reason(client, db_session, fake_msp_admin):
+    org = _org(db_session, fake_msp_admin)
+    entity = _device(db_session, org)
+    _approval(
+        db_session, org, entity, decision="rejected", decided_by_name="Jane Reviewer",
+        rejection_reason="Personal device, not authorized for CUI.",
+    )
+    db_session.commit()
+
+    r = client.get(f"/orgs/{org.id}/scope/{entity.id}/approvals")
+    body = r.json()
+    assert body[0]["decision"] == "rejected"
+    assert body[0]["rejection_reason"] == "Personal device, not authorized for CUI."
+
+
+@pytest.mark.integration
+def test_approval_includes_checklist_snapshot(client, db_session, fake_msp_admin):
+    org = _org(db_session, fake_msp_admin)
+    entity = _device(db_session, org)
+    approval = _approval(db_session, org, entity)
+    db_session.add(AssetApprovalChecklistItem(
+        approval_id=approval.id, org_id=org.id,
+        product_key="rocketcyber", product_name="RocketCyber", confirmed=True,
+    ))
+    db_session.add(AssetApprovalChecklistItem(
+        approval_id=approval.id, org_id=org.id,
+        product_key="datto-rmm", product_name="Datto RMM", confirmed=False,
+    ))
+    db_session.commit()
+
+    body = client.get(f"/orgs/{org.id}/scope/{entity.id}/approvals").json()
+    checklist = {c["product_key"]: c for c in body[0]["checklist"]}
+    assert checklist["rocketcyber"]["confirmed"] is True
+    assert checklist["datto-rmm"]["confirmed"] is False
+
+
+@pytest.mark.integration
+def test_approval_name_is_the_stored_snapshot_not_a_live_join(client, db_session, fake_msp_admin):
+    """§2's own instruction, asserted directly: decided_by_name is
+    rendered exactly as stored at decision time, never re-derived from a
+    live user lookup. fake_msp_admin's own current display_name is "Test
+    Admin" (tests/conftest.py) -- the approval below is stored under a
+    different name entirely, and that stored name is what must come back,
+    proving no live join happened.
+    """
+    org = _org(db_session, fake_msp_admin)
+    entity = _device(db_session, org)
+    _approval(db_session, org, entity, decided_by_name="Former Name Co-Worker")
+    db_session.commit()
+
+    body = client.get(f"/orgs/{org.id}/scope/{entity.id}/approvals").json()
+    assert body[0]["decided_by_name"] == "Former Name Co-Worker"
+    assert body[0]["decided_by_name"] != fake_msp_admin.display_name
+
+
+@pytest.mark.integration
+def test_approval_history_most_recent_first_never_hides_earlier_decisions(
+    client, db_session, fake_msp_admin
+):
+    """An asset can accumulate more than one asset_approval row (the model
+    allows it; a future re-approval slice will produce it) -- not
+    reachable through today's UI, constructed directly here. A second
+    decision must never silently hide the first: both come back, most
+    recent first.
+    """
+    org = _org(db_session, fake_msp_admin)
+    entity = _device(db_session, org)
+    first = _approval(db_session, org, entity, decision="rejected", rejection_reason="Not yet.")
+    db_session.commit()
+    second = _approval(db_session, org, entity, decision="approved", decided_by_name="Later Reviewer")
+    db_session.commit()
+
+    body = client.get(f"/orgs/{org.id}/scope/{entity.id}/approvals").json()
+    assert [a["id"] for a in body] == [str(second.id), str(first.id)]
+    assert body[0]["decision"] == "approved"
+    assert body[1]["decision"] == "rejected"
+
+
+@pytest.mark.integration
+def test_c3pao_assessor_can_read_approvals(db_session, fake_msp_admin):
+    org = _org(db_session, fake_msp_admin)
+    entity = _device(db_session, org)
+    _approval(db_session, org, entity)
+    db_session.commit()
+
+    assessor = _make_fake_user(role="c3pao_assessor")
+    _grant(db_session, assessor, org_id=org.id)
+    app.dependency_overrides[get_session] = _app_session(db_session)
+    app.dependency_overrides[get_current_user] = _authed(db_session, assessor)
+    try:
+        c = TestClient(app)
+        r = c.get(f"/orgs/{org.id}/scope/{entity.id}/approvals")
+        assert r.status_code == 200
+        assert len(r.json()) == 1
+    finally:
+        app.dependency_overrides.clear()
+
+
+# ---------------------------------------------------------------------------
+# Delete preserves the acceptance record (migration 0057, ON DELETE RESTRICT)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_delete_refused_when_asset_has_an_approval_record(client, db_session, fake_msp_admin):
+    org = _org(db_session, fake_msp_admin)
+    entity = _device(db_session, org)
+    _approval(db_session, org, entity)
+    db_session.commit()
+
+    r = client.delete(f"/orgs/{org.id}/scope/{entity.id}")
+    assert r.status_code == 409
+    assert "approval" in r.text.lower()
+
+    # Still there -- refused, not partially applied.
+    assert db_session.get(ScopeEntity, entity.id) is not None
+    assert db_session.scalars(
+        select(AssetApproval).where(AssetApproval.scope_entity_id == entity.id)
+    ).first() is not None
+    # The pre-commit audit log entry for the attempted delete must roll
+    # back with everything else, not linger as a record of a delete that
+    # never actually happened.
+    assert db_session.scalars(
+        select(AuditLog).where(
+            AuditLog.action == "scope_entity.delete", AuditLog.entity_id == entity.id
+        )
+    ).first() is None
+
+
+@pytest.mark.integration
+def test_delete_still_works_for_an_asset_with_no_approval_record(
+    client, db_session, fake_msp_admin
+):
+    """Regression: the RESTRICT change must not affect the ordinary case
+    (no asset_approval row at all) -- same behavior as
+    test_delete_removes_from_list above, named explicitly here as the
+    control case for the RESTRICT change."""
+    org = _org(db_session, fake_msp_admin)
+    entity = _device(db_session, org)
+    db_session.commit()
+
+    r = client.delete(f"/orgs/{org.id}/scope/{entity.id}")
+    assert r.status_code == 204
