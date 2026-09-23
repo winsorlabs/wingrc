@@ -8,6 +8,7 @@ Run in-container:
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -467,13 +468,21 @@ def _device(db_session, org: Organization, natural_key: str = "SN-APPROVAL-TEST"
 def _approval(
     db_session, org: Organization, entity: ScopeEntity, *,
     decision: str = "approved", decided_by_name: str = "Jane Reviewer",
-    rejection_reason: str | None = None,
+    rejection_reason: str | None = None, decided_at: datetime | None = None,
 ) -> AssetApproval:
     approval = AssetApproval(
         org_id=org.id, scope_entity_id=entity.id, decision=decision,
         decided_by=str(uuid.uuid4()), decided_by_name=decided_by_name,
         rejection_reason=rejection_reason,
     )
+    if decided_at is not None:
+        # decided_at's server_default is func.now(), which is fixed for
+        # the whole test transaction (db_session wraps the test in one
+        # transaction; see its own docstring) -- two approvals created in
+        # the same test would otherwise get an identical timestamp, making
+        # "most recent first" ordering non-deterministic. Same fix
+        # test_audit_log.py already uses for the same reason.
+        approval.decided_at = decided_at
     db_session.add(approval)
     db_session.flush()
     return approval
@@ -582,10 +591,14 @@ def test_approval_history_most_recent_first_never_hides_earlier_decisions(
     """
     org = _org(db_session, fake_msp_admin)
     entity = _device(db_session, org)
-    first = _approval(db_session, org, entity, decision="rejected", rejection_reason="Not yet.")
-    db_session.commit()
+    base = datetime(2026, 9, 20, tzinfo=UTC)
+    first = _approval(
+        db_session, org, entity, decision="rejected", rejection_reason="Not yet.",
+        decided_at=base,
+    )
     second = _approval(
-        db_session, org, entity, decision="approved", decided_by_name="Later Reviewer"
+        db_session, org, entity, decision="approved", decided_by_name="Later Reviewer",
+        decided_at=base + timedelta(days=1),
     )
     db_session.commit()
 
@@ -602,7 +615,7 @@ def test_c3pao_assessor_can_read_approvals(db_session, fake_msp_admin):
     _approval(db_session, org, entity)
     db_session.commit()
 
-    assessor = _make_fake_user(role="c3pao_assessor")
+    assessor = _make_fake_user(role="c3pao_assessor", email="assessor@example.com")
     _grant(db_session, assessor, org_id=org.id)
     app.dependency_overrides[get_session] = _app_session(db_session)
     app.dependency_overrides[get_current_user] = _authed(db_session, assessor)
