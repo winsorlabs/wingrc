@@ -300,8 +300,18 @@ def create_document(
         entity_id=doc.id, after_value={"doc_id": doc.doc_id, "title": doc.title},
         context={"via": "api"},
     )
+    # Build the response BEFORE commit, not after: doc.updated_at has
+    # onupdate=func.now() (set by the current_version_id update above),
+    # and reading a just-flushed server-computed column after commit can
+    # trigger a deferred SELECT that runs with app.current_org already
+    # reset by _app_session's own commit wrapper -- RLS then matches zero
+    # rows and raises ObjectDeletedError on a row that's very much still
+    # there (tests/conftest.py:_app_session's own docstring names this
+    # exact trap; ScopeEntityOut avoids it by never exposing updated_at at
+    # all, which isn't the right fix here since it's a useful field).
+    result = _document_detail_out(session, doc)
     session.commit()
-    return _document_detail_out(session, doc)
+    return result
 
 
 @router.get("/{org_id}/documents", response_model=list[DocumentOut])
@@ -340,8 +350,11 @@ def patch_document(
         entity_id=doc.id, before_value=before, after_value=update_data,
         context={"via": "api"},
     )
+    # Built before commit -- see create_document's own comment for why
+    # (doc.updated_at's onupdate).
+    result = _document_detail_out(session, doc)
     session.commit()
-    return _document_detail_out(session, doc)
+    return result
 
 
 @router.delete("/{org_id}/documents/{document_id}", status_code=204)
@@ -668,5 +681,10 @@ def publish_document(
         },
         context={"via": "api"},
     )
+    # Built before commit -- see create_document's own comment for why
+    # (doc.updated_at's onupdate; here version.status/approved_at/
+    # approved_by_contact_id were also just flushed on a row read back
+    # into the response, same trap).
+    result = _document_out(session, doc)
     session.commit()
-    return _document_out(session, doc)
+    return result
