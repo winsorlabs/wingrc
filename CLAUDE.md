@@ -447,13 +447,16 @@ verified from this entry alone.
 ### 7. Document library / SSP templates
 
 **Plan and live status: `docs/PLAN-document-library.md`** (slices N.1–N.5).
-Read that file before touching this item. Genuinely unstarted — no `Document`
-model, no `routers/documents.py` — do not infer otherwise from this entry;
-the plan doc's own status line is the only source of truth. Reconciles two
-prior specs that had drifted apart (`ROADMAP.md` item F and this section's
-own earlier text, flagged 2026-09-07 as likely-duplicated and never
-reconciled until the plan doc landed); do not re-derive the design from
-either of those, they're superseded.
+Read that file before touching this item. **N.1 ✅ DONE** (2026-09-24) —
+`document`/`document_version`/`document_objective_tag` (migration 0059),
+versioned from day one; see `docs/roadmap.md`'s Done entry for the full
+writeup (the document/version split, the status transition table, the
+republish decision). N.2–N.5 not started — do not infer otherwise from this
+entry; the plan doc's own status line is the only source of truth.
+Reconciles two prior specs that had drifted apart (`ROADMAP.md` item F and
+this section's own earlier text, flagged 2026-09-07 as likely-duplicated
+and never reconciled until the plan doc landed); do not re-derive the
+design from either of those, they're superseded.
 
 Org-level document store for policies, procedures, and plans that flow into
 implementation statements. Versioned from the first migration (append-only
