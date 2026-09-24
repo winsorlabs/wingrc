@@ -24,6 +24,7 @@ from .routers import (
     bundle,
     contacts,
     dashboard,
+    documents,
     evidence,
     frameworks,
     integrations,
@@ -81,6 +82,7 @@ app.include_router(scheduled_jobs.router)
 app.include_router(sprs_submissions.router)
 app.include_router(review_cycles.router)
 app.include_router(liongard_sync.router)
+app.include_router(documents.router)
 
 
 @app.get("/health")

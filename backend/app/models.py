@@ -1013,6 +1013,22 @@ class Evidence(Base):
     source_product_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("product.id"), nullable=True
     )
+    # Document library (N.1, migration 0059): which exact DocumentVersion
+    # this evidence came from, fixed at publish time -- RESTRICT, not
+    # SET NULL/CASCADE, and explicit about it (source_product_id above
+    # relies on the implicit NO ACTION default; this one says so on
+    # purpose, matching the asset_approval RESTRICT precedent from
+    # migration 0057): a document_version is never deleted on its own
+    # (only a whole Document cascades, and routers/documents.py refuses
+    # that delete while any Evidence still references one of its
+    # versions), so this FK should never actually need to refuse anything
+    # in practice -- it exists as the same defense-in-depth backstop.
+    # Deliberately a version, not the Document itself: "the version that
+    # was approved," resolvable later, never "whatever is current" --
+    # see DocumentVersion's own docstring.
+    source_document_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("document_version.id", ondelete="RESTRICT"), nullable=True
+    )
     sha256_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -2669,3 +2685,255 @@ class AssetApprovalChecklistItem(Base):
     product_key: Mapped[str] = mapped_column(String(60), nullable=False)
     product_name: Mapped[str] = mapped_column(String(200), nullable=False)
     confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+# ---------------------------------------------------------------------------
+# Document library (roadmap item N, slice N.1 -- migration 0059)
+# ---------------------------------------------------------------------------
+
+
+class Document(Base):
+    """One policy/procedure/plan/list/sop/form an org maintains -- roadmap
+    item N.1. Versioned from day one: roadmap item P's own lesson
+    (`ProductBaselineVersion`'s docstring) is that baseline mappings were
+    built mutable, an already-activated tenant's compliance justification
+    got silently rewritten by a later reimport, and versioning had to be
+    retrofitted across five tables and two migrations afterward. A
+    document IS the evidence, not a pointer to it, so this is worse to get
+    wrong, not equally bad -- there is no N.1-without-versioning
+    intermediate step; `DocumentVersion` (below) is append-only from this
+    same migration.
+
+    This row holds identity, tagging, and cadence: facts about the
+    document as a durable thing the org maintains, independent of which
+    specific version is currently in force. Body, status, and approval
+    belong to `DocumentVersion` -- see that class's own docstring for the
+    full document/version split and why status specifically lives there
+    (a document doesn't have one approval state; a specific version does,
+    and different versions of the same document can be draft/approved/
+    superseded simultaneously).
+
+    `current_version_id` mirrors `Product.current_version_id` exactly,
+    including why it's nullable: a `Document` row must be flushed before
+    the first `DocumentVersion` can reference it back via `document_id`,
+    so this starts NULL and is set immediately after, in the same
+    transaction, by the same create call -- never left NULL once creation
+    completes. Also mirrors it structurally: this table is created without
+    the column, `document_version` is created next (referencing this
+    table), then the column is added by `ALTER TABLE` -- see migration
+    0059 for why (a straight forward FK from `document` to
+    `document_version` can't be declared before `document_version`
+    exists).
+
+    `is_template_derived`/`template_ref`: the monetization-boundary marker
+    from roadmap N. The matching engine, tagging, and publish/approve flow
+    here are core and open-source; curated template *content* (Jarrod's
+    own MSP document set included) ships as a separate seed script marked
+    by these columns -- no code-level paywall. Placed here rather than on
+    `DocumentVersion` deliberately: N.1 doesn't build N.4's actual
+    template-adoption mechanism, and guessing at per-version template
+    provenance now (should a re-adopted newer template version show up as
+    a fact about the Document or about the specific DocumentVersion it
+    produced?) would be designing N.4 blind. Keeping these at roadmap N's
+    original granularity is the smaller commitment; N.4 can move them if
+    its real adoption design needs finer granularity than this.
+
+    `cadence_months`, not `review_cadence_months`: `Organization.review_
+    cadence_months` already names the existing, unrelated per-org users/
+    devices review cycle -- `ReviewCycle.cadence_months` made the identical
+    naming choice for the identical reason when it copied that same
+    Organization column (see its own docstring). This is a third, distinct
+    cadence: how often THIS document is due for re-approval (N.3 builds
+    the actual scheduled job against it), defaulting to annual. Carried
+    now because N.3 needs it and a later `ALTER TABLE` for one integer
+    column with a sane default costs nothing today.
+    """
+
+    __tablename__ = "document"
+    __table_args__ = (
+        UniqueConstraint("org_id", "doc_id", name="uq_document_doc_id"),
+        CheckConstraint(
+            "doc_type IN ('policy', 'procedure', 'plan', 'list', 'sop', 'form', 'other')",
+            name="ck_document_doc_type",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    # Stable, human-readable, MSP-assigned -- "AC-POL-001". Appears in
+    # Evidence.reference_location once published; validated at the router
+    # (routers/documents.py) as the same class of input as a filename, not
+    # free text -- see that module's own validator docstring.
+    doc_id: Mapped[str] = mapped_column(String(60), nullable=False)
+    doc_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    title: Mapped[str] = mapped_column(String(400), nullable=False)
+    cadence_months: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("12")
+    )
+    is_template_derived: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    template_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    current_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("document_version.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class DocumentVersion(Base):
+    """One immutable, append-only snapshot of a `Document`'s content --
+    see `Document`'s own docstring for why this table exists from N.1
+    rather than being retrofitted later. Editing a document creates a new
+    row here; nothing here is ever mutated in place after creation except
+    the small set of fields explicitly named below as approval moves
+    forward through it -- `body`/`storage_key`/`is_template_derived`/
+    `template_ref` never change once a version is created, matching
+    `ProductBaselineVersion`'s own "entirely fresh rows, never mutated"
+    rule for the same class of artifact.
+
+    Holds body, status, and approval: everything about THIS specific piece
+    of content, as opposed to `Document`'s identity/tagging/cadence.
+
+    `status` values and legal transitions (enforced in
+    `routers/documents.py`, not by a DB trigger -- same "application
+    validation, not a CHECK against a sibling column" precedent
+    `baseline_import.py`'s coverage_basis-required-for-non-customer_owns
+    check already uses for a conditional rule a CHECK can't express):
+
+      draft         -- default on creation. Freely reachable from
+                       under_review and vice versa via a plain PATCH;
+                       creating a new version *always* starts here
+                       regardless of the version it supersedes.
+      under_review  -- informational marker only in this slice, no
+                       workflow side effects. N.3 builds the real
+                       review/re-approval machinery against this state;
+                       N.1 only needs it to exist and be a legal, visible
+                       waypoint.
+      approved      -- reachable ONLY via `POST .../documents/{id}/publish`,
+                       never via a bare status PATCH. This is "candidates,
+                       never auto-met" applied to documents: approval is a
+                       deliberate, audited action with real side effects
+                       (an `Evidence` row + `EvidenceStateLink`s), not a
+                       status flag anyone can flip by editing a field.
+      superseded    -- set automatically, ONLY as the side effect of a
+                       LATER version of the same document being published
+                       (see `routers/documents.py:publish_document`'s own
+                       docstring for the full republish handling). Terminal
+                       -- nothing transitions out of superseded, and
+                       nothing manually transitions a version INTO it.
+
+    `is_template_derived`/`template_ref` carried here too, alongside
+    `Document`'s own copies of the same two columns -- see `Document`'s
+    own docstring for why N.1 doesn't yet pick which granularity is
+    authoritative; both exist as inert N.4 placeholders for now.
+    """
+
+    __tablename__ = "document_version"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id", "version_number", name="uq_document_version_identity"
+        ),
+        CheckConstraint(
+            "status IN ('draft', 'under_review', 'approved', 'superseded')",
+            name="ck_document_version_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("document.id", ondelete="CASCADE"), index=True
+    )
+    # Denormalized from document.org_id -- see LiongardSyncResultChange
+    # .org_id's own comment for why every RLS-enabled child table in this
+    # codebase carries its own copy rather than relying on a join.
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'draft'")
+    )
+    # Plain text/markdown in this slice -- N.2 is rich-text editing, N.4 is
+    # .docx-> text conversion. Nullable because a file-backed version
+    # (storage_key set) may carry no extracted text at all yet.
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # File-backed versions only. Same id-based-path convention as
+    # Evidence.storage_key/ProductDocument.storage_key (models.py) -- an
+    # operator-supplied filename never becomes part of the actual storage
+    # path, so it can't path-traverse; the original filename is kept
+    # separately (routers/documents.py request schema), same split those
+    # two already use.
+    storage_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_template_derived: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    template_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # A named person, not the authenticated actor -- same reasoning RACI/
+    # CRM already establishes for why responsibility attaches to Contact,
+    # not User: the person granting approval (e.g. the customer's own
+    # President signing off on a policy) is often not a WinGRC login at
+    # all. The authenticated caller who performed the publish action is
+    # captured separately, by audit_log (via log_event's actor
+    # resolution) -- these are two different facts, deliberately not
+    # merged into one.
+    approved_by_contact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contact.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class DocumentObjectiveTag(Base):
+    """Many-to-many: one document can satisfy multiple framework
+    objectives; one objective can be addressed by multiple documents --
+    the same evidence-minimization dedup shape used throughout this
+    codebase (baseline evidence specs, EvidenceTask fan-out).
+
+    `objective_id` references the shared reference catalog
+    (`AssessmentObjective`), deployment-wide, never a per-assessment
+    `ControlState` row directly -- `routers/documents.py:publish_document`
+    resolves a tagged objective_id to this org's actual ControlState
+    row(s) fresh, at publish time, across every `in_progress` assessment
+    (there can be more than one; see `review_cycles.py`'s own precedent
+    for resolving "the active assessment(s)" as a set, not a singleton).
+    """
+
+    __tablename__ = "document_objective_tag"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id", "objective_id", name="uq_document_objective_tag"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("document.id", ondelete="CASCADE"), index=True
+    )
+    # Denormalized from document.org_id -- see DocumentVersion.org_id's
+    # own comment.
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    objective_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("assessment_objective.id"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

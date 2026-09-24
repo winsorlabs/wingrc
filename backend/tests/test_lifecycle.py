@@ -519,6 +519,49 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     ).first() is None, "confirms: nothing was promoted, no acceptance record either"
 
     # ------------------------------------------------------------------ #
+    # Step 3d — Document library (roadmap N.1): tag and publish a policy  #
+    # against IR.L2-3.6.1[a] BEFORE Step 4 marks it met by hand -- a live #
+    # check of publish's own "candidates, never auto-met" rule. Attaching #
+    # evidence here must not itself move the objective's status; Step 4   #
+    # still has to do that explicitly, same as any other evidence path.   #
+    # ------------------------------------------------------------------ #
+    ir_a = by_key[("IR.L2-3.6.1", "a")]
+    status_before_publish = ir_a["status"]
+
+    r = client.post(
+        f"/orgs/{org.id}/documents",
+        json={
+            "doc_id": "IR-POL-001", "doc_type": "policy",
+            "title": "Incident Response Policy", "body": "Our incident response policy...",
+        },
+    )
+    assert r.status_code == 201, r.text
+    ir_doc = r.json()
+    r = client.post(
+        f"/orgs/{org.id}/documents/{ir_doc['id']}/objective-tags",
+        json={"objective_id": ir_a["objective_id"]},
+    )
+    assert r.status_code == 201, r.text
+    r = client.post(
+        f"/orgs/{org.id}/documents/{ir_doc['id']}/publish",
+        json={"approved_by_contact_id": so_contact_id},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["current_version"]["status"] == "approved"
+
+    ir_a_after_publish = next(
+        s for s in client.get(
+            f"/orgs/{org.id}/assessments/{assessment_id}/control-states"
+        ).json()
+        if s["control_id"] == "IR.L2-3.6.1" and s["objective_key"] == "a"
+    )
+    assert ir_a_after_publish["status"] == status_before_publish, (
+        "publishing a document must never change control_state.status -- "
+        "'candidates, never auto-met' applies to documents exactly like tool "
+        "activation and connector output"
+    )
+
+    # ------------------------------------------------------------------ #
     # Step 4 — Collect evidence until IR.L2-3.6.1 (all seven objectives)  #
     # reaches met. Also collect for the AU.L2-3.3.1 overlap control --    #
     # this is what step 10's evidence-archival check needs real evidence  #
@@ -607,6 +650,11 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     scoring_html_v1 = _strip_stamp(zf_v1.read(scoring_name))
     inventory_html_v1 = _strip_stamp(zf_v1.read(inventory_name))
     assert "shared" in impl_html_v1.lower() or "provider" in impl_html_v1.lower()
+    assert "IR-POL-001" in impl_html_v1, (
+        "Step 3d's published document must show up as evidence on IR.L2-3.6.1[a] "
+        "in the exact same implementation section this pass's own point-in-time "
+        "comparison already tracks -- extending it, not adding a parallel check"
+    )
     assert "SN-LT-STILL-PENDING" in inventory_html_v1
     assert "Pending Approval" in inventory_html_v1
     # A2: the devices approved in Steps 3/3b show who accepted them --
