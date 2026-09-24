@@ -1,8 +1,12 @@
 # Plan — Document Library (roadmap item N)
 
-**Status:** N.1–N.5 all unstarted. This document is the sequencing spec and
-the cross-cutting rules; each slice gets its own prompt when it starts.
-**Start with N.1.**
+**Status:** N.1 ✅ DONE (2026-09-24, migration 0059 — see `docs/roadmap.md`'s
+Done entry for the full writeup: the document/version split, the status
+transition table, and the republish decision). N.2–N.5 not started. This
+document is the sequencing spec and the cross-cutting rules; each slice
+gets its own prompt when it starts. **N.2 or N.5 next** — either can run
+first per this doc's own sequencing section below; N.3 wants N.2 in place
+first, N.4 wants N.1's versioning exercised for a while first.
 
 **Reconciles two prior specs, both superseded by this one:** `ROADMAP.md`'s
 item F ("Template document library") and `docs/roadmap.md`'s original item

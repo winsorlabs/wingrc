@@ -5028,6 +5028,127 @@ live, confirmed by direct query afterward.
 
 ---
 
+### Document library N.1: core record shape, versioned from day one ✅ DONE (2026-09-24)
+
+`docs/PLAN-document-library.md` has the full five-slice plan. This is N.1,
+the foundation N.2-N.5 build on. `Document`/`document_objective_tag`
+confirmed genuinely absent before starting (grounding check, not assumed);
+`importers/document.py` confirmed to be the unrelated AI vendor-CRM
+extractor, not this feature.
+
+**§1 decision: document/document_version split, and why.** Roadmap item
+P's exact lesson (`ProductBaselineVersion`'s own docstring) — baseline
+mappings were built mutable, an already-activated tenant's justification
+got silently rewritten by a later reimport, versioning retrofitted across
+five tables and two migrations afterward — applies harder to documents: a
+document IS the evidence, not a pointer to it. `document_version` is
+append-only from migration `0059`, the first migration this feature has.
+Split: `document` holds identity/tags/cadence (`doc_id`, `doc_type`,
+`title`, `cadence_months`, `current_version_id`, the `is_template_derived`/
+`template_ref` monetization markers); `document_version` holds body,
+status, and approval (`body`, `storage_key`, `status`, `approved_at`,
+`approved_by_contact_id`). `current_version_id` mirrors `Product.
+current_version_id` exactly, including the same nullable-then-backfilled-
+in-the-same-transaction resolution for the identical circular-FK reason,
+and migration `0059` resolves the create-ordering the same way migration
+`0054` did (create `document` without the column, create `document_
+version`, `ALTER TABLE` to add it).
+
+**Naming:** `cadence_months`, not `review_cadence_months` —
+`Organization.review_cadence_months` already names the unrelated per-org
+users/devices review cycle; `ReviewCycle.cadence_months` made the
+identical naming choice for the identical reason when it copied that same
+column. A third, distinct cadence needed a third, distinct name.
+
+**Status transition table** (enforced in `routers/documents.py`, not a DB
+trigger — same "application validation, not a CHECK against a sibling
+column" precedent `baseline_import.py`'s conditional coverage_basis check
+already uses):
+
+| From | To | How |
+|---|---|---|
+| (new version) | `draft` | Always the starting state, regardless of what version it supersedes |
+| `draft` | `under_review` | Manual PATCH, current version only |
+| `under_review` | `draft` | Manual PATCH, current version only |
+| `draft` / `under_review` | `approved` | `POST .../publish` only — never a bare PATCH |
+| `approved` | `superseded` | Automatic, only as the side effect of a *later* version of the same document being published |
+| `superseded` | (none) | Terminal |
+
+This is "candidates, never auto-met" applied to documents: approval is a
+deliberate, audited action with real side effects, not a status flag
+anyone can flip.
+
+**§3 decision: republish supersedes and archives, never deletes.** At most
+one `approved` version per document. Publishing while another version is
+still `approved` flips that older version to `superseded` and archives
+(`EvidenceStateLink.is_archived`) the `EvidenceStateLink` rows its own
+`Evidence` row produced — the `Evidence` row itself is never touched or
+deleted. This is why "the version that was approved, not whatever is
+current" (the other §3 question) has a clean answer at all:
+`Evidence.source_document_version_id` is a fixed FK set once at publish
+time, so an old `Evidence` row stays permanently resolvable to the exact
+version that earned it, and a bundle already exported keeps rendering
+those frozen bytes regardless of what happens to the document later. A
+*fresh* export after a republish correctly shows only the new version's
+evidence (`EvidenceStateLink.is_archived.is_(False)` is already
+`bundle_service.py`'s existing filter — no changes needed there at all).
+Verified directly: `test_republish_supersedes_prior_version_and_archives_
+its_evidence_links`.
+
+**What roadmap N's original spec kept vs. changed** (its field list dates
+to 2026-09-07, before any of this was real code):
+- **Kept as specified:** `doc_id`/`doc_type`/`title`/`storage_key`/
+  `is_template_derived`/`template_ref`/`approved_at`/`approved_by_
+  contact_id` — same fields, now correctly distributed across the two
+  tables per §1 rather than one.
+- **Changed:** `status`/`version`/`body` move from a single mutable
+  `document` row onto append-only `document_version` rows — the entire
+  point of this slice. URL keys on `{document_id}` (the internal UUID),
+  not roadmap N's illustrative `{doc_id}` path — every other resource in
+  this API keys its URL on the internal id, not a natural key
+  (`routers/scope.py`'s own precedent), and `doc_id` is operator-supplied,
+  human-facing text, not a routing identifier.
+- **Added, not in the original spec:** `cadence_months` (N.3 needs it; a
+  later `ALTER TABLE` for one column costs nothing today).
+- **Deliberately not built in this slice:** any endpoint that writes or
+  reads `storage_key` — it's carried in the schema per roadmap N's own
+  field list, but there's no upload/download path here, matching how
+  `is_template_derived`/`template_ref` are also carried-but-unexercised
+  until N.4. A real file-backed version, and the id-based-storage-path
+  convention `DocumentVersion`'s own docstring already documents for
+  whenever that lands, is N.4's concern — that's also where `.docx`->text
+  conversion is decided.
+
+**Found and fixed during the bench run, not a design issue:**
+`document.updated_at` has `onupdate=func.now()`; the `current_version_id`
+update in create/patch (and the version/evidence writes in publish)
+triggers it, and reading that column *after* `session.commit()` ran the
+deferred refresh with `app.current_org` already reset by `_app_session`'s
+own commit wrapper (`tests/conftest.py`'s own documented trap) — RLS then
+matched zero rows and raised `ObjectDeletedError` on a row very much still
+there. `ScopeEntityOut` avoids this by never exposing `updated_at` at all;
+that wasn't the right fix here since the field is genuinely useful on a
+document. Fixed by building the Pydantic response before `session.commit()`
+in every mutating endpoint, not after.
+
+**Verification:** bench-stack on an isolated wl-util-1 Docker Compose
+project (live `wingrc` project confirmed untouched before and after) --
+1371/1371 backend tests, `ruff check .` clean (routers/documents.py added
+to the B008 per-file-ignore list, matching every other FastAPI router),
+156/156 frontend tests (no frontend changes in this slice), `tsc -b`
+clean, `vite build` clean. `test_lifecycle.py` gains Step 3d: publishes a
+real document against `IR.L2-3.6.1[a]` before Step 4 marks it met by
+hand, asserting `control_state.status` is unaffected by publish, and
+extends the existing three-export point-in-time comparison (`impl_html_v1`
+now contains the published `doc_id`, compared byte-for-byte against
+`impl_html_v2` at Step 8) rather than adding a parallel check. `c3pao_
+assessor` confirmed read-only across every mutation; RLS confirmed through
+real HTTP, not a direct query; SPRS confirmed unaffected by document
+existence or publish, asserted directly. Merged to `main`, deployed to
+`dev.wingrc.us`.
+
+---
+
 ## Planned
 
 ### N. Document Library
