@@ -5032,6 +5032,24 @@ live, confirmed by direct query afterward.
 
 ### N. Document Library
 
+**Superseded 2026-09-24 by `docs/PLAN-document-library.md`** (slices
+N.1–N.5) — read that file, not this entry, before touching this item. It
+also reconciles `ROADMAP.md` item F ("Template document library"), flagged
+2026-09-07 as likely-duplicating this section and never resolved until now;
+both this inline spec and F's are superseded by the plan doc, which is the
+single current design. Still genuinely unstarted (no `Document` model, no
+`routers/documents.py`) — the plan doc's own status line, not this one, is
+the source of truth on progress.
+
+The prerequisite check below (item M / `Contact`) still holds and needed no
+re-verification; the rest of this entry is left for historical context
+only, superseded by the plan doc's own grounding section and cross-cutting
+rules (versioning from day one, variable substitution at import not
+render, MSP template sets, approval + review cadence, environment/tool-
+driven suggestions — none of which this original spec anticipated).
+
+**Original spec below (superseded):**
+
 Two new tables (a new migration — 0011 through 0015 are already in use by other shipped features, see Done above). Prerequisite: M (for `approved_by_contact_id` FK). **Verified 2026-09-07: this prerequisite is satisfied** — `Contact` (`models.py`) has existed since the Onboarding Wizard shipped (migrations 0011–0013, see Done above), well before this item was written. No remaining data-model blocker for N specifically; it's just unstarted.
 
 **Monetization boundary:** The matching engine, tagging, and publish/approve flow are core (free, open-source). The curated template content (polished ready-to-use policies) is a separately distributed seed script — not in this repo. `is_template_derived` and `template_ref` columns mark template-derived rows; no code-level paywall.
