@@ -769,18 +769,29 @@ review before shipping; no C3PAO sign-off required for the initial set.
 
 ## F — Template document library
 
-**Status: unstarted, and likely duplicated by `docs/roadmap.md` item
-N ("Document Library") — flagged 2026-09-07, not reconciled here.**
-Both describe the same feature (a tenant document library tagged to
-objectives), with different table names (`template_document` /
-`template_objective_link` here vs. `document` / `document_objective_tag`
-in N) and different levels of detail — N additionally specifies a
-publish workflow, a monetization boundary (free matching engine vs. paid
-seed content), and evidence-link integration that this section doesn't.
-N reads as the more current, more developed spec; this section reads like
-an earlier draft that predates it. Neither has any code behind it yet
-(verified: no `Document`/`template_document` model, no
-`routers/documents.py`). Reconcile into one spec before building either.
+**Reconciled 2026-09-24: superseded by `docs/PLAN-document-library.md`**
+(roadmap item N, slices N.1–N.5) — the reconciliation this section itself
+called for below, finally done. That plan doc is now the single current
+spec for a tenant document library tagged to objectives; it supersedes
+both this section and `docs/roadmap.md`'s own original item N text
+(likewise marked superseded there). Neither this section's
+`template_document`/`template_objective_link` table names nor N's
+original `document`/`document_objective_tag` sketch should be built from
+directly — read the plan doc's own N.1 slice instead, which carries the
+versioned (`document_version`, append-only) shape neither original spec
+had. Still genuinely unstarted (verified: no `Document`/`template_
+document` model, no `routers/documents.py`).
+
+**Original flag, left for context (the gap this reconciliation closes):**
+unstarted, and likely duplicated by `docs/roadmap.md` item N ("Document
+Library") — flagged 2026-09-07, not reconciled here. Both described the
+same feature (a tenant document library tagged to objectives), with
+different table names (`template_document` / `template_objective_link`
+here vs. `document` / `document_objective_tag` in N) and different levels
+of detail — N additionally specified a publish workflow, a monetization
+boundary (free matching engine vs. paid seed content), and evidence-link
+integration that this section didn't. N read as the more current, more
+developed spec; this section read like an earlier draft that predates it.
 
 **What:** A library of reusable policy, procedure, plan, and list templates,
 each with a stable document ID (e.g. `AC-POL-001`). Templates tag to the

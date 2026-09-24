@@ -445,11 +445,23 @@ verification per that plan doc's own status line — do not infer this is
 verified from this entry alone.
 
 ### 7. Document library / SSP templates
+
+**Plan and live status: `docs/PLAN-document-library.md`** (slices N.1–N.5).
+Read that file before touching this item. Genuinely unstarted — no `Document`
+model, no `routers/documents.py` — do not infer otherwise from this entry;
+the plan doc's own status line is the only source of truth. Reconciles two
+prior specs that had drifted apart (`ROADMAP.md` item F and this section's
+own earlier text, flagged 2026-09-07 as likely-duplicated and never
+reconciled until the plan doc landed); do not re-derive the design from
+either of those, they're superseded.
+
 Org-level document store for policies, procedures, and plans that flow into
-implementation statements. `Document` model (title, category, body_text or
-storage_key for uploaded files). AI generation can cite document library items
-in `grounded_in` JSONB. Templates for common CMMC policies (AUP, IR plan,
-media sanitization SOP).
+implementation statements. Versioned from the first migration (append-only
+`document_version`, never mutated in place), MSP/master-org templates with
+variable substitution resolved at import (not render), per-document
+approval and review cadence, and environment/tool-driven suggestions — see
+the plan doc for the full five-slice breakdown and the cross-cutting rules
+that apply to all of them.
 
 ### 8. Connectors (Liongard / RMM scope ingestion)
 API/MCP-based scope ingestion to replace manual spreadsheet upload. Liongard
