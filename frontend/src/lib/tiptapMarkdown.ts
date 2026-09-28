@@ -77,7 +77,7 @@ function markFor(token: Token): TiptapMark | null {
     case "s":
       return { type: "strike" };
     case "a": {
-      const href = token.attrGet("href") ?? "";
+      const href = String(token.attrGet("href") ?? "");
       // Defence in depth: markdown-it has already refused a bad scheme, so
       // an href here should always pass. If it somehow does not, the text
       // keeps its content and loses only the link.
@@ -251,7 +251,8 @@ export function markdownToDoc(source: string | null | undefined): TiptapNode {
         if (token.type === "th_open") {
           const style = token.attrGet("style");
           aligns[columnIndex] =
-            (style && ALIGN_FROM_STYLE[style.replace(/\s/g, "").toLowerCase()]) || null;
+            (style && ALIGN_FROM_STYLE[String(style).replace(/\s/g, "").toLowerCase()]) ||
+            null;
         }
         const align = aligns[columnIndex] ?? null;
         open(token.type === "th_open" ? "tableHeader" : "tableCell", {

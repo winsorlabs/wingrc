@@ -118,7 +118,7 @@ function attrsFor(token: Token): Record<string, unknown> {
   const props: Record<string, unknown> = {};
 
   if (token.tag === "a") {
-    const href = token.attrGet("href") ?? "";
+    const href = String(token.attrGet("href") ?? "");
     // markdown-it has already dropped the href for a scheme validateLink
     // rejected, which renders the link as plain text. This is the second
     // gate, not the first: if an href is here at all it gets re-checked
@@ -141,7 +141,7 @@ function attrsFor(token: Token): Record<string, unknown> {
     // refuses. Mapped to a class the stylesheet knows instead.
     const style = token.attrGet("style");
     if (style) {
-      const cls = ALIGN_CLASS[style.replace(/\s/g, "").toLowerCase()];
+      const cls = ALIGN_CLASS[String(style).replace(/\s/g, "").toLowerCase()];
       if (cls) props.className = cls;
     }
     return props;
