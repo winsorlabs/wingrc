@@ -130,6 +130,34 @@ from tests.conftest import _app_session, _authed, _grant, _make_fake_user
 
 pytestmark = pytest.mark.integration
 
+# Step 3d's document body. Markdown, per roadmap N.2's format decision
+# (backend/app/markdown_doc.py). Carries a script tag and an event-handler
+# attribute on purpose: the point-in-time bundle is what an assessor opens,
+# and "it renders" and "it renders safely" are different claims.
+_IR_POLICY_BODY = """# Incident Response Policy
+
+## Purpose
+
+This policy governs **incident response** for systems processing CUI.
+
+<script>alert('xss')</script>
+
+<img src=x onerror=alert('xss')>
+
+[bad link](javascript:alert('xss'))
+
+## Requirements
+
+1. Incidents are reported within 24 hours.
+2. The MSP maintains the response runbook.
+
+| Role | Owner |
+|:-----|------:|
+| Responder | MSP |
+
+See [NIST SP 800-171](https://csrc.nist.gov) for the source requirement.
+"""
+
 _STAMP_RE = re.compile(r'<div class="stamp">.*?</div>')
 
 
@@ -532,7 +560,12 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
         f"/orgs/{org.id}/documents",
         json={
             "doc_id": "IR-POL-001", "doc_type": "policy",
-            "title": "Incident Response Policy", "body": "Our incident response policy...",
+            "title": "Incident Response Policy",
+            # Real Markdown structure, plus markup an operator could paste
+            # (deliberately: N.2 §3 treats a document body as untrusted on
+            # the bundle/PDF path, not just in the browser). Stored verbatim
+            # here and neutralised at render -- asserted in Step 7 below.
+            "body": _IR_POLICY_BODY,
         },
     )
     assert r.status_code == 201, r.text
@@ -646,9 +679,35 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     inventory_name = next(
         n for n in zf_v1.namelist() if n.endswith("ssp/04_component_inventory.html")
     )
+    documents_name = next(n for n in zf_v1.namelist() if n.endswith("ssp/06_documents.html"))
     impl_html_v1 = _strip_stamp(zf_v1.read(impl_name))
     scoring_html_v1 = _strip_stamp(zf_v1.read(scoring_name))
     inventory_html_v1 = _strip_stamp(zf_v1.read(inventory_name))
+    documents_html_v1 = _strip_stamp(zf_v1.read(documents_name))
+
+    # N.2 §3/§7 on the bundle path specifically: the approved policy body is
+    # rendered (not escaped into literal asterisks, which would be useless in
+    # front of a C3PAO) and every hostile construct in it is inert. This is
+    # the same bytes WeasyPrint is handed for the consolidated SSP PDF.
+    assert "IR-POL-001" in documents_html_v1
+    assert "<strong>incident response</strong>" in documents_html_v1
+    assert "<h1" in documents_html_v1 and "<table>" in documents_html_v1
+    assert "csrc.nist.gov" in documents_html_v1
+    # Live markup absent; the escaped text of it present. Checking for the
+    # bare substring "onerror" would fail on safe output -- the escaped form
+    # &lt;img src=x onerror=...&gt; legitimately contains it, and an author
+    # writing about markup in an appendix must still see what they wrote.
+    lowered = documents_html_v1.lower()
+    for live_tag in ("<script", "<img", "<iframe", "<svg"):
+        assert live_tag not in lowered, (
+            f"{live_tag!r} reached the assessor-facing bundle HTML as markup"
+        )
+    assert '<a href="javascript:' not in lowered
+    assert "&lt;script&gt;" in documents_html_v1, "neutralised, not silently dropped"
+    # Alignment arrives as a class, never a style attribute -- markdown_doc.py
+    # refuses to put CSS on operator-influenced output.
+    assert "ta-right" in documents_html_v1
+    assert "style=" not in documents_html_v1
     assert "shared" in impl_html_v1.lower() or "provider" in impl_html_v1.lower()
     assert "IR-POL-001" in impl_html_v1, (
         "Step 3d's published document must show up as evidence on IR.L2-3.6.1[a] "
@@ -729,6 +788,7 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     impl_html_v2 = _strip_stamp(zf_v2.read(impl_name))
     scoring_html_v2 = _strip_stamp(zf_v2.read(scoring_name))
     inventory_html_v2 = _strip_stamp(zf_v2.read(inventory_name))
+    documents_html_v2 = _strip_stamp(zf_v2.read(documents_name))
 
     assert impl_html_v2 == impl_html_v1, (
         "a baseline reimport must never change what an already-generated bundle "
@@ -741,6 +801,11 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
         "A2's own point-in-time rule: a baseline reimport (unrelated to scope/assets "
         "entirely) must never change the still-pending marker or the stored approver "
         "snapshot the inventory rendered before"
+    )
+    assert documents_html_v2 == documents_html_v1, (
+        "N.2's rendered policy section is part of the same point-in-time guarantee: "
+        "the approved version's own body is what the snapshot carries, so nothing "
+        "unrelated to the document can change what an export already rendered"
     )
 
     score_after_reimport = client.get(f"/orgs/{org.id}/assessments").json()
@@ -924,6 +989,10 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
         "submitted" in cover_html_v3.lower()
         or "closed" in cover_html_v3.lower()
         or str(score_after_met) in cover_html_v3
+    )
+    assert _strip_stamp(zf_v3.read(documents_name)) == documents_html_v1, (
+        "moving the tenant to a new baseline version touches neither the document "
+        "nor its approved body, so the rendered policy section must be unchanged"
     )
     assert inventory_html_v3 == inventory_html_v1, (
         "unrelated activity since Step 6 (evidence collection, SPRS submission) "

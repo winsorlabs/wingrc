@@ -1,0 +1,150 @@
+{
+  "_comment": "Shared Markdown rendering corpus. Replayed by backend/tests/test_markdown_doc.py and frontend/src/lib/markdown.test.ts so the two renderers of the same untrusted document body cannot drift apart unnoticed. Regenerate deliberately, never to make a failing test pass -- a diff here means rendering changed for every document in every bundle.",
+  "cases": [
+    {
+      "name": "headings",
+      "markdown": "# H1\n\n## H2\n\n### H3\n",
+      "html": "<h1>H1</h1>\n<h2>H2</h2>\n<h3>H3</h3>\n"
+    },
+    {
+      "name": "emphasis",
+      "markdown": "Plain, **bold**, _italic_, ~~struck~~, and `code`.\n",
+      "html": "<p>Plain, <strong>bold</strong>, <em>italic</em>, <s>struck</s>, and <code>code</code>.</p>\n"
+    },
+    {
+      "name": "bullet-list",
+      "markdown": "- First item\n- Second item\n- Third item\n",
+      "html": "<ul>\n<li>First item</li>\n<li>Second item</li>\n<li>Third item</li>\n</ul>\n"
+    },
+    {
+      "name": "ordered-list",
+      "markdown": "1. First\n2. Second\n3. Third\n",
+      "html": "<ol>\n<li>First</li>\n<li>Second</li>\n<li>Third</li>\n</ol>\n"
+    },
+    {
+      "name": "nested-list",
+      "markdown": "- Outer\n    - Inner one\n    - Inner two\n- Outer two\n",
+      "html": "<ul>\n<li>Outer\n<ul>\n<li>Inner one</li>\n<li>Inner two</li>\n</ul>\n</li>\n<li>Outer two</li>\n</ul>\n"
+    },
+    {
+      "name": "blockquote",
+      "markdown": "> Exceptions require written approval from the ISSO.\n",
+      "html": "<blockquote>\n<p>Exceptions require written approval from the ISSO.</p>\n</blockquote>\n"
+    },
+    {
+      "name": "thematic-break",
+      "markdown": "Before\n\n---\n\nAfter\n",
+      "html": "<p>Before</p>\n<hr />\n<p>After</p>\n"
+    },
+    {
+      "name": "hard-break",
+      "markdown": "Line one  \nline two\n",
+      "html": "<p>Line one<br />\nline two</p>\n"
+    },
+    {
+      "name": "fenced-code",
+      "markdown": "```python\nprint('policy')\n```\n",
+      "html": "<pre><code>print('policy')\n</code></pre>\n"
+    },
+    {
+      "name": "indented-code",
+      "markdown": "    literal code block\n",
+      "html": "<pre><code>literal code block\n</code></pre>\n"
+    },
+    {
+      "name": "table-plain",
+      "markdown": "| Role | Owner |\n|------|-------|\n| ISSO | MSP |\n",
+      "html": "<table>\n<thead>\n<tr>\n<th>Role</th>\n<th>Owner</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>ISSO</td>\n<td>MSP</td>\n</tr>\n</tbody>\n</table>\n"
+    },
+    {
+      "name": "table-aligned",
+      "markdown": "| Left | Center | Right |\n|:-----|:------:|------:|\n| a | b | c |\n",
+      "html": "<table>\n<thead>\n<tr>\n<th class=\"ta-left\">Left</th>\n<th class=\"ta-center\">Center</th>\n<th class=\"ta-right\">Right</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td class=\"ta-left\">a</td>\n<td class=\"ta-center\">b</td>\n<td class=\"ta-right\">c</td>\n</tr>\n</tbody>\n</table>\n"
+    },
+    {
+      "name": "link-https",
+      "markdown": "See [NIST SP 800-171](https://csrc.nist.gov/pubs/sp/800/171/r2/final).\n",
+      "html": "<p>See <a href=\"https://csrc.nist.gov/pubs/sp/800/171/r2/final\" rel=\"noopener noreferrer nofollow\" target=\"_blank\">NIST SP 800-171</a>.</p>\n"
+    },
+    {
+      "name": "link-mailto",
+      "markdown": "Contact [security](mailto:security@example.test).\n",
+      "html": "<p>Contact <a href=\"mailto:security@example.test\">security</a>.</p>\n"
+    },
+    {
+      "name": "link-relative",
+      "markdown": "See [Annex A](./annex-a).\n",
+      "html": "<p>See <a href=\"./annex-a\">Annex A</a>.</p>\n"
+    },
+    {
+      "name": "link-javascript",
+      "markdown": "[click me](javascript:alert(1))\n",
+      "html": "<p>[click me](javascript:alert(1))</p>\n"
+    },
+    {
+      "name": "link-data-uri",
+      "markdown": "[click me](data:text/html;base64,PHN2Zz48L3N2Zz4=)\n",
+      "html": "<p>[click me](data:text/html;base64,PHN2Zz48L3N2Zz4=)</p>\n"
+    },
+    {
+      "name": "link-vbscript",
+      "markdown": "[click me](vbscript:msgbox(1))\n",
+      "html": "<p>[click me](vbscript:msgbox(1))</p>\n"
+    },
+    {
+      "name": "raw-script",
+      "markdown": "<script>alert(1)</script>\n",
+      "html": "<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>\n"
+    },
+    {
+      "name": "raw-img-onerror",
+      "markdown": "<img src=x onerror=alert(1)>\n",
+      "html": "<p>&lt;img src=x onerror=alert(1)&gt;</p>\n"
+    },
+    {
+      "name": "raw-iframe",
+      "markdown": "<iframe src=//evil.test></iframe>\n",
+      "html": "<p>&lt;iframe src=//evil.test&gt;&lt;/iframe&gt;</p>\n"
+    },
+    {
+      "name": "raw-style",
+      "markdown": "<style>body{background:url(//evil.test)}</style>\n",
+      "html": "<p>&lt;style&gt;body{background:url(//evil.test)}&lt;/style&gt;</p>\n"
+    },
+    {
+      "name": "raw-inline-html",
+      "markdown": "Text with <b>bold</b> and <span onclick=x>span</span>.\n",
+      "html": "<p>Text with &lt;b&gt;bold&lt;/b&gt; and &lt;span onclick=x&gt;span&lt;/span&gt;.</p>\n"
+    },
+    {
+      "name": "html-comment",
+      "markdown": "<!-- hidden -->\n",
+      "html": "<p>&lt;!-- hidden --&gt;</p>\n"
+    },
+    {
+      "name": "image-syntax",
+      "markdown": "![Network diagram](https://example.test/d.png)\n",
+      "html": "<p>!<a href=\"https://example.test/d.png\" rel=\"noopener noreferrer nofollow\" target=\"_blank\">Network diagram</a></p>\n"
+    },
+    {
+      "name": "entities",
+      "markdown": "R&D covers values < 5 and > 10, plus &amp; literal.\n",
+      "html": "<p>R&amp;D covers values &lt; 5 and &gt; 10, plus &amp; literal.</p>\n"
+    },
+    {
+      "name": "autolink-not-linkified",
+      "markdown": "Visit example.test for details.\n",
+      "html": "<p>Visit example.test for details.</p>\n"
+    },
+    {
+      "name": "angle-autolink",
+      "markdown": "<https://example.test/policy>\n",
+      "html": "<p><a href=\"https://example.test/policy\" rel=\"noopener noreferrer nofollow\" target=\"_blank\">https://example.test/policy</a></p>\n"
+    },
+    {
+      "name": "full-policy",
+      "markdown": "# Access Control Policy\n\n**Document ID:** AC-POL-001\n\n## 1. Purpose\n\nThis policy governs access to systems that store, process, or transmit CUI.\n\n## 2. Requirements\n\n1. All accounts require phishing-resistant MFA.\n2. Access is reviewed quarterly.\n\n| Control | Owner | Cadence |\n|:--------|:-----:|--------:|\n| AC.L2-3.1.1 | MSP | Quarterly |\n\n> Exceptions require written approval.\n\nSee [NIST SP 800-171](https://csrc.nist.gov) for the source requirement.\n",
+      "html": "<h1>Access Control Policy</h1>\n<p><strong>Document ID:</strong> AC-POL-001</p>\n<h2>1. Purpose</h2>\n<p>This policy governs access to systems that store, process, or transmit CUI.</p>\n<h2>2. Requirements</h2>\n<ol>\n<li>All accounts require phishing-resistant MFA.</li>\n<li>Access is reviewed quarterly.</li>\n</ol>\n<table>\n<thead>\n<tr>\n<th class=\"ta-left\">Control</th>\n<th class=\"ta-center\">Owner</th>\n<th class=\"ta-right\">Cadence</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td class=\"ta-left\">AC.L2-3.1.1</td>\n<td class=\"ta-center\">MSP</td>\n<td class=\"ta-right\">Quarterly</td>\n</tr>\n</tbody>\n</table>\n<blockquote>\n<p>Exceptions require written approval.</p>\n</blockquote>\n<p>See <a href=\"https://csrc.nist.gov\" rel=\"noopener noreferrer nofollow\" target=\"_blank\">NIST SP 800-171</a> for the source requirement.</p>\n"
+    }
+  ]
+}

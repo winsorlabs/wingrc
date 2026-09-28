@@ -1,12 +1,18 @@
 # Plan — Document Library (roadmap item N)
 
-**Status:** N.1 ✅ DONE (2026-09-24, migration 0059 — see `docs/roadmap.md`'s
-Done entry for the full writeup: the document/version split, the status
-transition table, and the republish decision). N.2–N.5 not started. This
-document is the sequencing spec and the cross-cutting rules; each slice
-gets its own prompt when it starts. **N.2 or N.5 next** — either can run
-first per this doc's own sequencing section below; N.3 wants N.2 in place
-first, N.4 wants N.1's versioning exercised for a while first.
+**Status:** N.1 ✅ DONE (2026-09-24, migration 0059 — the document/version
+split, the status transition table, the republish decision). **N.2 ✅ DONE**
+(2026-09-28, no migration — GFM-subset Markdown as the body format, TipTap
+on a constrained schema, structured server-side diffs, versions-plus-
+audit_log history, approved documents rendered into the bundle and PDF).
+See `docs/roadmap.md`'s Done entries for both writeups, including N.2's §0
+format decision and its cost, and the post-commit RLS audit N.2 section 8
+asked for. N.3–N.5 not started. This document is the sequencing spec and
+the cross-cutting rules; each slice gets its own prompt when it starts.
+**N.3 or N.5 next** — N.3 is now unblocked (it wanted N.2 in place so
+approval attaches to something a human can read and diff); N.5 is
+independent of both; N.4 wants N.1's versioning exercised for a while
+first.
 
 **Reconciles two prior specs, both superseded by this one:** `ROADMAP.md`'s
 item F ("Template document library") and `docs/roadmap.md`'s original item
@@ -136,16 +142,27 @@ unique per org), `title`, `doc_type`, `status`, `body`, `storage_key`
 
 **Ships first and alone.** Everything else builds on this shape.
 
-### N.2 — Browser editing, diffs, audit
+### N.2 — Browser editing, diffs, audit ✅ DONE (2026-09-28)
 
 Rich-text editing against the versioned store. Version history with a
 readable diff between any two versions. Audit log entries for create,
 edit, publish, supersede.
 
-Editor library is Code's choice with justification — ProseMirror/TipTap is
-the obvious candidate. The constraint that matters: whatever it stores must
-diff readably, because "what changed in this policy between March and
-September" is the question an assessor asks.
+Shipped as specified, with the open questions settled — see
+`docs/roadmap.md`'s Done entry for the full writeup. In short: the body
+format is **GFM-subset Markdown**, decided not on diff quality but on the
+fact that a body renders in two places (the app and the WeasyPrint PDF)
+and Markdown lets both renderers construct their own output rather than
+forwarding operator markup; the editor is **TipTap 3** on a schema
+constrained to exactly the serializable subset, asserted by a test rather
+than assumed; concurrent editing is **optimistic concurrency, not a
+lock**; there is **no autosave**, because append-only versions make one
+either absurd or illegal. The costs — no merged table cells, no inline
+images until N.4 — were confirmed with Jarrod before the slice started.
+
+Two things below are now settled by that slice rather than open: the
+"editing can be a plain text area" note under N.1 is superseded, and
+N.3's dependency on N.2 is satisfied.
 
 ### N.3 — Approval and review cadence
 
@@ -204,8 +221,9 @@ N.1 (core, versioned)
  └── N.5 (suggestions)             ← needs N.1; independent of N.2–N.4
 ```
 
-N.1 first, alone. N.2 and N.5 could run in either order after it; N.3 wants
-N.2 in place so approval attaches to something a human can read and diff.
+N.1 first, alone; N.2 landed next. N.3's precondition (approval attaching
+to something a human can read and diff) is now met, and N.5 remains
+independent of both.
 N.4 is the biggest and wants N.1's versioning settled and exercised.
 
 **Start with N.1.** Its prompt is separate.

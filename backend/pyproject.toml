@@ -23,6 +23,12 @@ dependencies = [
     "weasyprint>=63.0",
     "defusedxml>=0.7",
     "cryptography>=44.0",
+    # Document-body rendering (markdown_doc.py, roadmap N.2). Pure Python,
+    # no transitive runtime deps. Deliberately paired with the frontend's
+    # `markdown-it` (JS): they are ports of each other, which is what
+    # bounds the divergence risk of rendering the same untrusted body in
+    # two places -- see markdown_doc.py's own docstring.
+    "markdown-it-py>=4.0",
 ]
 
 [project.optional-dependencies]

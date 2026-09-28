@@ -33,6 +33,17 @@ export type ScopeTab =
 // view, "roles" is the Roles/RACI matrix, both live under Assessments now.
 export type AssessmentsTab = "board" | "roles";
 export type SecurityTab = "users" | "api-tokens" | "audit-log";
+// Library is the org's document library (roadmap N.1/N.2). "all" is every
+// document; the rest are doc_type filters, which is what the placeholder
+// subitems in this category were always standing in for.
+//
+// Deliberately NOT here: Lists and Baselines. `list` is a real doc_type, but
+// the nav's "Lists" entry means the scope-derived catalog views (CLAUDE.md:
+// "Lists are views over the scope graph, not separate documents"), and
+// Baselines means the product baseline library. Two different features that
+// happen to share an English word with a document type -- they stay disabled
+// rather than being quietly repointed at this screen.
+export type LibraryTab = "all" | "policy" | "procedure" | "plan";
 export type SystemDescriptionSection = "network_diagram" | "data_flow_diagram";
 
 interface Props {
@@ -49,6 +60,8 @@ interface Props {
   onSelectAssessmentsTab: (t: AssessmentsTab) => void;
   securityTab: SecurityTab;
   onSelectSecurityTab: (t: SecurityTab) => void;
+  libraryTab: LibraryTab;
+  onSelectLibraryTab: (t: LibraryTab) => void;
   currentUserRole: string;
   status: OnboardingStatus | null;
 }
@@ -63,6 +76,8 @@ export function SideNav({
   onSelectAssessmentsTab,
   securityTab,
   onSelectSecurityTab,
+  libraryTab,
+  onSelectLibraryTab,
   currentUserRole,
   status,
 }: Props) {
@@ -173,13 +188,36 @@ export function SideNav({
         </SideNavItem>
         {category === "library" && (
           <SideNavSubitems>
-            {/* None of these are built yet (G.10) except Lists' backend
-                export logic, which has no frontend wrapper either. */}
+            <SideNavSubitem
+              active={libraryTab === "all"}
+              onClick={() => onSelectLibraryTab("all")}
+            >
+              All Documents
+            </SideNavSubitem>
+            <SideNavSubitem
+              active={libraryTab === "policy"}
+              onClick={() => onSelectLibraryTab("policy")}
+            >
+              Policies
+            </SideNavSubitem>
+            <SideNavSubitem
+              active={libraryTab === "procedure"}
+              onClick={() => onSelectLibraryTab("procedure")}
+            >
+              Procedures
+            </SideNavSubitem>
+            <SideNavSubitem
+              active={libraryTab === "plan"}
+              onClick={() => onSelectLibraryTab("plan")}
+            >
+              Plans
+            </SideNavSubitem>
+            {/* Still not built, and not this screen -- see LibraryTab's own
+                comment for why these two are different features rather than
+                doc_type filters. Lists' backend export logic exists with no
+                frontend wrapper; Baselines lives in AdminArea. */}
             <SideNavSubitem active={false} disabled>Lists</SideNavSubitem>
             <SideNavSubitem active={false} disabled>Baselines</SideNavSubitem>
-            <SideNavSubitem active={false} disabled>Plans</SideNavSubitem>
-            <SideNavSubitem active={false} disabled>Policies</SideNavSubitem>
-            <SideNavSubitem active={false} disabled>Procedures</SideNavSubitem>
           </SideNavSubitems>
         )}
       </SideNavCategory>

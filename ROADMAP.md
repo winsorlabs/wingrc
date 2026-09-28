@@ -779,8 +779,12 @@ both this section and `docs/roadmap.md`'s own original item N text
 original `document`/`document_objective_tag` sketch should be built from
 directly — read the plan doc's own N.1 slice instead, which carries the
 versioned (`document_version`, append-only) shape neither original spec
-had. Still genuinely unstarted (verified: no `Document`/`template_
-document` model, no `routers/documents.py`).
+had. **No longer unstarted** — that claim was true when written and went
+stale on 2026-09-24: N.1 shipped `document`/`document_version`/
+`document_objective_tag` (migration 0059) and `routers/documents.py`, and
+N.2 shipped the editor, diffs and audit surfacing on 2026-09-28. The plan
+doc's own status line is the source of truth; do not re-derive progress
+from this section.
 
 **Original flag, left for context (the gap this reconciliation closes):**
 unstarted, and likely duplicated by `docs/roadmap.md` item N ("Document

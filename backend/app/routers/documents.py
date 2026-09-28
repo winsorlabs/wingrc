@@ -1,8 +1,16 @@
-"""Document library (roadmap item N, slice N.1) -- the core, versioned
-record shape. N.2 (browser editing/diffs), N.3 (approval workflow/review
-cadence), N.4 (MSP templates) and N.5 (suggested documentation) all build
-on what this router and models.py:Document/DocumentVersion/
-DocumentObjectiveTag establish here -- see docs/PLAN-document-library.md.
+"""Document library (roadmap item N, slices N.1 and N.2).
+
+N.1 established the core versioned record shape; N.2 added the read
+surface a browser editor needs -- single-version detail, a structured
+diff between any two versions, and the versions-plus-audit history view --
+plus optimistic-concurrency conflict detection on save. N.3 (approval
+workflow/review cadence), N.4 (MSP templates) and N.5 (suggested
+documentation) build on this and models.py:Document/DocumentVersion/
+DocumentObjectiveTag -- see docs/PLAN-document-library.md.
+
+Document bodies are GFM-subset Markdown; markdown_doc.py owns the format
+decision and is the only thing that renders one to HTML. Nothing in this
+router returns rendered HTML -- see the N.2 section below for why.
 
 Not to be confused with importers/document.py -- that module is the AI
 vendor-CRM/baseline-document extractor, a completely different feature
@@ -17,6 +25,9 @@ Endpoints:
                                                                        still references a version
   POST   /orgs/{org_id}/documents/{document_id}/versions             New version (edit)
   PATCH  /orgs/{org_id}/documents/{document_id}/versions/{id}        draft <-> under_review only
+  GET    /orgs/{org_id}/documents/{document_id}/versions/{id}        One version + objective set
+  GET    /orgs/{org_id}/documents/{document_id}/diff                 Diff any two versions
+  GET    /orgs/{org_id}/documents/{document_id}/history              Versions + audit timeline
   POST   /orgs/{org_id}/documents/{document_id}/objective-tags       Tag an objective
   DELETE /orgs/{org_id}/documents/{document_id}/objective-tags/{id}  Untag
   POST   /orgs/{org_id}/documents/{document_id}/publish              Approve current version
@@ -50,12 +61,14 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..audit import log_event
+from ..audit import identity_out, log_event, parse_actor_uuid, resolve_identities
 from ..auth import require_org_access, require_write
 from ..db import get_session
+from ..document_diff import BodyDiff, diff_bodies, diff_sets
 from ..models import (
     Assessment,
     AssessmentObjective,
+    AuditLog,
     Contact,
     ControlState,
     Document,
@@ -193,6 +206,12 @@ class DocumentPatchIn(BaseModel):
 
 class VersionCreateIn(BaseModel):
     body: str | None = None
+    # Optimistic concurrency (roadmap N.2). The version the editor was
+    # working from. Required once a document has any version at all --
+    # see create_document_version's docstring for why a silent
+    # last-write-wins was not an acceptable answer and why this is a
+    # conflict check rather than a lock.
+    base_version_id: uuid.UUID | None = None
 
 
 class VersionStatusPatchIn(BaseModel):
@@ -315,10 +334,24 @@ def create_document(
 
 
 @router.get("/{org_id}/documents", response_model=list[DocumentOut])
-def list_documents(org_id: uuid.UUID, session: Session = Depends(get_session)) -> list[DocumentOut]:
-    docs = session.scalars(
-        select(Document).where(Document.org_id == org_id).order_by(Document.doc_id)
-    ).all()
+def list_documents(
+    org_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    doc_type: str | None = None,
+) -> list[DocumentOut]:
+    """`doc_type` backs the Library nav's per-type views (Policies,
+    Procedures, Plans) -- validated against the same vocabulary the create
+    and patch bodies use, so an unknown value is a 422 rather than a
+    silently empty list that reads like "you have no policies".
+    """
+    query = select(Document).where(Document.org_id == org_id)
+    if doc_type is not None:
+        if doc_type not in _DOC_TYPES:
+            raise HTTPException(
+                status_code=422, detail=f"doc_type must be one of: {sorted(_DOC_TYPES)}"
+            )
+        query = query.where(Document.doc_type == doc_type)
+    docs = session.scalars(query.order_by(Document.doc_id)).all()
     return [_document_out(session, d) for d in docs]
 
 
@@ -419,6 +452,31 @@ def create_document_version(
     by this call -- only publish (below) ever changes an existing version's
     status, and only to move it to superseded as the side effect of a
     NEWER version being published, never as a side effect of this one.
+
+    **Concurrent editing (roadmap N.2's own required decision).** Two
+    people editing one document is a real MSP scenario, and a silent
+    last-write-wins is the wrong answer: the loser's work vanishes with
+    no signal. This is optimistic concurrency -- the caller states which
+    version it edited from (`base_version_id`), and a save races only if
+    the document moved underneath it, which returns 409 carrying the
+    version that won so the UI can say "X saved version N while you were
+    editing" and offer a diff.
+
+    Chosen over a lock deliberately. A lock needs a lease, an expiry, and
+    a steal path, because an MSP engineer who closes a tab must not
+    strand a policy document for whoever needs it next -- and every one
+    of those mechanisms is state that can itself be wrong. A conflict
+    check is stateless, never strands anything, and cannot lose an edit:
+    the "loser" still holds their text in the browser and can re-save
+    onto the new base. Nothing is destroyed either way, because versions
+    are append-only -- the racing save is still recorded, just as a
+    version off a different parent.
+
+    `base_version_id` is required once a document has any version, and
+    optional only for the no-versions-yet case (which `create_document`
+    handles anyway). Omitting it on a document that has versions is a 422,
+    not a silent unchecked write -- a client that does not know what it is
+    editing from cannot be allowed to overwrite whatever is current.
     """
     doc = _get_document(session, org_id, document_id)
     max_version = session.scalar(
@@ -426,6 +484,36 @@ def create_document_version(
             DocumentVersion.document_id == doc.id
         )
     ) or 0
+
+    if max_version and body.base_version_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "base_version_id is required -- it names the version this edit started "
+                "from, so a concurrent save can be detected rather than silently lost."
+            ),
+        )
+    if body.base_version_id is not None and doc.current_version_id != body.base_version_id:
+        current = (
+            session.get(DocumentVersion, doc.current_version_id)
+            if doc.current_version_id
+            else None
+        )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    "This document changed while you were editing -- someone else saved a "
+                    "newer version. Your text has not been lost; compare and re-save onto "
+                    "the current version."
+                ),
+                "base_version_id": str(body.base_version_id),
+                "current_version_id": str(doc.current_version_id)
+                if doc.current_version_id
+                else None,
+                "current_version_number": current.version_number if current else None,
+            },
+        )
 
     version = DocumentVersion(
         document_id=doc.id, org_id=org_id, version_number=max_version + 1,
@@ -688,3 +776,372 @@ def publish_document(
     result = _document_out(session, doc)
     session.commit()
     return result
+
+
+# ---------------------------------------------------------------------------
+# Version detail, diff, history (roadmap N.2)
+# ---------------------------------------------------------------------------
+#
+# Note what these endpoints deliberately do NOT return: rendered HTML.
+# Bodies go to the browser as Markdown and are rendered there into React
+# elements, so the SPA never needs `dangerouslySetInnerHTML` -- an
+# invariant the frontend holds everywhere today, and that this slice was
+# not willing to be the first to break. markdown_doc.render_html exists
+# for the bundle/PDF path, which has no DOM to render into. See
+# markdown_doc.py's own docstring for the full two-renderer argument.
+
+
+class VersionDetailOut(DocumentVersionOut):
+    """A single version, with the objective set it actually covers.
+
+    `objective_ids` is resolved differently depending on status, and
+    `objective_basis` says which way, because the honest answer differs:
+
+      published  -- for an approved or superseded version, the exact set
+                    that version was published against, recovered from
+                    the EvidenceStateLink rows its own Evidence row
+                    produced (archived ones included -- a republish
+                    archives them, and "what did v2 cover" must survive
+                    that). Recorded state, not inference.
+      current    -- for a draft or under_review version there is no such
+                    record yet, so this is the document's tag set as it
+                    stands right now.
+
+    DocumentObjectiveTag hangs off `document`, not `document_version`, so
+    tags are not versioned state and "the tags as of version 3" is not a
+    question the schema can answer for an unpublished version. Naming the
+    basis is the honest alternative to quietly presenting one as the
+    other; the audit timeline carries the tag add/remove actions that fill
+    the gap.
+    """
+
+    objective_ids: list[uuid.UUID]
+    objective_basis: str
+
+
+class SpanOut(BaseModel):
+    start: int
+    end: int
+
+
+class DiffRowOut(BaseModel):
+    op: str
+    old_line_no: int | None = None
+    new_line_no: int | None = None
+    old_text: str | None = None
+    new_text: str | None = None
+    old_spans: list[SpanOut] = []
+    new_spans: list[SpanOut] = []
+    skipped: int = 0
+
+
+class BodyDiffOut(BaseModel):
+    rows: list[DiffRowOut]
+    added_lines: int
+    removed_lines: int
+    changed_lines: int
+    identical: bool
+    is_initial: bool
+
+
+class SetDiffOut(BaseModel):
+    added: list[uuid.UUID]
+    removed: list[uuid.UUID]
+    unchanged: list[uuid.UUID]
+    changed: bool
+
+
+class DocumentDiffOut(BaseModel):
+    document_id: uuid.UUID
+    from_version: VersionDetailOut | None
+    to_version: VersionDetailOut
+    body: BodyDiffOut
+    objectives: SetDiffOut
+    objective_basis_note: str | None = None
+    events: list[dict]
+
+
+class DocumentHistoryOut(BaseModel):
+    document_id: uuid.UUID
+    versions: list[DocumentVersionOut]
+    events: list[dict]
+
+
+_DOCUMENT_AUDIT_ACTIONS = (
+    "document.create",
+    "document.update",
+    "document.delete",
+    "document.version.create",
+    "document.version.status_change",
+    "document.objective_tag.add",
+    "document.objective_tag.remove",
+    "document.publish",
+)
+
+
+def _published_objective_ids(session: Session, version: DocumentVersion) -> list[uuid.UUID]:
+    """Objectives a published version actually landed against.
+
+    Archived links are included on purpose: a later republish archives
+    them (publish_document's own step 2), and the question this answers
+    is "what did THIS version cover when it was approved" -- which that
+    archival must not erase.
+    """
+    return list(
+        session.scalars(
+            select(ControlState.objective_id)
+            .join(EvidenceStateLink, EvidenceStateLink.control_state_id == ControlState.id)
+            .join(Evidence, Evidence.id == EvidenceStateLink.evidence_id)
+            .where(Evidence.source_document_version_id == version.id)
+            .distinct()
+        ).all()
+    )
+
+
+def _current_tag_ids(session: Session, document_id: uuid.UUID) -> list[uuid.UUID]:
+    return list(
+        session.scalars(
+            select(DocumentObjectiveTag.objective_id).where(
+                DocumentObjectiveTag.document_id == document_id
+            )
+        ).all()
+    )
+
+
+def _version_detail_out(session: Session, version: DocumentVersion) -> VersionDetailOut:
+    if version.status in ("approved", "superseded"):
+        ids = _published_objective_ids(session, version)
+        basis = "published"
+    else:
+        ids = _current_tag_ids(session, version.document_id)
+        basis = "current"
+    return VersionDetailOut(
+        **_version_out(version).model_dump(), objective_ids=ids, objective_basis=basis
+    )
+
+
+def _body_diff_out(diff: BodyDiff) -> BodyDiffOut:
+    return BodyDiffOut(
+        rows=[
+            DiffRowOut(
+                op=r.op,
+                old_line_no=r.old_line_no,
+                new_line_no=r.new_line_no,
+                old_text=r.old_text,
+                new_text=r.new_text,
+                old_spans=[SpanOut(start=s.start, end=s.end) for s in r.old_spans],
+                new_spans=[SpanOut(start=s.start, end=s.end) for s in r.new_spans],
+                skipped=r.skipped,
+            )
+            for r in diff.rows
+        ],
+        added_lines=diff.added_lines,
+        removed_lines=diff.removed_lines,
+        changed_lines=diff.changed_lines,
+        identical=diff.identical,
+        is_initial=diff.is_initial,
+    )
+
+
+def _document_events(
+    session: Session,
+    org_id: uuid.UUID,
+    doc: Document,
+    *,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> list[dict]:
+    """Audit rows for this document and every one of its versions.
+
+    Roadmap N.2's own instruction: no parallel history table. The versions
+    ARE the content record and audit_log IS the action record, so "who
+    changed what, when" is those two joined at read time, not a third
+    store that has to be kept in sync with both.
+
+    Matched on entity_id, not action name alone -- a document action is
+    logged against either the document (create/update/tag) or a specific
+    version (version.create/status_change/publish), so both id sets are
+    in scope.
+    """
+    version_ids = list(
+        session.scalars(
+            select(DocumentVersion.id).where(DocumentVersion.document_id == doc.id)
+        ).all()
+    )
+    entity_ids = [doc.id, *version_ids]
+    query = select(AuditLog).where(
+        AuditLog.org_id == org_id,
+        AuditLog.action.in_(_DOCUMENT_AUDIT_ACTIONS),
+        AuditLog.entity_id.in_(entity_ids),
+    )
+    if since is not None:
+        query = query.where(AuditLog.created_at >= since)
+    if until is not None:
+        query = query.where(AuditLog.created_at <= until)
+    rows = list(
+        session.scalars(query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc())).all()
+    )
+    users_by_id = resolve_identities(session, org_id, rows)
+    out: list[dict] = []
+    for r in rows:
+        actor_id = parse_actor_uuid(r.actor)
+        out.append(
+            {
+                "id": str(r.id),
+                "created_at": r.created_at.isoformat(),
+                "action": r.action,
+                "actor": r.actor,
+                "actor_type": r.actor_type,
+                "actor_user": identity_out(actor_id, users_by_id)
+                if actor_id is not None
+                else None,
+                "entity_type": r.entity_type,
+                "entity_id": str(r.entity_id),
+                "before_value": r.before_value,
+                "after_value": r.after_value,
+            }
+        )
+    return out
+
+
+@router.get(
+    "/{org_id}/documents/{document_id}/versions/{version_id}", response_model=VersionDetailOut
+)
+def get_document_version(
+    org_id: uuid.UUID,
+    document_id: uuid.UUID,
+    version_id: uuid.UUID,
+    session: Session = Depends(get_session),
+) -> VersionDetailOut:
+    doc = _get_document(session, org_id, document_id)
+    version = session.get(DocumentVersion, version_id)
+    if version is None or version.document_id != doc.id:
+        raise HTTPException(status_code=404, detail="Version not found")
+    return _version_detail_out(session, version)
+
+
+@router.get("/{org_id}/documents/{document_id}/history", response_model=DocumentHistoryOut)
+def get_document_history(
+    org_id: uuid.UUID, document_id: uuid.UUID, session: Session = Depends(get_session)
+) -> DocumentHistoryOut:
+    """Versions and audit actions together -- roadmap N.2's section 4."""
+    doc = _get_document(session, org_id, document_id)
+    versions = session.scalars(
+        select(DocumentVersion)
+        .where(DocumentVersion.document_id == doc.id)
+        .order_by(DocumentVersion.version_number.desc())
+    ).all()
+    return DocumentHistoryOut(
+        document_id=doc.id,
+        versions=[_version_out(v) for v in versions],
+        events=_document_events(session, org_id, doc),
+    )
+
+
+@router.get("/{org_id}/documents/{document_id}/diff", response_model=DocumentDiffOut)
+def get_document_diff(
+    org_id: uuid.UUID,
+    document_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    to_version_id: uuid.UUID | None = None,
+    from_version_id: uuid.UUID | None = None,
+    context_lines: int = 3,
+) -> DocumentDiffOut:
+    """Diff any two versions of one document.
+
+    Defaults chosen for the common case -- "what changed since we approved
+    this": `to_version_id` defaults to the current version and
+    `from_version_id` to the version immediately preceding it by
+    version_number, so diffing a superseded version against the current
+    one is the zero-argument call.
+
+    Version 1 is not a special case for the caller: with no preceding
+    version, `from_version` comes back null and the body diff carries
+    `is_initial`, so the view renders "initial version" rather than an
+    empty or broken panel.
+    """
+    doc = _get_document(session, org_id, document_id)
+    if context_lines < 0 or context_lines > 100:
+        raise HTTPException(status_code=422, detail="context_lines must be between 0 and 100")
+
+    if to_version_id is None:
+        if doc.current_version_id is None:
+            raise HTTPException(status_code=422, detail="Document has no versions to diff")
+        to_version = session.get(DocumentVersion, doc.current_version_id)
+    else:
+        to_version = session.get(DocumentVersion, to_version_id)
+    if to_version is None or to_version.document_id != doc.id:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    if from_version_id is None:
+        from_version = session.scalars(
+            select(DocumentVersion)
+            .where(
+                DocumentVersion.document_id == doc.id,
+                DocumentVersion.version_number < to_version.version_number,
+            )
+            .order_by(DocumentVersion.version_number.desc())
+            .limit(1)
+        ).first()
+    else:
+        from_version = session.get(DocumentVersion, from_version_id)
+        if from_version is None or from_version.document_id != doc.id:
+            raise HTTPException(status_code=404, detail="Version not found")
+
+    to_detail = _version_detail_out(session, to_version)
+    from_detail = _version_detail_out(session, from_version) if from_version else None
+
+    body = diff_bodies(
+        from_version.body if from_version else None,
+        to_version.body,
+        context_lines=context_lines,
+    )
+    obj = diff_sets(
+        [str(i) for i in (from_detail.objective_ids if from_detail else [])],
+        [str(i) for i in to_detail.objective_ids],
+    )
+
+    # A tag change matters to the SSP even when the body is byte-identical
+    # -- the objective set a document answers for is what the
+    # implementation statements and the evidence manifest are built from.
+    # Say plainly when the two sides were resolved on different bases,
+    # rather than presenting an unpublished draft's live tag set as if it
+    # were a record of what that version covered.
+    note = None
+    if from_detail is not None and from_detail.objective_basis != to_detail.objective_basis:
+        note = (
+            f"Objective sets compared on different bases: version "
+            f"{from_detail.version_number} is {from_detail.objective_basis}, version "
+            f"{to_detail.version_number} is {to_detail.objective_basis}. A 'current' basis "
+            f"reflects the document's tags as they stand now, not as they stood at that "
+            f"version -- tags are document-level, not version-level."
+        )
+    elif to_detail.objective_basis == "current":
+        note = (
+            "Both versions are unpublished, so the objective set shown is the document's "
+            "current tag set for each -- tags are document-level, not version-level. The "
+            "timeline carries the individual tag changes."
+        )
+
+    events = _document_events(
+        session,
+        org_id,
+        doc,
+        since=from_version.created_at if from_version else None,
+        until=to_version.created_at,
+    )
+
+    return DocumentDiffOut(
+        document_id=doc.id,
+        from_version=from_detail,
+        to_version=to_detail,
+        body=_body_diff_out(body),
+        objectives=SetDiffOut(
+            added=[uuid.UUID(i) for i in obj.added],
+            removed=[uuid.UUID(i) for i in obj.removed],
+            unchanged=[uuid.UUID(i) for i in obj.unchanged],
+            changed=obj.changed,
+        ),
+        objective_basis_note=note,
+        events=events,
+    )

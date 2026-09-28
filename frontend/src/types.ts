@@ -1164,3 +1164,139 @@ export interface AssetApprovalResult {
   decided_at: string;
   rejection_reason: string | null;
 }
+
+
+// ---------------------------------------------------------------------------
+// Document library (roadmap N.1/N.2)
+// ---------------------------------------------------------------------------
+//
+// Not to be confused with DocumentIngestResult above -- that belongs to the
+// AI vendor-CRM/baseline extractor (importers/document.py), a different
+// feature entirely. The library's own backend is routers/documents.py.
+//
+// `body` is always GFM-subset Markdown, never HTML. The server deliberately
+// does not send rendered HTML: bodies are rendered to React elements by
+// lib/markdown.tsx, which is what keeps the SPA free of
+// dangerouslySetInnerHTML. See that module and backend/app/markdown_doc.py.
+
+export type DocumentType = "policy" | "procedure" | "plan" | "list" | "sop" | "form" | "other";
+
+export type DocumentVersionStatus = "draft" | "under_review" | "approved" | "superseded";
+
+export interface DocumentVersionRow {
+  id: string;
+  version_number: number;
+  status: DocumentVersionStatus;
+  body: string | null;
+  is_template_derived: boolean;
+  template_ref: string | null;
+  approved_at: string | null;
+  approved_by_contact_id: string | null;
+  created_at: string;
+}
+
+export interface DocumentVersionDetail extends DocumentVersionRow {
+  objective_ids: string[];
+  // "published" -- the exact set this version was approved against,
+  // recovered from its own evidence links (archived ones included).
+  // "current"   -- the document's tag set as it stands now, because an
+  //                unpublished version has no such record. Tags hang off
+  //                the document, not the version, so this distinction is
+  //                real and the UI labels it rather than hiding it.
+  objective_basis: "published" | "current";
+}
+
+export interface DocumentRow {
+  id: string;
+  doc_id: string;
+  doc_type: DocumentType;
+  title: string;
+  cadence_months: number;
+  is_template_derived: boolean;
+  template_ref: string | null;
+  current_version: DocumentVersionRow | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DocumentDetail extends DocumentRow {
+  versions: DocumentVersionRow[];
+  tagged_objective_ids: string[];
+}
+
+/** Half-open [start, end) character range within one diff line. */
+export interface DiffSpan {
+  start: number;
+  end: number;
+}
+
+export interface DocumentDiffRow {
+  op: "equal" | "insert" | "delete" | "replace" | "skip";
+  old_line_no: number | null;
+  new_line_no: number | null;
+  old_text: string | null;
+  new_text: string | null;
+  old_spans: DiffSpan[];
+  new_spans: DiffSpan[];
+  // Only on op === "skip": how many unchanged lines were collapsed.
+  skipped: number;
+}
+
+export interface DocumentBodyDiff {
+  rows: DocumentDiffRow[];
+  added_lines: number;
+  removed_lines: number;
+  changed_lines: number;
+  identical: boolean;
+  // True when there is no earlier version -- the view labels this "initial
+  // version" instead of "everything was added".
+  is_initial: boolean;
+}
+
+export interface DocumentSetDiff {
+  added: string[];
+  removed: string[];
+  unchanged: string[];
+  changed: boolean;
+}
+
+/** An audit_log row as the document history/diff views surface it. */
+export interface DocumentAuditEvent {
+  id: string;
+  created_at: string;
+  action: string;
+  actor: string;
+  actor_type: string;
+  actor_user: ResolvedIdentity | null;
+  entity_type: string;
+  entity_id: string;
+  before_value: Record<string, unknown> | null;
+  after_value: Record<string, unknown> | null;
+}
+
+export interface DocumentDiff {
+  document_id: string;
+  from_version: DocumentVersionDetail | null;
+  to_version: DocumentVersionDetail;
+  body: DocumentBodyDiff;
+  objectives: DocumentSetDiff;
+  // Set when the two sides' objective sets were resolved on different
+  // bases, or when neither is published. Displayed verbatim -- the point is
+  // not to present a live tag set as a record of what a version covered.
+  objective_basis_note: string | null;
+  events: DocumentAuditEvent[];
+}
+
+export interface DocumentHistory {
+  document_id: string;
+  versions: DocumentVersionRow[];
+  events: DocumentAuditEvent[];
+}
+
+/** 409 payload from POST .../versions when someone else saved first. */
+export interface DocumentSaveConflict {
+  message: string;
+  base_version_id: string;
+  current_version_id: string | null;
+  current_version_number: number | null;
+}

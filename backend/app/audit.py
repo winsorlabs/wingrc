@@ -369,3 +369,80 @@ def _sanitise(value: dict[str, Any] | None) -> dict[str, Any] | None:
             out[key] = out[key][:_MAX_BODY_LEN]
             out["body_truncated"] = True
     return out
+
+
+# ---------------------------------------------------------------------------
+# Actor / identity resolution for reading the log back
+# ---------------------------------------------------------------------------
+#
+# These three moved here from routers/audit_log.py when the document
+# library's own history view (roadmap N.2, routers/documents.py) needed the
+# same resolution. Two routers rendering "who did this" from audit_log
+# rows must agree on the anonymized-vs-deleted distinction ADR 0006 draws;
+# a second copy of that fallback chain is exactly the drift this codebase
+# keeps getting bitten by. Public here, private there, because reading the
+# log back is an audit-module concern, not an audit_log-router one.
+
+
+def parse_actor_uuid(value: str) -> uuid.UUID | None:
+    """`actor` is a free-text column: a user GUID for a human action, or a
+    literal like "system" for a scheduler one. Returns None for the latter.
+    """
+    try:
+        return uuid.UUID(value)
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def resolve_identities(db: Session, org_id: uuid.UUID, rows: list[AuditLog]) -> dict:
+    """One batch query for every GUID referenced by `rows` — actor (when it
+    parses as a UUID) and entity_id (when entity_type == "user") — rather
+    than a query per row.
+    """
+    from .models import User
+
+    ids: set[uuid.UUID] = set()
+    for r in rows:
+        actor_id = parse_actor_uuid(r.actor)
+        if actor_id is not None:
+            ids.add(actor_id)
+        if r.entity_type == "user":
+            ids.add(r.entity_id)
+
+    if not ids:
+        return {}
+
+    from sqlalchemy import select
+
+    users = (
+        db.execute(select(User).where(User.home_org_id == org_id, User.id.in_(ids)))
+        .scalars()
+        .all()
+    )
+    return {u.id: u for u in users}
+
+
+def identity_out(user_id: uuid.UUID, users_by_id: dict) -> dict:
+    """Fallback chain (ADR 0006 shapes this — anonymize keeps the row,
+    delete removes it):
+      1. Row exists, not anonymized -> display_name + email.
+      2. Row exists, deleted_at set (anonymized) -> "anonymized" status,
+         no display_name/email — never surface the scrubbed placeholder
+         values as if they were real PII.
+      3. Row absent entirely (hard-deleted) -> "deleted" status. This is
+         the documented, expected outcome of ADR 0006's zero-history path,
+         not a data-integrity bug, so it's labeled distinctly from
+         "anonymized" rather than rendered as a bare orphan GUID.
+    The GUID itself is always included — it's the durable record.
+    """
+    user = users_by_id.get(user_id)
+    if user is None:
+        return {"id": str(user_id), "status": "deleted", "display_name": None, "email": None}
+    if user.deleted_at is not None:
+        return {"id": str(user_id), "status": "anonymized", "display_name": None, "email": None}
+    return {
+        "id": str(user_id),
+        "status": "active",
+        "display_name": user.display_name,
+        "email": user.email,
+    }

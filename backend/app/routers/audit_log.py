@@ -42,6 +42,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ..audit import identity_out, parse_actor_uuid, resolve_identities
 from ..auth import CurrentUser, require_org_access
 from ..db import get_session
 from ..models import AuditLog, User
@@ -111,7 +112,7 @@ def list_audit_log(
         .limit(limit)
     ).scalars().all()
 
-    users_by_id = _resolve_identities(db, org_id, rows)
+    users_by_id = resolve_identities(db, org_id, rows)
 
     return {
         "items": [_row_out(r, users_by_id) for r in rows],
@@ -121,67 +122,10 @@ def list_audit_log(
     }
 
 
-def _resolve_identities(
-    db: Session, org_id: uuid.UUID, rows: list[AuditLog]
-) -> dict[uuid.UUID, User]:
-    """One batch query for every GUID referenced on this page — actor (when
-    it parses as a UUID; "system" and similar literals don't) and entity_id
-    (when entity_type == "user") — rather than a query per row.
-    """
-    ids: set[uuid.UUID] = set()
-    for r in rows:
-        actor_id = _parse_uuid(r.actor)
-        if actor_id is not None:
-            ids.add(actor_id)
-        if r.entity_type == "user":
-            ids.add(r.entity_id)
-
-    if not ids:
-        return {}
-
-    users = db.execute(
-        select(User).where(User.home_org_id == org_id, User.id.in_(ids))
-    ).scalars().all()
-    return {u.id: u for u in users}
-
-
-def _parse_uuid(value: str) -> uuid.UUID | None:
-    try:
-        return uuid.UUID(value)
-    except (ValueError, AttributeError, TypeError):
-        return None
-
-
-def _identity_out(user_id: uuid.UUID, users_by_id: dict[uuid.UUID, User]) -> dict:
-    """Fallback chain (ADR 0006 shapes this — anonymize keeps the row,
-    delete removes it):
-      1. Row exists, not anonymized -> display_name + email.
-      2. Row exists, deleted_at set (anonymized) -> "anonymized" status,
-         no display_name/email — never surface the scrubbed placeholder
-         values as if they were real PII.
-      3. Row absent entirely (hard-deleted) -> "deleted" status. This is
-         the documented, expected outcome of ADR 0006's zero-history path,
-         not a data-integrity bug, so it's labeled distinctly from
-         "anonymized" rather than rendered as a bare orphan GUID.
-    The GUID itself is always included — it's the durable record.
-    """
-    user = users_by_id.get(user_id)
-    if user is None:
-        return {"id": str(user_id), "status": "deleted", "display_name": None, "email": None}
-    if user.deleted_at is not None:
-        return {"id": str(user_id), "status": "anonymized", "display_name": None, "email": None}
-    return {
-        "id": str(user_id),
-        "status": "active",
-        "display_name": user.display_name,
-        "email": user.email,
-    }
-
-
 def _row_out(r: AuditLog, users_by_id: dict[uuid.UUID, User]) -> dict:
-    actor_id = _parse_uuid(r.actor)
-    actor_user = _identity_out(actor_id, users_by_id) if actor_id is not None else None
-    entity_user = _identity_out(r.entity_id, users_by_id) if r.entity_type == "user" else None
+    actor_id = parse_actor_uuid(r.actor)
+    actor_user = identity_out(actor_id, users_by_id) if actor_id is not None else None
+    entity_user = identity_out(r.entity_id, users_by_id) if r.entity_type == "user" else None
 
     return {
         "id": str(r.id),

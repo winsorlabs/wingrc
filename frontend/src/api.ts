@@ -1,4 +1,4 @@
-import type { ApiTokenRow, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow } from "./types";
+import type { ApiTokenRow, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType } from "./types";
 
 const BASE = "/api";
 
@@ -22,6 +22,21 @@ export class ApiError extends Error {
   constructor(message: string, status: number) {
     super(message);
     this.status = status;
+  }
+}
+
+/**
+ * Thrown when a document save lost a race (roadmap N.2's optimistic
+ * concurrency). Carries the version that won so the editor can say who it
+ * lost to and offer a diff, rather than reporting a generic failure. The
+ * caller's text is never discarded -- it is still in the editor, and can be
+ * re-saved onto the new base.
+ */
+export class DocumentConflictError extends Error {
+  conflict: DocumentSaveConflict;
+  constructor(conflict: DocumentSaveConflict) {
+    super(conflict.message);
+    this.conflict = conflict;
   }
 }
 
@@ -1133,6 +1148,144 @@ export const api = {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   },
+
+  // --- Document library (roadmap N.1/N.2) -------------------------------
+  //
+  // Bodies move as Markdown in both directions. Nothing here asks the
+  // server for rendered HTML: lib/markdown.tsx renders to React elements,
+  // which is how the SPA stays free of dangerouslySetInnerHTML.
+
+  listDocuments: (orgId: string, docType?: DocumentType) =>
+    req<DocumentRow[]>(
+      `/orgs/${orgId}/documents${docType ? `?doc_type=${encodeURIComponent(docType)}` : ""}`,
+    ),
+
+  getDocument: (orgId: string, documentId: string) =>
+    req<DocumentDetail>(`/orgs/${orgId}/documents/${documentId}`),
+
+  createDocument: (
+    orgId: string,
+    payload: { doc_id: string; doc_type: DocumentType; title: string; cadence_months?: number; body?: string | null },
+  ) =>
+    req<DocumentDetail>(`/orgs/${orgId}/documents`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  patchDocument: (
+    orgId: string,
+    documentId: string,
+    payload: { title?: string; doc_type?: DocumentType; cadence_months?: number },
+  ) =>
+    req<DocumentDetail>(`/orgs/${orgId}/documents/${documentId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  deleteDocument: async (orgId: string, documentId: string): Promise<void> => {
+    const r = await fetch(`${BASE}/orgs/${orgId}/documents/${documentId}`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new ApiError(body.detail ?? `${r.status} ${r.statusText}`, r.status);
+    }
+  },
+
+  getDocumentVersion: (orgId: string, documentId: string, versionId: string) =>
+    req<DocumentVersionDetail>(
+      `/orgs/${orgId}/documents/${documentId}/versions/${versionId}`,
+    ),
+
+  /**
+   * Save an edit as a new version. `baseVersionId` is the version the
+   * editor was opened on; a 409 means someone else saved first and comes
+   * back as DocumentConflictError carrying the winner.
+   */
+  createDocumentVersion: async (
+    orgId: string,
+    documentId: string,
+    body: string,
+    baseVersionId: string,
+  ): Promise<DocumentVersionRow> => {
+    const r = await fetch(`${BASE}/orgs/${orgId}/documents/${documentId}/versions`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body, base_version_id: baseVersionId }),
+    });
+    if (r.status === 409) {
+      const payload = await r.json().catch(() => ({}));
+      const detail = payload.detail;
+      if (detail && typeof detail === "object") {
+        throw new DocumentConflictError(detail as DocumentSaveConflict);
+      }
+      throw new ApiError(typeof detail === "string" ? detail : "Save conflict", 409);
+    }
+    if (!r.ok) {
+      const payload = await r.json().catch(() => ({}));
+      throw new ApiError(
+        typeof payload.detail === "string" ? payload.detail : `${r.status} ${r.statusText}`,
+        r.status,
+      );
+    }
+    return r.json() as Promise<DocumentVersionRow>;
+  },
+
+  setDocumentVersionStatus: (
+    orgId: string,
+    documentId: string,
+    versionId: string,
+    status: "draft" | "under_review",
+  ) =>
+    req<DocumentVersionRow>(
+      `/orgs/${orgId}/documents/${documentId}/versions/${versionId}`,
+      { method: "PATCH", body: JSON.stringify({ status }) },
+    ),
+
+  getDocumentDiff: (
+    orgId: string,
+    documentId: string,
+    opts?: { fromVersionId?: string; toVersionId?: string; contextLines?: number },
+  ) => {
+    const params = new URLSearchParams();
+    if (opts?.fromVersionId) params.set("from_version_id", opts.fromVersionId);
+    if (opts?.toVersionId) params.set("to_version_id", opts.toVersionId);
+    if (opts?.contextLines !== undefined) params.set("context_lines", String(opts.contextLines));
+    const qs = params.toString();
+    return req<DocumentDiff>(
+      `/orgs/${orgId}/documents/${documentId}/diff${qs ? `?${qs}` : ""}`,
+    );
+  },
+
+  getDocumentHistory: (orgId: string, documentId: string) =>
+    req<DocumentHistory>(`/orgs/${orgId}/documents/${documentId}/history`),
+
+  addDocumentObjectiveTag: (orgId: string, documentId: string, objectiveId: string) =>
+    req<{ document_id: string; objective_id: string }>(
+      `/orgs/${orgId}/documents/${documentId}/objective-tags`,
+      { method: "POST", body: JSON.stringify({ objective_id: objectiveId }) },
+    ),
+
+  removeDocumentObjectiveTag: async (
+    orgId: string,
+    documentId: string,
+    objectiveId: string,
+  ): Promise<void> => {
+    const r = await fetch(
+      `${BASE}/orgs/${orgId}/documents/${documentId}/objective-tags/${objectiveId}`,
+      { method: "DELETE", credentials: "include" },
+    );
+    if (!r.ok) throw new ApiError(`${r.status} ${r.statusText}`, r.status);
+  },
+
+  publishDocument: (orgId: string, documentId: string, approvedByContactId: string) =>
+    req<DocumentRow>(`/orgs/${orgId}/documents/${documentId}/publish`, {
+      method: "POST",
+      body: JSON.stringify({ approved_by_contact_id: approvedByContactId }),
+    }),
+
 };
 
 const CACHE_PREFIX = "wingrc_assessment_";
