@@ -142,15 +142,13 @@ def test_upsert_statements_control_state_id_is_lost_to_a_post_commit_read(
     # is keyed on the control's internal id, not the assessment alone.
     r = client.put(
         f"/orgs/{org_id}/assessments/{assessment_id}/controls/{d['control'].id}/statements",
-        json={
-            "items": [
-                {
-                    "objective_id": str(d["objective"].id),
-                    "body": "We limit system access to authorised users.",
-                    "status": "draft",
-                }
-            ]
-        },
+        json=[
+            {
+                "objective_id": str(d["objective"].id),
+                "body": "We limit system access to authorised users.",
+                "status": "draft",
+            }
+        ],
     )
     assert r.status_code == 200, r.text
     statements = r.json()
