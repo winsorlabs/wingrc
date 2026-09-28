@@ -31,9 +31,13 @@
  * bump of the parser is not something to find out about from a customer.
  */
 
-import MarkdownIt from "markdown-it";
-import type Token from "markdown-it/lib/token.mjs";
-import type { ReactNode } from "react";
+// Token comes from markdown-it itself: v15 ships its own types, and the
+// separate @types/markdown-it package describes an older, incompatible
+// Token shape (attrs as [string, string][] rather than allowing numeric
+// values). Installing both is how you get two mutually unassignable
+// Token types for one object.
+import MarkdownIt, { type Token } from "markdown-it";
+import type { ElementType, ReactNode } from "react";
 
 /** Tags this renderer may construct. Anything else fails closed. */
 const ALLOWED_TAGS = new Set([
@@ -226,7 +230,7 @@ export function renderMarkdown(source: string | null | undefined): ReactNode[] {
           throw new UnsafeMarkdownError("unbalanced token stream");
         }
         const parent = stack[stack.length - 1];
-        const Tag = frame.tag as keyof JSX.IntrinsicElements;
+        const Tag = frame.tag as ElementType;
         parent.children.push(
           <Tag key={parent.children.length} {...frame.props}>
             {frame.children.length ? frame.children : null}

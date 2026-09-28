@@ -34,7 +34,8 @@
  * attribute rather than dropped -- see `alignedTableExtensions`.
  */
 
-import type Token from "markdown-it/lib/token.mjs";
+// See markdown.tsx on why Token comes from markdown-it, not @types.
+import type { Token } from "markdown-it";
 
 import { isAllowedLink, parseMarkdown } from "./markdown";
 
