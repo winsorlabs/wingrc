@@ -17,7 +17,8 @@ import { OrgProfileForm } from "./components/OrgProfileForm";
 import { ProductsPanel } from "./components/ProductsPanel";
 import { ReviewCyclesPanel } from "./components/ReviewCyclesPanel";
 import { RolesPanel } from "./components/RolesPanel";
-import type { AssessmentsTab, NavCategory, ScopeTab, SecurityTab, SystemDescriptionSection } from "./components/SideNav";
+import type { AssessmentsTab, LibraryTab, NavCategory, ScopeTab, SecurityTab, SystemDescriptionSection } from "./components/SideNav";
+import { DocumentsPanel } from "./components/DocumentsPanel";
 import { SideNav } from "./components/SideNav";
 import { SprsSubmissionsPanel } from "./components/SprsSubmissionsPanel";
 import { SystemDescriptionForm } from "./components/SystemDescriptionForm";
@@ -60,6 +61,7 @@ export function App() {
   const [systemFocus, setSystemFocus] = useState<{ section: SystemDescriptionSection; nonce: number } | null>(null);
   const focusNonceRef = useRef(0);
   const [securityTab, setSecurityTab] = useState<SecurityTab>("users");
+  const [libraryTab, setLibraryTab] = useState<LibraryTab>("all");
   const [onboardingStatus, setOnboardingStatus] = useState<OnboardingStatus | null>(null);
   // An invite/reset email (email_service.py) links here as
   // `?invite_token=<token>` rather than making the recipient copy-paste a
@@ -270,6 +272,8 @@ export function App() {
             onSelectAssessmentsTab={setAssessmentsTab}
             securityTab={securityTab}
             onSelectSecurityTab={setSecurityTab}
+            libraryTab={libraryTab}
+            onSelectLibraryTab={setLibraryTab}
             currentUserRole={user.role}
             status={onboardingStatus}
           />
@@ -362,7 +366,16 @@ export function App() {
 
           {navCategory === "library" && (
             <div className="workspace-content">
-              <div className="empty">Library isn't built yet (docs/PLAN-gui-restructure.md G.10).</div>
+              {/* The document library (roadmap N.1/N.2). G.10's original
+                  "Library isn't built" placeholder covered five subitems;
+                  three of them (Policies/Procedures/Plans) are doc_type
+                  views over this screen now, and Lists/Baselines remain
+                  separate features -- see SideNav's LibraryTab comment. */}
+              <DocumentsPanel
+                orgId={org.id}
+                currentUserRole={user.role}
+                docType={libraryTab === "all" ? undefined : libraryTab}
+              />
             </div>
           )}
 

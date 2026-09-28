@@ -334,10 +334,24 @@ def create_document(
 
 
 @router.get("/{org_id}/documents", response_model=list[DocumentOut])
-def list_documents(org_id: uuid.UUID, session: Session = Depends(get_session)) -> list[DocumentOut]:
-    docs = session.scalars(
-        select(Document).where(Document.org_id == org_id).order_by(Document.doc_id)
-    ).all()
+def list_documents(
+    org_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    doc_type: str | None = None,
+) -> list[DocumentOut]:
+    """`doc_type` backs the Library nav's per-type views (Policies,
+    Procedures, Plans) -- validated against the same vocabulary the create
+    and patch bodies use, so an unknown value is a 422 rather than a
+    silently empty list that reads like "you have no policies".
+    """
+    query = select(Document).where(Document.org_id == org_id)
+    if doc_type is not None:
+        if doc_type not in _DOC_TYPES:
+            raise HTTPException(
+                status_code=422, detail=f"doc_type must be one of: {sorted(_DOC_TYPES)}"
+            )
+        query = query.where(Document.doc_type == doc_type)
+    docs = session.scalars(query.order_by(Document.doc_id)).all()
     return [_document_out(session, d) for d in docs]
 
 

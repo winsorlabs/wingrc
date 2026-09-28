@@ -269,7 +269,7 @@ export function MarkdownView({
   } catch (err) {
     return (
       <div className={className}>
-        <p className="doc-render-error">
+        <p className="form-error">
           This document could not be rendered safely and has been withheld.{" "}
           {err instanceof Error ? err.message : "Unknown rendering error."}
         </p>
@@ -279,7 +279,7 @@ export function MarkdownView({
   if (!content.length) {
     return (
       <div className={className}>
-        <p className="muted">This version has no content.</p>
+        <p className="field-hint">This version has no content.</p>
       </div>
     );
   }

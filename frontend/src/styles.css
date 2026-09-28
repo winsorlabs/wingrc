@@ -1936,3 +1936,158 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .change-badge-changed { background: #fef9c3; color: #a16207; }
 .change-badge-missing { background: #f1f5f9; color: #64748b; }
 
+
+/* ==========================================================================
+   Document library (roadmap N.1/N.2)
+   ==========================================================================
+   `.doc-body` styles rendered Markdown. `.ta-left/.ta-center/.ta-right` are
+   what lib/markdown.tsx rewrites GFM table alignment into -- it refuses to
+   emit a `style` attribute on operator-influenced output, so alignment has
+   to arrive as a class the stylesheet knows. The backend's bundle CSS
+   carries the same three rules for the same reason. */
+
+.doc-library { display: grid; grid-template-columns: 20rem 1fr; gap: 1.25rem; align-items: start; }
+.doc-library-list { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem; }
+.doc-library-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.5rem; }
+.doc-library-head h2 { font-size: 1rem; text-transform: capitalize; }
+.doc-library-detail { min-width: 0; }
+
+.doc-list { list-style: none; display: flex; flex-direction: column; gap: 0.25rem; }
+.doc-list-item { display: flex; flex-direction: column; gap: 0.15rem; width: 100%; text-align: left;
+  background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 0.45rem 0.5rem; cursor: pointer; }
+.doc-list-item:hover { background: var(--bg); }
+.doc-list-item.active { background: var(--bg); border-color: var(--primary); }
+.doc-list-id { font-family: ui-monospace, monospace; font-size: 0.75rem; color: var(--muted); }
+.doc-list-title { font-size: 0.875rem; }
+
+.doc-status { display: inline-block; font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 3px; text-transform: capitalize; }
+.doc-status-draft { background: var(--na-bg); color: var(--na-fg); }
+.doc-status-under_review { background: var(--partial-bg); color: var(--partial-fg); }
+.doc-status-approved { background: var(--met-bg); color: var(--met-fg); }
+.doc-status-superseded { background: var(--pending-bg); color: var(--pending-fg); }
+
+.doc-tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 0.75rem; }
+.doc-tab { background: transparent; border: none; border-bottom: 2px solid transparent;
+  padding: 0.4rem 0.75rem; cursor: pointer; font-size: 0.875rem; color: var(--muted); text-transform: capitalize; }
+.doc-tab.active { color: var(--text); border-bottom-color: var(--primary); font-weight: 600; }
+
+.doc-tbtn { background: var(--surface); border: 1px solid var(--border); border-radius: 3px;
+  padding: 0.2rem 0.45rem; font-size: 0.75rem; cursor: pointer; text-transform: capitalize; }
+.doc-tbtn:hover { background: var(--bg); }
+.doc-tbtn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+.doc-editor-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.5rem; flex-wrap: wrap; }
+.doc-editor-actions { display: flex; align-items: center; gap: 0.5rem; }
+.doc-mode-switch { display: flex; gap: 0.15rem; }
+
+.doc-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem;
+  padding: 0.35rem; border: 1px solid var(--border); border-bottom: none; border-radius: 4px 4px 0 0; background: var(--bg); }
+.doc-toolbar-sep { width: 1px; height: 1.1rem; background: var(--border); margin: 0 0.25rem; }
+
+.doc-panes { display: grid; gap: 1rem; }
+.doc-panes-split { grid-template-columns: 1fr 1fr; }
+.doc-panes-edit, .doc-panes-preview { grid-template-columns: 1fr; }
+.doc-pane { min-width: 0; }
+.doc-pane-label { font-size: 0.75rem; color: var(--muted); margin-bottom: 0.35rem; }
+.doc-editor-surface { border: 1px solid var(--border); border-radius: 0 0 4px 4px; background: var(--surface); }
+.doc-editor-surface .ProseMirror { min-height: 24rem; padding: 1rem 1.25rem; outline: none; }
+.doc-editor-surface .ProseMirror table { border-collapse: collapse; width: 100%; }
+.doc-editor-surface .ProseMirror th,
+.doc-editor-surface .ProseMirror td { border: 1px solid var(--border); padding: 0.3rem 0.5rem; }
+.doc-editor-surface .ProseMirror th { background: var(--bg); }
+
+.doc-notice { padding: 0.5rem 0.75rem; border-radius: 4px; font-size: 0.8125rem;
+  background: var(--bg); border: 1px solid var(--border); margin-bottom: 0.75rem; }
+.doc-notice-warn { background: var(--partial-bg); color: var(--partial-fg); border-color: transparent; }
+.doc-notice-error { background: var(--not-met-bg); color: var(--not-met-fg); border-color: transparent; }
+
+.doc-publish { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; }
+.doc-create { background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem; max-width: 34rem; }
+.doc-create label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.8125rem; }
+.doc-create-actions { display: flex; align-items: center; gap: 0.75rem; }
+
+/* Rendered document bodies. Deliberately scoped: these are the only rules
+   that style operator-authored structure, and they must not leak into the
+   surrounding app chrome. */
+.doc-body { background: var(--surface); border: 1px solid var(--border); border-radius: 4px;
+  padding: 1rem 1.25rem; min-height: 24rem; overflow-wrap: break-word; }
+.doc-body > :first-child { margin-top: 0; }
+.doc-body h1 { font-size: 1.35rem; margin: 1.25rem 0 0.5rem; }
+.doc-body h2 { font-size: 1.15rem; margin: 1.1rem 0 0.45rem; }
+.doc-body h3 { font-size: 1rem; margin: 1rem 0 0.4rem; }
+.doc-body h4, .doc-body h5, .doc-body h6 { font-size: 0.9rem; margin: 0.9rem 0 0.35rem; }
+.doc-body p { margin: 0.5rem 0; }
+.doc-body ul, .doc-body ol { margin: 0.5rem 0 0.5rem 1.35rem; }
+.doc-body li { margin: 0.2rem 0; }
+.doc-body blockquote { margin: 0.75rem 0; padding: 0.25rem 1rem; border-left: 3px solid var(--border); color: var(--muted); }
+.doc-body pre { background: var(--bg); padding: 0.75rem; border-radius: 4px; overflow-x: auto; margin: 0.75rem 0; }
+.doc-body code { font-family: ui-monospace, monospace; font-size: 0.85em; }
+.doc-body :not(pre) > code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 3px; }
+.doc-body hr { border: none; border-top: 1px solid var(--border); margin: 1.25rem 0; }
+.doc-body table { border-collapse: collapse; margin: 0.75rem 0; width: 100%; }
+.doc-body th, .doc-body td { border: 1px solid var(--border); padding: 0.35rem 0.5rem; font-size: 0.875rem; }
+.doc-body th { background: var(--bg); }
+.doc-body a { color: var(--primary); }
+.ta-left { text-align: left; }
+.ta-center { text-align: center; }
+.ta-right { text-align: right; }
+
+/* Diff view */
+.doc-diff-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+.doc-diff-head h3 { font-size: 1rem; }
+.doc-diff-actions { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.doc-diff-toggle { font-size: 0.75rem; color: var(--muted); display: inline-flex; align-items: center; gap: 0.25rem; }
+
+.diff-objectives { background: var(--surface); border: 1px solid var(--border); border-radius: 4px;
+  padding: 0.6rem 0.85rem; margin-bottom: 0.75rem; font-size: 0.8125rem; }
+.diff-objectives h4 { font-size: 0.8125rem; margin-bottom: 0.25rem; }
+.diff-basis-note { margin-top: 0.4rem; color: var(--muted); font-size: 0.75rem; }
+
+.diff-table { width: 100%; border-collapse: collapse; table-layout: fixed;
+  font-family: ui-monospace, monospace; font-size: 0.78rem; }
+.diff-table thead th { text-align: left; padding: 0.3rem 0.5rem; background: var(--bg);
+  border-bottom: 1px solid var(--border); font-family: system-ui, sans-serif; font-size: 0.75rem; }
+.diff-gutter { width: 2.75rem; color: var(--muted); text-align: right; padding-right: 0.4rem;
+  user-select: none; vertical-align: top; }
+.diff-cell { padding: 0.15rem 0.5rem; vertical-align: top; white-space: pre-wrap; overflow-wrap: break-word; }
+.diff-cell-absent { background: repeating-linear-gradient(45deg, transparent, transparent 4px, var(--bg) 4px, var(--bg) 8px); }
+.diff-row.diff-insert .diff-cell:last-child { background: var(--met-bg); }
+.diff-row.diff-delete .diff-cell:nth-child(2) { background: var(--not-met-bg); }
+.diff-row.diff-replace .diff-cell { background: var(--partial-bg); }
+.diff-skip td, .diff-skip { color: var(--muted); background: var(--bg); font-size: 0.72rem;
+  text-align: center; padding: 0.25rem; font-family: system-ui, sans-serif; }
+.diff-word { background: #fde68a; color: inherit; border-radius: 2px; padding: 0 1px; }
+.diff-blank { color: var(--muted); font-style: italic; font-family: system-ui, sans-serif; }
+.diff-absent { display: block; }
+
+.diff-inline { font-family: ui-monospace, monospace; font-size: 0.78rem; }
+.diff-inline-line { display: flex; gap: 0.5rem; padding: 0.1rem 0.4rem; white-space: pre-wrap; overflow-wrap: break-word; }
+.diff-inline-line.diff-insert { background: var(--met-bg); }
+.diff-inline-line.diff-delete { background: var(--not-met-bg); }
+.diff-inline-pair { margin: 0.15rem 0; }
+.diff-marker { flex: 0 0 1ch; color: var(--muted); user-select: none; }
+.diff-legend { margin-top: 0.75rem; font-size: 0.72rem; }
+
+/* History */
+.doc-history h3 { font-size: 0.9375rem; margin: 1rem 0 0.5rem; }
+.doc-history h3:first-child { margin-top: 0; }
+.doc-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; background: var(--surface); }
+.doc-table th, .doc-table td { border-bottom: 1px solid var(--border); padding: 0.4rem 0.5rem; text-align: left; }
+.doc-table th { background: var(--bg); font-size: 0.75rem; }
+
+.doc-timeline { list-style: none; font-size: 0.8125rem; }
+.doc-timeline li { display: grid; grid-template-columns: 11rem 1fr 10rem; gap: 0.5rem;
+  padding: 0.35rem 0; border-bottom: 1px solid var(--border); }
+.doc-timeline-when { color: var(--muted); font-size: 0.75rem; }
+.doc-timeline-who { color: var(--muted); font-size: 0.75rem; text-align: right; }
+.doc-diff-events { margin-top: 1.25rem; }
+.doc-diff-events h4 { font-size: 0.8125rem; margin-bottom: 0.35rem; }
+
+@media (max-width: 1100px) {
+  .doc-library { grid-template-columns: 1fr; }
+  .doc-panes-split { grid-template-columns: 1fr; }
+  .doc-timeline li { grid-template-columns: 1fr; }
+  .doc-timeline-who { text-align: left; }
+}
