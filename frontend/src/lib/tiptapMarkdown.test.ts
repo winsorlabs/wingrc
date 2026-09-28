@@ -134,10 +134,15 @@ describe("structure that would change meaning is escaped", () => {
 });
 
 describe("link safety carries into the editor bridge", () => {
-  it("drops a javascript: href rather than carrying it into the doc", () => {
+  it("never carries a javascript: href as a link mark", () => {
+    // The text `[x](javascript:alert(1))` IS present in the document -- it
+    // is what the author wrote, and markdown-it correctly renders it as
+    // prose rather than a link. What must not exist is a link mark, which
+    // is the only thing that could become a clickable href.
     const doc = markdownToDoc("[x](javascript:alert(1))");
-    const json = JSON.stringify(doc);
-    expect(json).not.toContain("javascript:");
+    const marks = JSON.stringify(doc).match(/"type":"link"/g) ?? [];
+    expect(marks).toHaveLength(0);
+    expect(JSON.stringify(doc)).toContain("[x](javascript:alert(1))");
   });
 
   it("refuses to serialize a disallowed href back out", () => {

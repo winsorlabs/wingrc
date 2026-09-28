@@ -204,6 +204,14 @@ export function renderMarkdown(source: string | null | undefined): ReactNode[] {
         continue;
       }
 
+      // A "tight" list's item paragraphs are marked hidden by markdown-it:
+      // its own HTML renderer emits nothing for them, so `- a` becomes
+      // `<li>a</li>` rather than `<li><p>a</p></li>`. Honouring that is
+      // what keeps this renderer byte-comparable with the backend -- the
+      // shared-corpus parity test caught exactly this, rendering every
+      // tight list one level deeper here than in the PDF.
+      if (token.hidden) continue;
+
       if (token.nesting === 1) {
         if (!ALLOWED_TAGS.has(token.tag)) {
           throw new UnsafeMarkdownError(`disallowed tag <${token.tag}>`);

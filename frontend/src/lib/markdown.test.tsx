@@ -180,7 +180,11 @@ describe("hostile bodies never become live markup", () => {
       expect(container.querySelector("script")).toBeNull();
       expect(container.querySelector("img")).toBeNull();
       expect(container.querySelector("iframe")).toBeNull();
-      expect(container.innerHTML).not.toMatch(/\son[a-z]+=/i);
+      // Deliberately not a substring scan of innerHTML for `on...=`: the
+      // escaped text of `<img src=x onerror=...>` legitimately contains
+      // that, and asserting on it would fail on safe output. The attribute
+      // walk above is the real check -- it inspects what the DOM actually
+      // holds rather than what the markup happens to spell.
     });
   }
 
