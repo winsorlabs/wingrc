@@ -10,14 +10,23 @@
  * same thing.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 
 import { api } from "../api";
 import { deriveCanWrite } from "../lib/roles";
 import { DocumentDiffView } from "./DocumentDiffView";
-import { DocumentEditor } from "./DocumentEditor";
 import { DocumentHistoryPanel } from "./DocumentHistoryPanel";
 import type { Contact, DocumentDetail, DocumentRow, DocumentType } from "../types";
+
+// TipTap and ProseMirror are ~700 kB of the production bundle, and every
+// screen that is not this one pays for them on first load otherwise. Split
+// out so the editor arrives only when someone actually opens a document.
+// DocumentDiffView and DocumentHistoryPanel are NOT split: they are plain
+// React with no heavy dependency, and read-only roles (c3pao_assessor) reach
+// them without ever loading the editor at all.
+const DocumentEditor = lazy(() =>
+  import("./DocumentEditor").then((m) => ({ default: m.DocumentEditor })),
+);
 
 const DOC_TYPES: DocumentType[] = ["policy", "procedure", "plan", "list", "sop", "form", "other"];
 
@@ -337,16 +346,18 @@ export function DocumentsPanel({
 
             {tab === "edit" && (
               <>
-                <DocumentEditor
-                  orgId={orgId}
-                  doc={selected}
-                  canEdit={canEdit}
-                  onSaved={() => void refreshSelected()}
-                  onShowDiff={(from, to) => {
-                    setDiffTarget({ fromVersionId: from, toVersionId: to });
-                    setTab("diff");
-                  }}
-                />
+                <Suspense fallback={<div className="empty">Loading editor…</div>}>
+                  <DocumentEditor
+                    orgId={orgId}
+                    doc={selected}
+                    canEdit={canEdit}
+                    onSaved={() => void refreshSelected()}
+                    onShowDiff={(from, to) => {
+                      setDiffTarget({ fromVersionId: from, toVersionId: to });
+                      setTab("diff");
+                    }}
+                  />
+                </Suspense>
                 {canEdit && (
                   <PublishControl
                     orgId={orgId}
