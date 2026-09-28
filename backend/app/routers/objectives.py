@@ -66,7 +66,7 @@ router = APIRouter(
 
 
 class ResolvedEditorOut(BaseModel):
-    """Mirrors audit_log.py's _identity_out shape (and the frontend's
+    """Mirrors audit.py's identity_out shape (and the frontend's
     existing ResolvedIdentity type) so the UI can render the same
     active/anonymized/deleted fallback it already knows how to render for
     audit-log actors -- this is the same fact (a user identity that may
@@ -105,7 +105,7 @@ class PractitionerNotesIn(BaseModel):
 
 
 def _resolve_editor(session: Session, user_id: uuid.UUID | None) -> ResolvedEditorOut | None:
-    """No org scoping here (unlike audit_log.py's _identity_out) --
+    """No org scoping here (unlike audit.py's identity_out) --
     practitioner_notes_edited_by isn't an org-scoped fact, so there's no
     org_id to filter by. Deliberately does NOT use session.get(User, ...):
     that runs under user's RLS policy (0015), home_org_id = app.current_org,

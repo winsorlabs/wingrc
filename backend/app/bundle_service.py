@@ -33,6 +33,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from .engine import recompute_sprs
+from .markdown_doc import render_html as render_document_html
 from .models import (
     Assessment,
     AssessmentObjective,
@@ -43,6 +44,8 @@ from .models import (
     Control,
     ControlState,
     ControlStateContributor,
+    Document,
+    DocumentVersion,
     Evidence,
     EvidenceStateLink,
     EvidenceTask,
@@ -97,6 +100,19 @@ _CSS = (
     ".s-tag{font-size:.75rem;color:#6b7280;background:#f3f4f6;"
     "padding:.1rem .4rem;border-radius:2px;margin-left:.5rem}"
     ".logo{max-height:80px;max-width:200px;margin-bottom:1rem;display:block}"
+    # Document bodies (roadmap N.2). `.ta-*` are what markdown_doc.py
+    # rewrites GFM table alignment into -- it refuses to emit a `style`
+    # attribute on operator-influenced output, so alignment has to land
+    # as a class the stylesheet knows about.
+    ".doc-entry{margin:2rem 0;padding-top:1rem;border-top:2px solid #e5e7eb}"
+    ".doc-body{margin-top:1rem;padding:1rem 1.25rem;border:1px solid #e5e7eb;"
+    "border-radius:6px;background:#fff}"
+    ".doc-body h1{font-size:1.35rem}.doc-body h2{font-size:1.15rem}"
+    ".doc-body h3{font-size:1rem}"
+    ".doc-body blockquote{margin:.75rem 0;padding:.25rem 1rem;"
+    "border-left:3px solid #d1d5db;color:#4b5563}"
+    ".doc-body pre{background:#f6f8fa;padding:.75rem;border-radius:4px;overflow-x:auto}"
+    ".ta-left{text-align:left}.ta-center{text-align:center}.ta-right{text-align:right}"
     ".toc{list-style:none;padding:0}"
     ".toc li{padding:.35rem 0;border-bottom:1px solid #f0f0f0}"
     ".toc a{color:#1d4ed8;text-decoration:none}"
@@ -405,6 +421,35 @@ class CrmRowSnap:
 
 
 @dataclass
+class DocumentSnap:
+    """One approved document, captured as of the export (roadmap N.2).
+
+    `body_markdown` is the *version's own* body, copied out of the exact
+    `document_version` row that was approved -- never "whatever is current
+    for this document". An already-exported bundle therefore keeps
+    rendering what it rendered, and a fresh export after a republish shows
+    the new version, which is the same point-in-time rule the evidence
+    path already follows via `Evidence.source_document_version_id`.
+
+    Markdown, not HTML, on the snapshot: `render_bundle` is a pure
+    function over frozen dataclasses, and `markdown_doc.render_html` is
+    itself pure, so rendering stays on the render side of that split
+    rather than being baked in during collection. That also means a
+    rendering fix ships to *future* exports only -- it cannot retroactively
+    alter a ZIP already handed to an assessor.
+    """
+
+    doc_id: str
+    title: str
+    doc_type: str
+    version_number: int
+    approved_at: datetime | None
+    approved_by: str | None
+    body_markdown: str | None
+    objective_keys: list[str] = field(default_factory=list)
+
+
+@dataclass
 class BundleSnapshot:
     generated_at: datetime
     sprs_score: int
@@ -422,6 +467,7 @@ class BundleSnapshot:
     scope_entities: list[ScopeEntitySnap] = field(default_factory=list)
     crm_rows: list[CrmRowSnap] = field(default_factory=list)
     sprs_submissions: list[SprsSubmissionSnap] = field(default_factory=list)
+    documents: list[DocumentSnap] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -1191,6 +1237,60 @@ def snapshot_bundle(
         for s in submission_rows
     ]
 
+    # --- approved documents (roadmap N.2) ---
+    # Only `approved` versions. A draft is not a compliance record and a
+    # superseded one is the *previous* answer -- neither belongs in a
+    # point-in-time bundle handed to an assessor. Ordered by doc_id so the
+    # section is stable across exports (the three-export byte comparison
+    # in test_lifecycle.py depends on that stability).
+    document_rows = session.execute(
+        select(
+            Document.doc_id,
+            Document.title,
+            Document.doc_type,
+            DocumentVersion.version_number,
+            DocumentVersion.approved_at,
+            DocumentVersion.body,
+            DocumentVersion.id.label("version_id"),
+            Contact.name.label("approved_by"),
+        )
+        .join(DocumentVersion, DocumentVersion.document_id == Document.id)
+        .outerjoin(Contact, Contact.id == DocumentVersion.approved_by_contact_id)
+        .where(Document.org_id == org_id, DocumentVersion.status == "approved")
+        .order_by(Document.doc_id, DocumentVersion.version_number)
+    ).all()
+
+    doc_objective_keys: dict[uuid.UUID, list[str]] = {}
+    if document_rows:
+        version_ids = [r.version_id for r in document_rows]
+        key_rows = session.execute(
+            select(Evidence.source_document_version_id, AssessmentObjective.objective_key)
+            .join(EvidenceStateLink, EvidenceStateLink.evidence_id == Evidence.id)
+            .join(ControlState, ControlState.id == EvidenceStateLink.control_state_id)
+            .join(AssessmentObjective, AssessmentObjective.id == ControlState.objective_id)
+            .where(
+                Evidence.source_document_version_id.in_(version_ids),
+                EvidenceStateLink.is_archived.is_(False),
+            )
+            .distinct()
+        ).all()
+        for version_id, objective_key in key_rows:
+            doc_objective_keys.setdefault(version_id, []).append(objective_key)
+
+    documents = [
+        DocumentSnap(
+            doc_id=r.doc_id,
+            title=r.title,
+            doc_type=r.doc_type,
+            version_number=r.version_number,
+            approved_at=r.approved_at,
+            approved_by=r.approved_by,
+            body_markdown=r.body,
+            objective_keys=sorted(doc_objective_keys.get(r.version_id, [])),
+        )
+        for r in document_rows
+    ]
+
     # Stamp generated_at after all data is collected
     generated_at = datetime.now(UTC)
 
@@ -1211,6 +1311,7 @@ def snapshot_bundle(
         scope_entities=scope_entities,
         crm_rows=crm_rows,
         sprs_submissions=sprs_submissions,
+        documents=documents,
     )
 
 
@@ -1246,6 +1347,7 @@ def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
     personnel_html = _render_personnel(snapshot)
     inventory_html = _render_component_inventory(snapshot)
     crm_html = _render_crm(snapshot)
+    documents_html = _render_documents(snapshot)
     manifest_html = _render_manifest(snapshot)
     scoring_html = _render_scoring(snapshot)
     outstanding_html = _render_outstanding(snapshot)
@@ -1273,6 +1375,7 @@ def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
         (f"{root}/ssp/03_personnel.html", personnel_html),
         (f"{root}/ssp/04_component_inventory.html", inventory_html),
         (f"{root}/ssp/05_customer_responsibility_matrix.html", crm_html),
+        (f"{root}/ssp/06_documents.html", documents_html),
         (f"{root}/evidence/manifest.html", manifest_html),
         (f"{root}/summary/scoring.html", scoring_html),
         (f"{root}/summary/outstanding.html", outstanding_html),
@@ -1306,6 +1409,7 @@ def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
         zf.writestr(f"{root}/ssp/03_personnel.html", personnel_html)
         zf.writestr(f"{root}/ssp/04_component_inventory.html", inventory_html)
         zf.writestr(f"{root}/ssp/05_customer_responsibility_matrix.html", crm_html)
+        zf.writestr(f"{root}/ssp/06_documents.html", documents_html)
         zf.writestr(ssp_pdf_rel_path, ssp_pdf_bytes)
         zf.writestr(f"{root}/evidence/manifest.html", manifest_html)
         zf.writestr(f"{root}/summary/scoring.html", scoring_html)
@@ -1776,6 +1880,67 @@ def _crm_body(snapshot: BundleSnapshot) -> str:
     )
 
 
+def _documents_body(snapshot: BundleSnapshot) -> str:
+    """Content for the approved-policy section.
+
+    **This is the one place in the bundle that emits markup derived from
+    operator-supplied content rather than escaping it**, so it is worth
+    being explicit about why that is safe here. Every other field on this
+    page goes through `_esc` (html.escape). A document body cannot: the
+    whole point of a policy is its headings, lists and tables, and an
+    escaped Markdown body would render as literal asterisks in front of a
+    C3PAO.
+
+    `markdown_doc.render_html` is what makes that safe, and it is the same
+    function the browser's own renderer is matched against -- raw HTML in
+    a body is escaped to text by the parser rather than forwarded, every
+    emitted tag is one markdown-it constructed, and an allowlist check
+    runs over the result and raises rather than returning anything
+    unexpected. WeasyPrint renders whatever it is given, which is exactly
+    why what it is given is built this way. See markdown_doc.py's module
+    docstring for the full argument.
+    """
+    if not snapshot.documents:
+        return (
+            '<h1 id="ssp-documents">Approved Policies &amp; Procedures</h1>'
+            '<p class="no-stmt">No approved documents for this organization.</p>'
+        )
+
+    parts = ['<h1 id="ssp-documents">Approved Policies &amp; Procedures</h1>']
+    for doc in snapshot.documents:
+        approved = (
+            doc.approved_at.strftime("%Y-%m-%d") if doc.approved_at is not None else "—"
+        )
+        objectives = (
+            ", ".join(_esc(k) for k in doc.objective_keys)
+            if doc.objective_keys
+            else '<span class="no-stmt">—</span>'
+        )
+        body_html = render_document_html(doc.body_markdown) or (
+            '<p class="no-stmt">This document has no content.</p>'
+        )
+        parts.append(
+            f'<section class="doc-entry" id="doc-{_safe_slug(doc.doc_id)}">'
+            f"<h2>{_esc(doc.doc_id)} — {_esc(doc.title)}</h2>"
+            "<table>"
+            f"<tr><th>Type</th><td>{_esc(doc.doc_type)}</td></tr>"
+            f"<tr><th>Version</th><td>{doc.version_number}</td></tr>"
+            f"<tr><th>Approved</th><td>{_esc(approved)}</td></tr>"
+            f"<tr><th>Approved by</th><td>{_esc(doc.approved_by or '—')}</td></tr>"
+            f"<tr><th>Objectives</th><td>{objectives}</td></tr>"
+            "</table>"
+            f'<div class="doc-body">{body_html}</div>'
+            "</section>"
+        )
+    return "".join(parts)
+
+
+def _render_documents(snapshot: BundleSnapshot) -> str:
+    return _html_page(
+        "Approved Policies & Procedures", f"{_stamp(snapshot)}{_documents_body(snapshot)}"
+    )
+
+
 def _render_crm(snapshot: BundleSnapshot) -> str:
     body = f"{_stamp(snapshot)}{_crm_body(snapshot)}"
     return _html_page("Customer Responsibility Matrix", body)
@@ -1851,6 +2016,8 @@ def _render_ssp_pdf(snapshot: BundleSnapshot) -> bytes:
         '<li class="toc-entry"><a href="#ssp-personnel">Personnel &amp; Contacts</a></li>'
         '<li class="toc-entry"><a href="#ssp-inventory">Component/Asset Inventory</a></li>'
         '<li class="toc-entry"><a href="#ssp-crm">Customer Responsibility Matrix</a></li>'
+        '<li class="toc-entry"><a href="#ssp-documents">'
+        "Approved Policies &amp; Procedures</a></li>"
         "</ul></section>"
     )
 
@@ -1861,6 +2028,7 @@ def _render_ssp_pdf(snapshot: BundleSnapshot) -> bytes:
         f'<div class="pdf-section">{_personnel_body(snapshot)}</div>'
         f'<div class="pdf-section">{_component_inventory_body(snapshot)}</div>'
         f'<div class="pdf-section">{_crm_body(snapshot)}</div>'
+        f'<div class="pdf-section">{_documents_body(snapshot)}</div>'
     )
 
     page_css = (
@@ -2192,6 +2360,7 @@ def _render_index(snapshot: BundleSnapshot) -> str:
         ("SSP — Personnel &amp; Contacts", "ssp/03_personnel.html"),
         ("SSP — Component/Asset Inventory", "ssp/04_component_inventory.html"),
         ("SSP — Customer Responsibility Matrix", "ssp/05_customer_responsibility_matrix.html"),
+        ("SSP — Approved Policies &amp; Procedures", "ssp/06_documents.html"),
         ("SSP — Consolidated PDF", "ssp/system_security_plan.pdf"),
         ("Evidence Manifest", "evidence/manifest.html"),
         ("SPRS Scoring Summary", "summary/scoring.html"),

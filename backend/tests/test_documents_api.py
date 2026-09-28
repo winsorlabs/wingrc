@@ -1,5 +1,12 @@
-"""Integration tests for routers/documents.py (roadmap N.1): the core,
-versioned document-library record shape.
+"""Integration tests for routers/documents.py (roadmap N.1 and N.2):
+the core versioned record shape, and the editing/diff/history surface
+built on it.
+
+N.2 made `base_version_id` a required field on every edit of a document
+that already has a version (optimistic concurrency -- see
+create_document_version's docstring). The N.1 scenarios below are
+otherwise unchanged; they just now state which version each edit started
+from, the same as the real editor does.
 
 Run in-container:
     docker compose exec backend pytest tests/test_documents_api.py -m integration -v
@@ -131,7 +138,7 @@ def test_editing_creates_a_new_version_prior_version_intact(client, db_session, 
 
     r = client.post(
         f"/orgs/{d['org'].id}/documents/{doc['id']}/versions",
-        json={"body": "Revised access control policy text."},
+        json={"body": "Revised access control policy text.", "base_version_id": v1_id},
     )
     assert r.status_code == 201, r.text
     v2 = r.json()
@@ -195,7 +202,10 @@ def test_cannot_patch_status_of_a_non_current_version(client, db_session, fake_m
     d = _seed(db_session, fake_msp_admin)
     doc = _create_doc(client, d["org"].id)
     v1_id = doc["current_version"]["id"]
-    client.post(f"/orgs/{d['org'].id}/documents/{doc['id']}/versions", json={"body": "v2"})
+    client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/versions",
+        json={"body": "v2", "base_version_id": v1_id},
+    )
 
     r = client.patch(
         f"/orgs/{d['org'].id}/documents/{doc['id']}/versions/{v1_id}",
@@ -316,7 +326,8 @@ def test_evidence_resolves_to_the_approved_version_not_current(client, db_sessio
     # A new edit makes a DIFFERENT version current -- the approved one is
     # no longer "current" at all.
     r = client.post(
-        f"/orgs/{d['org'].id}/documents/{doc['id']}/versions", json={"body": "draft edit"}
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/versions",
+        json={"body": "draft edit", "base_version_id": approved_version_id},
     )
     assert r.status_code == 201
     new_current_id = r.json()["id"]
@@ -414,7 +425,8 @@ def test_republish_supersedes_prior_version_and_archives_its_evidence_links(
 
     # Edit and republish.
     r = client.post(
-        f"/orgs/{d['org'].id}/documents/{doc['id']}/versions", json={"body": "v2 text"}
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/versions",
+        json={"body": "v2 text", "base_version_id": v1_id},
     )
     v2_id = r.json()["id"]
     r = client.post(
@@ -608,3 +620,487 @@ def test_sprs_unaffected_by_document_existence_or_publish(client, db_session, fa
     db_session.expire_all()
     after_score = db_session.get(type(d["assessment"]), d["assessment"].id).sprs_score
     assert after_score == before_score
+
+
+# ---------------------------------------------------------------------------
+# N.2 -- concurrent editing (section 1)
+# ---------------------------------------------------------------------------
+
+
+def _new_version(client, org_id, doc_id, base_version_id, body):
+    return client.post(
+        f"/orgs/{org_id}/documents/{doc_id}/versions",
+        json={"body": body, "base_version_id": base_version_id},
+    )
+
+
+def test_concurrent_edit_from_a_stale_base_is_refused_with_the_winner(
+    client, db_session, fake_msp_admin
+):
+    """Two people editing one document is a real MSP scenario and a silent
+    last-write-wins is the wrong answer. The second saver is told, and is
+    told what won, so the UI can offer a diff instead of a shrug.
+    """
+    d = _seed(db_session, fake_msp_admin)
+    doc = _create_doc(client, d["org"].id)
+    v1_id = doc["current_version"]["id"]
+
+    # Both editors opened v1.
+    first = _new_version(client, d["org"].id, doc["id"], v1_id, "Editor A's rewrite.")
+    assert first.status_code == 201, first.text
+    v2_id = first.json()["id"]
+
+    second = _new_version(client, d["org"].id, doc["id"], v1_id, "Editor B's rewrite.")
+    assert second.status_code == 409, second.text
+    detail = second.json()["detail"]
+    assert detail["base_version_id"] == v1_id
+    assert detail["current_version_id"] == v2_id
+    assert detail["current_version_number"] == 2
+
+    # Nothing was lost and nothing was written: still exactly two versions.
+    versions = client.get(f"/orgs/{d['org'].id}/documents/{doc['id']}").json()["versions"]
+    assert [v["version_number"] for v in versions] == [2, 1]
+    assert [v["body"] for v in versions if v["version_number"] == 2] == ["Editor A's rewrite."]
+
+
+def test_losing_editor_can_re_save_onto_the_new_base(client, db_session, fake_msp_admin):
+    """The conflict never strands anyone -- which is the whole reason this
+    is a conflict check and not a lock."""
+    d = _seed(db_session, fake_msp_admin)
+    doc = _create_doc(client, d["org"].id)
+    v1_id = doc["current_version"]["id"]
+
+    v2_id = _new_version(client, d["org"].id, doc["id"], v1_id, "A").json()["id"]
+    assert _new_version(client, d["org"].id, doc["id"], v1_id, "B").status_code == 409
+
+    retry = _new_version(client, d["org"].id, doc["id"], v2_id, "B, rebased")
+    assert retry.status_code == 201
+    assert retry.json()["version_number"] == 3
+
+
+def test_edit_without_a_base_version_is_refused(client, db_session, fake_msp_admin):
+    """A client that cannot say what it edited from must not be allowed to
+    overwrite whatever happens to be current."""
+    d = _seed(db_session, fake_msp_admin)
+    doc = _create_doc(client, d["org"].id)
+
+    r = client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/versions", json={"body": "blind write"}
+    )
+    assert r.status_code == 422
+    assert "base_version_id" in r.text
+
+
+def test_editing_an_approved_document_leaves_it_byte_identical(
+    client, db_session, fake_msp_admin
+):
+    """N.2 section 7's explicit ask: assert the negative. Editing an
+    approved document produces a new draft and the approved version is
+    unchanged in every field, not merely still present.
+    """
+    d = _seed(db_session, fake_msp_admin)
+    doc = _create_doc(client, d["org"].id)
+    client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/objective-tags",
+        json={"objective_id": str(d["obj_a"].id)},
+    )
+    approved_id = doc["current_version"]["id"]
+    assert client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/publish",
+        json={"approved_by_contact_id": str(d["contact"].id)},
+    ).status_code == 200
+
+    before = client.get(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/versions/{approved_id}"
+    ).json()
+    assert before["status"] == "approved"
+
+    r = _new_version(client, d["org"].id, doc["id"], approved_id, "# Rewritten\n\nNew text.")
+    assert r.status_code == 201
+    assert r.json()["status"] == "draft", "a new version always starts as draft"
+    assert r.json()["id"] != approved_id
+
+    after = client.get(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/versions/{approved_id}"
+    ).json()
+    assert after == before, "the approved version must be untouched, field for field"
+
+
+# ---------------------------------------------------------------------------
+# N.2 -- diffs (section 2)
+# ---------------------------------------------------------------------------
+
+
+def test_diff_of_version_one_is_not_a_broken_view(client, db_session, fake_msp_admin):
+    d = _seed(db_session, fake_msp_admin)
+    doc = _create_doc(client, d["org"].id)
+
+    r = client.get(f"/orgs/{d['org'].id}/documents/{doc['id']}/diff")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["from_version"] is None
+    assert body["body"]["is_initial"] is True
+    assert {row["op"] for row in body["body"]["rows"]} == {"insert"}
+
+
+def test_diff_defaults_to_current_against_its_predecessor(client, db_session, fake_msp_admin):
+    d = _seed(db_session, fake_msp_admin)
+    doc = _create_doc(client, d["org"].id, body="All users must authenticate with MFA.")
+    v1_id = doc["current_version"]["id"]
+    _new_version(
+        client,
+        d["org"].id,
+        doc["id"],
+        v1_id,
+        "All users must authenticate with phishing-resistant MFA.",
+    )
+
+    body = client.get(f"/orgs/{d['org'].id}/documents/{doc['id']}/diff").json()
+    assert body["from_version"]["version_number"] == 1
+    assert body["to_version"]["version_number"] == 2
+    assert body["body"]["changed_lines"] == 1
+    row = next(r for r in body["body"]["rows"] if r["op"] == "replace")
+    highlighted = [row["new_text"][s["start"] : s["end"]] for s in row["new_spans"]]
+    assert highlighted == ["phishing-resistant"]
+
+
+def test_diff_between_a_superseded_version_and_the_current_one(
+    client, db_session, fake_msp_admin
+):
+    """"What changed since we approved this" is the common case -- and
+    after a republish the earlier approved version is superseded, so it
+    must stay diffable."""
+    d = _seed(db_session, fake_msp_admin)
+    doc = _create_doc(client, d["org"].id, body="Reviewed annually.")
+    v1_id = doc["current_version"]["id"]
+    client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/objective-tags",
+        json={"objective_id": str(d["obj_a"].id)},
+    )
+    client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/publish",
+        json={"approved_by_contact_id": str(d["contact"].id)},
+    )
+    v2_id = _new_version(client, d["org"].id, doc["id"], v1_id, "Reviewed quarterly.").json()[
+        "id"
+    ]
+    client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/publish",
+        json={"approved_by_contact_id": str(d["contact"].id)},
+    )
+
+    r = client.get(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/diff",
+        params={"from_version_id": v1_id, "to_version_id": v2_id},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["from_version"]["status"] == "superseded"
+    assert body["to_version"]["status"] == "approved"
+    assert body["body"]["changed_lines"] == 1
+
+
+def test_diff_rejects_a_version_from_another_document(client, db_session, fake_msp_admin):
+    d = _seed(db_session, fake_msp_admin)
+    doc_a = _create_doc(client, d["org"].id)
+    doc_b = _create_doc(client, d["org"].id, doc_id="AC-POL-002", title="Second")
+    foreign = doc_b["current_version"]["id"]
+
+    r = client.get(
+        f"/orgs/{d['org'].id}/documents/{doc_a['id']}/diff",
+        params={"from_version_id": foreign},
+    )
+    assert r.status_code == 404
+
+
+def test_objective_set_change_is_reported_even_when_the_body_is_identical(
+    client, db_session, fake_msp_admin
+):
+    """N.2 section 2's own point: a document whose objective tags changed
+    affects the SSP even if the text did not."""
+    d = _seed(db_session, fake_msp_admin)
+    doc = _create_doc(client, d["org"].id, body="Unchanged text.")
+    v1_id = doc["current_version"]["id"]
+    client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/objective-tags",
+        json={"objective_id": str(d["obj_a"].id)},
+    )
+    client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/publish",
+        json={"approved_by_contact_id": str(d["contact"].id)},
+    )
+
+    # Same body, but retagged onto a second objective before republishing.
+    v2_id = _new_version(client, d["org"].id, doc["id"], v1_id, "Unchanged text.").json()["id"]
+    client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/objective-tags",
+        json={"objective_id": str(d["obj_b"].id)},
+    )
+    client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/publish",
+        json={"approved_by_contact_id": str(d["contact"].id)},
+    )
+
+    body = client.get(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/diff",
+        params={"from_version_id": v1_id, "to_version_id": v2_id},
+    ).json()
+    assert body["body"]["identical"] is True, "the text really is unchanged"
+    assert body["objectives"]["changed"] is True, "but the objective coverage is not"
+    assert str(d["obj_b"].id) in body["objectives"]["added"]
+
+
+def test_published_version_objective_set_survives_being_superseded(
+    client, db_session, fake_msp_admin
+):
+    """A republish archives the earlier version's evidence links. "What
+    did v1 cover" must survive that -- so the lookup deliberately includes
+    archived links.
+    """
+    d = _seed(db_session, fake_msp_admin)
+    doc = _create_doc(client, d["org"].id)
+    v1_id = doc["current_version"]["id"]
+    client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/objective-tags",
+        json={"objective_id": str(d["obj_a"].id)},
+    )
+    client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/publish",
+        json={"approved_by_contact_id": str(d["contact"].id)},
+    )
+    _new_version(client, d["org"].id, doc["id"], v1_id, "v2")
+    client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/publish",
+        json={"approved_by_contact_id": str(d["contact"].id)},
+    )
+
+    v1 = client.get(f"/orgs/{d['org'].id}/documents/{doc['id']}/versions/{v1_id}").json()
+    assert v1["status"] == "superseded"
+    assert v1["objective_basis"] == "published"
+    assert v1["objective_ids"] == [str(d["obj_a"].id)]
+
+
+def test_draft_version_reports_a_current_objective_basis_not_a_published_one(
+    client, db_session, fake_msp_admin
+):
+    d = _seed(db_session, fake_msp_admin)
+    doc = _create_doc(client, d["org"].id)
+    client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/objective-tags",
+        json={"objective_id": str(d["obj_a"].id)},
+    )
+    v = client.get(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/versions/{doc['current_version']['id']}"
+    ).json()
+    assert v["status"] == "draft"
+    assert v["objective_basis"] == "current"
+    assert v["objective_ids"] == [str(d["obj_a"].id)]
+
+    diff = client.get(f"/orgs/{d['org'].id}/documents/{doc['id']}/diff").json()
+    assert diff["objective_basis_note"] is not None, (
+        "an unpublished version's tag set must be labelled, not presented as a record"
+    )
+
+
+# ---------------------------------------------------------------------------
+# N.2 -- audit surfacing (section 4)
+# ---------------------------------------------------------------------------
+
+
+def test_history_returns_versions_and_the_audit_actions_beside_them(
+    client, db_session, fake_msp_admin
+):
+    d = _seed(db_session, fake_msp_admin)
+    doc = _create_doc(client, d["org"].id)
+    v1_id = doc["current_version"]["id"]
+    client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/objective-tags",
+        json={"objective_id": str(d["obj_a"].id)},
+    )
+    _new_version(client, d["org"].id, doc["id"], v1_id, "v2 text")
+    client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/publish",
+        json={"approved_by_contact_id": str(d["contact"].id)},
+    )
+
+    r = client.get(f"/orgs/{d['org'].id}/documents/{doc['id']}/history")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert [v["version_number"] for v in body["versions"]] == [2, 1]
+
+    actions = [e["action"] for e in body["events"]]
+    for expected in (
+        "document.create",
+        "document.objective_tag.add",
+        "document.version.create",
+        "document.publish",
+    ):
+        assert expected in actions, f"{expected} missing from the document history"
+
+    # Newest first, and the acting user is resolved to a person rather
+    # than left as a bare GUID.
+    assert actions[0] == "document.publish"
+    publish_event = body["events"][0]
+    assert publish_event["actor_user"] is not None
+    assert publish_event["actor_user"]["id"] == str(fake_msp_admin.id)
+
+
+def test_history_does_not_leak_another_documents_events(client, db_session, fake_msp_admin):
+    d = _seed(db_session, fake_msp_admin)
+    doc_a = _create_doc(client, d["org"].id)
+    doc_b = _create_doc(client, d["org"].id, doc_id="AC-POL-002", title="Second")
+
+    events = client.get(f"/orgs/{d['org'].id}/documents/{doc_a['id']}/history").json()["events"]
+    ids = {e["entity_id"] for e in events}
+    assert doc_b["id"] not in ids
+    assert doc_b["current_version"]["id"] not in ids
+
+
+# ---------------------------------------------------------------------------
+# N.2 -- RLS and roles on the new endpoints
+# ---------------------------------------------------------------------------
+
+
+def test_new_endpoints_are_not_reachable_across_orgs(client, db_session, fake_msp_admin):
+    d = _seed(db_session, fake_msp_admin)
+    doc = _create_doc(client, d["org"].id)
+    version_id = doc["current_version"]["id"]
+
+    other_org = Organization(name=f"OtherOrg-{uuid.uuid4().hex[:8]}")
+    db_session.add(other_org)
+    db_session.flush()
+    _grant(db_session, fake_msp_admin, org_id=other_org.id)
+    db_session.commit()
+
+    for path in (
+        f"/orgs/{other_org.id}/documents/{doc['id']}/versions/{version_id}",
+        f"/orgs/{other_org.id}/documents/{doc['id']}/diff",
+        f"/orgs/{other_org.id}/documents/{doc['id']}/history",
+    ):
+        assert client.get(path).status_code == 404, f"{path} resolved across orgs"
+
+
+def test_c3pao_assessor_can_read_diffs_and_history_but_not_edit(db_session, fake_msp_admin):
+    org = Organization(name=f"AssessorDiffOrg-{uuid.uuid4().hex[:8]}")
+    db_session.add(org)
+    db_session.flush()
+    _grant(db_session, fake_msp_admin, org_id=org.id)
+    db_session.commit()
+
+    app.dependency_overrides[get_session] = _app_session(db_session)
+    app.dependency_overrides[get_current_user] = _authed(db_session, fake_msp_admin)
+    admin_client = TestClient(app)
+    doc = _create_doc(admin_client, org.id)
+    v1_id = doc["current_version"]["id"]
+    _new_version(admin_client, org.id, doc["id"], v1_id, "v2")
+    app.dependency_overrides.clear()
+
+    assessor = _make_fake_user(role="c3pao_assessor", email="assessor-diff@example.com")
+    _grant(db_session, assessor, org_id=org.id)
+    app.dependency_overrides[get_session] = _app_session(db_session)
+    app.dependency_overrides[get_current_user] = _authed(db_session, assessor)
+    try:
+        c = TestClient(app)
+        assert c.get(f"/orgs/{org.id}/documents/{doc['id']}/diff").status_code == 200
+        assert c.get(f"/orgs/{org.id}/documents/{doc['id']}/history").status_code == 200
+        assert (
+            c.get(f"/orgs/{org.id}/documents/{doc['id']}/versions/{v1_id}").status_code == 200
+        )
+        assert c.post(
+            f"/orgs/{org.id}/documents/{doc['id']}/versions",
+            json={"body": "nope", "base_version_id": v1_id},
+        ).status_code == 403
+    finally:
+        app.dependency_overrides.clear()
+
+
+# ---------------------------------------------------------------------------
+# N.2 -- rendering safety on the bundle/PDF path (section 3)
+# ---------------------------------------------------------------------------
+
+
+HOSTILE_POLICY_BODY = (
+    "# Incident Response Policy\n\n"
+    "<script>alert('xss')</script>\n\n"
+    "<img src=x onerror=alert('xss')>\n\n"
+    "[click](javascript:alert('xss'))\n\n"
+    "<svg/onload=alert('xss')></svg>\n\n"
+    "<iframe src=//evil.test></iframe>\n\n"
+    "Legitimate **bold** text and a [real link](https://example.test).\n"
+)
+
+
+def test_hostile_document_body_renders_safely_into_the_bundle(
+    client, db_session, fake_msp_admin
+):
+    """N.2 section 3/7: prove the bundle path, not just the browser.
+
+    The body is stored verbatim -- nothing is stripped on save, because
+    the author may legitimately be documenting markup -- and neutralised
+    on render, which is the line svg_sanitize.py already draws.
+    """
+    from app.bundle_service import _documents_body, snapshot_bundle
+    from app.storage import NullStorageClient
+
+    d = _seed(db_session, fake_msp_admin)
+    doc = _create_doc(client, d["org"].id, body=HOSTILE_POLICY_BODY)
+    client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/objective-tags",
+        json={"objective_id": str(d["obj_a"].id)},
+    )
+    assert client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/publish",
+        json={"approved_by_contact_id": str(d["contact"].id)},
+    ).status_code == 200
+
+    stored = db_session.scalars(
+        select(DocumentVersion).where(DocumentVersion.id == uuid.UUID(doc["current_version"]["id"]))
+    ).one()
+    assert stored.body == HOSTILE_POLICY_BODY, "storage must be verbatim; sanitising is on render"
+
+    snapshot = snapshot_bundle(
+        db_session, org_id=d["org"].id, assessment_id=d["assessment"].id,
+        storage=NullStorageClient(),
+    )
+    assert [s.doc_id for s in snapshot.documents] == ["AC-POL-001"]
+
+    rendered = _documents_body(snapshot).lower()
+    for dangerous in ("<script", "<img", "<iframe", "<svg", "onerror", "onload", "javascript:"):
+        assert dangerous not in rendered, f"{dangerous!r} reached the bundle HTML"
+    assert "<strong>bold</strong>" in rendered
+    assert "example.test" in rendered
+
+
+def test_only_approved_versions_reach_the_bundle(client, db_session, fake_msp_admin):
+    """A draft is not a compliance record and a superseded version is the
+    previous answer -- neither belongs in a point-in-time bundle."""
+    from app.bundle_service import snapshot_bundle
+    from app.storage import NullStorageClient
+
+    d = _seed(db_session, fake_msp_admin)
+    doc = _create_doc(client, d["org"].id, body="Draft only.")
+    v1_id = doc["current_version"]["id"]
+
+    snapshot = snapshot_bundle(
+        db_session, org_id=d["org"].id, assessment_id=d["assessment"].id,
+        storage=NullStorageClient(),
+    )
+    assert snapshot.documents == [], "an unpublished draft must not appear in the bundle"
+
+    client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/publish",
+        json={"approved_by_contact_id": str(d["contact"].id)},
+    )
+    _new_version(client, d["org"].id, doc["id"], v1_id, "Second answer.")
+    client.post(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/publish",
+        json={"approved_by_contact_id": str(d["contact"].id)},
+    )
+
+    db_session.expire_all()
+    snapshot = snapshot_bundle(
+        db_session, org_id=d["org"].id, assessment_id=d["assessment"].id,
+        storage=NullStorageClient(),
+    )
+    assert [s.body_markdown for s in snapshot.documents] == ["Second answer."]
+    assert [s.version_number for s in snapshot.documents] == [2]
