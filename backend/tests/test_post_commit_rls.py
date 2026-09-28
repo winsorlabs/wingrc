@@ -109,6 +109,7 @@ def _seed(db_session, fake_msp_admin) -> dict:
     return {
         "org": org,
         "assessment": assessment,
+        "control": ctrl,
         "objective": obj,
         "control_state": control_state,
     }
@@ -137,8 +138,10 @@ def test_upsert_statements_control_state_id_is_lost_to_a_post_commit_read(
     org_id = d["org"].id
     assessment_id = d["assessment"].id
 
-    r = client.post(
-        f"/orgs/{org_id}/assessments/{assessment_id}/statements",
+    # PUT .../controls/{control_db_id}/statements -- the statements endpoint
+    # is keyed on the control's internal id, not the assessment alone.
+    r = client.put(
+        f"/orgs/{org_id}/assessments/{assessment_id}/controls/{d['control'].id}/statements",
         json={
             "items": [
                 {

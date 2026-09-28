@@ -1065,8 +1065,19 @@ def test_hostile_document_body_renders_safely_into_the_bundle(
     assert [s.doc_id for s in snapshot.documents] == ["AC-POL-001"]
 
     rendered = _documents_body(snapshot).lower()
-    for dangerous in ("<script", "<img", "<iframe", "<svg", "onerror", "onload", "javascript:"):
-        assert dangerous not in rendered, f"{dangerous!r} reached the bundle HTML"
+
+    # Live markup is what must be absent. The escaped TEXT of the hostile
+    # input is expected to be present and is asserted below -- an author
+    # documenting a script tag in an appendix must still see it, and
+    # checking for the substring "onerror" would fail on exactly that safe
+    # output. render_html having returned at all is itself the allowlist
+    # guarantee: it raises UnsafeRenderError rather than emitting an
+    # unvetted tag or attribute.
+    for live_tag in ("<script", "<img", "<iframe", "<svg", "<object", "<embed"):
+        assert live_tag not in rendered, f"{live_tag!r} reached the bundle HTML as markup"
+    assert "<a href=\"javascript:" not in rendered
+    assert "&lt;script&gt;" in rendered, "neutralised, not silently dropped"
+    assert "&lt;img src=x onerror=" in rendered, "neutralised, not silently dropped"
     assert "<strong>bold</strong>" in rendered
     assert "example.test" in rendered
 

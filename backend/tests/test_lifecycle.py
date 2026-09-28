@@ -693,10 +693,17 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     assert "<strong>incident response</strong>" in documents_html_v1
     assert "<h1" in documents_html_v1 and "<table>" in documents_html_v1
     assert "csrc.nist.gov" in documents_html_v1
-    for dangerous in ("<script", "<img", "onerror", "onload", "javascript:"):
-        assert dangerous not in documents_html_v1.lower(), (
-            f"{dangerous!r} reached the assessor-facing bundle HTML"
+    # Live markup absent; the escaped text of it present. Checking for the
+    # bare substring "onerror" would fail on safe output -- the escaped form
+    # &lt;img src=x onerror=...&gt; legitimately contains it, and an author
+    # writing about markup in an appendix must still see what they wrote.
+    lowered = documents_html_v1.lower()
+    for live_tag in ("<script", "<img", "<iframe", "<svg"):
+        assert live_tag not in lowered, (
+            f"{live_tag!r} reached the assessor-facing bundle HTML as markup"
         )
+    assert '<a href="javascript:' not in lowered
+    assert "&lt;script&gt;" in documents_html_v1, "neutralised, not silently dropped"
     # Alignment arrives as a class, never a style attribute -- markdown_doc.py
     # refuses to put CSS on operator-influenced output.
     assert "ta-right" in documents_html_v1
