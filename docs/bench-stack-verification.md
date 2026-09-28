@@ -94,8 +94,18 @@ bench work.
    runs on backend start — check its logs, and check migration source for
    whether it's purely additive or touches existing rows).
 4. Frontend: a throwaway `node:24-alpine` (or matching) container running
-   the frontend's own `npm ci && npm test && npm run build` unmodified —
-   don't hand-roll a different build path.
+   the frontend's own `npm install && npm test && npm run build`
+   unmodified — don't hand-roll a different build path. **`npm install`,
+   not `npm ci`**: there is no committed `package-lock.json`, and
+   `deploy/nginx/Dockerfile` itself runs `npm install`, so `npm ci` both
+   fails and would not be the real build path anyway. (Whether to commit a
+   lockfile and move the image to `npm ci` is an open decision — it is what
+   would actually pin transitive dependencies for a compliance product, and
+   it changes the deploy path, so it needs its own call rather than being
+   slipped in.)
+   Mount the **repo root**, not just `frontend/`: the Markdown renderer's
+   parity test reads `backend/tests/fixtures/markdown_corpus.json`, which is
+   deliberately shared with the backend suite rather than duplicated.
 5. Any slice-specific load measurement or manual walkthrough the slice's
    own task calls for.
 6. Tear down: `docker compose -p wingrc_verify_<date> down -v` — confirm

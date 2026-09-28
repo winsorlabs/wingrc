@@ -129,6 +129,10 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
 | `backend/app/assessment.py` | Pure domain functions: `compute_sprs`, `magic_loop_updates` |
 | `backend/app/engine.py` | DB adapter: `start_assessment`, `activate_org_product`, `deactivate_org_product`, `recompute_sprs` |
 | `backend/app/bundle_service.py` | Bundle snapshot + ZIP render (pure function over frozen dataclasses) |
+| `backend/app/markdown_doc.py` | The document-body format decision (GFM-subset Markdown) and the only renderer for it — read its docstring before touching document rendering anywhere |
+| `backend/app/document_diff.py` | Pure version-to-version diff (word spans, collapsed runs); no DB |
+| `frontend/src/lib/markdown.tsx` | Browser counterpart to `markdown_doc.py` — Markdown → React elements, never `dangerouslySetInnerHTML` |
+| `frontend/src/lib/tiptapMarkdown.ts` | Editor bridge: stored Markdown ↔ TipTap document, owned in-repo so the subset stays the subset |
 | `backend/app/routers/` | FastAPI routers: `assessments`, `bundle`, `contacts`, `evidence`, `frameworks`, `orgs` |
 | `backend/app/storage.py` | `StorageClient` ABC + `MinIOClient` + `NullStorageClient` |
 | `backend/app/audit.py` | `log_event()` — writes `AuditLog` rows |
@@ -307,6 +311,10 @@ fetched from MinIO and embedded, `generated_at` stamped last.
     01_system_description.html  — SSP Section 1 narrative
     02_implementation.html      — per-control [a]/[b]/[c] statements, RACI, evidence
     03_personnel.html           — contacts with documentation roles
+    04_component_inventory.html — scoped assets/users, with approval records
+    05_customer_responsibility_matrix.html — RACI flattened to a matrix
+    06_documents.html           — approved policies, rendered from Markdown (N.2)
+    system_security_plan.pdf    — the consolidated SSP (WeasyPrint)
   evidence/
     manifest.html               — per-objective evidence index with zip paths
     files/                      — embedded evidence file bytes
@@ -449,10 +457,25 @@ verified from this entry alone.
 **Plan and live status: `docs/PLAN-document-library.md`** (slices N.1–N.5).
 Read that file before touching this item. **N.1 ✅ DONE** (2026-09-24) —
 `document`/`document_version`/`document_objective_tag` (migration 0059),
-versioned from day one; see `docs/roadmap.md`'s Done entry for the full
-writeup (the document/version split, the status transition table, the
-republish decision). N.2–N.5 not started — do not infer otherwise from this
-entry; the plan doc's own status line is the only source of truth.
+versioned from day one. **N.2 ✅ DONE** (2026-09-28, no migration) —
+browser editing, diffs, audit surfacing. See `docs/roadmap.md`'s Done
+entries for both full writeups. N.3–N.5 not started — do not infer
+otherwise from this entry; the plan doc's own status line is the only
+source of truth.
+
+N.2's decisions that constrain later slices: **document bodies are
+GFM-subset Markdown** and `backend/app/markdown_doc.py` is the only thing
+that renders one to HTML — matched by `frontend/src/lib/markdown.tsx`,
+which renders to React elements so the SPA keeps its
+no-`dangerouslySetInnerHTML` invariant, with a shared corpus test
+(`backend/tests/fixtures/markdown_corpus.json`) pinning the two together.
+Bodies are stored verbatim and neutralised on render, the same line
+`svg_sanitize.py` draws. No merged table cells (GFM cannot express them,
+and no HTML escape hatch was added on purpose) and no inline images until
+N.4 adds an upload path for `storage_key`. Editing is append-only with
+optimistic concurrency (`base_version_id` required); there is no
+autosave.
+
 Reconciles two prior specs that had drifted apart (`ROADMAP.md` item F and
 this section's own earlier text, flagged 2026-09-07 as likely-duplicated
 and never reconciled until the plan doc landed); do not re-derive the

@@ -5028,6 +5028,272 @@ live, confirmed by direct query afterward.
 
 ---
 
+### Document library N.2: browser editing, readable diffs, audit surfacing ✅ DONE (2026-09-28)
+
+`docs/PLAN-document-library.md` has the five-slice plan. N.2 makes the
+library usable: before this, a document could be created and published
+through the API, but there was no way for a person to write one. No
+migration — N.2 is entirely behaviour on N.1's `0059` shape.
+
+**§0 decision: the body format is GFM-subset Markdown, and the deciding
+argument is not diffing.** `DocumentVersion.body`'s own comment deferred
+this. The obvious framing is Markdown-diffs-well versus HTML-round-trips-
+well, and on that framing it is a close call. What settles it is that a
+body has to render in *two* places — the React app, and the backend's
+HTML → WeasyPrint PDF/bundle path — so both are injection surfaces on
+operator-supplied content. Markdown lets both renderers *construct* their
+own output and escape all text, so raw markup in a body is never
+forwarded: injection becomes structurally impossible rather than
+filtered. That is `svg_sanitize.py`'s allowlist-rebuild philosophy applied
+to a second untrusted-content path. HTML storage instead forces a
+correct-by-audit sanitizer onto both paths, and would have introduced the
+first `dangerouslySetInnerHTML` in `frontend/src/` — an invariant the
+codebase currently holds everywhere. Editor JSON round-trips perfectly and
+does not diff at all, which is disqualifying for the one question this
+feature exists to answer.
+
+**What it costs, confirmed with Jarrod before the slice started rather
+than discovered in N.4:** no merged table cells — GFM cannot express them
+and `markdown_doc.py` deliberately does not add an HTML escape hatch that
+would hand the sanitizer problem straight back — and no inline images
+until N.4 adds an upload path for `DocumentVersion.storage_key`. The image
+limit is reversible (an N.4 `wingrc-asset:<uuid>` scheme plus an
+allowlisted `img`); the merged-cell one is not. N.4's `.docx` conversion
+can target GFM: pandoc emits it directly, and mammoth's HTML output
+converts onward. The plan doc's already-accepted cost ("complex Word
+formatting is lost and his existing set gets re-styled once inside
+WinGRC") is what that amounts to.
+
+**§3 sanitization, stated as the two separate claims it is.** Bodies are
+stored *verbatim* — nothing is stripped on save, because an author may
+legitimately be documenting markup in an appendix — and neutralised on
+render, which is where `svg_sanitize.py` already draws the line.
+`markdown_doc.py` (backend) and `lib/markdown.tsx` (browser) are
+configured identically: `html=False` so source markup is escaped to text
+rather than forwarded, linkify off so prose that merely looks like a URL
+does not silently become a clickable external reference in a document an
+assessor reads, the `image` rule disabled, an explicit http/https/mailto
+link allowlist replacing markdown-it's built-in *blocklist*, and GFM
+column alignment rewritten from `style="text-align:…"` into a class —
+refusing `style` for the same `url()`-smuggling reason `svg_sanitize.py`
+refuses it. Behind that construction-time guarantee, `render_html` runs an
+allowlist verification pass over its own output and raises
+`UnsafeRenderError` rather than returning anything unexpected, so a
+dependency upgrade that starts emitting a new tag fails loudly instead of
+silently widening what reaches a browser and WeasyPrint. The browser half
+renders markdown-it's token stream into React elements and never touches
+`dangerouslySetInnerHTML` at all.
+
+**Two renderers is the real risk, and it is bounded by a shared corpus.**
+`markdown-it` (JS) and `markdown-it-py` are ports of each other, so the
+pair was chosen deliberately; `backend/tests/fixtures/markdown_corpus.json`
+(29 cases, hostile inputs included) is replayed by both
+`tests/test_markdown_doc.py` and `src/lib/markdown.test.tsx`. That test
+earned itself immediately: it caught the React renderer building an
+element for markdown-it's *hidden* tight-list paragraphs, so every `- a`
+rendered as `<li><p>a</p></li>` in the app and `<li>a</li>` in the PDF.
+That is exactly the class of drift nobody notices until an assessor asks
+why the document looks different in the export.
+
+**§1 editor: TipTap 3, on a schema constrained to exactly the serializable
+subset.** ~30 ProseMirror packages into a frontend whose only runtime
+dependency was React; they are build-time only (Vite bundles them, the
+nginx image ships built assets) so air-gap is unaffected, but it is a real
+supply-chain surface in a compliance product and Jarrod accepted it
+explicitly. Versions are pinned exactly, not by caret. The editor is
+code-split (`React.lazy`), which matters: TipTap tripled the main bundle
+to 1.06 MB before splitting and it is back to 504 kB after, with the
+editor's 559 kB arriving only when someone opens a document —
+`c3pao_assessor`, who can read diffs and history but never edit, never
+loads it at all.
+
+`lib/documentSchema.ts` disables `underline` (StarterKit 3 ships it;
+Markdown has no underline, so an author who could press Ctrl+U would lose
+that formatting silently on save) and carries no image node. **The schema
+is asserted, not assumed** — `documentSchema.test.ts` checks the resulting
+node and mark lists exactly, because TipTap option names move between
+majors and an unrecognised key is silently ignored, so "we passed
+`underline: false`" is not evidence that underline is off. A second test
+pairs with it from the other direction: every node and mark the schema
+*does* hold has a Markdown sample that round-trips.
+
+`lib/tiptapMarkdown.ts` is owned in-repo rather than using TipTap 3's own
+per-node Markdown specs. Two reasons, both recorded in the module: the
+inbound direction has to agree with the renderers, and those are
+markdown-it, so `markdownToDoc` consumes `parseMarkdown`'s token stream —
+one `MarkdownIt` instance, three consumers — instead of routing the editor
+through `marked` and reintroducing the divergence this slice exists to
+avoid; and owning the outbound direction is what lets the supported subset
+*be* the subset. Consolidating onto TipTap's specs is a reasonable future
+simplification, not a correction. GFM column alignment is carried as an
+`align` attribute rather than flattened on save. `tiptapMarkdown.test.ts`
+asserts the fixpoint `md → doc → md′` with `md′ === md″` over the shared
+corpus, so a save is idempotent and a policy cannot drift a little on
+every edit.
+
+**§1 concurrent editing: optimistic concurrency, not a lock.** The caller
+states which version it edited from (`base_version_id`, required once a
+document has any version — omitting it is a 422, not an unchecked write),
+and a stale base returns 409 carrying the version that won, so the UI says
+"someone else saved version N while you were editing" and offers the diff.
+A lock would need a lease, an expiry and a steal path, because an engineer
+who closes a tab must not strand a policy document for whoever needs it
+next, and every one of those mechanisms is state that can itself be wrong.
+The conflict check is stateless and cannot lose an edit: the loser's text
+is still in their browser and re-saves onto the new base, and because
+versions are append-only the racing save is still recorded, just off a
+different parent.
+
+**§1 autosave: none, deliberately.** A version per keystroke is absurd and
+a mutable scratch version would break append-only, so the working copy
+lives in the component and in `sessionStorage` for crash/reload recovery
+only, keyed per `(document, base version)` so a recovered draft can never
+be applied on top of a *different* base than it was written against. It is
+**offered** on return, never silently applied. The accepted cost: version
+history is noisier than a system with autosave-into-a-draft, which is
+exactly why the diff view compares any two versions rather than only
+adjacent ones.
+
+**§2 diffs.** `document_diff.py` is pure (no DB, no ORM) and returns
+structured rows, not a patch string the client has to parse. Three things
+make it readable rather than merely correct: word-level spans inside a
+changed line, so a one-word edit highlights that word and not the
+paragraph; collapsed unchanged runs, so a 60-line policy with one edit
+renders 9 rows instead of 60; and paragraph-granular lines, which is the
+unit a human actually reviews. Version 1 is not a caller special case —
+`from_version` comes back null with `is_initial` set, and the view renders
+"initial version" rather than an empty panel.
+
+**§2 metadata changes: answered honestly rather than fudged.**
+`DocumentObjectiveTag` hangs off `document`, not `document_version`, so
+tags are not versioned state and "the tags as of version 3" is not a
+question the schema can answer for an unpublished version. For an
+*approved or superseded* version it can be answered exactly, and is: the
+objective set is recovered from the `EvidenceStateLink` rows that version's
+own `Evidence` row produced, archived ones included — a republish archives
+them, and "what did v2 cover" must survive that. Each side of a diff is
+labelled `published` or `current`, and where the two differ the server
+emits a note that the UI renders verbatim. The gap that leaves is filled
+by the audit timeline, which carries the individual tag add/remove actions
+— which is §4's own instruction, not a workaround.
+
+**§4 audit: no parallel history table.** The versions are the content
+record, `audit_log` is the action record, and `GET …/history` joins them at
+read time. Actor resolution moved up into `audit.py`
+(`parse_actor_uuid`/`resolve_identities`/`identity_out`, previously private
+to `routers/audit_log.py`) rather than being copied — two routers
+rendering "who did this" must agree on ADR 0006's anonymized-vs-deleted
+distinction, and a second copy of that fallback chain is the drift this
+codebase keeps getting bitten by.
+
+**§5 point-in-time: extended, not regressed.** Approved documents now
+render into `ssp/06_documents.html` and the consolidated SSP PDF through
+the same `markdown_doc.render_html`. `DocumentSnap` carries the approved
+version's *own* Markdown — never "whatever is current for this document" —
+and rendering stays on the render side of `render_bundle`'s pure-function
+split, which also means a rendering fix ships to future exports only and
+cannot retroactively alter a ZIP already handed to an assessor. Only
+`approved` versions reach the bundle: a draft is not a compliance record
+and a superseded one is the previous answer. `test_lifecycle.py`'s
+three-export comparison was extended to cover the new section rather than
+gaining a parallel check, and its Step 3d policy now carries a real
+Markdown body with a script tag, an event-handler attribute and a
+`javascript:` link in it, so the assessor-facing bytes are asserted both
+to render the structure and to neutralise all of it.
+
+**§8 audit — the post-commit RLS read pattern. Reported, not quietly
+fixed, per the instruction.** The shape N.1 hit is real but the predicate
+is narrower than "any read after commit": `db.py`'s `SessionLocal` sets
+`expire_on_commit=False`, so already-loaded attributes survive. What does
+not survive is (1) a column populated by a server-side SQL expression
+during an UPDATE (`onupdate=func.now()`), which SQLAlchemy expires and
+re-fetches lazily, and (2) any explicit `refresh()` or fresh `select()`
+issued after the commit — because `SET LOCAL app.current_org` is
+transaction-scoped and `commit()` ends that transaction.
+
+Exposure, from an AST sweep of every function in `backend/app` that reads
+through a session after its first `commit()`:
+
+- **12 models carry `onupdate=func.now()`; 8 of those are on RLS-gated
+  tables** (`control_state`, `evidence_task`, `poa_m_item`,
+  `implementation_statement`, `org_product`, `scope_entity`,
+  `org_liongard_environment`, `document`). Only four routers ever serialize
+  `updated_at` at all, and three are already safe: `documents.py` builds
+  responses before committing (N.1's fix), `scope.py` sets `updated_at` in
+  Python and skips the post-commit `refresh()` on purpose (two existing
+  comments), and `orgs.py`'s `refresh()` calls are on `organization` /
+  `system_description`, which have **no RLS policy**.
+- **Every other `session.refresh()` after a commit is on a non-RLS table**
+  — `contact`, `contact_documentation_role`, `raci_assignment`,
+  `integration_connection`, `assessment_objective`. (Worth its own look
+  later on the auth/RBAC track, separately: `contact` and `raci_assignment`
+  carry `org_id` but have no tenant-isolation policy, so they rely purely
+  on router-level filtering. Not this slice's business, and not a bug
+  today.)
+- **`auth.py` already does the right thing** — `_resolve_session` and
+  `_resolve_api_token` re-issue `SET LOCAL app.current_org` immediately
+  after their heartbeat commit, with a comment saying why. That is the
+  existing precedent for a systemic fix.
+- **One live instance, and it fails silently:**
+  `routers/assessments.py:upsert_statements` commits and *then* runs
+  `select(ControlState)` to fill `StatementOut.control_state_id`. A
+  zero-row select is not an error, so under RLS the endpoint answers 200
+  with `control_state_id: null` for every statement — no exception, no log
+  line. Confirmed empirically, not by reading:
+  `tests/test_post_commit_rls.py` asserts the wrong-but-current behaviour
+  with a note that fixing it means inverting the assertion.
+
+**Why it is latent rather than live today**, and why that is the thing to
+act on: the app still connects as `wingrc`, which is table owner and (in
+compose) a superuser, and Postgres bypasses RLS unconditionally for both —
+migration `0016_app_role`'s own docstring says the cutover to `wingrc_app`
+has not happened. The test harness does `SET ROLE wingrc_app` per request
+precisely so this class surfaces *before* the cutover, the same way
+`docs/PLAN-auth-rbac-completion.md` records it catching the session-fixation
+gap. So this is not forty call sites needing quiet fixes; it is a small,
+enumerated set plus one silent bug, and a decision to make at the cutover:
+re-issue `SET LOCAL` on a SQLAlchemy `after_commit` event (fixes the whole
+class, including `refresh()`, and matches what `auth.py` already does by
+hand), versus keeping the current explicit convention of building responses
+before the commit. **Jarrod's call; deliberately not made here.**
+
+**Verification.** Bench-stack on an isolated wl-util-1 Docker Compose
+project (`wingrc_verify_20260928_n2`, own volumes, nginx on 18080/18443 via
+an uncommitted bench-only override since the live stack owns 80/443) —
+live `wingrc` project confirmed `running(5)` before, during and after, and
+the bench project torn down with `down -v`. **1468/1468 backend tests**
+(N.1 left 1371), `ruff check .` clean, **330/330 frontend tests** (was
+156), `tsc -b` clean, `vite build` clean. Plus a real browser walkthrough
+against that stack: created a document, typed Markdown with a `<script>`
+tag in it and watched the preview render the heading and escape the script
+as literal text with no console output at all; saved three versions and
+confirmed each one appended rather than mutating; opened Compare and saw
+"phishing-resistant" highlighted as a word-level span inside an otherwise
+unchanged line, with the objective-basis note and the actor-resolved
+timeline beneath it; opened version 1 and got "initial version" rather than
+a broken panel; and drove the concurrent-edit case with two tabs — the
+second saver got "someone else saved a newer version… your text has not
+been lost", the winning version number named, a working "see what changed"
+link, and their own text still sitting in the editor.
+
+**Not done here, on purpose:** approval workflow and review cadence stay
+N.3 (`under_review` remains the informational marker N.1 made it),
+templates/variables/branding stay N.4, suggestions stay N.5,
+`storage_key` is still carried and unexercised, and `.docx` import is
+N.4 — confirmed to be able to target this format, not built.
+
+**Worth a decision later, not acted on:** the frontend has no
+`package-lock.json` and `deploy/nginx/Dockerfile` runs `npm install`, so
+TipTap's ~30 transitive dependencies float even though TipTap itself is
+pinned. For a compliance product a committed lockfile plus `npm ci` is the
+thing that actually makes the build reproducible. That changes the deploy
+path, so it is its own decision rather than a side effect of this slice.
+Note also that `docs/bench-stack-verification.md` already tells a verifier
+to run `npm ci`, which cannot work today — the real build path is
+`npm install`.
+
+---
+
 ### Document library N.1: core record shape, versioned from day one ✅ DONE (2026-09-24)
 
 `docs/PLAN-document-library.md` has the full five-slice plan. This is N.1,
@@ -5158,9 +5424,11 @@ N.1–N.5) — read that file, not this entry, before touching this item. It
 also reconciles `ROADMAP.md` item F ("Template document library"), flagged
 2026-09-07 as likely-duplicating this section and never resolved until now;
 both this inline spec and F's are superseded by the plan doc, which is the
-single current design. Still genuinely unstarted (no `Document` model, no
-`routers/documents.py`) — the plan doc's own status line, not this one, is
-the source of truth on progress.
+single current design. **No longer unstarted** — this line said "no
+`Document` model, no `routers/documents.py`" and went stale the moment
+N.1 landed on 2026-09-24; N.1 and N.2 are both done (see the Done entries
+above). The plan doc's own status line, not this one, is the source of
+truth on progress.
 
 The prerequisite check below (item M / `Contact`) still holds and needed no
 re-verification; the rest of this entry is left for historical context
