@@ -722,9 +722,10 @@ def snapshot_bundle(
         session.scalars(
             select(ContactDocumentationRole)
             .where(ContactDocumentationRole.contact_id.in_(contact_ids))
+            # DETERMINISM-TOTAL: (contact_id, role) is unique
+            # (uq_contact_documentation_role), so no id tiebreak is needed.
             # Rendered as a per-contact list in the personnel section, so the
-            # order is visible. (contact_id, role) is unique
-            # (uq_contact_documentation_role), so this is total.
+            # order is visible.
             .order_by(ContactDocumentationRole.contact_id, ContactDocumentationRole.role)
         ).all()
         if contact_ids
@@ -769,6 +770,8 @@ def snapshot_bundle(
             ScopeEntity.org_id == org_id,
             ScopeEntity.entity_type.in_(["device", "software"]),
         )
+        # DETERMINISM-TOTAL: (org_id, entity_type, natural_key) is unique
+        # (uq_scope_entity_identity) and org_id is already filtered.
         .order_by(ScopeEntity.entity_type, ScopeEntity.natural_key)
     ).all()
 
@@ -904,6 +907,10 @@ def snapshot_bundle(
             & (ImplementationStatement.assessment_id == assessment_id),
         )
         .where(ControlState.assessment_id == assessment_id)
+        # DETERMINISM-TOTAL: one row per (control, objective) here --
+        # control_state is unique on (assessment_id, objective_id)
+        # (uq_control_state_identity) and objective_key is unique within a
+        # control, so (control_id, objective_key) identifies the row.
         .order_by(
             Control.sequence_order,
             Control.family,
@@ -1153,6 +1160,7 @@ def snapshot_bundle(
             # intermittently; the comment below about insertion order
             # "preserving query order" was relying on an ordering the
             # database never guaranteed.
+            # DETERMINISM-TOTAL: Product.key is unique.
             .order_by(Product.name, Product.key)
         ).all()
         for cs_id, pkey, pname, classification in contrib_rows:
@@ -1309,6 +1317,9 @@ def snapshot_bundle(
         .join(DocumentVersion, DocumentVersion.document_id == Document.id)
         .outerjoin(Contact, Contact.id == DocumentVersion.approved_by_contact_id)
         .where(Document.org_id == org_id, DocumentVersion.status == "approved")
+        # DETERMINISM-TOTAL: doc_id is unique per org (uq_document_doc_id)
+        # and version_number is unique within a document
+        # (uq_document_version_identity).
         .order_by(Document.doc_id, DocumentVersion.version_number)
     ).all()
 

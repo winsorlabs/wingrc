@@ -414,6 +414,53 @@ def test_every_snapshot_query_is_ordered_or_explicitly_exempt():
     )
 
 
+def test_every_snapshot_ordering_is_total():
+    """A present ORDER BY is not enough -- it has to be a TOTAL order.
+
+    This is the regression the behavioural tests cannot be trusted to
+    catch. Mutation-tested: dropping `Contact.id` from the contacts
+    ordering leaves `order_by` in place, so the missing-ORDER-BY guard is
+    satisfied, and a four-row sort is too small for the byte comparison to
+    reliably notice. Only a static check fails on that reliably.
+
+    Rule: the final ordering term must be a primary key (`<Model>.id`), or
+    the query must carry `DETERMINISM-TOTAL: <which constraint makes the
+    key unique>`. Naming the constraint is the point -- "it looks unique"
+    is exactly how a tiebreak gets dropped two refactors later.
+    """
+    src = (_APP / _SNAPSHOT_MODULE).read_text(encoding="utf-8")
+    lines = src.split("\n")
+    offenders: list[str] = []
+    for block, ln in _select_blocks(src):
+        if ".order_by(" not in block:
+            continue
+        nearby = "\n".join(lines[max(0, ln - 11) : ln + 10])
+        if "DETERMINISM-TOTAL" in block or "DETERMINISM-TOTAL" in nearby:
+            continue
+        start = block.index(".order_by(") + len(".order_by(")
+        depth, i = 1, start
+        while i < len(block):
+            if block[i] == "(":
+                depth += 1
+            elif block[i] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        terms = [t.strip() for t in block[start:i].split(",") if t.strip() and not t.strip().startswith("#")]
+        final = terms[-1] if terms else ""
+        if not final.endswith(".id"):
+            offenders.append(f"{_SNAPSHOT_MODULE}:{ln}: ends with {final!r}")
+
+    assert not offenders, (
+        "Every snapshot ORDER BY must end in a primary key, or carry a "
+        "DETERMINISM-TOTAL comment naming the constraint that already makes "
+        "it unique. A key that can tie leaves row order to the planner, and "
+        "that is not something the byte comparison reliably catches. "
+        "Offenders:\n  " + "\n  ".join(offenders)
+    )
+
+
 @pytest.mark.parametrize("module,func", _RENDER_PATH_FUNCTIONS)
 def test_named_render_path_function_orders_its_queries(module, func):
     """The artifact-producing functions outside the snapshot builder.
