@@ -20,6 +20,7 @@ is enforced in production yet -- these test the state the cutover produces.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select, text
@@ -87,6 +88,7 @@ def two_orgs(db_session):
         evidence = Evidence(
             org_id=org.id, kind="reference", title=f"Evidence {label}",
             artifact_type="document", reference_location=f"DOC-{label}",
+            collected_at=datetime.now(UTC),
         )
         task = EvidenceTask(
             org_id=org.id, assessment_id=assessment.id, title=f"Task {label}",
