@@ -5028,6 +5028,180 @@ live, confirmed by direct query afterward.
 
 ---
 
+### The application now runs as a non-owner role — `wingrc_app` cutover complete ✅ DONE (2026-09-29)
+
+**Tenant isolation on this deployment is now enforced by PostgreSQL, not by
+router filtering.** The application connects as `wingrc_app`: not the table
+owner, not a superuser, `rolbypassrls = false`. Every table carrying an
+`org_id`, and every table reachable transitively from one, is
+policy-gated (migrations `0060`/`0061`). A query that forgets its org scope
+now returns nothing instead of another tenant's rows, and that is a
+property of the database rather than of every developer remembering a
+`WHERE` clause.
+
+For a multi-tenant compliance product this is the milestone the whole RLS
+track existed to reach, and it is worth naming as one rather than filing as
+config.
+
+#### The healthcheck came first, deliberately
+
+`/health` returned a static dict. That is how an `alembic upgrade head`
+which ran, logged success, exited 0 and silently rolled back left a
+completely empty database while `docker compose ps` reported the backend
+healthy throughout — nothing in the check touched a table, so nothing
+noticed. (That rollback was itself self-inflicted, in the previous slice: a
+privilege probe run on alembic's own connection before
+`context.begin_transaction()` opened a transaction alembic nested inside
+and never committed.)
+
+It was fixed and verified *before* the credentials changed, because it is
+the instrument the cutover is judged by and the cutover's two failure modes
+are "cannot authenticate" and "RLS returns nothing" — a healthcheck that
+touches no table reports healthy through both.
+
+Two checks now, both cheap enough for a 30-second interval:
+
+1. `SELECT 1` as the application's own role — proves the connection
+   authenticates and the database answers.
+2. `alembic_version` against the head the image ships — the one that would
+   have caught the rollback directly.
+
+(2) is a readiness condition, not a warning: a deploy **is** unhealthy
+while the schema does not match the code. It costs nothing in this
+deployment shape, because the backend's command is
+`alembic upgrade head && exec uvicorn` (uvicorn never starts before
+migrations finish) and the worker has healthchecks disabled. A multi-replica
+rollout would see a real window, and being marked unhealthy during it is
+still the right answer. `alembic_version` carries no RLS policy and is
+readable by `wingrc_app`, so it behaves identically either side of the
+cutover.
+
+#### The flip
+
+- `wingrc_app` password generated on the host into a mode-600 file, applied
+  via stdin so it never reached a command line, and **never printed to a
+  transcript, log or commit**. Stored where the deployment's other secrets
+  live, same rule as `WINGRC_CREDENTIAL_ENCRYPTION_KEYS`.
+- `WINGRC_DATABASE_URL` → `wingrc_app`; `WINGRC_MIGRATION_DATABASE_URL` →
+  the owner, set in the same change. Appended to the existing `.env`
+  (which holds real secrets) rather than rewritten, with the previous file
+  kept as `.env.pre-cutover.bak`.
+- `docker-compose.yml` now reads `${WINGRC_DATABASE_URL:-<owner default>}`,
+  so a cutover is a config change rather than an edit. The default stays
+  the owner because a fresh install has no `wingrc_app` password — there is
+  no shippable default for a credential.
+- **The worker connects too**, and is easy to forget because it serves
+  nothing. It is also where `app.current_org` changes mid-session (the
+  per-org scheduler loop), so it exercises `rls.py`'s hook harder than the
+  API does.
+- **Rollback, written down before starting:** comment out the one
+  `WINGRC_DATABASE_URL` line in `.env` and restart. Pre-flight `pg_dump` at
+  `/backups/pre-cutover-20260929T141914Z.dump`.
+
+#### What "verified" meant
+
+Under RLS a missing or wrong `app.current_org` does not raise — it returns
+zero rows with a 200. **So "the app starts and serves 200s" is not evidence
+of anything, and an empty result where there used to be data is a cutover
+failure even when the status code is fine.** Every check below asserts that
+data *is* returned.
+
+On the bench, with the app actually running as `wingrc_app`:
+
+- 1496/1496 backend tests, twice, from a clean test database.
+- Real authenticated HTTP (API token): scope 35, control states 320,
+  documents 1, contacts 1, SPRS −204, a 357 KB bundle, cross-org 403.
+- The per-org scheduler loop opened **one review cycle per org** — the
+  hardest exercise of the org-context hook available.
+- Deployment-wide (`org_id = NULL`) audit writes accepted, which is what
+  `0060`'s `IS NULL` arm exists for and the cutover is when it first
+  matters.
+- The CLI still works as the owner via an explicit override.
+
+On the live deployment, against real data, the decisive check was running
+the same probe twice — once with an owner override, once as configured —
+and diffing:
+
+> **identical apart from `current_user` and `bypassrls`.** Per-org scope
+> entity counts, contact counts, evidence counts, document counts,
+> assessment counts, SPRS scores (−199 and −204), control-state counts
+> (320 each) and both bundle section SHA-256 hashes all matched exactly.
+
+Cross-org isolation, with the contrast that makes it meaningful:
+
+| Scoped to | As `wingrc_app` | As owner (bypass) |
+|---|---|---|
+| Acme MSP | own 320, Winsorlabs **0** | own 320, Winsorlabs **320** |
+| Winsorlabs | own 320, Acme **0** | own 320, Acme **320** |
+
+The owner column is the point: the zeros are RLS doing its job, not an
+empty table.
+
+Also verified live: `/health` reporting `0061_rls_transitive_policies` and
+`database: ok`; real authenticated HTTP returning non-empty data and
+refusing an unknown org; both cross-org `SECURITY DEFINER` functions
+(`auth.expire_stale_invites`, `auth.msp_role_users`) executing as
+`wingrc_app` and returning rows; the scheduler evaluating all five jobs
+without error under the new role; deployment-wide audit writes accepted;
+and the CLI's `rotate-credential-keys` and `seed-catalog` working as the
+owner. The temporary API token minted for the HTTP checks was deleted
+afterwards.
+
+**One honest gap:** no scheduler job *body* executed on live post-cutover
+during the verification window — only `expire_stale_invites` was near due
+and the scheduler judged it not yet so. The job path itself ran cleanly
+under the new role, and a full per-org loop executed on the bench. The next
+hourly run will close it without intervention.
+
+#### A pre-existing bug found on the way, and a correction
+
+`test_lifecycle`'s three-export comparison was failing intermittently. It
+reproduces on `main` as well as on the cutover branch, so **the previous
+slice's reported "1491/1491" was a lucky green run, not proof** — recorded
+here because a single green run on a known-intermittent test is exactly the
+kind of evidence that should not have been presented as conclusive.
+
+Root cause: the bundle's contributors query had no `ORDER BY`, so Postgres
+was free to return the same two products in a different order on two
+executions, and the implementation section rendered
+`Tools: Datto RMM, RocketCyber…` one time and
+`Tools: RocketCyber…, Datto RMM` the next. That is a point-in-time
+integrity problem rather than a cosmetic one: the bundle's whole premise is
+that an already-generated export renders the same thing. Fixed with an
+explicit `ORDER BY`; the suite is now green twice from a clean database.
+
+**Fifteen other queries in `bundle_service.py` also lack an `ORDER BY`.**
+Most feed dict lookups where order cannot matter, but not obviously all of
+them. Reported rather than fixed here — a blind sixteen-query refactor does
+not belong in a cutover slice, and bundle determinism deserves its own
+pass. That is the next natural piece of work on this file.
+
+Separately, `conftest.py` now clears `WINGRC_MIGRATION_DATABASE_URL` when it
+redirects to the test database. Without it, `env.py`'s
+different-database guard fired during test bootstrap and the entire suite
+aborted (1042 errors) on any stack that had cut over. The guard was right;
+the harness was wrong. It was only found by running the suite on a stack
+that had actually cut over, which is the argument for doing the bench
+cutover before the live one.
+
+#### What still holds owner rights, and why
+
+- **Migrations.** DDL needs the owner; `WINGRC_MIGRATION_DATABASE_URL` is
+  that credential and is consumed only by `app/migrations/env.py`.
+- **The CLI**, per the decision already recorded in `docs/deployment.md`:
+  `wingrc-admin` creates the first org and user before any org context
+  exists, `reset-dev` deletes across every tenant, the seed commands write
+  deployment-wide reference data, and `scope`/`render` look read-only but
+  call `get_or_create_org`, which writes. Privileged commands now need an
+  explicit owner override on the command line; that is documented, and the
+  operational consequence — the CLI's access is controlled by who can reach
+  the host and the credential, not by RLS — is stated there too.
+
+`FORCE ROW LEVEL SECURITY` remains unset and should stay that way: it would
+subject the owner to RLS and break exactly those two.
+
+---
+
 ### RLS track finished: six transitive policies, and the migration-connection split ✅ DONE (2026-09-29)
 
 Cutover *preparation*, deliberately not the cutover. Migration `0061`; no
@@ -5177,7 +5351,9 @@ main thing still holding owner rights.
 Isolated bench project `wingrc_verify_20260929_rls2` (own volumes, no
 published ports; live `wingrc` untouched). **1491/1491 backend tests**
 (1481 before), `ruff check .` clean, **330/330 frontend**, `tsc -b` and
-`vite build` clean — no frontend files changed. Fresh-install path checked
+`vite build` clean — but see the cutover entry above: `test_lifecycle`
+was intermittently failing on `main` at this point due to an unordered
+bundle query, so this green run was luck rather than proof. Fixed there — no frontend files changed. Fresh-install path checked
 explicitly by tearing the volumes down and rebuilding: `alembic current` →
 `0061_rls_transitive_policies (head)`, 54 tables.
 

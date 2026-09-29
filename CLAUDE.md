@@ -378,13 +378,18 @@ commit discards it and any read afterwards matches zero rows under RLS;
 which is what makes a post-commit `refresh()`/`select()` work at all. A
 direct write leaves the recorded value stale and the hook would then
 re-apply the *wrong* org — `tests/test_rls_context.py` fails the build on
-one. **The app still connects as the RLS-bypassing owner role**, so none of
-this is enforced yet. Every org-scoped table now has a policy (migrations
-0060/0061), and all that remains before the cutover is setting a password
-on `wingrc_app` and pointing `WINGRC_DATABASE_URL` at it, with
-`WINGRC_MIGRATION_DATABASE_URL` set to the owner because migrations need
-DDL the runtime role will not have — see `docs/deployment.md`'s "Database
-roles" section and `docs/roadmap.md`'s Done entries. Router-level
+one. **The app connects as `wingrc_app` — a non-owner role that cannot bypass
+RLS (cutover 2026-09-29).** Tenant isolation is enforced by the database,
+not by router filtering: a query that forgets its org scope returns nothing
+rather than another tenant's rows. Every org-scoped table, directly or
+transitively, is policy-gated (migrations 0060/0061).
+
+Migrations still need the owner, via `WINGRC_MIGRATION_DATABASE_URL` —
+which is why there are two connection strings, and why consolidating them
+back would break the next deploy. The CLI also runs as the owner and
+privileged commands need an explicit override; see `docs/deployment.md`'s
+"Database roles" section for both, and `docs/roadmap.md`'s Done entries for
+the reasoning. Router-level
 guards on all routers. Multi-org access (`org_membership`, per-membership
 role — see `docs/adr/0009-multi-org-user-access.md`) is what `require_org_access()`
 actually enforces; a role is not a fixed property of a `User` row.
