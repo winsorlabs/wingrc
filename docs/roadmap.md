@@ -5200,8 +5200,16 @@ first move is structural rather than procedural:
    are both on, and unchanged throughout). The cost was four tests at
    **260.0s each** — `test_cors.py`'s three plus
    `test_auth.py::test_health_is_ungated`, totalling 1043s of a 1054s run.
-   Exactly the four that were failing. **The slowness was the bug, not the
-   platform.**
+   Exactly the four that were failing.
+
+   **A correction, since the first version of this entry overclaimed.** It
+   said "the slowness was the bug, not the platform". That is wrong, and run
+   #313 disproved it: CI's `backend` "Test" step took **12s on #312**
+   (pre-fix, with all four tests failing) and **12s on #313** (post-fix).
+   On Linux the identical bug cost nothing at all. So the bug was
+   *necessary* — no bug, no connection attempt, no delay — but the platform
+   supplied the entire 260x. It is the interaction, and describing it as
+   either one alone is wrong in a way that would mislead the next reader.
 
    The mechanism, isolated: a raw TCP connect to `localhost:5432` with
    nothing listening is refused in **4.10s**, but psycopg took **260.03s**
@@ -5215,7 +5223,17 @@ first move is structural rather than procedural:
    is a production defect, not a test-speed annoyance: a load balancer or
    container healthcheck polling it gets a four-minute hang instead of a
    fast negative, and it was shipped by the cutover slice that introduced
-   the probe. Fixed with `db_connect_timeout` (default 5s) in
+   the probe.
+
+   **The production scenario is a dropped SYN, not a refused one**, which is
+   why the Linux/Windows split above does not make this Windows-only. A
+   *refused* connection (nothing listening, port closed) is fast on every
+   platform — that is why CI never saw it. A *dropped* one (host firewall
+   set to DROP, a dead IP, a severed network path, a hung Postgres that
+   accepts no new connections) hangs until something bounds it, on Linux
+   exactly as on Windows. Without `connect_timeout` nothing bounds it, so
+   the readiness probe hangs precisely in the outage it exists to detect.
+   Fixed with `db_connect_timeout` (default 5s) in
    `config.py`, passed through `db.build_connect_args()`, and pinned by
    `test_health.py::test_engine_sets_a_connect_timeout`. Measured after:
    **260.03s → 10.02s** (5s x the two addresses `localhost` resolves to; a
@@ -5227,7 +5245,18 @@ first move is structural rather than procedural:
    looked like tooling friction *was* the defect, and treating the 200x as
    an environment quirk would have shipped a broken readiness probe.
 
-5. **Branch-protection configuration, for the record.** Require **`backend`
+5. **Open: make "did it actually run the tests?" a CI assertion, not a log
+   read.** This workflow already carries a comment about a past incident
+   where every `@pytest.mark.integration` test skipped silently and the job
+   "reported green while testing nothing" — the failure mode is known and
+   has happened. It is still checked by eye, and only by someone who can
+   download the log. A `--co -q` count compared against a floor, or
+   `-p no:randomly --strict-markers` plus asserting a minimum collected
+   count, would turn it into a failure. Not done here: it is a change to
+   the workflow being merged, and this slice's own rule was not to fix
+   forward on `main`. Worth doing next.
+
+6. **Branch-protection configuration, for the record.** Require **`backend`
    and `integration`, deliberately not `image`** — `image` keeps `needs:
    [backend, integration]`, so it legitimately skips when either fails, and
    **a skipped required check counts as satisfied.** That distinction is the
@@ -5251,6 +5280,18 @@ Reproduced and fixed against CI's own configuration, on the bench, in a
 - **#307 reproduced twice** at `df55f52` (1 failed, 1021 passed) and
   confirmed to pass when `test_lifecycle.py` is run alone — the
   order-dependence is the finding, not an anomaly.
+- **CI green on `main`: run #313** (`2623f4cd`), the merge commit —
+  `backend` success 44s, `integration` success 245s, `image` success 80s.
+  **All three actually ran**; none skipped, which is the point of dropping
+  `needs: backend`. Step timings confirm the work happened rather than
+  being skipped over: `Integration tests` **185s** and `Migration chain`
+  **4s** against the live `postgres:18` service (a skipping run is ~1s),
+  and `backend`'s `Test` step 12s.
+  *Exact pytest counts are not recorded here because raw log download
+  requires `Actions: read` and this was watched unauthenticated — the
+  durations are the evidence, and they are inference from duration, not a
+  count. See the note below on making this a CI-enforced assertion instead
+  of something read off a log.*
 - **Readiness-probe latency, measured before and after:** `/health` with
   Postgres unreachable went **260.19s → 10.19s**, and the underlying
   `SELECT 1` **260.03s → 10.02s**, across three consecutive calls each.
