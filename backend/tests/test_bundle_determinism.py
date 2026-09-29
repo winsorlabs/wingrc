@@ -235,10 +235,22 @@ def test_export_is_unchanged_by_an_unrelated_write(tied_fixture, db_session):
     aid = tied_fixture["assessment"].id
     before = _section_hashes(db_session, org_id, aid)
 
-    # Rewrite every evidence row in place; same values, new tuple versions.
-    db_session.execute(
-        text("UPDATE evidence SET title = title WHERE org_id = :o"), {"o": str(org_id)}
-    )
+    # Rewrite in place every table whose ordering this slice fixed: same
+    # values, new tuple versions. An UPDATE writes a new row version and
+    # leaves the old one dead, which is what moves a heap scan's output
+    # order -- perturbing only one table would leave the other orderings
+    # untested.
+    for stmt in (
+        "UPDATE evidence SET title = title WHERE org_id = :o",
+        "UPDATE contact SET name = name WHERE org_id = :o",
+        "UPDATE raci_assignment SET raci_letter = raci_letter WHERE control_state_id IN "
+        "(SELECT id FROM control_state WHERE org_id = :o)",
+        "UPDATE contact_documentation_role SET role = role WHERE contact_id IN "
+        "(SELECT id FROM contact WHERE org_id = :o)",
+        "UPDATE control_state_contributor SET product_id = product_id WHERE "
+        "control_state_id IN (SELECT id FROM control_state WHERE org_id = :o)",
+    ):
+        db_session.execute(text(stmt), {"o": str(org_id)})
     # An audit row and an SPRS recompute: both real things that happen
     # between two exports in production.
     db_session.add(
