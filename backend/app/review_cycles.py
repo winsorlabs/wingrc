@@ -411,8 +411,21 @@ def close_cycle(
     learned about it.
     """
     now = datetime.now(UTC)
+    # Ordered because these rows render into the attestation document,
+    # which is uploaded to storage and recorded as Evidence -- see
+    # _render_attestation_html. An unordered collection reaching a stored
+    # artifact makes that artifact nondeterministic; same defect class as
+    # bundle_service's contributors query. id breaks the name tie.
     reviewers = list(
-        session.scalars(select(ReviewCycleReviewer).where(ReviewCycleReviewer.cycle_id == cycle.id))
+        session.scalars(
+            select(ReviewCycleReviewer)
+            .where(ReviewCycleReviewer.cycle_id == cycle.id)
+            .order_by(
+                ReviewCycleReviewer.reviewer_side,
+                ReviewCycleReviewer.reviewer_name,
+                ReviewCycleReviewer.id,
+            )
+        )
     )
     for r in reviewers:
         if r.status in ("requested", "viewed"):
@@ -421,8 +434,19 @@ def close_cycle(
     if status == "closed_unattested" and all(r.notified_at is None for r in reviewers):
         status = "closed_undeliverable"
 
+    # Same reasoning as `reviewers` above. (subject_type, natural_key) is
+    # how the table reads; id makes it total, since nothing constrains a
+    # cycle to one item per natural key.
     items = list(
-        session.scalars(select(ReviewCycleItem).where(ReviewCycleItem.cycle_id == cycle.id))
+        session.scalars(
+            select(ReviewCycleItem)
+            .where(ReviewCycleItem.cycle_id == cycle.id)
+            .order_by(
+                ReviewCycleItem.subject_type,
+                ReviewCycleItem.natural_key,
+                ReviewCycleItem.id,
+            )
+        )
     )
 
     cycle.status = status
