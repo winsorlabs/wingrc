@@ -119,8 +119,18 @@ def run_migrations_online() -> None:
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
+    # The privilege check runs on its OWN connection, deliberately.
+    # Executing anything on alembic's connection before
+    # `context.begin_transaction()` implicitly opens a transaction that
+    # alembic then nests inside and never commits -- every migration runs,
+    # alembic logs success, `alembic upgrade head` exits 0, and the
+    # connection close rolls the whole thing back leaving an empty
+    # database. Caught on the bench; the symptom is silent by construction,
+    # which is the same class of failure this RLS track exists to remove.
+    with connectable.connect() as check_connection:
+        _assert_can_run_ddl(check_connection)
+
     with connectable.connect() as connection:
-        _assert_can_run_ddl(connection)
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
             context.run_migrations()
