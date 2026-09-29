@@ -185,7 +185,8 @@ def tied_fixture(db_session):
     for key, pname in [("prod-a", "Alpha Tool"), ("prod-b", "Beta Tool"), ("prod-c", "Gamma Tool")]:
         p = Product(
             framework_id=fw.id, key=f"{key}-{uuid.uuid4().hex[:4]}", name=pname,
-            provider="Vendor", category="EDR", role="Coverage.", is_published=True,
+            provider="Vendor", category="EDR", asset_type="SPA", role="Coverage.",
+            is_published=True,
         )
         products.append(p)
     db_session.add_all(products)
@@ -319,7 +320,7 @@ def _select_blocks(src: str):
                 if depth == 0:
                     break
             i += 1
-        yield start, src[start : i + 1], src[:start].count("\n") + 1
+        yield src[start : i + 1], src[:start].count("\n") + 1
 
 
 def test_every_render_path_query_is_ordered_or_explicitly_exempt():
