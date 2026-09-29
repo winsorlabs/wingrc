@@ -100,6 +100,7 @@ def two_orgs(db_session):
         doc_role = ContactDocumentationRole(contact_id=contact.id, role="it_admin")
         history = ControlStateHistory(
             control_state_id=cs.id, previous_status="not_met", new_status="pending_evidence",
+            previous_responsibility="customer_owns", new_responsibility="customer_owns",
             change_reason=f"seed {label}",
         )
         ev_link = EvidenceStateLink(evidence_id=evidence.id, control_state_id=cs.id)
@@ -166,9 +167,10 @@ def test_cannot_insert_a_history_row_for_another_orgs_control_state(two_orgs, db
         with pytest.raises(ProgrammingError):
             db_session.execute(
                 text(
-                    "INSERT INTO control_state_history "
-                    "(id, control_state_id, previous_status, new_status, changed_at) "
-                    "VALUES (gen_random_uuid(), :cs, 'not_met', 'met', now())"
+                    "INSERT INTO control_state_history (id, control_state_id, "
+                    "previous_status, new_status, previous_responsibility, "
+                    "new_responsibility, changed_at) VALUES (gen_random_uuid(), :cs, "
+                    "'not_met', 'met', 'customer_owns', 'customer_owns', now())"
                 ),
                 {"cs": str(b["control_state"].id)},
             )
@@ -241,9 +243,10 @@ def test_writes_into_the_current_org_still_succeed(two_orgs, db_session):
     try:
         db_session.execute(
             text(
-                "INSERT INTO control_state_history "
-                "(id, control_state_id, previous_status, new_status, changed_at) "
-                "VALUES (gen_random_uuid(), :cs, 'not_met', 'met', now())"
+                "INSERT INTO control_state_history (id, control_state_id, "
+                "previous_status, new_status, previous_responsibility, "
+                "new_responsibility, changed_at) VALUES (gen_random_uuid(), :cs, "
+                "'not_met', 'met', 'customer_owns', 'customer_owns', now())"
             ),
             {"cs": str(a["control_state"].id)},
         )
