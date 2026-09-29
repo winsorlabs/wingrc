@@ -27,3 +27,11 @@ frontend/dist/
 /dist/
 *.xlsx
 !samples/*.xlsx
+
+# Deployment-host credential material. .env is already ignored above; these
+# are the files the wingrc_app cutover leaves beside it on a deployment host
+# (the generated role password, and the pre-cutover .env backup). Neither
+# should ever be committable by an accidental `git add -A` on that host.
+.wingrc_app_pw
+.env.*.bak
+.env.bak
