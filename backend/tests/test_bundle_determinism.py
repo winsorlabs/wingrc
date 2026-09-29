@@ -199,6 +199,7 @@ def tied_fixture(db_session):
         bc = BaselineControl(
             product_id=p.id, baseline_version_id=v.id, control_id=ctrl.id,
             objectives=["a"], classification="shared", coverage_basis="configured",
+            candidate_state="confirmed",
         )
         db_session.add(bc)
         db_session.flush()
@@ -377,11 +378,13 @@ def test_named_render_path_function_orders_its_queries(module, func):
     start = src.index(func)
     nxt = src.find("\ndef ", start + 1)
     body = src[start : nxt if nxt != -1 else len(src)]
-    queries = [b for b, _ in _select_blocks(body) if "select(" in b]
-    assert queries, f"{module}:{func} has no queries -- has it been refactored?"
-    unordered = [q for q in queries if "order_by" not in q and "DETERMINISM-EXEMPT" not in q]
-    assert not unordered, (
+    selects = body.count("select(")
+    ordered = body.count("order_by") + body.count("DETERMINISM-EXEMPT")
+    assert selects, f"{module}:{func} has no queries -- has it been refactored?"
+    assert ordered >= selects, (
         f"{module}:{func} renders a stored artifact, so every collection it "
-        f"reads must be totally ordered. Unordered: {len(unordered)} of "
-        f"{len(queries)}"
+        f"reads must be totally ordered: found {selects} select(s) but only "
+        f"{ordered} order_by/exemption(s). Counting rather than parsing "
+        f"because these build their statements in steps; it is crude, but it "
+        f"cannot be satisfied by an unrelated ordering elsewhere in the file."
     )
