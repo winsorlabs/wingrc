@@ -128,7 +128,7 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
 | `backend/app/models.py` | All SQLAlchemy models (single file, ~1660 lines) |
 | `backend/app/assessment.py` | Pure domain functions: `compute_sprs`, `magic_loop_updates` |
 | `backend/app/engine.py` | DB adapter: `start_assessment`, `activate_org_product`, `deactivate_org_product`, `recompute_sprs` |
-| `backend/app/bundle_service.py` | Bundle snapshot + ZIP render (pure function over frozen dataclasses) |
+| `backend/app/bundle_service.py` | Bundle snapshot + ZIP render (pure function over frozen dataclasses). **Every query here must be totally ordered** — ordered or `DETERMINISM-EXEMPT`, ending in a primary key or `DETERMINISM-TOTAL`; `tests/test_bundle_determinism.py` enforces both, because an unordered collection reaching a rendered artifact makes it nondeterministic and the byte comparison does not reliably catch it |
 | `backend/app/markdown_doc.py` | The document-body format decision (GFM-subset Markdown) and the only renderer for it — read its docstring before touching document rendering anywhere |
 | `backend/app/document_diff.py` | Pure version-to-version diff (word spans, collapsed runs); no DB |
 | `frontend/src/lib/markdown.tsx` | Browser counterpart to `markdown_doc.py` — Markdown → React elements, never `dangerouslySetInnerHTML` |

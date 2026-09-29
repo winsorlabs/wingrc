@@ -5028,6 +5028,167 @@ live, confirmed by direct query afterward.
 
 ---
 
+### Bundle export made deterministic, and the test made reliable ✅ DONE (2026-09-29)
+
+**The lesson, first, because it generalises: a passing test that depends on
+unspecified ordering is not a passing test.** `test_lifecycle.py`'s
+three-export comparison is the assertion underneath baseline versioning,
+multi-tool coverage, the acceptance record and the SSP inventory — every
+one of those slices was verified against it. It was passing on row-order
+luck. A green suite meant "the rows happened to come back in the same order
+twice", which is a different claim from "the export is reproducible", and
+it hid a real integrity defect for weeks.
+
+#### The per-query audit
+
+A correction to the previous slice's figure first: it reported "fifteen
+other queries lack an ORDER BY". That came from a naive scanner that missed
+multi-line `.order_by()` chains. The real count is **17 queries, of which 2
+were unordered on a render path** — the earlier number was wrong and is
+corrected here rather than quietly restated.
+
+**Unordered, now ordered** (both feed rendered collections):
+
+| Query | Ordering | Why it is stable |
+|---|---|---|
+| `contact_documentation_role` | `contact_id, role` | `uq_contact_documentation_role` makes the pair unique |
+| `raci_assignment` + `contact` | `control_state_id, raci_letter, contact.name, contact_id` | `uq_raci_assignment` closes it; rendered twice, inline per objective and again in the CRM matrix |
+
+**Ordered but able to tie, now total** — a key that can tie is not a stable
+key, so each gained a unique final term:
+
+| Query | Was | Tie | Now |
+|---|---|---|---|
+| contacts | `name` | two people share a name | `+ Contact.id` |
+| asset approvals | `scope_entity_id, decided_at desc` | same-instant decisions | `+ id` |
+| Liongard changes | `entity_type, natural_key, pulled_at desc` | two pulls, same instant | `+ id` |
+| evidence per control state | `collected_at` | **routine** — a task collect writes several rows in one transaction | `+ title, id` |
+| unlinked evidence | `collected_at` | same | `+ title, id` |
+| evidence tasks | `title, control_id` | two tasks sharing a title on one control | `+ id` |
+| findings | `severity, title` | same severity and title | `+ id` |
+| SPRS submissions | `submitted_date desc, created_at desc` | a date, not a timestamp | `+ id` |
+
+Ordering keys are meaningful rather than arbitrary wherever possible —
+tools by name, evidence by collection date then title, findings by
+severity — so the bundle stays scannable. The unique term is the tiebreak,
+not the sort.
+
+**Order cannot affect output** — stated per query rather than as a blanket
+claim, because the next person changing a renderer needs to know which
+guarantee they are leaning on:
+
+- `system_description` — `uq_system_description_org` means the filter
+  matches at most one row, so `.first()` has nothing to choose between.
+- the document objective-key lookup — carries `.distinct()` (Postgres
+  forbids ordering a `SELECT DISTINCT` by expressions outside the select
+  list) and the consumer sorts: `DocumentSnap.objective_keys` is built with
+  `sorted()`. That sort is the guarantee.
+- the evidence hash write — an `UPDATE`, not a collection read.
+
+**Already total, and now says so**: `product.key`, `scope_entity`'s
+`(entity_type, natural_key)`, `(control_id, objective_key)`, and
+`(doc_id, version_number)` were each already unique under a named
+constraint. Each carries a `DETERMINISM-TOTAL` comment naming that
+constraint, because "it looks unique" is how a tiebreak gets dropped two
+refactors later.
+
+#### Wider than that file — the same defect class elsewhere
+
+- **The review-cycle attestation document.** `close_cycle` read its
+  reviewers and its items with no ordering and rendered both straight into
+  `_render_attestation_html`, which is uploaded to storage and recorded as
+  an `Evidence` row. That is a compliance artifact, not a screen. Both are
+  now ordered.
+- **`repo.list_entities`.** Unordered, and it feeds `render.py`'s `.xlsx`
+  list exports — the assessor-facing Lists deliverable. Ordered by
+  `(entity_type, natural_key)`, total under `uq_scope_entity_identity`.
+- **The consolidated SSP PDF.** Issues no queries of its own; every section
+  reads the frozen `BundleSnapshot`, so it inherits the fixes. Verified
+  rather than assumed.
+- Nothing else found: `render.py` itself touches no database, and the other
+  queries in `review_cycles.py` serve API responses that render no stored
+  artifact.
+
+#### Making the test stop being lucky — and what mutation testing revealed
+
+Both were needed, and finding out why was the useful part.
+
+`tests/test_bundle_determinism.py` builds a fixture that **ties on
+purpose** — four contacts in two duplicate-name pairs, five evidence rows
+sharing one `collected_at`, one contact with three documentation roles,
+four RACI holders of the same letter on one control state, three products
+contributing to one objective. (`test_ties_really_exist_in_the_fixture`
+guards that, so the others cannot pass vacuously.) It then exports five
+times, and exports again across an unrelated write, since an `UPDATE`
+writes a new tuple version and can move a heap scan's output order.
+
+**Then mutation testing showed the behavioural tests are not enough.**
+Removing the RACI `ORDER BY` entirely: not caught by any byte comparison.
+Dropping `Contact.id` from the contacts ordering: not caught either. A
+four-row sort simply does not reorder on demand, and rewriting whole tables
+usually preserves relative order. Hoping for a flip is what the original
+defect already proved unreliable.
+
+So the guards are **static**, and each was verified by mutation to fail on
+the first run:
+
+1. Every query in the snapshot builder must be ordered or carry
+   `DETERMINISM-EXEMPT: <reason>`. Catches a removed `ORDER BY`.
+2. Every `ORDER BY` must end in a primary key or carry
+   `DETERMINISM-TOTAL: <constraint>`. Catches a dropped tiebreak — the one
+   no behavioural test caught.
+3. The two artifact-producing functions outside that file
+   (`review_cycles.close_cycle`, `repo.list_entities`) are checked by name.
+   Scoped to the function rather than the module deliberately: scanning
+   those files wholesale flagged ordinary API queries that render nothing,
+   and a guard that cries wolf gets silenced rather than fixed.
+
+The behavioural tests remain, as the check that the orderings actually
+produce stable bytes rather than merely existing.
+
+#### Verification
+
+Bench project `wingrc_verify_det`, live `wingrc` untouched. **1504/1504
+backend, three consecutive runs each from a dropped-and-recreated test
+database** — three rather than two because two is what caught the original
+defect and caught it only intermittently; the point of three is that the
+nondeterminism is now gone by construction, so the repetition is
+corroboration rather than the mechanism. `ruff` clean, **330/330
+frontend**, `tsc -b` and `vite build` clean; no frontend files changed.
+
+Both mutations (removed `ORDER BY`, dropped tiebreak) fail on a clean
+checkout's first run; clean code passes 8/8.
+
+**The live before/after, and a measurement error worth recording.** The
+first live comparison appeared to show every section's hash changing. It
+had not: the probe hashed the section bytes *without stripping the
+`generated` stamp*, which is per-export by design, so it was comparing
+clocks. Re-done properly by restoring the pre-deploy `pg_dump` into the
+isolated bench stack and rendering the **same live data** on both the
+pre-change and post-change code: **byte-identical across all five
+sections for both orgs.** Consistent with the data — live currently has no
+duplicate contact names, no evidence sharing a `collected_at`, and no RACI
+rows at all, so there was nothing for the new tiebreaks to reorder. The
+fix changes what *can* happen, not what did.
+
+On the deployed instance, two exports across a real intervening write are
+byte-identical. (The first attempt at that write was rejected by
+row-level security because the ad-hoc script never set `app.current_org` —
+an incidental confirmation that the `wingrc_app` cutover is doing its job.)
+
+#### Loose ends from the cutover
+
+- **The scheduler job body has now executed on live** under `wingrc_app`:
+  `expire_stale_invites` succeeded at `15:20:27Z`, after the worker
+  restarted at `14:20:25Z`. That gap is closed.
+- **Frontend build determinism** (`package-lock.json` + `npm ci`) remains
+  open and is **unrelated to this slice**, despite sharing the word. This
+  one is about row order inside a rendered artifact; that one is about
+  which dependency versions a build resolves. Closing this does not close
+  that.
+
+---
+
 ### The application now runs as a non-owner role — `wingrc_app` cutover complete ✅ DONE (2026-09-29)
 
 **Tenant isolation on this deployment is now enforced by PostgreSQL, not by
@@ -5175,6 +5336,10 @@ Most feed dict lookups where order cannot matter, but not obviously all of
 them. Reported rather than fixed here — a blind sixteen-query refactor does
 not belong in a cutover slice, and bundle determinism deserves its own
 pass. That is the next natural piece of work on this file.
+**Corrected 2026-09-29 by that pass:** the figure was wrong. It came from a
+scanner that missed multi-line `.order_by()` chains; the real count was two
+unordered queries plus seven whose keys could tie. See the Done entry above
+for the full audit.
 
 Separately, `conftest.py` now clears `WINGRC_MIGRATION_DATABASE_URL` when it
 redirects to the test database. Without it, `env.py`'s
