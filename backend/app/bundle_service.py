@@ -1315,6 +1315,12 @@ def snapshot_bundle(
     doc_objective_keys: dict[uuid.UUID, list[str]] = {}
     if document_rows:
         version_ids = [r.version_id for r in document_rows]
+        # DETERMINISM-EXEMPT: the consumer sorts.
+        # No ORDER BY here deliberately: this query carries .distinct(), and
+        # Postgres forbids ordering a SELECT DISTINCT by expressions outside
+        # the select list. DocumentSnap.objective_keys is built with
+        # sorted() below, which is the guarantee -- do not remove that sort
+        # without adding an ORDER BY here.
         key_rows = session.execute(
             select(Evidence.source_document_version_id, AssessmentObjective.objective_key)
             .join(EvidenceStateLink, EvidenceStateLink.evidence_id == Evidence.id)
@@ -1326,12 +1332,6 @@ def snapshot_bundle(
             )
             .distinct()
         ).all()
-        # DETERMINISM-EXEMPT: consumer sorts (see objective_keys=sorted(...)).
-        # No ORDER BY on the query above, deliberately: it carries
-        # .distinct(), which in Postgres forbids ordering by expressions
-        # outside the select list, and the consumer sorts anyway --
-        # DocumentSnap.objective_keys is built with sorted() below. The sort
-        # is the guarantee; do not remove it without adding an ORDER BY here.
         for version_id, objective_key in key_rows:
             doc_objective_keys.setdefault(version_id, []).append(objective_key)
 
