@@ -35,3 +35,12 @@ frontend/dist/
 .wingrc_app_pw
 .env.*.bak
 .env.bak
+
+# Bench/CI credential material. The GitHub PAT used to open PRs and read run
+# status lives at /home/claude/.secrets/gh_pat_wingrc on wl-util-1 -- outside
+# any checkout, which is the point. This entry exists so that a stray copy
+# inside the repo cannot be committed by an accidental `git add -A`. Read it
+# as GH_TOKEN="$(cat <path>)"; never pass a token as an argument, where it
+# would land in shell history and the process table.
+gh_pat_*
+.gh_token
