@@ -301,11 +301,21 @@ def test_ties_really_exist_in_the_fixture(tied_fixture, db_session):
 
 _APP = pathlib.Path(__file__).resolve().parent.parent / "app"
 
-# Modules whose queries feed a rendered/stored artifact. bundle_service is
-# the ZIP and the SSP PDF; review_cycles renders the attestation document
-# that is itself uploaded as Evidence; repo.list_entities feeds render.py's
-# .xlsx list exports.
-_RENDER_PATH_MODULES = ("bundle_service.py", "review_cycles.py", "repo.py")
+# `bundle_service.py` IS the snapshot builder: every query in it feeds the
+# ZIP and the SSP PDF, so it is scanned wholesale.
+_SNAPSHOT_MODULE = "bundle_service.py"
+
+# Elsewhere only specific functions reach an artifact, and scanning those
+# modules wholesale would flag ordinary API queries that render nothing.
+# A guard that cries wolf gets silenced rather than fixed, so these are
+# named individually:
+#   review_cycles.close_cycle -> _render_attestation_html, which is
+#     uploaded to storage and recorded as Evidence.
+#   repo.list_entities        -> render.py's .xlsx list exports.
+_RENDER_PATH_FUNCTIONS = (
+    ("review_cycles.py", "def close_cycle"),
+    ("repo.py", "def list_entities"),
+)
 
 
 def _select_blocks(src: str):
@@ -323,34 +333,55 @@ def _select_blocks(src: str):
         yield src[start : i + 1], src[:start].count("\n") + 1
 
 
-def test_every_render_path_query_is_ordered_or_explicitly_exempt():
-    """The next person to add an unordered query to a render path fails
-    here, on their first run.
+def test_every_snapshot_query_is_ordered_or_explicitly_exempt():
+    """The next person to add an unordered query to the snapshot builder
+    fails here, on their first run.
 
     Exemption is deliberate and must be written down: put
-    `DETERMINISM-EXEMPT: <reason>` in or just above the query. The three
-    that carry it today are a single-row lookup guaranteed by a UNIQUE
+    `DETERMINISM-EXEMPT: <reason>` in or near the query. The three that
+    carry it today are a single-row lookup guaranteed by a UNIQUE
     constraint, a query whose consumer sorts, and an UPDATE.
     """
+    src = (_APP / _SNAPSHOT_MODULE).read_text(encoding="utf-8")
+    lines = src.split("\n")
     offenders: list[str] = []
-    for mod in _RENDER_PATH_MODULES:
-        path = _APP / mod
-        src = path.read_text(encoding="utf-8")
-        lines = src.split("\n")
-        for block, ln in _select_blocks(src):
-            if "select(" not in block:
-                continue
-            if "order_by" in block or "DETERMINISM-EXEMPT" in block:
-                continue
-            preceding = "\n".join(lines[max(0, ln - 9) : ln])
-            if "DETERMINISM-EXEMPT" in preceding:
-                continue
-            offenders.append(f"{mod}:{ln}: {lines[ln - 1].strip()[:70]}")
+    for block, ln in _select_blocks(src):
+        if "select(" not in block and "update(" not in block:
+            continue
+        if "order_by" in block or "DETERMINISM-EXEMPT" in block:
+            continue
+        # The marker may sit just above the query or just below it, since a
+        # reason sometimes reads better next to the consumer.
+        nearby = "\n".join(lines[max(0, ln - 11) : ln + 10])
+        if "DETERMINISM-EXEMPT" in nearby:
+            continue
+        offenders.append(f"{_SNAPSHOT_MODULE}:{ln}: {lines[ln - 1].strip()[:70]}")
 
     assert not offenders, (
-        "Queries on a render path must be totally ordered, or carry a "
-        "DETERMINISM-EXEMPT comment saying why order cannot affect output. "
-        "An unordered collection reaching a rendered artifact makes that "
-        "artifact nondeterministic -- which is how the contributors bug hid "
-        "behind green runs for weeks. Offenders:\n  " + "\n  ".join(offenders)
+        "Queries in the snapshot builder must be totally ordered, or carry a "
+        "DETERMINISM-EXEMPT comment saying why order cannot affect output. An "
+        "unordered collection reaching a rendered artifact makes that artifact "
+        "nondeterministic -- which is how the contributors bug hid behind green "
+        "runs for weeks. Offenders:\n  " + "\n  ".join(offenders)
+    )
+
+
+@pytest.mark.parametrize("module,func", _RENDER_PATH_FUNCTIONS)
+def test_named_render_path_function_orders_its_queries(module, func):
+    """The artifact-producing functions outside the snapshot builder.
+
+    Scoped to the function rather than the module on purpose: most queries
+    in these files serve API responses and never reach a stored artifact.
+    """
+    src = (_APP / module).read_text(encoding="utf-8")
+    start = src.index(func)
+    nxt = src.find("\ndef ", start + 1)
+    body = src[start : nxt if nxt != -1 else len(src)]
+    queries = [b for b, _ in _select_blocks(body) if "select(" in b]
+    assert queries, f"{module}:{func} has no queries -- has it been refactored?"
+    unordered = [q for q in queries if "order_by" not in q and "DETERMINISM-EXEMPT" not in q]
+    assert not unordered, (
+        f"{module}:{func} renders a stored artifact, so every collection it "
+        f"reads must be totally ordered. Unordered: {len(unordered)} of "
+        f"{len(queries)}"
     )
