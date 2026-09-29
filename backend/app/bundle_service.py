@@ -1113,6 +1113,8 @@ def snapshot_bundle(
             )
             .join(Contact, Contact.id == RaciAssignment.contact_id)
             .where(RaciAssignment.control_state_id.in_(all_cs_ids))
+            # DETERMINISM-TOTAL: (control_state_id, contact_id, raci_letter)
+            # is unique (uq_raci_assignment), so contact_id closes the order.
             # Rendered twice -- inline per objective in the implementation
             # section, and again grouped by letter in the CRM matrix, where
             # holders of one letter are joined with <br>. Both are visible

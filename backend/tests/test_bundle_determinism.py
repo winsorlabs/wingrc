@@ -447,7 +447,10 @@ def test_every_snapshot_ordering_is_total():
                 if depth == 0:
                     break
             i += 1
-        terms = [t.strip() for t in block[start:i].split(",") if t.strip() and not t.strip().startswith("#")]
+        # Strip comments before splitting: an inline note between two
+        # ordering terms would otherwise be read as the final term.
+        clause = re.sub(r"#[^\n]*", "", block[start:i])
+        terms = [t.strip() for t in clause.split(",") if t.strip()]
         final = terms[-1] if terms else ""
         if not final.endswith(".id"):
             offenders.append(f"{_SNAPSHOT_MODULE}:{ln}: ends with {final!r}")
