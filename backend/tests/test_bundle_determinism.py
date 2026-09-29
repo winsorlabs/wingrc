@@ -63,20 +63,12 @@ from app.models import (
     ProductBaselineVersion,
     RaciAssignment,
 )
-from app.storage import StorageClient
+from app.storage import NullStorageClient
 
 pytestmark = pytest.mark.integration
 
 _SECTIONS = ("ssp/02_implementation.html", "evidence/manifest.html",
              "ssp/03_personnel.html", "ssp/05_customer_responsibility_matrix.html")
-
-
-class _NullStorage(StorageClient):
-    def upload_file(self, key, data, content_type):  # noqa: D102
-        return key
-
-    def presigned_url(self, key, expires_in=3600):  # noqa: D102
-        return f"https://example.invalid/{key}"
 
 
 def _section_hashes(session, org_id, assessment_id) -> dict[str, str]:
@@ -85,7 +77,7 @@ def _section_hashes(session, org_id, assessment_id) -> dict[str, str]:
     time. The sections are the content the point-in-time promise is about.
     """
     snap = snapshot_bundle(
-        session, storage=_NullStorage(), org_id=org_id, assessment_id=assessment_id
+        session, storage=NullStorageClient(), org_id=org_id, assessment_id=assessment_id
     )
     zip_bytes, _, _, _ = render_bundle(snap)
     zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
