@@ -324,6 +324,74 @@ Restore the `pre-deploy-*.dump` from 7a, report exactly what the migration
 did versus what was expected, and wait for a decision before touching it
 again. A half-corrected table is worse than a restored one.
 
+## Database roles: which credential does what
+
+A WinGRC deployment uses the database in three different capacities, and
+they do not all want the same privileges. Understanding this is the
+difference between a working cutover and a confusing one.
+
+| Capacity | Configured by | Privileges it needs |
+|---|---|---|
+| Serving requests | `WINGRC_DATABASE_URL` | Read/write rows. No DDL. Should be subject to row-level security. |
+| Running migrations | `WINGRC_MIGRATION_DATABASE_URL` | Owner: creates and alters tables. |
+| Administrative CLI | `WINGRC_DATABASE_URL` (today) | Owner: see below. |
+
+### Why two connection strings
+
+Migrations create and alter tables; that needs the owning role. The
+application does not, and it is moving to `wingrc_app` — a role that
+deliberately has **no DDL rights and cannot bypass row-level security**, so
+that a bug in a query cannot return another tenant's rows. One role cannot
+be both, which is why `WINGRC_MIGRATION_DATABASE_URL` exists.
+
+**Leave it unset unless `WINGRC_DATABASE_URL` points at `wingrc_app`.**
+Unset means migrations reuse `WINGRC_DATABASE_URL`, which is correct while
+that is still the owning role — including on a fresh install, where nothing
+extra needs configuring.
+
+If you do set it, it must name the **same host, port and database** as
+`WINGRC_DATABASE_URL` and differ only in the user. Migrating one database
+while the application serves another is refused rather than attempted.
+
+Two things fail loudly rather than quietly, on purpose — a migration
+silently running as the wrong role, or against the wrong database, is how a
+security cutover gets undone without anyone noticing:
+
+- A migration URL naming a different database exits with both targets
+  printed.
+- A connected role that cannot create objects in `public` exits naming
+  `WINGRC_MIGRATION_DATABASE_URL`, rather than failing partway through some
+  migration with a message about a table.
+
+### The CLI runs as the owner, and that is a decision
+
+`wingrc` and `wingrc-admin` commands connect via `WINGRC_DATABASE_URL`,
+and several of them genuinely require owner privileges:
+
+- `wingrc-admin` (bootstrap-admin) creates the first organization and the
+  first user — there is no org context yet for row-level security to scope
+  to, by definition.
+- `wingrc reset-dev` deletes across every tenant in the database.
+- `wingrc seed` / `seed-catalog` / `seed-baselines` write deployment-wide
+  reference data that belongs to no tenant.
+- `wingrc scope` and `wingrc render` look read-only but call
+  `get_or_create_org`, which writes.
+
+Forcing these through `wingrc_app` would mean weakening that role or adding
+bypasses to it — both worse than an honest "this tool runs as the owner".
+
+**The consequence, stated plainly because it is an operational
+requirement, not a footnote:** the CLI is a privileged administrative tool.
+Its access is controlled by who can reach the host and the credential, not
+by row-level security, and after the `wingrc_app` cutover it will be the
+main thing still holding owner rights. Treat the owner credential the same
+way `docs/email-setup.md` and the credential-encryption-key guidance treat
+their secrets — in the operator's password manager or secrets store, not
+only in a `.env` on a machine that may be rebuilt — and limit shell access
+to the deployment host accordingly.
+
+---
+
 ## Follow-ups not covered by this baseline
 
 - **HSTS** — commented out in `deploy/nginx/nginx.conf`. Enable once this

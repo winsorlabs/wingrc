@@ -5028,6 +5028,203 @@ live, confirmed by direct query afterward.
 
 ---
 
+### RLS track finished: six transitive policies, and the migration-connection split ✅ DONE (2026-09-29)
+
+Cutover *preparation*, deliberately not the cutover. Migration `0061`; no
+frontend change. After this, the only thing between the current state and
+the application connecting as a non-owner is setting a password and
+flipping one variable.
+
+**The rule this slice inherited**, generalised from the last one's most
+useful finding: *adding a policy to a table is a change to every
+post-commit read of that table*, because `app.current_org` dies with the
+committing transaction. Confirmed for each of the six rather than assumed
+— `routers/contacts.py:add_role` does exactly this on
+`contact_documentation_role`, and
+`tests/test_rls_transitive_policies.py` asserts it directly. The hook is
+new and these tables had never been gated, so "the hook covers it" was not
+something to take on trust.
+
+#### The six policies
+
+All six carry no `org_id`; each is gated by an `EXISTS` over a parent that
+is already gated. That composes because PostgreSQL applies a table's own
+policies to references of it *inside another policy's expression*, so the
+child inherits its parent's scoping rather than restating it — one
+definition of "which org", not seven. `0060`'s `raci_assignment` policy
+had already proved the mechanism under `SET ROLE wingrc_app`.
+
+| Table | Join | `USING` and `WITH CHECK` |
+|---|---|---|
+| `contact_documentation_role` | `contact_id` → `contact` | `EXISTS (SELECT 1 FROM contact p WHERE p.id = …contact_id)` |
+| `control_state_contributor` | `control_state_id` → `control_state` | `EXISTS (SELECT 1 FROM control_state p WHERE p.id = …control_state_id)` |
+| `control_state_history` | `control_state_id` → `control_state` | same shape |
+| `evidence_state_link` | `control_state_id` → `control_state` | same shape |
+| `evidence_task_state_link` | `control_state_id` → `control_state` | same shape |
+| `review_cycle_reminder_log` | `cycle_id` → `review_cycle` | `EXISTS (SELECT 1 FROM review_cycle p WHERE p.id = …cycle_id)` |
+
+**`USING` and `WITH CHECK` are identical for all six, and both are spelled
+out — "identical, deliberately" rather than silence.** `0060`'s `audit_log`
+finding is the reason: a `FOR ALL` policy with no explicit `WITH CHECK`
+silently reuses `USING` as the check, which for an EXISTS predicate means
+an INSERT gets validated against a condition written for a read. They
+match here because the rule genuinely is symmetric — a row may be read iff
+its parent is visible, and written iff its parent is visible. There is no
+case where you may create a link to a control state you cannot see.
+
+**No nullable join columns**, enumerated rather than read: every FK column
+used is `NOT NULL` (`pg_attribute.attnotnull`). So the `NULL = <uuid>` →
+NULL trap that shaped `audit_log`'s policy cannot arise, which is why these
+six are plain and carry no `IS NULL` arm.
+
+**Where a table has two gated parents** — `evidence_state_link` and
+`evidence_task_state_link` (control state *and* evidence side),
+`review_cycle_reminder_log` (cycle *and* reviewer) — either would isolate
+correctly, since both sides are org-gated and in the same org by
+construction. Each policy joins through the parent whose FK column has its
+own dedicated index, and the two link tables both use `control_state` so
+there is one join shape rather than two.
+
+#### Cost, measured at realistic volume rather than reported from an empty table
+
+Live row counts are useless for this: the largest of the six holds 37 rows
+and `evidence_state_link` is empty. So the bench was seeded to a plausible
+MSP shape — 2 tenants, 10,000 control states, 10,000 evidence links,
+10,000 history rows — and the plans compared as the owner (RLS bypassed)
+against `wingrc_app` (enforced).
+
+- **The shape the application actually issues — a lookup by
+  `control_state_id` — is unaffected.** `Index Scan using
+  ix_evidence_state_link_control_state_id` and `Index Only Scan using
+  ix_control_state_history_control_state_id` are both preserved under the
+  policy, at 8 shared buffers. The policy costs essentially nothing on the
+  indexed path.
+- **The worst case, a full-table aggregate with no narrowing predicate,
+  goes 0.84 ms → 3.13 ms** (114 → 206 shared buffers) at 10k/10k.
+- **The reason it is only that:** PostgreSQL *hashes* the EXISTS subplan
+  rather than re-evaluating it per row. The plan shows one
+  `Index Scan using ix_control_state_org_id` over the parent, hashed, then
+  probed — so the cost is O(child + parent), not O(child × parent), which
+  is the thing worth knowing before putting six of these in.
+
+Every join column is indexed, verified rather than assumed:
+`ix_contact_documentation_role_contact_id`,
+`ix_control_state_contributor_control_state_id`,
+`ix_control_state_history_control_state_id`,
+`ix_evidence_state_link_control_state_id`,
+`ix_evidence_task_state_link_control_state_id`,
+`ix_review_cycle_reminder_log_cycle_id`.
+
+#### The migration-connection split
+
+`WINGRC_MIGRATION_DATABASE_URL`, consumed by `app/migrations/env.py` and
+nothing else. Chosen over a separate init container because it is one
+variable in the existing config surface rather than a new deployment
+topology, and because the failure modes can be checked in-process.
+
+Unset falls back to `WINGRC_DATABASE_URL`, which is correct while that is
+still the owner — including on a fresh install, where nothing extra needs
+configuring. Two guards keep a wrong configuration loud, because a
+migration silently running as the wrong role or against the wrong database
+is how a cutover gets undone without anyone noticing:
+
+1. **Same database.** A migration URL naming a different host/port/database
+   than the app URL is refused, with both targets printed. Migrating one
+   database while the app serves another is the failure that otherwise
+   looks exactly like success.
+2. **Can actually do DDL.** Before running anything, the connected role is
+   checked for `CREATE` on `public`. This turns the post-cutover mistake
+   ("forgot to set the migration URL") from a permission error partway
+   through some migration into one message naming the variable.
+
+**A bug found while building guard 2, worth recording because it is the
+same silent-success shape this whole track is about.** The check was
+initially run on alembic's own connection, before
+`context.begin_transaction()`. That implicitly opened a transaction alembic
+then nested inside and never committed: every migration ran, alembic logged
+success, `alembic upgrade head` **exited 0**, and closing the connection
+rolled the entire thing back, leaving an empty database. The check now runs
+on its own connection. Two things about how it surfaced are worth keeping:
+the bench caught it only because a *fresh* volume was used, and
+`docker compose ps` still reported the backend **healthy** throughout —
+`/health` touches no table, so a completely unmigrated database passes the
+healthcheck. That is not fixed here, and is worth its own look.
+
+#### The CLI stays privileged, documented rather than fixed
+
+Agreed with, after checking whether a clean split exists. It does not:
+
+- `wingrc-admin` creates the first org and user — there is no org context
+  for RLS to scope to, by definition.
+- `reset-dev` deletes across every tenant.
+- `seed` / `seed-catalog` / `seed-baselines` write deployment-wide
+  reference data belonging to no tenant.
+- `scope` and `render` *look* read-only but call `get_or_create_org`,
+  which writes. That is the one worth knowing about: the obvious candidates
+  for demotion are not actually read-only.
+- Only `views` touches no database at all.
+
+Forcing these through `wingrc_app` would mean weakening that role or adding
+bypasses — both worse than an honest "this tool runs as the owner". The
+operational consequence is written into `docs/deployment.md`'s new
+"Database roles: which credential does what" section: the CLI is a
+privileged administrative tool whose access is controlled by who can reach
+the host and the credential, not by RLS, and after the cutover it is the
+main thing still holding owner rights.
+
+#### Verification
+
+Isolated bench project `wingrc_verify_20260929_rls2` (own volumes, no
+published ports; live `wingrc` untouched). **1491/1491 backend tests**
+(1481 before), `ruff check .` clean, **330/330 frontend**, `tsc -b` and
+`vite build` clean — no frontend files changed. Fresh-install path checked
+explicitly by tearing the volumes down and rebuilding: `alembic current` →
+`0061_rls_transitive_policies (head)`, 54 tables.
+
+Coverage added: isolation in **both directions per table** — a cross-org
+read returns nothing and a cross-org insert is refused — plus a test that
+ordinary in-org writes still succeed, because a policy that blocks
+everything also passes an isolation test. `test_lifecycle.py` now renders
+the same bundle twice, once under `SET ROLE wingrc_app` and once as the
+owner with RLS bypassed, and requires the implementation section and
+evidence manifest to be byte-identical; `evidence_state_link` is what
+`bundle_service` filters on, and a policy hiding rows there raises nothing
+— it just hands an assessor a thinner SSP.
+
+**That comparison caught a real mistake of mine on its first run**, which
+is the best argument for it existing: placed between the v1 and v2 exports,
+`snapshot_bundle`'s `recompute_sprs` wrote between two exports the walk
+compares byte-for-byte, and the *pre-existing* baseline-reimport assertion
+failed. Moved after the three-export comparison, where nothing downstream
+depends on it.
+
+#### What remains before the `wingrc_app` cutover
+
+Everything except the flip itself.
+
+1. **Set a password on `wingrc_app`** (`ALTER ROLE`). It has
+   `rolcanlogin = true` and `rolpassword IS NULL`, so it cannot
+   authenticate — deliberate, per migration `0016`.
+2. **Point `WINGRC_DATABASE_URL` at it, and set
+   `WINGRC_MIGRATION_DATABASE_URL` to the owner** (same host/port/database,
+   different user).
+3. **Verify.** The suite already runs under `SET ROLE wingrc_app`, so the
+   behaviour is covered; what the cutover itself needs proving is that the
+   deployment starts, migrates and serves under the new credentials.
+
+No schema work, no policy work and no code work is left. Grants were
+verified complete in the previous slice (0016's `ALTER DEFAULT PRIVILEGES`
+held for every table created since; `wingrc_app` can EXECUTE every `auth`
+SECURITY DEFINER function), and every table carrying an `org_id` or
+reachable transitively from one now has a policy.
+
+Still worth knowing, and not blocking: `FORCE ROW LEVEL SECURITY` remains
+unset everywhere and should stay that way — it would subject the owner to
+RLS and break migrations and the CLI. The cutover is the mechanism, not
+FORCE.
+
+---
+
 ### Post-commit RLS gap closed, and four missing tenant-isolation policies ✅ DONE (2026-09-28)
 
 Jarrod's decision on the open question N.2's §8 audit raised: the
