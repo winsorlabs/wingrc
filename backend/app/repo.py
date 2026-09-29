@@ -64,6 +64,12 @@ def list_entities(
     stmt = select(ScopeEntity).where(ScopeEntity.org_id == org_id)
     if entity_type is not None:
         stmt = stmt.where(ScopeEntity.entity_type == entity_type.value)
+    # Ordered because this feeds render.py's .xlsx list exports -- an
+    # assessor-facing deliverable, so two exports of unchanged scope data
+    # must not order rows differently. (org_id, entity_type, natural_key) is
+    # unique (uq_scope_entity_identity) and org_id is already filtered, so
+    # this is a total order rather than one that merely usually holds.
+    stmt = stmt.order_by(ScopeEntity.entity_type, ScopeEntity.natural_key)
     return [to_canonical(r) for r in session.scalars(stmt)]
 
 

@@ -655,6 +655,10 @@ def snapshot_bundle(
     )
 
     # --- system description ---
+    # DETERMINISM-EXEMPT: single row.
+    # No ORDER BY, deliberately: system_description has a UNIQUE constraint on
+    # org_id (uq_system_description_org), so this filter can match at most one
+    # row and .first() has nothing to choose between.
     sd = session.scalars(
         select(SystemDescription).where(SystemDescription.org_id == org_id)
     ).first()
@@ -707,14 +711,21 @@ def snapshot_bundle(
 
     # --- contacts ---
     contact_rows = session.scalars(
-        select(Contact).where(Contact.org_id == org_id).order_by(Contact.name)
+        # Contact.id breaks the tie: two people can share a name, and an
+        # ORDER BY that ties leaves row order to the planner.
+        select(Contact)
+        .where(Contact.org_id == org_id)
+        .order_by(Contact.name, Contact.id)
     ).all()
     contact_ids = [c.id for c in contact_rows]
     role_rows = (
         session.scalars(
-            select(ContactDocumentationRole).where(
-                ContactDocumentationRole.contact_id.in_(contact_ids)
-            )
+            select(ContactDocumentationRole)
+            .where(ContactDocumentationRole.contact_id.in_(contact_ids))
+            # Rendered as a per-contact list in the personnel section, so the
+            # order is visible. (contact_id, role) is unique
+            # (uq_contact_documentation_role), so this is total.
+            .order_by(ContactDocumentationRole.contact_id, ContactDocumentationRole.role)
         ).all()
         if contact_ids
         else []
@@ -771,7 +782,11 @@ def snapshot_bundle(
             AssetApproval.org_id == org_id,
             AssetApproval.scope_entity_id.in_([e.id for e in entity_rows]),
         )
-        .order_by(AssetApproval.scope_entity_id, AssetApproval.decided_at.desc())
+        .order_by(
+            AssetApproval.scope_entity_id,
+            AssetApproval.decided_at.desc(),
+            AssetApproval.id,
+        )
     ).all()
     latest_approval_by_entity: dict[uuid.UUID, AssetApproval] = {}
     for a in approval_rows:
@@ -831,6 +846,9 @@ def snapshot_bundle(
             LiongardSyncResultChange.entity_type,
             LiongardSyncResultChange.natural_key,
             LiongardSyncResult.pulled_at.desc(),
+            # Two pulls can report the same entity at the same
+            # instant; the change id makes the order total.
+            LiongardSyncResultChange.id,
         )
     ).all()
     seen_pending_keys: set[tuple[str, str]] = set()
@@ -916,7 +934,11 @@ def snapshot_bundle(
             ControlState.assessment_id == assessment_id,
             EvidenceStateLink.is_archived.is_(False),
         )
-        .order_by(Evidence.collected_at)
+        # collected_at ties routinely -- a task collect creates several
+        # evidence rows in one transaction, all with the same timestamp.
+        # Title then id makes the per-objective evidence list both stable and
+        # readable.
+        .order_by(Evidence.collected_at, Evidence.title, Evidence.id)
     ).all()
 
     # Fetch file bytes once per evidence_id regardless of how many objectives
@@ -943,6 +965,7 @@ def snapshot_bundle(
                 h = cached_hash
                 if h is None:
                     h = hashlib.sha256(file_bytes).hexdigest()
+                    # DETERMINISM-EXEMPT: an UPDATE, not a collection read.
                     session.execute(
                         update(Evidence)
                         .where(Evidence.id == ev_id)
@@ -1035,7 +1058,7 @@ def snapshot_bundle(
             Evidence.org_id == org_id,
             ~Evidence.id.in_(_linked_ev_ids),
         )
-        .order_by(Evidence.collected_at)
+        .order_by(Evidence.collected_at, Evidence.title, Evidence.id)
     ).all()
 
     unlinked_evidence: list[EvidenceSnap] = []
@@ -1083,6 +1106,17 @@ def snapshot_bundle(
             )
             .join(Contact, Contact.id == RaciAssignment.contact_id)
             .where(RaciAssignment.control_state_id.in_(all_cs_ids))
+            # Rendered twice -- inline per objective in the implementation
+            # section, and again grouped by letter in the CRM matrix, where
+            # holders of one letter are joined with <br>. Both are visible
+            # orderings. Letter then name reads well; contact_id breaks the
+            # tie two people with the same name would otherwise leave.
+            .order_by(
+                RaciAssignment.control_state_id,
+                RaciAssignment.raci_letter,
+                Contact.name,
+                RaciAssignment.contact_id,
+            )
         ).all()
         for rr in raci_rows:
             raci_by_cs.setdefault(rr.control_state_id, []).append(
@@ -1199,7 +1233,7 @@ def snapshot_bundle(
             EvidenceTask.status == "open",
             EvidenceTask.is_archived.is_(False),
         )
-        .order_by(EvidenceTask.title, Control.control_id)
+        .order_by(EvidenceTask.title, Control.control_id, EvidenceTask.id)
     ).all()
 
     task_map: dict[uuid.UUID, OpenTaskSnap] = {}
@@ -1221,7 +1255,7 @@ def snapshot_bundle(
             Finding.assessment_id == assessment_id,
             Finding.status.in_(["open", "in_remediation"]),
         )
-        .order_by(Finding.severity, Finding.title)
+        .order_by(Finding.severity, Finding.title, Finding.id)
     ).all()
     findings = [
         FindingSnap(
@@ -1238,7 +1272,11 @@ def snapshot_bundle(
     submission_rows = session.scalars(
         select(SprsSubmission)
         .where(SprsSubmission.org_id == org_id)
-        .order_by(SprsSubmission.submitted_date.desc(), SprsSubmission.created_at.desc())
+        .order_by(
+            SprsSubmission.submitted_date.desc(),
+            SprsSubmission.created_at.desc(),
+            SprsSubmission.id,
+        )
     ).all()
     sprs_submissions = [
         SprsSubmissionSnap(
@@ -1288,6 +1326,12 @@ def snapshot_bundle(
             )
             .distinct()
         ).all()
+        # DETERMINISM-EXEMPT: consumer sorts (see objective_keys=sorted(...)).
+        # No ORDER BY on the query above, deliberately: it carries
+        # .distinct(), which in Postgres forbids ordering by expressions
+        # outside the select list, and the consumer sorts anyway --
+        # DocumentSnap.objective_keys is built with sorted() below. The sort
+        # is the guarantee; do not remove it without adding an ORDER BY here.
         for version_id, objective_key in key_rows:
             doc_objective_keys.setdefault(version_id, []).append(objective_key)
 
