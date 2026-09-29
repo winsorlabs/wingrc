@@ -5661,6 +5661,154 @@ identical, counts as above).
 
 ---
 
+### Q. Role-aware, user-arrangeable dashboard
+
+**Not started.** Specification only — recorded 2026-09-28 so the design gets
+made deliberately rather than assembled under time pressure. Independent of
+the document library: it neither blocks nor is blocked by N.1–N.5, and can
+be scheduled whenever.
+
+**Jarrod's ask, 2026-09-28**, with an annotated screenshot of the current
+G.3 dashboard:
+
+> a more scope driven dashboard with the data most relevant to those
+> managing the environment... making the "Widgets" resizable and movable on
+> the dashboard with the default looking more like my example with
+> Scrollable asset and user lists etc. Right now the widgets are all over
+> the place.
+
+**The sketch**, described so the intent survives without the image: SPRS
+score and family completion together in the top-left. **Active users** and
+**active PCs** as two large, scrollable lists filling the whole right-hand
+side — the dominant elements, not cards. Tasks centre-left. POA&M summary
+and recent activity as a strip along the bottom.
+
+#### This is two dashboards, not one layout
+
+The framing matters more than the drag-and-drop, and getting it wrong turns
+a product decision into a preferences screen.
+
+The current dashboard answers **"how is the assessment progressing"** —
+family completion, SPRS, statement counts by status, evidence expiring,
+blocked objectives, the needs-review queue. That is a *consultant's*
+question, asked in the run-up to an assessment.
+
+Jarrod's sketch answers **"what is in this environment and what needs
+attention"** — who has access, what devices are in the boundary, what is
+pending approval, what changed recently. That is an *engineer's* question,
+and it is the one an MSP asks daily.
+
+So the feature is **role-aware default layouts, with per-user arrangement on
+top** — not "let people drag boxes around." Without the defaults, every
+engineer has to rebuild Jarrod's layout by hand and most never will; the
+customization would exist and go unused, which is the usual fate of a
+layout editor shipped without opinionated defaults.
+
+Map defaults onto the existing role vocabulary (`auth.py:_ROLE_RANK`) and
+decide each one deliberately rather than shipping a single default and
+calling the rest customization:
+
+| Role | Default view |
+|---|---|
+| `msp_engineer` | The scope/environment view — Jarrod's sketch |
+| `msp_admin` | Assessment view (plus the admin-only widgets it can already see) |
+| `consultant_admin` | Assessment view — compliance data without identity/security admin |
+| `customer_poc` | Whatever is genuinely actionable for them; decide, don't default it to the consultant view |
+| `c3pao_assessor` | Read-only evidence and completeness view |
+
+#### Why the current dashboard reads as "all over the place"
+
+Worth recording, because the cause is specific and is not widget choice.
+`styles.css`'s `.dashboard-grid` is
+`repeat(auto-fill, minmax(280px, 1fr))` — a uniform auto-fill grid, so
+every widget gets an identical footprint and the whole arrangement reflows
+purely by viewport width. The SPRS score (one number) occupies the same
+space as the family heatmap (fourteen rows), and nothing expresses
+hierarchy or grouping. That is the actual complaint; a layout engine is one
+fix for it, but so is a deliberate default grid, and the second is a
+prerequisite for the first being worth anything.
+
+#### Grounding — what exists, verified 2026-09-28
+
+- **`routers/dashboard.py` is assessment-scoped**:
+  `GET /orgs/{org_id}/assessments/{assessment_id}/dashboard`. Jarrod's
+  sketch is **org-scoped** — active users and devices in the boundary have
+  nothing to do with which assessment is open, and a new tenant with no
+  assessment yet still has an environment worth showing. **This is the
+  structural decision the slice turns on**: either the scope widgets get
+  their own org-scoped endpoint, or the dashboard stops being one endpoint.
+  Do not assume the existing route can simply grow.
+- **It is one aggregation endpoint returning all nine widgets in one
+  payload**, deliberately (its own module docstring explains the choice,
+  mirroring `OnboardingStatus`). That shape is a good fit for a fixed
+  dashboard and a poor one for an arrangeable dashboard where a given user
+  may be showing three widgets: every load would compute all nine
+  regardless. Revisit the round-trip-versus-waste trade explicitly; it was
+  right for G.3 and may not survive this item.
+- **Recent activity is already excluded from that payload on purpose** —
+  `audit_log` is `msp_admin`-only, and folding it in would mean either
+  leaking it to `customer_poc`/`c3pao_assessor` or conditionally omitting a
+  field per role. The frontend calls `GET /orgs/{org_id}/audit-log` directly
+  with its own gate intact. **That is already the precedent for the rule
+  below**: the gate lives on the endpoint, not on whether a widget is
+  rendered.
+- **Asset and user list widgets likely need no new backend** —
+  `GET /orgs/{org_id}/scope?entity_type=…` already returns scope entities,
+  `routers/users.py` covers users, and `routers/liongard_sync.py` covers
+  pending approvals. **But see the cost note below: `get_scope` has no
+  pagination and no `status` filter** (only `entity_type`), so it returns
+  the tenant's entire inventory and cannot answer "just the ones pending
+  approval" server-side. Both are small additions, and both are needed
+  before a live list widget is reasonable.
+- Every aggregation in `dashboard.py` fetches raw rows and rolls them up in
+  Python rather than in SQL, deliberately. Adding list widgets means more
+  raw rows, not fewer.
+
+#### Design questions to settle when this is picked up
+
+- **Where layout lives.** Per user *per org*, almost certainly — the same
+  person consulting on six tenants wants the same arrangement in each. A
+  JSONB column or a small table; the choice is not the interesting part.
+  **The interesting part is that this is *preference*, not compliance
+  data.** It needs no versioning, no audit trail, no point-in-time
+  treatment, and no append-only discipline. Stated explicitly here because
+  this codebase applies that heavier discipline nearly everywhere and
+  applying it here out of habit would be wrong — losing a layout is an
+  annoyance, not an integrity failure.
+- **Reset to the role default must be one click and must not feel
+  destructive.** People experiment with layouts and need a way out.
+- **The widget catalogue.** Movable widgets imply a registry: what exists,
+  what data each needs, which roles see it by default. **RLS and role
+  checks stay on the endpoints, never on widget visibility.** A hidden
+  widget is a UI convenience; it must never be the only thing between a
+  role and data it should not have. If a widget is hidden from a role
+  because that role may not see the data, the endpoint must refuse it too —
+  and the endpoint is the thing to test.
+- **Scrollable live lists change the dashboard's cost profile.** Today it
+  renders counts. Asset and user lists mean real queries on every load, per
+  org, and an MSP with forty tenants will notice. Paginate or cap, and
+  **measure before and after** — this is the first screen after login and
+  its latency is the product's first impression. (The auth-path throughput
+  work is the precedent for how to measure it: a real concurrent-load run,
+  not a `TestClient` timing.)
+- **Empty states.** The current screenshot is mostly zeros and "Nothing
+  waiting on review." A layout that looks right full and useless empty is a
+  common failure, and a brand-new tenant sees the empty version first —
+  which is also the first impression an evaluating MSP gets.
+- **Grid library** is the implementer's call with justification;
+  `react-grid-layout` is the obvious candidate. The constraint that
+  matters: it must degrade sanely at laptop width, because that is where
+  this is actually used. Note the frontend dependency budget — N.2 already
+  added TipTap (~30 packages, code-split); a second heavy UI dependency
+  deserves the same supply-chain scrutiny and the same code-splitting.
+
+#### Out of scope for this entry
+
+No scaffolding, no columns added in anticipation. When this is picked up it
+gets its own plan doc and its own prompt, like the document library did.
+
+---
+
 ## Sequencing
 
 ```
