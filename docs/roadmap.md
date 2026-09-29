@@ -5028,6 +5028,177 @@ live, confirmed by direct query afterward.
 
 ---
 
+### CI was red on `main` for six consecutive runs ✅ FIXED (2026-09-29)
+
+**How long: six runs, roughly 13 hours of wall clock, 2026-09-28 23:12 to
+2026-09-29 12:03.** Every push to `main` in that window was red. Mapping
+runs to pushes:
+
+| Run | Pushed | Commit | Failed in |
+|---|---|---|---|
+| #307 | 09-28 23:12 | `df55f52` finish the RLS track | `integration` |
+| #308 | 09-29 10:19 | `2d872af` `wingrc_app` cutover | `backend` |
+| #309 | 09-29 10:31 | `453d087` record the cutover | `backend` |
+| #310 | 09-29 10:32 | `490fd21` gitignore the credential files | `backend` |
+| #311 | 09-29 11:57 | `022dfed` bundle determinism | `backend` |
+| #312 | 09-29 12:03 | `3d39d00` record the determinism pass | `backend` |
+
+**There were two failures, not one** — the run durations said so before
+the logs did, and they turned out to be unrelated.
+
+#### Failure 1: `/health` became a readiness probe (#308-#312, sub-minute)
+
+The `wingrc_app` cutover made `/health` prove the database answers and
+the schema matches the build (`150f2a6`). That is the point of the
+change and it stays. But the `backend` job runs with **no database at
+all**, and two test files had been using `/health` as a conveniently
+ungated endpoint: `test_cors.py` (three tests) and
+`test_auth.py::test_health_is_ungated`. All four asserted `200` and got
+`503`.
+
+Fixed with `conftest.HealthProbeSession` — a stub session answering
+exactly the two statements `/health` issues and raising on anything
+else, plus a `health_probe_client` fixture. **The assertions were not
+weakened to accept either status.** A route that 503s still gets CORS
+headers, so accepting either would have passed against a completely
+broken app, and `test_health_is_ungated` would have kept passing if the
+route later grew an auth dependency. A 503 proves ungatedness only by
+accident.
+
+#### Failure 2: the bundle nondeterminism (#307, ~4 minutes)
+
+`tests/test_lifecycle.py:766` — `assert impl_html_v2 == impl_html_v1`,
+the baseline-reimport check that an already-generated bundle does not
+change for a tenant pinned to the old version. The diff was the
+contributing-tools list: `RocketCyber Managed SIEM + SOC, Datto RMM` in
+one render, the other order in the next.
+
+This is exactly the defect the determinism slice found and fixed, from
+the other end. **It reproduces in the full suite and passes when the
+file is run alone**, which is why it survived local verification and why
+it first appeared in CI rather than on the bench. Already fixed on
+`main` by that slice; no further change needed. It is recorded here
+because the correlation is the useful part: the nondeterminism was not
+theoretical, it had already turned `main` red once before anyone
+attributed it.
+
+#### Marker scope: the correction
+
+`pytest.mark.integration` was applied at **module** scope in three
+files. That is wrong whenever a file mixes DB and non-DB tests, because
+a `-m "not integration"` run silently drops the non-DB ones. Moved onto
+the individual tests in `test_health.py` (3), `test_bundle_determinism.py`
+(4) and `test_rls_context.py` (5).
+
+This mattered most in `test_bundle_determinism.py`: its three static
+guards exist *because* behavioural testing missed the defect they
+protect against, so a module marker made them skippable in precisely the
+configuration where they are the only protection. They now run with no
+database (4 items pass, 4 skip).
+
+A scanner flagged more files than this, and only these three were
+changed — e.g. `test_dashboard.py`'s `dashboard_json` fixture is
+DB-backed, so its module marker is correct. The over-report is noted so
+the next person does not re-run the scan and "fix" the others.
+
+#### Why the bench did not catch either
+
+Two different reasons, and neither is "the bench is unreliable":
+
+- **Failure 1** needs a run with *no* database. Bench verification
+  always has one, so `/health` always answered. The `backend` job is the
+  only place that configuration exists, and nothing local reproduced it.
+- **Failure 2** needs the *full* integration suite in one process. The
+  slice that introduced it was verified per-file.
+
+Both reproductions were run on the bench in a `python:3.13-slim`
+container with CI's exact environment. **Two of my own repro attempts
+were unfaithful and produced false findings**, which is worth recording
+because it nearly went into the report as fact:
+
+1. A container with no `pg_dump` "found" a failing
+   `TestPreflightBackupReal::test_creates_a_nonempty_dump_file`. The
+   GitHub runner ships `postgresql-client`; with a real (older)
+   `pg_dump` present the existing version-mismatch skip guard works and
+   the test passes.
+2. A container missing WeasyPrint's Pango/cairo libraries "found" 63
+   failures. The workflow installs them; the job definition, not memory,
+   is the source of truth for what a faithful repro needs.
+
+#### Workflow hardening
+
+- **Runner pinned to `ubuntu-24.04`.** `ubuntu-latest` becomes Ubuntu 26
+  on **2026-10-19**. This suite depends on runner-level detail an image
+  swap changes silently — the system `pg_dump` version, which
+  `test_cli_reset_dev.py`'s skip guard is written around, and
+  WeasyPrint's system libraries. Riding it means finding out whenever
+  GitHub rolls it; pinning makes the upgrade its own commit with its own
+  run. **TODO: move to `ubuntu-26.04` deliberately after 2026-10-19.**
+- **Node 24 deprecation:** `actions/checkout@v4` to `@v7`,
+  `actions/setup-python@v5` to `@v7`, `actions/upload-artifact@v4` to
+  `@v7`.
+- **Third-party actions pinned to releases:**
+  `aquasecurity/trivy-action@master` to `@v0.36.0` (a floating `master`
+  ref runs whatever upstream pushed, on every push, with repo access)
+  and `anchore/sbom-action@v0` to `@v0.24.2`.
+- **`integration` no longer has `needs: backend`.** See below — this is
+  the structural half of the answer.
+
+#### What would make the next red run noticed within one commit
+
+**A skipped job is not a passed job — but a skipped *required status
+check* is treated as satisfied.** That is the trap, and it is why the
+first move is structural rather than procedural:
+
+1. **Done: `integration` runs unconditionally.** Gating it on `backend`
+   meant that from #308 onward it never ran at all, which hid #307's
+   genuine failure for five consecutive runs. It also meant that
+   requiring `integration` in branch protection would have let a broken
+   `backend` wave merges through on a skipped check. Both jobs now
+   always run and can be required honestly. Cost: a few runner-minutes
+   on a red push. Benefit: every failure visible at once instead of one
+   per fix-and-push cycle — which is the entire difference between one
+   commit and six.
+2. **Recommended: branch protection on `main`, requiring `backend` and
+   `integration`.** For a solo maintainer this sounds heavy, but the
+   delta is small *because the work already happens on branches* — it
+   only changes the final step from a fast-forward push to a PR merge.
+   This is the mechanism that would have stopped #307 becoming #312.
+   **Require only `backend` and `integration`, not `image`** — `image`
+   keeps `needs: [backend, integration]`, so it legitimately skips on
+   failure, and a required check that skips counts as satisfied.
+3. **Not recommended: relying on notification.** GitHub already emails
+   on failed runs for your own pushes. Six were missed, so that channel
+   demonstrably is not read. A webhook to wherever the maintainer
+   actually looks would work; the default will not.
+4. **A local pre-push hook is not viable as configured, and the measured
+   reason is worth recording.** The no-DB `backend` job — exactly the
+   thing that would have caught #308-#312 before the push existed — runs
+   in **5 seconds** in a Linux container and took **17 minutes 34
+   seconds** in the Windows dev venv for the same 453 passed / 1047
+   skipped. A 17-minute pre-push hook gets bypassed the first time it is
+   inconvenient. The Windows slowness is unexplained and out of scope
+   here, but it is the thing standing between this repo and a genuinely
+   cheap local gate.
+
+#### Verification
+
+Reproduced and fixed against CI's own configuration, on the bench, in a
+`python:3.13-slim` container with the workflow's package list and a
+`postgres:18` service:
+
+- **`backend` job (no database):** `ruff` clean, **457 passed, 1047
+  skipped** (was 4 failed / 453 passed).
+- **`integration` job:** migration chain `upgrade` to `downgrade` to
+  `upgrade` clean, **1027 passed, 1 skipped, 476 deselected**.
+- **Determinism guards in both configurations:** 4 static items pass
+  with no database, 4 DB items skip.
+- **#307 reproduced twice** at `df55f52` (1 failed, 1021 passed) and
+  confirmed to pass when `test_lifecycle.py` is run alone — the
+  order-dependence is the finding, not an anomaly.
+
+---
+
 ### Bundle export made deterministic, and the test made reliable ✅ DONE (2026-09-29)
 
 **The lesson, first, because it generalises: a passing test that depends on

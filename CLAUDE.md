@@ -111,7 +111,21 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
 - Keep the domain core DB-agnostic and unit-testable (`backend/app/domain.py`,
   `backend/app/assessment.py`).
 - All DB-touching tests use `@pytest.mark.integration` and require
-  `WINGRC_TEST_DATABASE_URL`. Unit tests run without a DB.
+  `WINGRC_TEST_DATABASE_URL`. Unit tests run without a DB. **Mark the
+  test, not the module**, unless every test in the file needs a database:
+  a module-level `pytestmark` silently drops the file's non-DB tests from
+  a `-m "not integration"` run, which is exactly the configuration CI's
+  `backend` job uses. Three files were wrong this way until 2026-09-29 —
+  worst in `test_bundle_determinism.py`, whose static guards exist
+  precisely because behavioural testing missed the defect they catch, so
+  the marker made them skippable where they were the only protection. See
+  `docs/roadmap.md`'s CI-red entry.
+- CI (`.github/workflows/ci.yml`) runs `backend` with **no database at
+  all** and `integration` against `postgres:18`. Both run
+  unconditionally — `integration` deliberately has no `needs: backend`,
+  because a skipped required status check counts as satisfied, and
+  because gating it once hid a real failure for five runs. The runner is
+  pinned to `ubuntu-24.04`; revisit after 2026-10-19.
 - `ruff check` must be clean before merge. B008 is suppressed per-file for
   FastAPI router files (see `backend/pyproject.toml`).
 - Work on branches, small commits. Push after every commit — dev server is a

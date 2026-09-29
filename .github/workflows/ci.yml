@@ -1,5 +1,15 @@
 name: ci
 
+# Runner pinned to ubuntu-24.04 rather than ubuntu-latest, deliberately.
+# `ubuntu-latest` becomes Ubuntu 26 on 2026-10-19. This suite depends on
+# runner-level detail that an image swap changes silently: the system
+# `pg_dump` version (tests/test_cli_reset_dev.py skips against a
+# version-mismatched binary, and that guard is written around "whatever
+# ubuntu-latest ships"), and WeasyPrint's Pango/cairo system libraries
+# installed below. Riding the migration means finding out at whatever
+# moment GitHub rolls it; pinning makes the upgrade its own commit with
+# its own CI run. TODO: move to ubuntu-26.04 deliberately after 2026-10-19.
+
 on:
   push:
     branches: [main]
@@ -7,10 +17,10 @@ on:
 
 jobs:
   backend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned -- see the header note
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Install
@@ -29,8 +39,20 @@ jobs:
         run: pytest -q
 
   integration:
-    runs-on: ubuntu-latest
-    needs: backend
+    runs-on: ubuntu-24.04  # pinned -- see the header note
+    # Deliberately NOT `needs: backend`. Two reasons, both learned the hard
+    # way by runs #307-#312:
+    #
+    # 1. A skipped job is not a passed job, but a *required status check*
+    #    that gets skipped is treated as satisfied. Gating this job on
+    #    `backend` while also requiring it in branch protection would mean a
+    #    broken `backend` silently waves the merge through on `integration`.
+    #    Jobs that always run can be required honestly.
+    # 2. From #308 onward `backend` failed in under a minute, so this job
+    #    never ran at all -- which hid #307's genuine integration failure
+    #    for five consecutive runs. Running both unconditionally costs a few
+    #    runner-minutes on a red push and shows every failure at once
+    #    instead of one per fix-and-push cycle.
     services:
       postgres:
         image: postgres:18
@@ -59,8 +81,8 @@ jobs:
       # CI-only key, not used anywhere real.
       WINGRC_CREDENTIAL_ENCRYPTION_KEYS: "ci:b_Lz6E-GOuMYIlFxMZW61m6ro3fgGGeRhwptwa8POz8="
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       # This job runs pytest directly on the runner, not inside backend/Dockerfile's
@@ -87,25 +109,25 @@ jobs:
         run: pytest -q -m integration
 
   image:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # pinned -- see the header note
     needs: [backend, integration]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build image
         run: docker build -t wingrc-backend:ci -f backend/Dockerfile .
       - name: Vulnerability scan (Trivy)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: wingrc-backend:ci
           format: table
           exit-code: "0"   # report-only for now; flip to "1" to gate
       - name: Generate SBOM (Syft)
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@v0.24.2
         with:
           image: wingrc-backend:ci
           format: spdx-json
           output-file: sbom.spdx.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sbom
           path: sbom.spdx.json
