@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.audit import set_current_actor
 from app.auth import CurrentUser, actor_type_for
 from app.models import OrgMembership, User
+from app.rls import reapply_current_org, set_current_org
 
 # Non-superuser, non-owner role Phase 3 introduces so RLS is an enforced
 # backstop rather than a no-op (superusers and table owners bypass RLS
@@ -208,12 +209,17 @@ def db_session(db_engine):
     Without it, the default `expire_on_commit=True` marks every attribute
     on committed instances stale, so the next attribute access (e.g.
     `ev.id` right after `session.commit()`, a totally normal pattern in the
-    routers) issues an implicit SELECT to refresh it. Under `_app_session`,
-    that SELECT runs after `app.current_org` has been RESET for the commit
-    it just followed, so RLS matches zero rows and SQLAlchemy raises
-    ObjectDeletedError — a test-harness artifact, not a real bug: production
-    never re-queries on attribute access here because it isn't expiring
-    those attributes in the first place.
+    routers) issues an implicit SELECT to refresh it.
+
+    That SELECT used to fail under `_app_session`: it ran after
+    `app.current_org` had been RESET for the commit it followed, RLS
+    matched zero rows, and SQLAlchemy raised ObjectDeletedError. As of
+    `app/rls.py` that is no longer the case — the org is re-applied when
+    the next transaction begins — so a post-commit read now returns the
+    row in the suite exactly as it does in production. Keeping
+    `expire_on_commit=False` here is still right, because the point of
+    this fixture is to match `SessionLocal`, not to exercise a setting
+    production doesn't use.
     """
     with db_engine.connect() as conn:
         trans = conn.begin()
@@ -261,7 +267,7 @@ def _authed(session: Session, user: CurrentUser):
         # LOCAL — mirrors the literal-embedding in app/auth.py's
         # _resolve_session/_resolve_api_token. Safe here because org_id is
         # a uuid.UUID, not unsanitized input.
-        session.execute(text(f"SET LOCAL app.current_org = '{user.org_id}'"))
+        set_current_org(session, user.org_id)
         set_current_actor(str(user.id), actor_type_for(user))
         return user
 
@@ -300,6 +306,19 @@ def _app_session(session: Session):
         def _commit_and_clear_org(*args, **kwargs):
             real_commit(*args, **kwargs)
             session.execute(text("RESET app.current_org"))
+            # Production models BOTH halves of a commit boundary: the
+            # transaction ends (the RESET above) AND the next statement
+            # autobegins a new one, where rls.py's after_begin hook
+            # re-applies the session's recorded org. Under
+            # join_transaction_mode="create_savepoint" no new transaction
+            # actually begins here, so the hook never fires and only the
+            # first half would be modelled -- which would make every
+            # post-commit read fail in the suite while working in
+            # production, the exact inverse of what this harness is for.
+            # Calls the PRODUCTION function rather than reimplementing it;
+            # tests/test_rls_context.py proves the after_begin wiring
+            # itself separately, against real commits on a real session.
+            reapply_current_org(session)
 
         session.commit = _commit_and_clear_org
 

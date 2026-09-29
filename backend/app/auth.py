@@ -42,6 +42,7 @@ from sqlalchemy.orm import Session
 from .audit import set_current_actor
 from .config import get_settings
 from .db import get_session
+from .rls import set_current_org
 
 logger = logging.getLogger(__name__)
 
@@ -624,7 +625,7 @@ def _resolve_session(db: Session, raw: str) -> CurrentUser:
         raise HTTPException(status_code=401, detail="Session expired or invalid")
 
     # Set app.current_org for all subsequent RLS-gated queries in this request
-    db.execute(text(f"SET LOCAL app.current_org = '{row.org_id}'"))
+    set_current_org(db, row.org_id)
 
     # Throttled activity heartbeat: only write when the stored value is more
     # than 60s stale, so a live session doesn't take a write on every single
@@ -647,11 +648,12 @@ def _resolve_session(db: Session, raw: str) -> CurrentUser:
     # under the bare UPDATE, an actively-reviewing assessor would
     # deterministically hit the idle timeout regardless of engagement.
     # SET LOCAL is transaction-scoped and this commit ends that
-    # transaction, so app.current_org must be re-issued for the new one
-    # that starts under this same session — every RLS-gated query for the
-    # rest of the request depends on it, not just the lookup below.
+    # transaction. The manual re-issue that used to sit directly after this
+    # commit is gone: rls.py's after_begin hook re-applies the recorded org
+    # when the next transaction begins. These two call sites are where that
+    # pattern was first written by hand; the hook generalises it so the next
+    # author does not have to know to repeat it.
     db.commit()
-    db.execute(text(f"SET LOCAL app.current_org = '{row.org_id}'"))
 
     user = db.get(User, row.user_id)
     if user is None or not user.is_active:
@@ -706,7 +708,7 @@ def _resolve_api_token(db: Session, raw: str) -> CurrentUser:
     # user_session.last_activity_at there is no idle timeout keyed off this
     # column — so a coarser value carries none of that risk, only less write
     # amplification.
-    db.execute(text(f"SET LOCAL app.current_org = '{row.org_id}'"))
+    set_current_org(db, row.org_id)
     db.execute(
         text(
             "UPDATE api_token SET last_used_at = :now WHERE id = :id"
@@ -721,11 +723,12 @@ def _resolve_api_token(db: Session, raw: str) -> CurrentUser:
     # traffic (a read-only integration, or any token minted at
     # c3pao_assessor). Same fix shape as _resolve_session's activity
     # heartbeat: SET LOCAL is transaction-scoped and this commit ends that
-    # transaction, so app.current_org must be re-issued for the new one
-    # that starts under this same session — every RLS-gated query for the
-    # rest of the request depends on it, not just the lookup below.
+    # transaction. The manual re-issue that used to sit directly after this
+    # commit is gone: rls.py's after_begin hook re-applies the recorded org
+    # when the next transaction begins. These two call sites are where that
+    # pattern was first written by hand; the hook generalises it so the next
+    # author does not have to know to repeat it.
     db.commit()
-    db.execute(text(f"SET LOCAL app.current_org = '{row.org_id}'"))
 
     user = db.get(User, row.user_id)
     if user is None or not user.is_active:
@@ -796,10 +799,7 @@ def require_org_access(*roles: str):
     ) -> CurrentUser:
         from .models import OrgMembership
 
-        db.execute(
-            text("SELECT set_config('app.current_org', :org_id, true)"),
-            {"org_id": str(org_id)},
-        )
+        set_current_org(db, org_id)
         membership = db.execute(
             select(OrgMembership).where(
                 OrgMembership.user_id == current_user.id, OrgMembership.org_id == org_id

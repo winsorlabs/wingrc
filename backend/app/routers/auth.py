@@ -72,6 +72,7 @@ from ..auth import (
 from ..config import get_settings
 from ..db import get_session
 from ..models import MfaBackupCode, User
+from ..rls import set_current_org
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -180,7 +181,7 @@ def sso_callback(
         user.is_active = True
 
     user.last_login_at = datetime.now(UTC)
-    db.execute(text(f"SET LOCAL app.current_org = '{user.home_org_id}'"))
+    set_current_org(db, user.home_org_id)
 
     _, raw_token = create_session(db, user)
     db.commit()
@@ -243,7 +244,7 @@ def local_login(
     # db.get() immediately below — not just before the writes later in this
     # function. (It previously was only set inside the bad-password branch,
     # after this read had already run unscoped.)
-    db.execute(text(f"SET LOCAL app.current_org = '{user_row.home_org_id}'"))
+    set_current_org(db, user_row.home_org_id)
 
     user = db.get(User, user_row.id)
     if user is None:
@@ -342,7 +343,7 @@ def set_password(
     if user is None:
         raise HTTPException(status_code=400, detail="User not found")
 
-    db.execute(text(f"SET LOCAL app.current_org = '{user.home_org_id}'"))
+    set_current_org(db, user.home_org_id)
 
     settings = get_settings()
     if user.password_hash and check_password_reuse(
@@ -418,7 +419,7 @@ def mfa_enroll(
 
     user_id = uuid.UUID(pending["user_id"])
     org_id = uuid.UUID(pending["org_id"])
-    db.execute(text(f"SET LOCAL app.current_org = '{org_id}'"))
+    set_current_org(db, org_id)
 
     user = db.get(User, user_id)
     if user is None:
@@ -481,7 +482,7 @@ def mfa_enroll_confirm(
     if not totp.verify(body.code, valid_window=1):
         raise HTTPException(status_code=400, detail="Invalid TOTP code")
 
-    db.execute(text(f"SET LOCAL app.current_org = '{org_id}'"))
+    set_current_org(db, org_id)
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -549,7 +550,7 @@ def mfa_verify(
 
     user_id = uuid.UUID(pending["user_id"])
     org_id = uuid.UUID(pending["org_id"])
-    db.execute(text(f"SET LOCAL app.current_org = '{org_id}'"))
+    set_current_org(db, org_id)
 
     user = db.get(User, user_id)
     if user is None or not user.is_active:

@@ -1211,6 +1211,13 @@ def upsert_statements(
     session.flush()  # populate DB-generated UUIDs before building the response
     session.commit()
 
+    # This read runs AFTER the commit, which ends the transaction that
+    # `SET LOCAL app.current_org` was scoped to. It works because rls.py's
+    # after_begin hook re-applies the session's recorded org when the next
+    # transaction begins -- without it this select matched zero rows under
+    # RLS and every statement came back with control_state_id: null, a 200
+    # with no exception and no log line. That silent failure is the reason
+    # the hook exists rather than a convention; see rls.py's docstring.
     upsert_obj_ids = [stmt.objective_id for stmt in saved]
     upsert_states: dict[uuid.UUID, ControlState] = {
         cs.objective_id: cs
