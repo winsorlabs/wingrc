@@ -5111,6 +5111,23 @@ Two different reasons, and neither is "the bench is unreliable":
 - **Failure 2** needs the *full* integration suite in one process. The
   slice that introduced it was verified per-file.
 
+**The methodology finding, which outlives this bug: running a file in
+isolation is not running the suite.** `test_lifecycle.py::test_full_tenant_lifecycle`
+**passes** when its file is run alone and **fails** inside the full
+integration run — reproduced both ways, twice each, at `df55f52`. Order- and
+state-dependent defects live precisely in that gap, and per-file
+verification cannot see them by construction: it is a different experiment,
+not a cheaper version of the same one. Anything that depends on row order,
+shared fixture state, sequence allocation, or one test's residue is
+invisible to it.
+
+So "I ran the tests for the files I touched" is not bench verification, and
+neither is a green per-file run on a slice that changes a query, an
+ordering, or anything a later test reads. The full suite in one process is
+the verification; a targeted run is a debugging convenience. Recorded in
+`docs/bench-stack-verification.md` as a rule, since that file is what gets
+read before a slice is called verified.
+
 Both reproductions were run on the bench in a `python:3.13-slim`
 container with CI's exact environment. **Two of my own repro attempts
 were unfaithful and produced false findings**, which is worth recording
@@ -5171,15 +5188,52 @@ first move is structural rather than procedural:
    on failed runs for your own pushes. Six were missed, so that channel
    demonstrably is not read. A webhook to wherever the maintainer
    actually looks would work; the default will not.
-4. **A local pre-push hook is not viable as configured, and the measured
-   reason is worth recording.** The no-DB `backend` job — exactly the
-   thing that would have caught #308-#312 before the push existed — runs
-   in **5 seconds** in a Linux container and took **17 minutes 34
-   seconds** in the Windows dev venv for the same 453 passed / 1047
-   skipped. A 17-minute pre-push hook gets bypassed the first time it is
-   inconvenient. The Windows slowness is unexplained and out of scope
-   here, but it is the thing standing between this repo and a genuinely
-   cheap local gate.
+4. **Done: the no-database suite is the cheap local gate, at ~10s.** This
+   item originally read "a pre-push hook is not viable" on the strength of
+   a 17m34s measurement in the Windows dev venv against 5s in a Linux
+   container — a 200x gap I attributed to unexplained Windows slowness, and
+   the standing hypothesis was Defender scanning `site-packages` on import.
+   **Both were wrong, and chasing it found a production defect.**
+
+   Measured, in order: collection is **3.83s**, so imports are not the cost
+   and Defender is not implicated (real-time protection and script scanning
+   are both on, and unchanged throughout). The cost was four tests at
+   **260.0s each** — `test_cors.py`'s three plus
+   `test_auth.py::test_health_is_ungated`, totalling 1043s of a 1054s run.
+   Exactly the four that were failing. **The slowness was the bug, not the
+   platform.**
+
+   The mechanism, isolated: a raw TCP connect to `localhost:5432` with
+   nothing listening is refused in **4.10s**, but psycopg took **260.03s**
+   to raise `OperationalError`, because **libpq applies `connect_timeout`
+   per resolved address** and `localhost` resolves to both `127.0.0.1` and
+   `::1`. A deliberate 300s setting was measured taking **600.64s**,
+   confirming the doubling rather than inferring it.
+
+   **So `/health` — a readiness probe, whose whole job is to answer
+   immediately — took 260s to return 503 with Postgres unreachable.** That
+   is a production defect, not a test-speed annoyance: a load balancer or
+   container healthcheck polling it gets a four-minute hang instead of a
+   fast negative, and it was shipped by the cutover slice that introduced
+   the probe. Fixed with `db_connect_timeout` (default 5s) in
+   `config.py`, passed through `db.build_connect_args()`, and pinned by
+   `test_health.py::test_engine_sets_a_connect_timeout`. Measured after:
+   **260.03s → 10.02s** (5s x the two addresses `localhost` resolves to; a
+   single-homed `postgres` host is 5s).
+
+   With that fixed the no-DB suite is **10.32s / 458 tests** on the same
+   Windows venv, so the gate is cheap after all and is now part of the
+   standing routine in `CLAUDE.md`. Note the shape of this: the thing that
+   looked like tooling friction *was* the defect, and treating the 200x as
+   an environment quirk would have shipped a broken readiness probe.
+
+5. **Branch-protection configuration, for the record.** Require **`backend`
+   and `integration`, deliberately not `image`** — `image` keeps `needs:
+   [backend, integration]`, so it legitimately skips when either fails, and
+   **a skipped required check counts as satisfied.** That distinction is the
+   thing that makes the protection real rather than decorative: requiring
+   the job that skips on failure would wave through exactly the runs it was
+   added to stop.
 
 #### Verification
 
@@ -5187,8 +5241,9 @@ Reproduced and fixed against CI's own configuration, on the bench, in a
 `python:3.13-slim` container with the workflow's package list and a
 `postgres:18` service:
 
-- **`backend` job (no database):** `ruff` clean, **457 passed, 1047
-  skipped** (was 4 failed / 453 passed).
+- **`backend` job (no database):** `ruff` clean, **458 passed, 1047
+  skipped** (was 4 failed / 453 passed; +1 is the new connect-timeout
+  guard).
 - **`integration` job:** migration chain `upgrade` to `downgrade` to
   `upgrade` clean, **1027 passed, 1 skipped, 476 deselected**.
 - **Determinism guards in both configurations:** 4 static items pass
@@ -5196,6 +5251,10 @@ Reproduced and fixed against CI's own configuration, on the bench, in a
 - **#307 reproduced twice** at `df55f52` (1 failed, 1021 passed) and
   confirmed to pass when `test_lifecycle.py` is run alone — the
   order-dependence is the finding, not an anomaly.
+- **Readiness-probe latency, measured before and after:** `/health` with
+  Postgres unreachable went **260.19s → 10.19s**, and the underlying
+  `SELECT 1` **260.03s → 10.02s**, across three consecutive calls each.
+  The no-DB suite on the Windows dev venv went **1054.59s → 10.32s**.
 
 ---
 

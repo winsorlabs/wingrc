@@ -130,6 +130,18 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   FastAPI router files (see `backend/pyproject.toml`).
 - Work on branches, small commits. Push after every commit — dev server is a
   separate Linux box that must `git pull` first.
+- **Landing a slice, in order: bench-verify → merge → deploy → *watch CI go
+  green* → report.** The CI step is not optional and not "check later". Six
+  consecutive red runs on `main` went unnoticed (2026-09-28/29) purely
+  because nobody looked; the signal existed the whole time. A slice is not
+  done until `backend` and `integration` have both actually **run** and
+  passed on the merge commit — a skipped job is not a passed job. Read
+  status with `gh run list` / `gh run view`; if there is no GitHub
+  credential to hand, say so rather than assuming green.
+- The no-database suite is the cheap local gate: `pytest -q` in `backend/`
+  with no `WINGRC_*DATABASE_URL` set runs ~458 tests in **~10s**. Use it
+  before every push. It is exactly the configuration CI's `backend` job
+  uses, so it catches that whole class before a run is spent.
 - When marking any slice done, grep `CLAUDE.md`, `ROADMAP.md`,
   `docs/roadmap.md`, and the relevant `PLAN-*.md` for that slice's own
   name/number and update every hit, not just the file you're actively
