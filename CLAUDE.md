@@ -135,7 +135,8 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
 | `frontend/src/lib/tiptapMarkdown.ts` | Editor bridge: stored Markdown ↔ TipTap document, owned in-repo so the subset stays the subset |
 | `backend/app/routers/` | FastAPI routers: `assessments`, `bundle`, `contacts`, `evidence`, `frameworks`, `orgs` |
 | `backend/app/storage.py` | `StorageClient` ABC + `MinIOClient` + `NullStorageClient` |
-| `backend/app/audit.py` | `log_event()` — writes `AuditLog` rows |
+| `backend/app/audit.py` | `log_event()` — writes `AuditLog` rows; also the actor-resolution helpers both audit views share |
+| `backend/app/rls.py` | The only place `app.current_org` is written, plus the `after_begin` hook that makes it survive a commit — read before touching anything org-scoped |
 | `backend/app/migrations/` | Alembic migrations (currently 0001–0040) |
 | `backend/baselines/` | YAML product baselines (`rocketcyber.yaml`, …) — not repo-root `baselines/`; `seeds/baselines.py:_BASELINES_DIR` resolves here, and a stale repo-root duplicate that drifted out of sync with a real coverage_basis reclassification was removed 2026-09-19 (see `docs/roadmap.md`'s tenant lifecycle consolidation pass entry) |
 | `docs/fips.md` | FIPS 140-2/140-3 crypto boundary documentation |
@@ -367,8 +368,19 @@ Shipped (migrations 0015–0017): local login + Entra SSO; session cookies
 (`wingrc_session`, HttpOnly/SameSite=Lax, Secure in prod) and
 `Authorization: Bearer wingrc_<token>` API tokens — NOT JWT. PBKDF2-HMAC-SHA256
 @ 600k iterations. TOTP MFA with backup codes. Exponential-backoff lockout.
-HIBP k-anonymity check. RLS via `SET LOCAL app.current_org` with SECURITY DEFINER
-functions on a pinned search_path. `wingrc_app` role, NOBYPASSRLS. Router-level
+HIBP k-anonymity check. RLS via `app.current_org` with SECURITY DEFINER
+functions on a pinned search_path. `wingrc_app` role, NOBYPASSRLS.
+
+**Always set the org through `rls.set_current_org(session, org_id)` — never
+write `app.current_org` directly.** That GUC is transaction-scoped, so a
+commit discards it and any read afterwards matches zero rows under RLS;
+`rls.py`'s `after_begin` hook re-applies the value the chokepoint recorded,
+which is what makes a post-commit `refresh()`/`select()` work at all. A
+direct write leaves the recorded value stale and the hook would then
+re-apply the *wrong* org — `tests/test_rls_context.py` fails the build on
+one. **The app still connects as the RLS-bypassing owner role**, so none of
+this is enforced yet; see `docs/roadmap.md`'s Done entry for what remains
+before the `wingrc_app` cutover. Router-level
 guards on all routers. Multi-org access (`org_membership`, per-membership
 role — see `docs/adr/0009-multi-org-user-access.md`) is what `require_org_access()`
 actually enforces; a role is not a fixed property of a `User` row.

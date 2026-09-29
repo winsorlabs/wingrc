@@ -5028,6 +5028,191 @@ live, confirmed by direct query afterward.
 
 ---
 
+### Post-commit RLS gap closed, and four missing tenant-isolation policies ✅ DONE (2026-09-28)
+
+Jarrod's decision on the open question N.2's §8 audit raised: the
+`after_commit` hook, not the build-the-response-before-committing
+convention. Migration `0060`; no frontend change.
+
+**Why a hook and not a convention.** `SET LOCAL app.current_org` is
+transaction-scoped, so `commit()` discards it and any read issued
+afterwards runs with no org context. Under an RLS-enforcing role that
+matches zero rows. The deciding case is
+`routers/assessments.py:upsert_statements`, which committed and then ran
+`select(ControlState)`: a zero-row select is not an error, so the endpoint
+answered **200 with `control_state_id: null` for every statement** — no
+exception, no log line. A convention only protects against mistakes
+someone can notice, and here the failure looked exactly like success.
+Supporting it: this codebase has four documented instances of an older
+writer routing around a newer guard, none caught by the rule holding, and
+the `repo.upsert` guard worked precisely because it moved the invariant to
+the place every writer must pass. Same move, session layer.
+
+**`after_begin`, not `after_commit`.** SQLAlchemy documents `after_begin`
+as the place to apply transaction-scoped settings and hands it the
+`Connection`; the `Session` is explicitly documented as unable to emit SQL
+from `after_commit`. `after_begin` also covers more: it fires on the first
+statement after a commit, which is exactly when the lazy reload, the
+`refresh()`, or the fresh `select()` happens.
+
+**How the hook knows the org, and when it refuses to guess.**
+`app/rls.py:set_current_org()` is the single chokepoint — it issues the
+`set_config` *and* records the value on `session.info`. The hook re-applies
+only that recorded value. No fallback, no inference from request context,
+no default: a session that never set an org gets nothing, which is the
+correct answer for the CLI and for the suite's owner-role scaffolding
+sessions. The one place the value legitimately changes mid-session is
+`scheduler.py`'s per-org loop, which calls `set_current_org` per iteration,
+so the recorded value tracks the loop rather than pinning the first org it
+saw (asserted directly). Every other caller sets one value for the life of
+the request.
+
+**Converting the call sites found six writers the first sweep missed** —
+all in `routers/auth.py`, all raw f-string `SET LOCAL`. That is why
+`tests/test_rls_context.py` carries a source guard asserting `rls.py` is
+the only module that writes the GUC: a direct write elsewhere leaves
+`session.info` stale, and the hook would then confidently re-apply the
+*wrong* org after a commit — a silent cross-tenant read, strictly worse
+than the silent empty result this replaces. Structural, not remembered.
+
+**The honest cost, recorded rather than glossed:** the hook is implicit. A
+future reader of `upsert_statements` will not see why its post-commit read
+works. Mitigated with a comment at the hook and one at that call site —
+not at every call site, which nobody maintains.
+
+**Test-harness fidelity, which took the most thought.**
+`conftest.py:db_session` uses `join_transaction_mode="create_savepoint"`,
+so an app-level `commit()` only releases a savepoint, the real transaction
+never ends, and no new one begins — meaning `after_begin` never fires under
+the suite. Left alone, the fix would have worked in production and failed
+in every test, the exact inverse of what that harness is for. So
+`_app_session` now models **both** halves of a commit boundary: it still
+RESETs the GUC (transaction ended) and then calls the *production*
+`reapply_current_org` (next transaction begins), rather than
+reimplementing it. Because that means the suite alone would pass even if
+the event were registered on the wrong hook or not at all,
+`tests/test_rls_context.py` proves the wiring separately against real
+`COMMIT`s on its own session, cleaning up after itself.
+
+**Migration 0060 — four policies, found by query rather than by reading.**
+Enumerating `pg_policy` against every table carrying an `org_id` disagreed
+with the preceding reading pass in two directions at once:
+
+- It surfaced **`audit_log`** and **`system_description`**, which the
+  reading pass had not flagged at all.
+- It showed **`raci_assignment` has no `org_id` column**. N.2's writeup
+  said it "carries `org_id` but has no tenant-isolation policy" — the
+  second half was right, the first was wrong. It is scoped transitively
+  through `control_state_id`, which is why its policy is an `EXISTS` over
+  `control_state` rather than a column comparison. That N.2 entry has been
+  corrected in place.
+
+**`audit_log` is deliberately shaped differently, and the usual shape
+would have broken production at cutover.** Its `org_id` is nullable on
+purpose — deployment-wide actions log with `org_id=None` (product baseline
+administration, credential-key rotation, practitioner notes), 45 of 317
+rows on the live dev database. A `FOR ALL` policy with no explicit
+`WITH CHECK` uses its `USING` expression as the check, and `NULL = <uuid>`
+is NULL rather than true, so every such write would have started failing
+the moment the app stopped bypassing RLS. The policy carries an
+`org_id IS NULL OR ...` arm, asserted by a test that inserts a NULL-org row
+under `wingrc_app`. It widens nothing for readers:
+`routers/audit_log.py` already filters `org_id == org_id` in its own query
+and is `msp_admin`-gated, so those rows stay invisible in the UI.
+
+**An ordering dependency worth naming:** re-running the post-commit sweep
+afterwards shows `routers/contacts.py` (×3),
+`routers/orgs.py:upsert_system_description` and
+`routers/raci.py:create_raci_assignment` all do a post-commit `refresh()`
+on tables *this same migration newly gates*. Without the hook, adding these
+policies would itself have introduced three new instances of the bug. The
+two halves of this slice are not independent, and shipping the policies
+first would have been wrong.
+
+**Re-sweep result.** Every remaining post-commit read is either on a
+non-RLS table (`organization`, `integration_connection`,
+`assessment_objective`), in the CLI (owner role, no org, hook correctly
+no-ops), or in a session the hook covers. Reachable failures: zero.
+
+#### Owner bypass, and what remains before the `wingrc_app` cutover
+
+**Nothing here is enforced yet, and that is the point.** The app connects
+as `wingrc`, which is both table owner and (in the compose dev setup) a
+superuser; PostgreSQL bypasses RLS unconditionally for both unless
+`FORCE ROW LEVEL SECURITY` is set, and it is **not set on any table**
+(`relforcerowsecurity = false` everywhere, verified by query). So every
+policy in this database — the twenty-eight that already existed and the
+four added here — is currently inert against the application's own
+connection. Stating that plainly because it is what makes this whole class
+of bug latent rather than live.
+
+`FORCE ROW LEVEL SECURITY` is *not* the fix and should not be applied: it
+would subject the owner to RLS too, breaking migrations and the CLI. The
+cutover — the app connecting as a non-owner — is the correct mechanism.
+
+**This slice deliberately does not perform the cutover**, so that a failure
+has one possible cause rather than two. What remains, verified against the
+schema at `0060` rather than assumed:
+
+1. **`wingrc_app` has no password.** `rolcanlogin = true`,
+   `rolpassword IS NULL` — it cannot authenticate at all. Deliberate:
+   migration `0016_app_role` says a real per-environment secret has no
+   business in a migration file. An operator sets it via `ALTER ROLE`.
+2. **Migrations run on the app's own connection string.**
+   `backend/Dockerfile`'s `CMD` is
+   `alembic upgrade head && exec uvicorn …`, and `docker-compose.yml`
+   repeats it — both on `WINGRC_DATABASE_URL`. Flipping that one variable
+   to `wingrc_app` makes migrations fail outright: no DDL privilege. The
+   cutover needs migration execution separated from the runtime
+   connection (a second credential, or a distinct migration step). **This
+   is the substantive work, not the password.**
+3. **Decide what the CLI and admin commands connect as.**
+   `wingrc reset-dev` and `manage.py bootstrap-admin` go through the same
+   `db.py:SessionLocal` and do work that is deliberately privileged
+   (bulk deletes, creating the first org and user before any org context
+   exists).
+4. **Six tables have no RLS at all**, being org-scoped only transitively:
+   `contact_documentation_role`, `control_state_contributor`,
+   `control_state_history`, `evidence_state_link`,
+   `evidence_task_state_link`, `review_cycle_reminder_log`. Each is
+   reachable only through a parent that *is* gated, and the app always
+   joins — but after cutover they are the tables where router-level
+   filtering is the only layer. Each needs its own `EXISTS` policy and its
+   own thought about the join and the `WITH CHECK`, which is a coherent
+   follow-up pass rather than something to append to `0060` unexamined.
+   Recorded here so the set is not lost.
+
+Everything else is ready, and this is the part that was pleasantly
+surprising: **grants need no work at all.** `0016`'s
+`ALTER DEFAULT PRIVILEGES` held for every table created since — zero tables
+are missing SELECT/INSERT/UPDATE/DELETE for `wingrc_app` — and it can
+EXECUTE every `SECURITY DEFINER` function in the `auth` schema.
+
+**Verification.** Isolated bench project `wingrc_verify_20260928_rls` on
+wl-util-1 (own volumes, no published ports; live `wingrc` untouched
+throughout). Migration `0060` applied cleanly on backend start
+(`alembic current` → `0060_rls_policy_gaps (head)`). **1481/1481 backend
+tests** (1468 before), `ruff check .` clean, **330/330 frontend**, `tsc -b`
+and `vite build` clean — no frontend files changed in this slice.
+`test_lifecycle.py` passed unchanged. The new coverage is 15 tests across
+`test_rls_context.py` (hook against real commits, org tracking across
+commits, no-op without an org, the source guard, the listener actually
+registered on the `Session` class) and `test_rls_policies.py` (cross-org
+isolation for all four tables queried under `SET ROLE wingrc_app`, the
+NULL-org audit row staying writable, and `WITH CHECK` refusing a
+cross-org insert), plus `test_post_commit_rls.py` inverted from asserting
+the bug to asserting the fix.
+
+**Harness coverage, since it determines whether other latent instances
+would surface:** 51 of the 53 test files that drive HTTP requests install
+`_app_session`, which does `SET ROLE wingrc_app` per request. The two that
+do not are `test_auth.py` (exercises the auth path that establishes org
+context in the first place) and `test_cors.py` (no database). So RLS
+enforcement is effectively suite-wide already — which is why N.2's audit
+found the `upsert_statements` bug at all.
+
+---
+
 ### Document library N.2: browser editing, readable diffs, audit surfacing ✅ DONE (2026-09-28)
 
 `docs/PLAN-document-library.md` has the five-slice plan. N.2 makes the
@@ -5227,9 +5412,15 @@ through a session after its first `commit()`:
   — `contact`, `contact_documentation_role`, `raci_assignment`,
   `integration_connection`, `assessment_objective`. (Worth its own look
   later on the auth/RBAC track, separately: `contact` and `raci_assignment`
-  carry `org_id` but have no tenant-isolation policy, so they rely purely
-  on router-level filtering. Not this slice's business, and not a bug
-  today.)
+  have no tenant-isolation policy, so they rely purely on router-level
+  filtering. Not this slice's business, and not a bug today.)
+  **Corrected 2026-09-28** by the slice that fixed this: the claim that
+  both *carry `org_id`* was half wrong. `contact` does; `raci_assignment`
+  has no `org_id` column at all and is scoped transitively through
+  `control_state_id`. Enumerating `pg_policy` also found two tables this
+  reading pass missed entirely (`audit_log`, `system_description`).
+  Reading migrations was the wrong instrument for the question; the
+  catalog query was the right one. See the Done entry above.
 - **`auth.py` already does the right thing** — `_resolve_session` and
   `_resolve_api_token` re-issue `SET LOCAL app.current_org` immediately
   after their heartbeat commit, with a comment saying why. That is the

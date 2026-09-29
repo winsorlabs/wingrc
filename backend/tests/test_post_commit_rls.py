@@ -1,6 +1,13 @@
-"""The post-commit RLS read pattern (roadmap N.2 section 8's audit).
+"""The post-commit RLS read pattern -- now closed by app/rls.py.
 
-**What this file documents, and why it is a test rather than a note.**
+**History, because the inversion below only makes sense with it.** This
+file was written during N.2 to record an audit result reproducibly: it
+asserted the *wrong* behaviour on purpose, with a note saying that fixing
+the bug meant inverting the assertion. That fix has landed (`app/rls.py`'s
+after_begin hook), so the assertions now say what should happen, and this
+file's job has changed from documenting a bug to guarding its return.
+
+**Why it is a test rather than a note.**
 
 `SET LOCAL app.current_org` is scoped to a transaction. `session.commit()`
 ends that transaction, so any DB read issued *after* a commit runs with no
@@ -23,23 +30,23 @@ attributes stay valid. What does NOT stay valid is:
 
 `test_documents_api.py` covers case 1 for `document` (create/patch/publish
 all build their response before committing). This file covers case 2, where
-the failure is *silent* -- a `select()` that matches zero rows returns an
-empty result rather than raising, so the endpoint answers 200 with a field
-quietly set to null.
+the failure was *silent* -- a `select()` that matches zero rows returns an
+empty result rather than raising, so the endpoint answered 200 with a field
+quietly set to null. That silence is precisely why the fix is a session
+hook and not a convention: a convention only protects against mistakes
+someone can notice, and this one looked exactly like success.
 
-**Today this is latent, not live.** The app connects as `wingrc`, which is
-both table owner and (in the compose dev setup) a superuser, and Postgres
-bypasses RLS unconditionally for both -- migration `0016_app_role`'s own
-docstring says the runtime cutover to `wingrc_app` has not happened. The
-test harness, by contrast, does `SET ROLE wingrc_app` per request
-(`conftest.py:_app_session`) precisely so this class of bug surfaces before
-the cutover rather than after it -- the same reason
-`docs/PLAN-auth-rbac-completion.md` flags the session-fixation RLS gap it
-caught the same way.
-
-So the assertion below is deliberately written as "this is what happens
-under RLS enforcement", and it is what makes the audit result in the
-roadmap writeup reproducible instead of a claim.
+**Why it was latent rather than live.** The app still connects as
+`wingrc`, which is both table owner and (in the compose dev setup) a
+superuser, and Postgres bypasses RLS unconditionally for both unless
+`FORCE ROW LEVEL SECURITY` is set, which it is not -- migration
+`0016_app_role`'s own docstring says the runtime cutover to `wingrc_app`
+has not happened. The test harness, by contrast, does `SET ROLE
+wingrc_app` per request (`conftest.py:_app_session`) precisely so this
+class of bug surfaces before the cutover rather than after it, the same
+reason `docs/PLAN-auth-rbac-completion.md` flags the session-fixation RLS
+gap it caught the same way. That harness is what makes the tests below
+meaningful: they fail without the hook.
 """
 
 from __future__ import annotations
@@ -115,24 +122,20 @@ def _seed(db_session, fake_msp_admin) -> dict:
     }
 
 
-def test_upsert_statements_control_state_id_is_lost_to_a_post_commit_read(
+def test_upsert_statements_resolves_control_state_after_its_commit(
     client, db_session, fake_msp_admin
 ):
     """`routers/assessments.py:upsert_statements` reads `control_state`
     AFTER `session.commit()` to fill `StatementOut.control_state_id`.
 
-    Under RLS enforcement that select matches nothing, and because a
-    zero-row select is not an error, every statement comes back with
-    `control_state_id: null` and a 200. The row is right there -- asserted
-    directly below, from a session that still has org context -- so this is
-    purely an artefact of when the read happens.
+    Before `app/rls.py`, that select matched nothing under RLS and --
+    because a zero-row select is not an error -- every statement came back
+    with `control_state_id: null` and a 200. The row was there the whole
+    time; it was purely an artefact of *when* the read happened.
 
-    This test asserts the CURRENT behaviour, wrong as it is, on purpose:
-    N.2 section 8 asked for an audit and a report rather than forty quiet
-    fixes, and the systemic options (re-issuing `SET LOCAL` on an
-    `after_commit` event, versus moving the reads before the commit) are
-    Jarrod's call. When that fix lands, this test is what has to be
-    inverted -- and its failure is the signal that it did.
+    Asserting the real id is the point. If the after_begin hook is ever
+    removed or mis-registered this goes back to null, and it fails here
+    rather than in a customer's SSP.
     """
     d = _seed(db_session, fake_msp_admin)
     org_id = d["org"].id
@@ -163,22 +166,24 @@ def test_upsert_statements_control_state_id_is_lost_to_a_post_commit_read(
     ).one()
     assert still_there is not None
 
-    assert statements[0]["control_state_id"] is None, (
-        "EXPECTED-WRONG, and the point of this test: upsert_statements resolves "
-        "control_state AFTER session.commit(), so under RLS enforcement the select "
-        "matches zero rows and the field silently comes back null even though the "
-        "row exists. If this assertion starts failing, the post-commit read was "
-        "fixed -- invert it and delete this note rather than deleting the test."
+    assert statements[0]["control_state_id"] == str(d["control_state"].id), (
+        "upsert_statements resolves control_state AFTER session.commit(); this is "
+        "the real id only because rls.py's after_begin hook re-applied the org to "
+        "the new transaction. A null here means the hook is gone or mis-registered, "
+        "and the failure mode it guards is silent -- a 200 with the field quietly "
+        "nulled -- which is why this is asserted rather than trusted."
     )
 
 
 def test_document_endpoints_do_not_have_the_same_gap(client, db_session, fake_msp_admin):
-    """The contrast case, so the pattern is legible rather than abstract.
+    """The other half of the class, still worth holding.
 
     `routers/documents.py` builds every response *before* committing, so
     `updated_at` (which has `onupdate=func.now()` and is therefore expired
-    by the UPDATE that sets `current_version_id`) is populated and returned
-    normally rather than raising `ObjectDeletedError`.
+    by the UPDATE that sets `current_version_id`) is populated without
+    needing the hook at all. Belt and braces: the hook now covers this
+    shape too, but N.1's explicit ordering is still the clearer code, and
+    this asserts it keeps working.
     """
     d = _seed(db_session, fake_msp_admin)
     org_id = d["org"].id

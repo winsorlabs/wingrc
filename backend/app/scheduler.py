@@ -146,6 +146,7 @@ from .config import get_settings
 from .connectors import liongard as liongard_connector
 from .db import SessionLocal
 from .models import JobRun, LiongardSyncNotification, ReviewCycle, ReviewCycleReviewer
+from .rls import set_current_org
 from .storage import get_storage_client
 
 logger = logging.getLogger(__name__)
@@ -348,16 +349,11 @@ def _review_cycle_open(session: Session) -> dict:
 
     opened = 0
     for org_id, _cadence in due:
-        # set_config(..., true), not "SET LOCAL app.current_org = :org_id"
-        # -- SET/SET LOCAL doesn't accept bind parameters at all in
-        # Postgres (a real syntax error, caught live on the bench stack,
-        # not a style preference); set_config is the parameterized
-        # equivalent require_org_access() itself already documents and
-        # prefers for exactly this reason.
-        session.execute(
-            text("SELECT set_config('app.current_org', :org_id, true)"),
-            {"org_id": str(org_id)},
-        )
+        # Via rls.set_current_org: this loop commits per iteration, and the
+        # recorded value is what rls.py's after_begin hook re-applies to the
+        # next transaction, so the org tracks the loop rather than being lost
+        # at the first commit.
+        set_current_org(session, org_id)
         cycle, reviewers = review_cycles.open_cycle(session, org_id=org_id, opened_by="scheduler")
         log_event(
             session, org_id=org_id, action="review_cycle.open", entity_type="review_cycle",
@@ -409,16 +405,11 @@ def _review_cycle_sweep(session: Session) -> dict:
     cycles_closed = 0
 
     for cycle_id, org_id in open_cycles:
-        # set_config(..., true), not "SET LOCAL app.current_org = :org_id"
-        # -- SET/SET LOCAL doesn't accept bind parameters at all in
-        # Postgres (a real syntax error, caught live on the bench stack,
-        # not a style preference); set_config is the parameterized
-        # equivalent require_org_access() itself already documents and
-        # prefers for exactly this reason.
-        session.execute(
-            text("SELECT set_config('app.current_org', :org_id, true)"),
-            {"org_id": str(org_id)},
-        )
+        # Via rls.set_current_org: this loop commits per iteration, and the
+        # recorded value is what rls.py's after_begin hook re-applies to the
+        # next transaction, so the org tracks the loop rather than being lost
+        # at the first commit.
+        set_current_org(session, org_id)
         cycle = session.get(ReviewCycle, cycle_id)
         reviewers = list(
             session.scalars(
@@ -551,10 +542,7 @@ def _liongard_daily_sync(session: Session) -> dict:
     errors = 0
 
     for org_id, _env_id, _env_name in mappings:
-        session.execute(
-            text("SELECT set_config('app.current_org', :org_id, true)"),
-            {"org_id": str(org_id)},
-        )
+        set_current_org(session, org_id)
         try:
             pull = liongard_sync.pull_and_reconcile(session, org_id)
         except (liongard_sync.LiongardSyncError, liongard_connector.LiongardAPIError) as e:

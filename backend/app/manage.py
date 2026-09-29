@@ -27,12 +27,13 @@ import uuid
 from dataclasses import dataclass
 
 import typer
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .auth import hash_password, validate_password_policy
 from .db import SessionLocal
 from .models import DeploymentSettings, Organization, OrgMembership, User
+from .rls import set_current_org
 
 app = typer.Typer(help="WinGRC admin management CLI.")
 
@@ -83,7 +84,7 @@ def _bootstrap_admin_core(
         raise ValueError(f"user {email!r} already exists in this org")
 
     # RLS: set current_org before any RLS-gated operations
-    db.execute(text(f"SET LOCAL app.current_org = '{org_row.id}'"))
+    set_current_org(db, org_row.id)
 
     user = User(
         home_org_id=org_row.id,
