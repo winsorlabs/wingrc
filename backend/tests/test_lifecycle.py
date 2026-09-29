@@ -102,6 +102,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.auth import get_current_user
+from app.bundle_service import render_bundle, snapshot_bundle
 from app.connectors import liongard as liongard_module
 from app.crypto import encrypt_credential
 from app.db import get_session
@@ -680,10 +681,41 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
         n for n in zf_v1.namelist() if n.endswith("ssp/04_component_inventory.html")
     )
     documents_name = next(n for n in zf_v1.namelist() if n.endswith("ssp/06_documents.html"))
+    manifest_name = next(n for n in zf_v1.namelist() if n.endswith("evidence/manifest.html"))
     impl_html_v1 = _strip_stamp(zf_v1.read(impl_name))
     scoring_html_v1 = _strip_stamp(zf_v1.read(scoring_name))
     inventory_html_v1 = _strip_stamp(zf_v1.read(inventory_name))
     documents_html_v1 = _strip_stamp(zf_v1.read(documents_name))
+
+    # ------------------------------------------------------------------ #
+    # RLS does not thin the bundle (migration 0061).                      #
+    # ------------------------------------------------------------------ #
+    # The export above was produced through `client`, i.e. under
+    # `SET ROLE wingrc_app` with every policy enforced. `evidence_state_link`
+    # is gated as of 0061 and is exactly what bundle_service filters on with
+    # `is_archived.is_(False)`; a policy that hid rows there would not raise
+    # anything -- it would quietly render a thinner bundle and hand an
+    # assessor an SSP missing evidence.
+    #
+    # So: render the same bundle again as the OWNER role, where RLS is
+    # bypassed entirely, and require the two to be byte-identical. That is
+    # the "before and after enforcement" comparison, run inside one test
+    # rather than across two deploys.
+    owner_snapshot = snapshot_bundle(
+        db_session, storage=storage, org_id=org.id, assessment_id=uuid.UUID(assessment_id)
+    )
+    owner_zip_bytes, _, _, _ = render_bundle(owner_snapshot)
+    zf_owner = zipfile.ZipFile(io.BytesIO(owner_zip_bytes))
+    assert _strip_stamp(zf_owner.read(impl_name)) == impl_html_v1, (
+        "the implementation section differs between an RLS-enforced export and an "
+        "owner-role export -- a policy is filtering rows out of the bundle"
+    )
+    assert _strip_stamp(zf_owner.read(manifest_name)) == _strip_stamp(
+        zf_v1.read(manifest_name)
+    ), (
+        "the evidence manifest differs between an RLS-enforced export and an "
+        "owner-role export -- evidence_state_link's policy is hiding links"
+    )
 
     # N.2 §3/§7 on the bundle path specifically: the approved policy body is
     # rendered (not escaped into literal asterisks, which would be useless in

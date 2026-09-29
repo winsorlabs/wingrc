@@ -12,6 +12,23 @@ class Settings(BaseSettings):
 
     # Default points at the docker-compose Postgres service.
     database_url: str = "postgresql+psycopg://wingrc:wingrc@localhost:5432/wingrc"
+    # Connection alembic uses, and ONLY alembic (app/migrations/env.py).
+    #
+    # It exists because running migrations and serving requests want
+    # different privileges: DDL needs the table owner, while the running app
+    # should eventually connect as `wingrc_app`, which has no DDL rights and
+    # cannot bypass RLS. Today both are the owner and this can stay unset;
+    # at the `wingrc_app` cutover it becomes required, because
+    # `database_url` will no longer be able to create a table.
+    #
+    # Unset falls back to `database_url` -- which is correct before the
+    # cutover and impossible to get silently wrong after it, because
+    # env.py verifies the connected role can actually perform DDL and fails
+    # by name if it cannot. It also refuses a value pointing at a different
+    # database than `database_url`, since migrating one database while
+    # serving another is the failure that would otherwise look like
+    # "the migration ran fine".
+    migration_database_url: str | None = None
     app_name: str = "WinGRC"
     environment: str = "development"
 
