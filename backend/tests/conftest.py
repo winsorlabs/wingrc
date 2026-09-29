@@ -74,7 +74,17 @@ def _ensure_test_db(test_url: str) -> None:
     from app.config import get_settings
 
     old_val = os.environ.get("WINGRC_DATABASE_URL")
+    # WINGRC_MIGRATION_DATABASE_URL must be cleared alongside the redirect,
+    # not just left alone. env.py refuses a migration URL naming a different
+    # database than the app URL -- deliberately, since migrating one database
+    # while serving another is the mistake that looks like success. Redirecting
+    # only WINGRC_DATABASE_URL to the test DB creates exactly that mismatch, so
+    # on any deployment that has cut over to wingrc_app (where the migration
+    # URL is set to the owner) the whole suite would abort in this fixture.
+    # Found on the bench during the cutover, not reasoned about.
+    old_migration = os.environ.get("WINGRC_MIGRATION_DATABASE_URL")
     os.environ["WINGRC_DATABASE_URL"] = test_url
+    os.environ.pop("WINGRC_MIGRATION_DATABASE_URL", None)
     get_settings.cache_clear()
     try:
         cfg = AlembicConfig(_ALEMBIC_INI)
@@ -84,6 +94,8 @@ def _ensure_test_db(test_url: str) -> None:
             os.environ.pop("WINGRC_DATABASE_URL", None)
         else:
             os.environ["WINGRC_DATABASE_URL"] = old_val
+        if old_migration is not None:
+            os.environ["WINGRC_MIGRATION_DATABASE_URL"] = old_migration
         get_settings.cache_clear()
 
 
