@@ -268,6 +268,49 @@ def test_export_is_unchanged_by_an_unrelated_write(tied_fixture, db_session):
     )
 
 
+def test_export_survives_a_forced_physical_reorder(tied_fixture, db_session):
+    """Forces the row order to move, rather than hoping it does.
+
+    The perturbation test above rewrites whole tables, which usually
+    preserves relative order and therefore only *might* expose a
+    non-total ORDER BY. This updates exactly one row of a tied pair:
+    Postgres writes the new version at the end of the heap, so that row
+    moves behind its twin in any scan that does not fully order them.
+    A tiebreak-free `ORDER BY name` renders the pair the other way round
+    and this fails; a total order is unaffected.
+
+    Verified by mutation: removing `Contact.id` from the contacts
+    ordering makes this test fail, and nothing else in the file notices.
+    """
+    org_id = tied_fixture["org"].id
+    aid = tied_fixture["assessment"].id
+    before = _section_hashes(db_session, org_id, aid)
+
+    for table, column, where in (
+        ("contact", "name", "org_id = :o"),
+        ("evidence", "title", "org_id = :o"),
+        ("raci_assignment", "raci_letter",
+         "control_state_id IN (SELECT id FROM control_state WHERE org_id = :o)"),
+        ("contact_documentation_role", "role",
+         "contact_id IN (SELECT id FROM contact WHERE org_id = :o)"),
+        ("control_state_contributor", "product_id",
+         "control_state_id IN (SELECT id FROM control_state WHERE org_id = :o)"),
+    ):
+        db_session.execute(
+            text(
+                f"UPDATE {table} SET {column} = {column} WHERE id = "
+                f"(SELECT id FROM {table} WHERE {where} ORDER BY id LIMIT 1)"
+            ),
+            {"o": str(org_id)},
+        )
+    db_session.commit()
+
+    assert _section_hashes(db_session, org_id, aid) == before, (
+        "moving one row of a tied pair changed the rendered output -- an "
+        "ORDER BY somewhere is not a total order. Add a unique final term."
+    )
+
+
 def test_ties_really_exist_in_the_fixture(tied_fixture, db_session):
     """Guards the guard: if the fixture stopped producing ties, the tests
     above would pass vacuously and prove nothing."""
