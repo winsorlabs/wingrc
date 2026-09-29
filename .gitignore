@@ -36,11 +36,15 @@ frontend/dist/
 .env.*.bak
 .env.bak
 
-# Bench/CI credential material. The GitHub PAT used to open PRs and read run
-# status lives at /home/claude/.secrets/gh_pat_wingrc on wl-util-1 -- outside
-# any checkout, which is the point. This entry exists so that a stray copy
-# inside the repo cannot be committed by an accidental `git add -A`. Read it
-# as GH_TOKEN="$(cat <path>)"; never pass a token as an argument, where it
-# would land in shell history and the process table.
+# Bench/CI credential material, as defence rather than because a token is in
+# use. Reading CI status needs no credential at all: this repo is public, so
+# run conclusions and per-job/per-step results come back from
+# api.github.com unauthenticated (raw log download is the one thing that
+# 403s, and a bench reproduction beats a log anyway). A token is only needed
+# to *write* -- opening a PR, or merging one. If one is ever introduced, keep
+# it outside every checkout, read it as GH_TOKEN="$(cat <path>)", and never
+# pass it as an argument, where it lands in shell history and the process
+# table. These patterns exist so a stray copy cannot be committed by an
+# accidental `git add -A`.
 gh_pat_*
 .gh_token
