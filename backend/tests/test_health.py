@@ -21,7 +21,10 @@ from sqlalchemy import text
 from app.db import get_session
 from app.main import _expected_migration_head, app
 
-pytestmark = pytest.mark.integration
+# Marked per-test, not per-module: two of these need no database at all, and
+# a module-level marker would drop them from a `-m "not integration"` run.
+# The unreachable-database test is specifically about what happens WITHOUT
+# one.
 
 
 @pytest.fixture
@@ -31,6 +34,7 @@ def client(db_session):
     app.dependency_overrides.clear()
 
 
+@pytest.mark.integration
 def test_health_reports_ok_with_a_live_database(client):
     r = client.get("/health")
     assert r.status_code == 200, r.text
@@ -39,6 +43,7 @@ def test_health_reports_ok_with_a_live_database(client):
     assert body["database"] == "ok"
 
 
+@pytest.mark.integration
 def test_health_reports_the_applied_migration(client):
     """Not decoration: this is the field that makes an empty or
     half-migrated database visible at a glance."""
@@ -46,6 +51,7 @@ def test_health_reports_the_applied_migration(client):
     assert body["migration"] == _expected_migration_head()
 
 
+@pytest.mark.integration
 def test_health_is_unhealthy_when_the_schema_does_not_match_the_build(client, db_session):
     """The rollback incident, reproduced.
 
