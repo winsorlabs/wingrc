@@ -36,7 +36,10 @@ from sqlalchemy.orm import Session
 from app.models import Contact, Organization
 from app.rls import clear_current_org, current_org, set_current_org
 
-pytestmark = pytest.mark.integration
+# Marked per-test, not per-module: the two guards at the bottom are source
+# checks needing no database, and the chokepoint one must not be skippable
+# -- it is what stops a raw `app.current_org` write leaving the hook to re-
+# apply a stale org.
 
 _APP_ROLE = "wingrc_app"
 _APP_DIR = pathlib.Path(__file__).resolve().parent.parent / "app"
@@ -83,6 +86,7 @@ def _seed_org(session: Session, created: list[uuid.UUID]) -> Organization:
     return org
 
 
+@pytest.mark.integration
 def test_org_context_survives_a_real_commit(real_session):
     """The core claim. Set the org, commit (ending the transaction the
     `SET LOCAL` was scoped to), then read — and get the row.
@@ -116,6 +120,7 @@ def test_org_context_survives_a_real_commit(real_session):
         session.commit()
 
 
+@pytest.mark.integration
 def test_post_commit_refresh_returns_the_row(real_session):
     """The shape N.1 hit: `session.refresh()` after a commit raised
     ObjectDeletedError on a row that plainly existed.
@@ -143,6 +148,7 @@ def test_post_commit_refresh_returns_the_row(real_session):
         session.commit()
 
 
+@pytest.mark.integration
 def test_org_context_tracks_the_latest_value_across_commits(real_session):
     """The scheduler's shape: a loop that changes org per iteration and
     commits in between. The hook must re-apply the *current* org, not the
@@ -169,6 +175,7 @@ def test_org_context_tracks_the_latest_value_across_commits(real_session):
         session.commit()
 
 
+@pytest.mark.integration
 def test_hook_is_a_no_op_when_no_org_was_ever_set(real_session):
     """The CLI and the suite's owner-role scaffolding sessions never set an
     org. The hook must leave them alone rather than guessing one.
@@ -183,6 +190,7 @@ def test_hook_is_a_no_op_when_no_org_was_ever_set(real_session):
     )
 
 
+@pytest.mark.integration
 def test_clear_current_org_stops_the_hook_re_applying(real_session):
     session, created = real_session
     org = _seed_org(session, created)

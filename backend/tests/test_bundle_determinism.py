@@ -65,7 +65,11 @@ from app.models import (
 )
 from app.storage import NullStorageClient
 
-pytestmark = pytest.mark.integration
+# Marked per-test, not per-module. The three static guards below need no
+# database and MUST NOT be skippable: they exist because behavioural testing
+# missed the defect they protect against, so a `-m "not integration"` run
+# that silently dropped them would reintroduce exactly the blind spot this
+# file was written to close.
 
 _SECTIONS = ("ssp/02_implementation.html", "evidence/manifest.html",
              "ssp/03_personnel.html", "ssp/05_customer_responsibility_matrix.html")
@@ -205,6 +209,7 @@ def tied_fixture(db_session):
     return {"org": org, "assessment": assessment, "states": states, "evidences": evidences}
 
 
+@pytest.mark.integration
 def test_repeated_exports_are_byte_identical(tied_fixture, db_session):
     """Five exports of unchanged data, all identical.
 
@@ -223,6 +228,7 @@ def test_repeated_exports_are_byte_identical(tied_fixture, db_session):
         )
 
 
+@pytest.mark.integration
 def test_export_is_unchanged_by_an_unrelated_write(tied_fixture, db_session):
     """Export, write something unrelated, export again.
 
@@ -268,6 +274,7 @@ def test_export_is_unchanged_by_an_unrelated_write(tied_fixture, db_session):
     )
 
 
+@pytest.mark.integration
 def test_export_survives_a_forced_physical_reorder(tied_fixture, db_session):
     """Forces the row order to move, rather than hoping it does.
 
@@ -311,6 +318,7 @@ def test_export_survives_a_forced_physical_reorder(tied_fixture, db_session):
     )
 
 
+@pytest.mark.integration
 def test_ties_really_exist_in_the_fixture(tied_fixture, db_session):
     """Guards the guard: if the fixture stopped producing ties, the tests
     above would pass vacuously and prove nothing."""

@@ -89,7 +89,15 @@ bench work.
    shell access into `backend`/`db`/etc.
 3. Backend: `docker compose -p wingrc_verify_<date> exec backend pytest -q`
    (full suite, not just `-m "not integration"` — that's the local-only
-   subset), `ruff check .`, confirm any new Alembic migration applies
+   subset). **The full suite in one process, never a per-file run.**
+   Running a file in isolation is a different experiment, not a cheaper
+   version of this one: order- and state-dependent defects are invisible to
+   it by construction. A bundle-export nondeterminism turned `main` red
+   (run #307, 2026-09-28) after passing per-file verification — reproduced
+   afterwards both ways, failing in the suite and passing alone. If a slice
+   touches a query, an ordering, a fixture, or anything a later test reads,
+   a green targeted run says nothing. Also run `ruff check .`, confirm any
+   new Alembic migration applies
    cleanly (`alembic upgrade head` is what `docker compose up` already
    runs on backend start — check its logs, and check migration source for
    whether it's purely additive or touches existing rows).

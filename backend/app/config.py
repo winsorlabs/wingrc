@@ -61,6 +61,24 @@ class Settings(BaseSettings):
     db_pool_size: int = 20
     db_max_overflow: int = 20
 
+    # Seconds libpq waits for a TCP connection before giving up. Must be set:
+    # with no `connect_timeout`, libpq's own default retry behaviour made
+    # `/health` -- a *readiness probe*, whose entire job is to answer fast --
+    # block for 260 seconds before returning 503 with Postgres unreachable.
+    # A probe that slow is useless to a load balancer or container
+    # healthcheck, and it is what made the no-database test suite take 17m34s
+    # instead of 11s (see docs/roadmap.md's CI-red entry).
+    #
+    # The 260s is not one timeout. libpq applies `connect_timeout` *per
+    # resolved address*, and a multi-homed host doubles it -- `localhost`
+    # resolves to both 127.0.0.1 and ::1, so a 300s setting was measured
+    # taking 600.64s. Budget accordingly: worst case is roughly this value
+    # times the number of A/AAAA records the host resolves to.
+    #
+    # libpq silently raises anything below 2 to 2, so values under 2 are
+    # pointless rather than tighter.
+    db_connect_timeout: int = 5
+
     # S3-compatible object storage for evidence artifacts.
     # Set storage_endpoint to activate MinIOClient; leave unset to use NullStorageClient.
     storage_endpoint: str | None = None

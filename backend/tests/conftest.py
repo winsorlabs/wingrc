@@ -20,11 +20,13 @@ from urllib.parse import urlparse, urlunparse
 import pytest
 from alembic import command as alembic_cmd
 from alembic.config import Config as AlembicConfig
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from app.audit import set_current_actor
 from app.auth import CurrentUser, actor_type_for
+from app.db import get_session
 from app.models import OrgMembership, User
 from app.rls import reapply_current_org, set_current_org
 
@@ -97,6 +99,56 @@ def _ensure_test_db(test_url: str) -> None:
         if old_migration is not None:
             os.environ["WINGRC_MIGRATION_DATABASE_URL"] = old_migration
         get_settings.cache_clear()
+
+
+class HealthProbeSession:
+    """Answers exactly the two statements `/health` issues, and nothing else.
+
+    `/health` became a readiness probe during the `wingrc_app` cutover: it
+    runs `SELECT 1` as the app's own role and compares `alembic_version`
+    against the head the image ships, so it returns 503 when there is no
+    database. That is the intended behaviour -- it is what makes the check
+    worth having.
+
+    It also broke CI, because `test_cors.py` and `test_auth.py` use
+    `/health` as a conveniently ungated endpoint in the no-database job and
+    asserted 200. Those tests are about CORS reflection and auth gating,
+    not about health semantics, so rather than weakening their assertions
+    they get a session that answers the probe. Anything else raises, so
+    this cannot quietly stand in for a real session somewhere it does not
+    belong.
+    """
+
+    class _Result:
+        def __init__(self, value):
+            self._value = value
+
+        def scalar(self):
+            return self._value
+
+    def execute(self, statement, *_args, **_kwargs):
+        sql = str(statement)
+        if "alembic_version" in sql:
+            from app.main import _expected_migration_head
+
+            return self._Result(_expected_migration_head())
+        if "SELECT 1" in sql:
+            return self._Result(1)
+        raise AssertionError(
+            f"HealthProbeSession only answers /health's own statements, got: {sql!r}"
+        )
+
+
+@pytest.fixture
+def health_probe_client():
+    """TestClient whose /health can answer without a database."""
+    from app.main import app as fastapi_app
+
+    fastapi_app.dependency_overrides[get_session] = HealthProbeSession
+    try:
+        yield TestClient(fastapi_app, raise_server_exceptions=False)
+    finally:
+        fastapi_app.dependency_overrides.pop(get_session, None)
 
 
 def _make_fake_user(**kwargs):

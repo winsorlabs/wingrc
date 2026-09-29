@@ -99,8 +99,16 @@ def http_client():
     return TestClient(app, raise_server_exceptions=False)
 
 
-def test_health_is_ungated(http_client):
-    assert http_client.get("/health").status_code == 200
+def test_health_is_ungated(health_probe_client):
+    """Ungated: no session, no 401.
+
+    Uses health_probe_client because /health is a readiness probe and
+    returns 503 without a database -- see conftest.HealthProbeSession. The
+    200 is what proves it is ungated; a 503 would prove it too, but only
+    by accident, and would keep passing if the route later grew an auth
+    dependency.
+    """
+    assert health_probe_client.get("/health").status_code == 200
 
 
 def test_me_without_session_returns_401(http_client):

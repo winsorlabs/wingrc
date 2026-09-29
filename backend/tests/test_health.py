@@ -21,7 +21,10 @@ from sqlalchemy import text
 from app.db import get_session
 from app.main import _expected_migration_head, app
 
-pytestmark = pytest.mark.integration
+# Marked per-test, not per-module: two of these need no database at all, and
+# a module-level marker would drop them from a `-m "not integration"` run.
+# The unreachable-database test is specifically about what happens WITHOUT
+# one.
 
 
 @pytest.fixture
@@ -31,6 +34,7 @@ def client(db_session):
     app.dependency_overrides.clear()
 
 
+@pytest.mark.integration
 def test_health_reports_ok_with_a_live_database(client):
     r = client.get("/health")
     assert r.status_code == 200, r.text
@@ -39,6 +43,7 @@ def test_health_reports_ok_with_a_live_database(client):
     assert body["database"] == "ok"
 
 
+@pytest.mark.integration
 def test_health_reports_the_applied_migration(client):
     """Not decoration: this is the field that makes an empty or
     half-migrated database visible at a glance."""
@@ -46,6 +51,7 @@ def test_health_reports_the_applied_migration(client):
     assert body["migration"] == _expected_migration_head()
 
 
+@pytest.mark.integration
 def test_health_is_unhealthy_when_the_schema_does_not_match_the_build(client, db_session):
     """The rollback incident, reproduced.
 
@@ -98,3 +104,42 @@ def test_expected_head_is_resolvable_in_this_build():
     """
     assert _expected_migration_head() is not None
     assert _expected_migration_head().startswith("00")
+
+
+def test_engine_sets_a_connect_timeout():
+    """A readiness probe must fail fast, so the engine must bound its connect.
+
+    No database needed, and no timing assertion -- this is a configuration
+    check on purpose. The defect it guards was measured, not theorised:
+    with no `connect_timeout`, `/health` took 260.03s to return 503 against
+    an unreachable Postgres, and the four no-database tests that call it
+    accounted for 1043s of a 1054s suite run.
+
+    The bound is per resolved address, not per connection attempt: libpq
+    applies it to each A/AAAA record in turn, so `localhost` (127.0.0.1 and
+    ::1) doubles it -- a 300s setting was measured taking 600.64s. A
+    multi-homed database host multiplies this value, which is why it is
+    small rather than merely finite.
+
+    Checks `build_connect_args()` rather than the live engine: `connect_args`
+    is captured in the pool's creator closure and cannot be read back off an
+    `Engine`. The single `connect_args=build_connect_args()` line in db.py is
+    the wiring, and it is visible in review; this pins the value.
+    """
+    from app.config import get_settings
+    from app.db import build_connect_args
+
+    configured = build_connect_args()
+    assert "connect_timeout" in configured, (
+        "the engine must pass connect_timeout to libpq -- without it an "
+        "unreachable database hangs every connection attempt for minutes, "
+        "including the readiness probe whose job is to answer immediately"
+    )
+    timeout = int(configured["connect_timeout"])
+    # libpq silently raises anything below 2 to 2, so 2 is the real floor.
+    assert 2 <= timeout <= 15, (
+        f"connect_timeout={timeout} is outside the useful range: below 2 libpq "
+        "ignores it, and a large value reintroduces the slow-probe defect once "
+        "multiplied by the number of addresses the host resolves to"
+    )
+    assert timeout == get_settings().db_connect_timeout

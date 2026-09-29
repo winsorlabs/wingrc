@@ -35,3 +35,16 @@ frontend/dist/
 .wingrc_app_pw
 .env.*.bak
 .env.bak
+
+# Bench/CI credential material, as defence rather than because a token is in
+# use. Reading CI status needs no credential at all: this repo is public, so
+# run conclusions and per-job/per-step results come back from
+# api.github.com unauthenticated (raw log download is the one thing that
+# 403s, and a bench reproduction beats a log anyway). A token is only needed
+# to *write* -- opening a PR, or merging one. If one is ever introduced, keep
+# it outside every checkout, read it as GH_TOKEN="$(cat <path>)", and never
+# pass it as an argument, where it lands in shell history and the process
+# table. These patterns exist so a stray copy cannot be committed by an
+# accidental `git add -A`.
+gh_pat_*
+.gh_token
