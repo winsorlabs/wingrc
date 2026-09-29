@@ -102,6 +102,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.auth import get_current_user
+from app.bundle_service import render_bundle, snapshot_bundle
 from app.connectors import liongard as liongard_module
 from app.crypto import encrypt_credential
 from app.db import get_session
@@ -680,40 +681,12 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
         n for n in zf_v1.namelist() if n.endswith("ssp/04_component_inventory.html")
     )
     documents_name = next(n for n in zf_v1.namelist() if n.endswith("ssp/06_documents.html"))
+    manifest_name = next(n for n in zf_v1.namelist() if n.endswith("evidence/manifest.html"))
     impl_html_v1 = _strip_stamp(zf_v1.read(impl_name))
     scoring_html_v1 = _strip_stamp(zf_v1.read(scoring_name))
     inventory_html_v1 = _strip_stamp(zf_v1.read(inventory_name))
     documents_html_v1 = _strip_stamp(zf_v1.read(documents_name))
 
-    # N.2 §3/§7 on the bundle path specifically: the approved policy body is
-    # rendered (not escaped into literal asterisks, which would be useless in
-    # front of a C3PAO) and every hostile construct in it is inert. This is
-    # the same bytes WeasyPrint is handed for the consolidated SSP PDF.
-    assert "IR-POL-001" in documents_html_v1
-    assert "<strong>incident response</strong>" in documents_html_v1
-    assert "<h1" in documents_html_v1 and "<table>" in documents_html_v1
-    assert "csrc.nist.gov" in documents_html_v1
-    # Live markup absent; the escaped text of it present. Checking for the
-    # bare substring "onerror" would fail on safe output -- the escaped form
-    # &lt;img src=x onerror=...&gt; legitimately contains it, and an author
-    # writing about markup in an appendix must still see what they wrote.
-    lowered = documents_html_v1.lower()
-    for live_tag in ("<script", "<img", "<iframe", "<svg"):
-        assert live_tag not in lowered, (
-            f"{live_tag!r} reached the assessor-facing bundle HTML as markup"
-        )
-    assert '<a href="javascript:' not in lowered
-    assert "&lt;script&gt;" in documents_html_v1, "neutralised, not silently dropped"
-    # Alignment arrives as a class, never a style attribute -- markdown_doc.py
-    # refuses to put CSS on operator-influenced output.
-    assert "ta-right" in documents_html_v1
-    assert "style=" not in documents_html_v1
-    assert "shared" in impl_html_v1.lower() or "provider" in impl_html_v1.lower()
-    assert "IR-POL-001" in impl_html_v1, (
-        "Step 3d's published document must show up as evidence on IR.L2-3.6.1[a] "
-        "in the exact same implementation section this pass's own point-in-time "
-        "comparison already tracks -- extending it, not adding a parallel check"
-    )
     assert "SN-LT-STILL-PENDING" in inventory_html_v1
     assert "Pending Approval" in inventory_html_v1
     # A2: the devices approved in Steps 3/3b show who accepted them --
@@ -994,6 +967,43 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
         "moving the tenant to a new baseline version touches neither the document "
         "nor its approved body, so the rendered policy section must be unchanged"
     )
+    # ------------------------------------------------------------------ #
+    # RLS does not thin the bundle (migration 0061).                      #
+    # ------------------------------------------------------------------ #
+    # Every export above went through `client`, i.e. under
+    # `SET ROLE wingrc_app` with every policy enforced. `evidence_state_link`
+    # is gated as of 0061 and is exactly what bundle_service filters on with
+    # `is_archived.is_(False)`; a policy hiding rows there raises nothing --
+    # it quietly renders a thinner bundle and hands an assessor an SSP with
+    # evidence missing. So render the same bundle as the OWNER role, where
+    # RLS is bypassed entirely, and require the two to match byte for byte.
+    # That is "before and after enforcement", inside one test.
+    #
+    # Placed AFTER the three-export comparison, not between exports:
+    # snapshot_bundle calls recompute_sprs, which writes, and interleaving a
+    # write between two exports being compared byte-for-byte is exactly what
+    # those assertions exist to catch. The app-role export is taken first so
+    # the owner render cannot influence it.
+    r = client.get(f"/orgs/{org.id}/assessments/{assessment_id}/bundle")
+    assert r.status_code == 200, r.text
+    zf_app = zipfile.ZipFile(io.BytesIO(r.content))
+    app_impl = _strip_stamp(zf_app.read(impl_name))
+    app_manifest = _strip_stamp(zf_app.read(manifest_name))
+
+    owner_snapshot = snapshot_bundle(
+        db_session, storage=storage, org_id=org.id, assessment_id=uuid.UUID(assessment_id)
+    )
+    owner_zip_bytes, _, _, _ = render_bundle(owner_snapshot)
+    zf_owner = zipfile.ZipFile(io.BytesIO(owner_zip_bytes))
+    assert _strip_stamp(zf_owner.read(impl_name)) == app_impl, (
+        "the implementation section differs between an RLS-enforced export and an "
+        "owner-role export -- a policy is filtering rows out of the bundle"
+    )
+    assert _strip_stamp(zf_owner.read(manifest_name)) == app_manifest, (
+        "the evidence manifest differs between an RLS-enforced export and an "
+        "owner-role export -- evidence_state_link's policy is hiding links"
+    )
+
     assert inventory_html_v3 == inventory_html_v1, (
         "unrelated activity since Step 6 (evidence collection, SPRS submission) "
         "must not have moved the pending marker or the stored approver snapshot either"

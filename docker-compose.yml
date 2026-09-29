@@ -7,6 +7,17 @@
 x-backend-env: &backend-env
   WINGRC_DATABASE_URL: postgresql+psycopg://wingrc:wingrc@db:5432/wingrc
   WINGRC_TEST_DATABASE_URL: postgresql+psycopg://wingrc:wingrc@db:5432/wingrc_test
+  # Connection `alembic upgrade head` uses, and nothing else. Unset here on
+  # purpose: WINGRC_DATABASE_URL above is still the owning role, which can
+  # run DDL, so migrations work without it today.
+  #
+  # It becomes REQUIRED when WINGRC_DATABASE_URL is pointed at `wingrc_app`
+  # (the RLS-enforced, no-DDL runtime role) -- at that point migrations and
+  # request handling need different privileges and can no longer share one
+  # string. Leaving it unset then is not silent: app/migrations/env.py
+  # checks the connected role can create objects and exits naming this
+  # variable. See docs/deployment.md.
+  WINGRC_MIGRATION_DATABASE_URL: ${WINGRC_MIGRATION_DATABASE_URL:-}
   # Set explicitly (not left to Settings.environment's Python-level
   # default) so `wingrc reset-dev`'s production guard (cli.py) sees a
   # real "development" value here rather than reading as unset --
