@@ -1109,6 +1109,17 @@ def snapshot_bundle(
                 ControlStateContributor.baseline_control_id == BaselineControl.id,
             )
             .where(ControlStateContributor.control_state_id.in_(all_cs_ids))
+            # Deterministic order is REQUIRED, not cosmetic. Without it
+            # Postgres is free to return these rows in a different order on
+            # two executions over identical data, and the "Tools:" line in
+            # the implementation section then renders differently in two
+            # exports of the same assessment -- which breaks the
+            # point-in-time promise this bundle exists to make. Caught by
+            # test_lifecycle's own three-export comparison failing
+            # intermittently; the comment below about insertion order
+            # "preserving query order" was relying on an ordering the
+            # database never guaranteed.
+            .order_by(Product.name, Product.key)
         ).all()
         for cs_id, pkey, pname, classification in contrib_rows:
             contributors_by_cs.setdefault(cs_id, []).append(
@@ -1117,7 +1128,10 @@ def snapshot_bundle(
                 )
             )
 
-    # Build ControlSnap tree (preserves query order via insertion-ordered dict)
+    # Build ControlSnap tree. The insertion-ordered dict preserves the
+    # order rows arrived in -- which is only meaningful because the
+    # queries feeding it are explicitly ordered. See the contributors
+    # query above for what happens when one is not.
     ctrl_map: dict[str, ControlSnap] = {}
     for row in ctrl_rows:
         cid = row.control_id
