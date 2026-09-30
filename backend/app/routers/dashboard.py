@@ -46,7 +46,6 @@ from ..models import (
     Contact,
     Control,
     ControlState,
-    Document,
     EvidenceStateLink,
     EvidenceTask,
     EvidenceTaskStateLink,

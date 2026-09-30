@@ -41,7 +41,7 @@ new tables carry `org_id` NOT NULL, so the rule is genuinely symmetric --
 readable iff in-org, writable iff in-org -- and saying so makes it a
 decision rather than an omission.
 
-Revision ID: 0062_document_approval_and_review
+Revision ID: 0062_document_approval_review
 Revises: 0061_rls_transitive_policies
 Create Date: 2026-09-30
 """
@@ -54,7 +54,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import UUID
 
-revision: str = "0062_document_approval_and_review"
+revision: str = "0062_document_approval_review"
 down_revision: str | None = "0061_rls_transitive_policies"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
