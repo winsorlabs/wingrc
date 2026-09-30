@@ -10,10 +10,42 @@ name: ci
 # moment GitHub rolls it; pinning makes the upgrade its own commit with
 # its own CI run. TODO: move to ubuntu-26.04 deliberately after 2026-10-19.
 
+# Why every branch and not just `main`: so that "watch CI go green" does not
+# depend on a human being around to open a PR. That is the step in the
+# landing routine that decays first -- it decayed once already, for six
+# consecutive red runs (2026-09-28/29), and it has no local equivalent,
+# because the `backend` job's no-database configuration exists nowhere else.
+# A branch run means the signal is available the moment work is pushed,
+# whoever is or isn't watching. `pull_request` stays for forks, whose branch
+# pushes never reach this repo.
 on:
   push:
-    branches: [main]
+    branches: ['**']  # all branches, but not tags
   pull_request:
+
+# A same-repo PR would otherwise run twice: once for the branch push and once
+# for the pull_request event. These collapse onto one group so only one
+# survives.
+#
+# `github.ref_name` rather than `github.ref` is load-bearing. `github.ref` is
+# `refs/heads/<branch>` on a push but `refs/pull/<n>/merge` on a
+# pull_request, so grouping on it produces two *different* groups and
+# deduplicates nothing. `ref_name` is the short name, and `head_ref` (set
+# only on pull_request, and equal to the source branch) takes precedence, so
+# both events land on the same group.
+#
+# `cancel-in-progress` is false on `main` deliberately: a follow-up push must
+# never kill a run whose result is the record for a merge commit. On feature
+# branches superseding is what you want.
+#
+# If a PR merge is ever blocked by a `backend`/`integration` check reading
+# "cancelled" rather than failed, this is why: the loser of that collapse
+# leaves cancelled check runs behind. The surviving run is the later one, so
+# it is normally also the one branch protection reads -- but pushing again
+# clears it, and that is a faster diagnosis than re-deriving this.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   backend:

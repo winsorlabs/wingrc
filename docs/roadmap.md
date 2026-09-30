@@ -5141,6 +5141,47 @@ break.
   noting the mechanism because every bench worktree will have the same
   problem.
 
+#### CI now runs on every branch push, not just `main`
+
+**The reason is the routine, not the coverage.** "Watch CI go green" is the
+step in the landing sequence that decays first, because it is the only one
+that depends on a human being present at a particular moment: with
+`push: [main]` plus `pull_request`, a pushed branch produced **no run at
+all** until somebody opened a PR. So the verification step was gated on an
+unrelated social act. It decayed exactly that way once already — six
+consecutive red runs — and it recurred immediately in this slice, where the
+work was finished, pushed, and bench-verified while CI had still never
+executed it.
+
+It also has no local substitute. The `backend` job's no-database
+configuration exists nowhere else: the bench always has a database, so the
+whole class of failure that produced runs #308-#312 is invisible outside
+that job. A branch run makes the signal exist the moment work is pushed,
+whoever is or isn't watching.
+
+`pull_request` stays, for forks, whose branch pushes never reach this repo.
+
+**Deduplication, and the bug in the obvious expression.** A same-repo PR
+would otherwise run twice per push. A `concurrency` group collapses them,
+but grouping on `github.ref` — the natural first guess — **does not work**:
+it is `refs/heads/<branch>` on a push and `refs/pull/<n>/merge` on a
+pull_request, so the two events land in two different groups and nothing is
+deduplicated. The group uses `github.head_ref || github.ref_name`;
+`ref_name` is the short branch name, and `head_ref` is set only on
+pull_request and equals the source branch, so both events collapse onto one
+group.
+
+`cancel-in-progress` is false on `main` and true elsewhere: superseding is
+right on a feature branch, but a follow-up push must never kill the run
+whose result is the record for a merge commit.
+
+The residual wrinkle, recorded in the workflow itself so a future blocked
+merge is diagnosable in seconds rather than re-derived: the loser of that
+collapse leaves *cancelled* check runs behind. The survivor is the later
+run, so it is normally the one branch protection reads, but a merge blocked
+by a check reading "cancelled" rather than "failed" is this, and another
+push clears it.
+
 #### Branch protection is now on
 
 `main` requires status checks: **`backend` and `integration` required,
