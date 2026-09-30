@@ -486,17 +486,22 @@ export function DocumentsPanel({
                     }}
                   />
                 </Suspense>
+                {/* Outside the canEdit gate on purpose: a read-only role
+                    (c3pao_assessor) must still see where a document stands
+                    against its cadence -- that is exactly what an assessor
+                    is looking for. ReaffirmControl gates only its form on
+                    canEdit, not the verdict it displays. */}
+                <ReaffirmControl
+                  orgId={orgId}
+                  doc={selected}
+                  contacts={contacts}
+                  canEdit={canEdit}
+                  onReaffirmed={() => {
+                    void refreshSelected();
+                    void loadList();
+                  }}
+                />
                 {canEdit && (
-                  <ReaffirmControl
-                    orgId={orgId}
-                    doc={selected}
-                    contacts={contacts}
-                    canEdit={canEdit}
-                    onReaffirmed={() => {
-                      void refreshSelected();
-                      void loadList();
-                    }}
-                  />
                   <PublishControl
                     orgId={orgId}
                     doc={selected}
