@@ -5028,6 +5028,272 @@ live, confirmed by direct query afterward.
 
 ---
 
+### Document library N.3: approval and the review cadence ✅ DONE (2026-09-30)
+
+Migration 0062. Turns the library from "you can write policies" into
+"policies are approved, and re-reviewed on a schedule", which is the reason
+a compliance product has one.
+
+#### §0 The record design, and why this shape
+
+**`document_approval`** — append-only, one row per approval decision,
+referencing the `DocumentVersion` it is about, with
+`approval_type IN ('initial', 'reaffirmation')`.
+
+Re-approving an unchanged document must not create a new
+`DocumentVersion`, and the reason is N.2: a version whose body is
+byte-identical to its predecessor fakes an edit, and it would answer "what
+changed in this policy" with noise for every annual review that changed
+nothing. But re-approval is a real, durable event — "reviewed and still
+current on <date> by <person>" is precisely what a periodic-review control
+wants to see. So the decision is recorded separately from the thing decided
+about, the shape `AssetApproval` already uses for scope entities and
+`ReviewCycleReviewer` for attestations.
+
+Chosen over the alternatives:
+
+- **A `reaffirmed_at` column on `DocumentVersion`.** Holds one
+  reaffirmation, not a history, and a periodic-review control wants the
+  history. It also mutates a row that N.1 declared immutable except for a
+  named set of approval fields, which is the kind of exception that grows.
+- **A generic audit-derived answer** (read `audit_log` for
+  `document.reaffirm` events). N.2 deliberately surfaced document history
+  from `audit_log` rather than building a parallel table, so this was the
+  consistent-looking option. Rejected because `audit_log` is a record of
+  *actions by authenticated users*, and the approver is frequently not the
+  actor and often not a user at all (see §2). Deriving a compliance fact
+  from the audit trail would also make it depend on retention policy, and
+  `audit_log.org_id` is nullable, which the RLS work already showed is a
+  sharp edge.
+- **Storing `next_due_at` on the approval row.** See the overdue section:
+  it would go stale on any cadence change.
+
+**Exactly one `initial` approval per version**, enforced by a partial
+unique index (`uq_document_approval_initial ... WHERE approval_type =
+'initial'`) rather than by application code, because it is a real
+invariant. Reaffirmations are unconstrained — each is a distinct event, and
+two in one day is odd but not wrong.
+
+#### What the existing N.1 columns now mean
+
+`DocumentVersion.approved_at` / `approved_by_contact_id` are now **a
+denormalized snapshot of the initial approval only**. They are kept because
+`publish_document` sets them and because the bundle and the SSP PDF already
+read them, and they are documented in the model as **not authoritative**.
+
+Nothing reads them to answer a cadence question, and that restriction is
+the point: they know nothing about reaffirmations, so a document
+re-approved four times still shows its original `approved_at` there. Every
+"when was this last reviewed" read goes to `document_approval`.
+
+The rejected alternative was the tidy-looking one: leave the columns as
+"the first approval" and let the new table carry "subsequent approvals".
+That is the `sourced_from_product_id` mistake — two places that both look
+authoritative, where a reader has to already know which holds what. One
+place answers every approval question; the columns are a cache of one row
+in it and say so, and
+`test_initial_approval_agrees_with_the_denormalized_version_columns`
+asserts the two actually agree rather than trusting the comment.
+
+#### §2 The cadence tracks the approver, not the actor
+
+Two people, deliberately not merged, and N.3 had to pick which one the
+cadence follows:
+
+- **The named approver** (`Contact`) is whose decision satisfies the
+  cadence. N.1 chose `Contact` because the person granting approval — a
+  customer's President signing a policy — is often not a WinGRC login at
+  all. `approver_name` is denormalized at decision time and the FK is `ON
+  DELETE SET NULL`, so the record survives the contact being deleted.
+- **The authenticated actor** who recorded it is captured by `audit_log`
+  via `log_event`'s actor resolution, and is deliberately **not**
+  duplicated onto the approval row. `document.reaffirm` events carry the
+  approver in their context so both facts are visible together, and
+  `GET .../history` already shows the actor.
+
+These are usually different people. The UI says so in as many words —
+"Reviewed and approved by" names the Contact, and the hint states "You are
+recorded separately as the person who entered it — see History" — because
+this is exactly the distinction a UI quietly loses, and the
+no-one-click-approval-links rule means someone authenticated always records
+a decision they may not have made.
+
+#### §3 Cadence, who is notified, and the digest shape
+
+`Document.cadence_months` (default 12) is a **third, distinct** cadence:
+not `Organization.review_cadence_months` (the per-org users/devices review
+cycle) and not `ReviewCycle.cadence_months`. Kept distinct in the UI too —
+the document one appears only on a document, labelled as that document's
+review cadence.
+
+`scheduler.py:_document_review_digest`, daily, per-org over
+`auth.orgs_with_documents()` (a SECURITY DEFINER function, because
+`document` is RLS-protected and cross-org discovery needs the same
+mechanism `auth.orgs_with_liongard_mapping()` uses — not a blanket bypass;
+the job still calls `set_current_org` per org).
+
+**Recipients: each due document's own named approver, plus every contact
+holding `security_officer` or `it_admin`.** The approver because the
+control is "the named approver reviewed this", so telling anyone else first
+is indirection; the role holders because that is D.3's routing precedent
+and because it is what makes a deleted or never-set approver not mean
+silence. Deduplicated by contact, with the reason recorded ('approver'
+beats 'role', being the more specific fact).
+
+**"Nobody holds that role" is counted and logged, never swallowed** —
+`orgs_with_no_contact`, exactly as `_liongard_daily_sync` does. That
+specific bug has been fixed twice in this codebase, so it is the function's
+documented contract rather than an edge case.
+
+**A digest, one email per recipient per org per run**, never one per
+document: an MSP with forty tenants and a dozen policies each would
+otherwise emit hundreds per sweep, which is how a notification channel
+becomes noise. The body names **no document, count, or org** —
+`email_service.py`'s content rule is a nudge plus a link, because mail
+leaves the deployment's trust boundary. The count is recorded server-side
+on `document_review_notification.document_count`, and a test asserts the
+document id and title do not appear in the body.
+
+**Reuse of `review_cycles.py`, since cross-cutting rule 6 asked.** The
+*machinery* is reused: `email_service.send`, the digest shape, and the
+`notified_at`-set-once / `notification_error`-always-current discipline,
+which is a third verbatim copy rather than a cleverer abstraction because
+the rule is the thing worth keeping identical. The *tables* are not, for
+two concrete reasons:
+
+1. `ReviewCycleReviewer` is `cycle_id`-scoped to a `review_cycle`, which is
+   the org's users-and-devices attestation cycle with its own snapshot
+   items, response window and attestation document. Reusing it would mean
+   inventing synthetic cycles that attest to nothing.
+2. Its reviewers come from `auth.org_reviewer_candidates()` and are
+   **Users**. Document approvers are **Contacts**, often with no login.
+
+D.3 hit exactly this and answered it the same way —
+`LiongardSyncNotification` is a separate table of identical shape. This
+follows that precedent rather than distorting the review cycle.
+
+#### §4 Overdue flags; it never invalidates
+
+Passing the cadence changes **nothing**: the `Evidence` row stays, its
+`EvidenceStateLink`s stay unarchived, `control_state.status` is untouched,
+and the SPRS score does not move. Auto-detaching evidence on a date would
+silently change what an assessment rests on with no human decision behind
+it — the failure this codebase refuses in `sprs_snapshot` (never
+rewritten), baseline versioning (a reimport never touches an activated
+tenant) and bundles (frozen at export). An overdue policy review is a
+*finding*; a finding is something a person looks at, not something a clock
+enacts.
+
+**Derived, never stored.** No `next_due_at` column and no `overdue` flag:
+`document_reviews.review_state` computes the verdict from the newest
+approval plus `cadence_months` on every read. A stored due date would go
+stale the moment an operator changed the cadence — a document moved from
+annual to quarterly should become due three months after its last
+approval, not on a date computed under the old policy. There is a test for
+exactly that, changing only `cadence_months` and watching the same approval
+flip from `current` to `overdue`.
+
+Four statuses, and `never_approved` is deliberately distinct from
+`overdue`: a document that has never been approved has not lapsed, it has
+never been through the control at all, and an operator does something
+different about each.
+
+**Visible in three places**, per §4: every `DocumentOut` carries the
+verdict (so the library list shows it without a second round trip, and a
+field the list already has is harder to forget to render), the document
+detail shows it with dates, and a dashboard card puts it where an engineer
+running an assessment will see it. The card says in words that an overdue
+review is a finding rather than an expiry. `review_status=needs_attention`
+filters the list.
+
+**Raised, not settled** (as instructed): whether overdue review state
+belongs in the SSP narrative or the exported bundle. Nothing was added to
+either.
+
+#### §1 `under_review` now has a workflow, and approval still attaches to a version
+
+`under_review` stops being decorative as the state a draft sits in while
+awaiting approval, with publishing from it being the approval path.
+Deliberately **not** used to mark an approved version as being re-reviewed:
+that would mutate an approved artifact's status, and the periodic-review
+state is derived instead, which is also what lets the scheduled job change
+nothing.
+
+Editing an approved document still creates a draft and leaves the approved
+version exactly as approved — already true, and now asserted here too
+(`test_reaffirm_leaves_the_approved_version_byte_identical` snapshots body,
+status, version number and both approval columns), because approval
+workflows are where someone eventually adds a convenience path that mutates
+in place.
+
+#### A pre-existing defect found by the tests
+
+`DocumentVersion.approved_by_contact_id` was declared in N.1 with **no
+`ON DELETE` clause** — the only nullable contact FK in the schema without
+one, where `ReviewCycleReviewer.user_id`,
+`SprsSubmission.submitted_by_contact_id`,
+`LiongardSyncNotification.contact_id` and `AssetApproval` all use
+`SET NULL`. The effect: deleting a contact who had ever approved a document
+raised `ForeignKeyViolation`, so it could not be deleted at all, which
+breaks ADR 0006's anonymize/hard-delete path outright.
+
+Found by a test in this slice deleting an approver, not by reading the
+schema. Fixed to `SET NULL` in 0062; nothing is lost, because
+`document_approval` is authoritative and denormalizes `approver_name`.
+
+#### §6 The 28 over-marked tests — and the premise was wrong
+
+The retag happened: `integration` moved off the module and onto the tests
+that need a database in four files, and `-m integration` dropped from 1027
+to 999 tests accordingly.
+
+**But the stated benefit does not exist, and measuring it is what showed
+so.** The premise — mine, carried into this slice's brief — was that those
+28 were excluded from the ~44s no-DB job, so retagging would recover free
+coverage. It does not. **A marker never causes a skip; the `db_session`
+fixture does**, by calling `pytest.skip()` when `WINGRC_TEST_DATABASE_URL`
+is unset. CI's `backend` job runs plain `pytest -q` with **no `-m`
+filter**, so those tests already ran there.
+
+Verified rather than argued: the no-DB total was **458 before and 458
+after**, and one freed test PASSES (not SKIPS) with no database on the
+pre-retag tree.
+
+What a misplaced marker actually breaks is **selection, not coverage**:
+`-m integration` ran 28 tests needing no database, and
+`-m "not integration"` dropped tests that would have run fine. Still worth
+fixing — the markers now mean what they say — but it is accuracy, not
+recovered coverage, and `CLAUDE.md`'s bullet from 2026-09-29 has been
+corrected where it claimed otherwise.
+
+#### Verification
+
+Bench, CI-shaped `python:3.13-slim` against a `postgres:18` service:
+
+- **Migration chain** `upgrade → downgrade → upgrade` clean, including the
+  backfill and the FK swap.
+- **`backend` job (no database):** `ruff` clean, **473 passed** (458 + 15
+  new pure cadence tests), floor 200 holding.
+- **`integration` job:** **1030 passed, 1 skipped** (999 + 31 new), floor
+  500 holding.
+- **Frontend:** `tsc -b` clean, **336/336** vitest across 27 files
+  (330 + 6 new), `vite build` clean.
+- Two errors caught by the toolchain rather than by review: the revision id
+  `0062_document_approval_and_review` was 33 characters against
+  `alembic_version.version_num`'s `varchar(32)` (there is already a test
+  for that), and the first `ReaffirmControl` placement both broke JSX and
+  sat inside the `canEdit` gate, which would have hidden the cadence
+  verdict from `c3pao_assessor` — the role most likely to want it.
+
+The tests are mostly **negatives**, because the design is mostly refusals:
+no new version, byte-identical body, no new diff-history entry, no evidence
+detached, no control state touched, no SPRS movement, and a scheduled job
+that writes only notification rows. A test that only checked "a
+reaffirmation row appeared" would pass against an implementation that also
+quietly archived evidence.
+
+---
+
 ### A silently-skipping test job now fails ✅ DONE (2026-09-30)
 
 **This closes the third of three signals in this repo that reported success

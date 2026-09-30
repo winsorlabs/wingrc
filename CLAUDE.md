@@ -534,10 +534,11 @@ verified from this entry alone.
 Read that file before touching this item. **N.1 ✅ DONE** (2026-09-24) —
 `document`/`document_version`/`document_objective_tag` (migration 0059),
 versioned from day one. **N.2 ✅ DONE** (2026-09-28, no migration) —
-browser editing, diffs, audit surfacing. See `docs/roadmap.md`'s Done
-entries for both full writeups. N.3–N.5 not started — do not infer
-otherwise from this entry; the plan doc's own status line is the only
-source of truth.
+browser editing, diffs, audit surfacing. **N.3 ✅ DONE** (2026-09-30,
+migration 0062) — approval records and the review cadence. See
+`docs/roadmap.md`'s Done entries for all three full writeups. N.4–N.5 not
+started — do not infer otherwise from this entry; the plan doc's own status
+line is the only source of truth.
 
 N.2's decisions that constrain later slices: **document bodies are
 GFM-subset Markdown** and `backend/app/markdown_doc.py` is the only thing
@@ -551,6 +552,21 @@ and no HTML escape hatch was added on purpose) and no inline images until
 N.4 adds an upload path for `storage_key`. Editing is append-only with
 optimistic concurrency (`base_version_id` required); there is no
 autosave.
+
+N.3's decisions, which later slices must not undo: **`document_approval` is
+the single authoritative approval record**, and
+`DocumentVersion.approved_at`/`approved_by_contact_id` are a denormalized
+snapshot of the *initial* approval only — never read either to answer a
+cadence question, because they know nothing about reaffirmations.
+**Re-approving an unchanged document creates no new version**; it appends
+one approval row and changes nothing else, so N.2's diff history stays
+meaningful. **Overdue is derived, never stored** (`document_reviews.py`) —
+there is no `next_due_at` column, because a cadence change must move the
+due date. **Overdue flags, never invalidates**: evidence stays attached,
+control state is untouched, the SPRS score does not move; the scheduled
+digest writes only notification rows. `Document.cadence_months` is a third,
+distinct cadence — not `Organization.review_cadence_months` (per-org
+users/devices cycle) and not `ReviewCycle.cadence_months`.
 
 Reconciles two prior specs that had drifted apart (`ROADMAP.md` item F and
 this section's own earlier text, flagged 2026-09-07 as likely-duplicated
