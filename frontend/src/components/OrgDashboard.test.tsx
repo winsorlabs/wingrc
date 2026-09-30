@@ -62,6 +62,12 @@ function makeDashboardData(): DashboardData {
     raci_open_tasks: [],
     poam_summary: { open: 0, on_track: 0, delayed: 0, completed: 0, cancelled: 0 },
     raci_load: { msp_count: 0, customer_count: 0, other_count: 0, by_contact: [] },
+    document_reviews: {
+      overdue_count: 0,
+      due_soon_count: 0,
+      never_approved_count: 0,
+      items: [],
+    },
   };
 }
 

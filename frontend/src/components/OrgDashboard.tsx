@@ -8,6 +8,7 @@ import type {
   AuditLogRow,
   BlockedObjectiveItem,
   DashboardData,
+  DocumentReviewWidgetData,
   EvidenceExpiringItem,
   FamilyHeatmapEntry,
   PoamSummary,
@@ -148,6 +149,7 @@ export function OrgDashboard({ orgId, assessmentId, currentUserRole, onSwitchAss
         <RaciLoadSplitCard load={data.raci_load} />
         <RaciLoadByContactCard load={data.raci_load} />
         <PoamSummaryCard summary={data.poam_summary} />
+        <DocumentReviewCard data={data.document_reviews} />
         <SprsSubmissionCard orgId={orgId} />
         {canSeeAuditLog(currentUserRole) && <RecentActivityCard orgId={orgId} />}
       </div>
@@ -493,6 +495,40 @@ function RaciLoadByContactCard({ load }: { load: RaciLoadWidgetData }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function DocumentReviewCard({ data }: { data: DocumentReviewWidgetData }) {
+  const total = data.overdue_count + data.due_soon_count + data.never_approved_count;
+  return (
+    <div className="card">
+      <h2>Document Reviews</h2>
+      {total === 0 ? (
+        <p className="field-hint">Every document is within its review cadence.</p>
+      ) : (
+        <>
+          <ul className="stat-list">
+            <li><span>Overdue</span><span>{data.overdue_count}</span></li>
+            <li><span>Due soon</span><span>{data.due_soon_count}</span></li>
+            <li><span>Never approved</span><span>{data.never_approved_count}</span></li>
+          </ul>
+          <ul className="mini-list">
+            {data.items.map((i) => (
+              <li key={i.document_id}>
+                <span className={`doc-review doc-review-${i.status}`}>
+                  {i.status.replace(/_/g, " ")}
+                </span>{" "}
+                <strong>{i.doc_id}</strong> {i.title}
+              </li>
+            ))}
+          </ul>
+          <p className="field-hint">
+            An overdue review is a finding, not an expiry: the document stays approved and
+            its evidence stays attached until a person decides otherwise.
+          </p>
+        </>
+      )}
     </div>
   );
 }
