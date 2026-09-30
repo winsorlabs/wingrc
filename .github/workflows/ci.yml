@@ -18,6 +18,14 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-24.04  # pinned -- see the header note
+    env:
+      # Fail the job if the run tested almost nothing -- see
+      # backend/tests/conftest.py's count-floor section for the mechanism and
+      # why the threshold lives in the environment. ~458 tests run here
+      # today; the floor is deliberately less than half that so it catches
+      # "nothing ran" without needing an edit every time the suite grows or
+      # tests move between the two jobs.
+      WINGRC_MIN_TESTS_RUN: "200"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -80,6 +88,11 @@ jobs:
       # need a real key here, same as docker-compose.yml's own dev default.
       # CI-only key, not used anywhere real.
       WINGRC_CREDENTIAL_ENCRYPTION_KEYS: "ci:b_Lz6E-GOuMYIlFxMZW61m6ro3fgGGeRhwptwa8POz8="
+      # The guard for the incident the WINGRC_TEST_DATABASE_URL comment above
+      # describes. That comment explains why the variable must be set; this
+      # makes forgetting it *fail* instead of reporting green having touched
+      # no database. ~1027 tests run here today; floor is under half.
+      WINGRC_MIN_TESTS_RUN: "500"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

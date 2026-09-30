@@ -435,3 +435,97 @@ def _is_cleared(response, name: str) -> bool:
             value = first_segment.split("=", 1)[1]
             return value in ("", '""') and "Max-Age=0" in raw
     return False
+
+
+# ---------------------------------------------------------------------------
+# Count floor: fail a run that tested (almost) nothing.
+#
+# Third of three signals in this repo that reported success while checking
+# nothing. The other two are now guarded -- /health proves the schema
+# matches the build, and test_bundle_determinism.py's static guards catch an
+# ordering that behavioural comparison missed. This is the remaining one,
+# and the cheapest to trigger: unset WINGRC_TEST_DATABASE_URL and every
+# @pytest.mark.integration test skips cleanly, so the integration job goes
+# green having exercised no database at all. One environment variable.
+#
+# Why a conftest hook rather than parsing pytest's summary line: the hook
+# fails the run itself, in the same process, so no second step has to read
+# output -- and reading output is exactly what was not happening, since raw
+# CI logs need `Actions: read` that a watcher may not have. It also behaves
+# identically in CI, on the bench, and locally, whereas the summary line's
+# wording shifts with pytest version, -q/-v, and installed plugins, which
+# makes a grep for it a guard that rots quietly.
+#
+# Why an environment variable that carries the floor rather than a constant:
+# presence enables the check and the value *is* the threshold, so a narrow
+# run (`pytest tests/test_health.py`) cannot trip it by construction. There
+# is no list of "legitimate partial runs" to maintain -- the default is off,
+# and only CI turns it on.
+# ---------------------------------------------------------------------------
+
+_MIN_TESTS_ENV = "WINGRC_MIN_TESTS_RUN"
+
+# Tests whose body actually executed. Deliberately not "collected": a
+# collected-but-skipped test is precisely what this guard exists to catch.
+# A setup-phase error counts as not run, which is also right -- a fixture
+# that fails wholesale leaves nothing verified.
+_tests_actually_run = 0
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    global _tests_actually_run
+    if report.when == "call" and report.outcome in ("passed", "failed"):
+        _tests_actually_run += 1
+
+
+def _fail_session(session: pytest.Session, code: pytest.ExitCode, message: str) -> None:
+    """Set the exit status and say why, without depending on hook ordering.
+
+    Reported straight from `pytest_sessionfinish` rather than through
+    `pytest_terminal_summary`, because whether this conftest's summary hook
+    runs before or after the terminal reporter's is a registration-order
+    detail. Printing here puts the reason last, which is where a reader
+    looks, and needs no assumption to be correct.
+    """
+    session.exitstatus = code
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    if reporter is None:  # -p no:terminal, or an embedding harness
+        print(message)
+        return
+    reporter.write_sep("=", "count floor not met", red=True, bold=True)
+    reporter.write_line(message)
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    raw = os.environ.get(_MIN_TESTS_ENV)
+    if not raw:
+        return
+    # --collect-only runs nothing by design; the floor would always trip.
+    if getattr(session.config.option, "collectonly", False):
+        return
+
+    try:
+        floor = int(raw)
+    except ValueError:
+        # Fail loudly rather than silently disarming: a typo here would
+        # restore exactly the blind spot this guard closes.
+        _fail_session(
+            session,
+            pytest.ExitCode.USAGE_ERROR,
+            f"{_MIN_TESTS_ENV}={raw!r} is not an integer, so the count floor "
+            "could not be applied. Refusing to report a pass that was never "
+            "checked.",
+        )
+        return
+
+    if _tests_actually_run < floor:
+        _fail_session(
+            session,
+            pytest.ExitCode.TESTS_FAILED,
+            f"{_tests_actually_run} tests ran; {_MIN_TESTS_ENV}={floor} "
+            "required.\nThis job is configured to run far more than that, so "
+            "the run verified almost nothing and must not report success.\n"
+            "The usual cause is a missing environment variable making tests "
+            "skip wholesale -- check WINGRC_TEST_DATABASE_URL for the "
+            "integration job, and that the database service is reachable.",
+        )
