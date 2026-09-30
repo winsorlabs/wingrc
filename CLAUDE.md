@@ -112,14 +112,20 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   `backend/app/assessment.py`).
 - All DB-touching tests use `@pytest.mark.integration` and require
   `WINGRC_TEST_DATABASE_URL`. Unit tests run without a DB. **Mark the
-  test, not the module**, unless every test in the file needs a database:
-  a module-level `pytestmark` silently drops the file's non-DB tests from
-  a `-m "not integration"` run, which is exactly the configuration CI's
-  `backend` job uses. Three files were wrong this way until 2026-09-29 —
-  worst in `test_bundle_determinism.py`, whose static guards exist
-  precisely because behavioural testing missed the defect they catch, so
-  the marker made them skippable where they were the only protection. See
-  `docs/roadmap.md`'s CI-red entry.
+  test, not the module**, unless every test in the file needs a database.
+  **A marker never causes a skip — the `db_session` fixture does**, by
+  calling `pytest.skip()` when `WINGRC_TEST_DATABASE_URL` is unset. CI's
+  `backend` job runs plain `pytest -q` with no `-m` filter, so it runs
+  every test and the DB-needing ones skip themselves. What a misplaced
+  marker breaks is therefore **selection, not coverage**: `-m integration`
+  runs tests that need no database, and `-m "not integration"` drops tests
+  that would have run fine. An earlier version of this bullet claimed the
+  `backend` job uses `-m "not integration"` and that a module marker cost
+  it coverage; both were wrong, and measuring it is what showed so — the
+  no-DB total was 458 before and after the 2026-09-30 retag of 28
+  over-marked tests. Seven files have been corrected in both directions
+  (three under-marked 2026-09-29, four over-marked 2026-09-30); see
+  `docs/roadmap.md`'s CI-red and N.3 entries.
 - CI (`.github/workflows/ci.yml`) runs `backend` with **no database at
   all** and `integration` against `postgres:18`. Both run
   unconditionally — `integration` deliberately has no `needs: backend`,
