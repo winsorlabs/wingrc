@@ -37,12 +37,16 @@ from sqlalchemy.orm import Session
 
 from ..auth import require_org_access, require_write
 from ..db import get_session
+from ..document_reviews import (
+    documents_needing_attention,
+)
 from ..models import (
     Assessment,
     AssessmentObjective,
     Contact,
     Control,
     ControlState,
+    Document,
     EvidenceStateLink,
     EvidenceTask,
     EvidenceTaskStateLink,
@@ -62,6 +66,11 @@ router = APIRouter(
 
 _EVIDENCE_EXPIRING_WINDOW_DAYS = 30
 _LIST_WIDGET_CAP = 20
+# How many due documents the N.3 widget lists. Its counts are complete;
+# this caps only the preview, because a library with two hundred stale
+# documents would otherwise push every other widget off the screen. The
+# full view is the library list with `review_status=needs_attention`.
+_DOC_REVIEW_PREVIEW = 10
 _TRAJECTORY_CAP = 200
 _POAM_STATUSES = ("open", "on_track", "delayed", "completed", "cancelled")
 
@@ -152,6 +161,41 @@ class RaciLoadWidget(BaseModel):
     by_contact: list[RaciLoadByContact]
 
 
+class DocumentReviewItem(BaseModel):
+    document_id: uuid.UUID
+    doc_id: str
+    title: str
+    status: str
+    last_approved_at: datetime | None
+    next_due_at: datetime | None
+    days_until_due: int | None
+
+
+class DocumentReviewWidget(BaseModel):
+    """Documents whose review needs a person -- roadmap N.3 section 4.
+
+    Here, on the assessment dashboard, because an overdue policy review is
+    a *finding*: the engineer running the assessment is who needs to see
+    it, not only whoever opens the Library. The document library list
+    carries the same verdict per row; this is the aggregate view.
+
+    Org-scoped, not assessment-scoped, unlike every other widget on this
+    dashboard -- documents belong to the org and outlive any one
+    assessment. Shown here anyway for the reason above; the counts are of
+    the org's documents, which is why this widget names no assessment.
+
+    **Nothing here changes because a review came due.** The evidence a
+    published document produced stays attached and the SPRS score does not
+    move -- see document_reviews.py. This widget reports; it does not
+    enact.
+    """
+
+    overdue_count: int
+    due_soon_count: int
+    never_approved_count: int
+    items: list[DocumentReviewItem]
+
+
 class DashboardOut(BaseModel):
     family_heatmap: list[FamilyHeatmapEntry]
     sprs: SprsWidget
@@ -164,6 +208,7 @@ class DashboardOut(BaseModel):
     raci_open_tasks: list[RaciBucket]
     poam_summary: PoamSummary
     raci_load: RaciLoadWidget
+    document_reviews: DocumentReviewWidget
 
 
 # ---------------------------------------------------------------------------
@@ -464,6 +509,44 @@ def _poam_summary(session: Session, assessment_id: uuid.UUID) -> PoamSummary:
 # ---------------------------------------------------------------------------
 
 
+def _document_reviews(session: Session, org_id: uuid.UUID) -> DocumentReviewWidget:
+    """Overdue / due-soon / never-approved documents for this org.
+
+    Derived on read from document_approval plus Document.cadence_months,
+    by the same function the API and the digest job use -- one
+    implementation of "overdue", so the dashboard cannot disagree with the
+    library list or with what the scheduler emailed about.
+
+    `items` is capped: a library with two hundred stale documents is a
+    known problem, and rendering all of them here would push every other
+    widget off the screen. The counts are complete; the list is a preview,
+    and the library list with `review_status=needs_attention` is the full
+    view. Already totally ordered by documents_needing_attention (worst
+    first, then doc_id, which is unique per org).
+    """
+    due = documents_needing_attention(session, org_id=org_id, now=datetime.now(UTC))
+    counts = {"overdue": 0, "due_soon": 0, "never_approved": 0}
+    for d in due:
+        counts[d.state.status] += 1
+    return DocumentReviewWidget(
+        overdue_count=counts["overdue"],
+        due_soon_count=counts["due_soon"],
+        never_approved_count=counts["never_approved"],
+        items=[
+            DocumentReviewItem(
+                document_id=d.document.id,
+                doc_id=d.document.doc_id,
+                title=d.document.title,
+                status=d.state.status,
+                last_approved_at=d.state.last_approved_at,
+                next_due_at=d.state.next_due_at,
+                days_until_due=d.state.days_until_due,
+            )
+            for d in due[:_DOC_REVIEW_PREVIEW]
+        ],
+    )
+
+
 @router.get("/assessments/{assessment_id}/dashboard", response_model=DashboardOut)
 def get_dashboard(
     org_id: uuid.UUID,
@@ -493,4 +576,5 @@ def get_dashboard(
         raci_open_tasks=_raci_open_tasks(session, assessment_id),
         poam_summary=_poam_summary(session, assessment_id),
         raci_load=_raci_load(session, assessment_id),
+        document_reviews=_document_reviews(session, org_id),
     )
