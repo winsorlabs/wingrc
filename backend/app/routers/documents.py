@@ -1,12 +1,22 @@
-"""Document library (roadmap item N, slices N.1 and N.2).
+"""Document library (roadmap item N, slices N.1, N.2 and N.3).
 
 N.1 established the core versioned record shape; N.2 added the read
 surface a browser editor needs -- single-version detail, a structured
 diff between any two versions, and the versions-plus-audit history view --
-plus optimistic-concurrency conflict detection on save. N.3 (approval
-workflow/review cadence), N.4 (MSP templates) and N.5 (suggested
-documentation) build on this and models.py:Document/DocumentVersion/
-DocumentObjectiveTag -- see docs/PLAN-document-library.md.
+plus optimistic-concurrency conflict detection on save. N.3 added the
+approval record and the review cadence: every `DocumentOut` now carries a
+derived `review` verdict, approval history is its own endpoint, and
+re-approval of an unchanged document appends an approval without creating a
+version. N.4 (MSP templates) and N.5 (suggested documentation) build on
+this and models.py:Document/DocumentVersion/DocumentObjectiveTag -- see
+docs/PLAN-document-library.md.
+
+N.3's cadence logic lives in document_reviews.py, not here: whether a
+document is overdue is derived arithmetic over document_approval, and it is
+deliberately never stored. Nothing in this router reads
+`DocumentVersion.approved_at` to answer a cadence question -- that column
+is a snapshot of the initial approval only and knows nothing about
+reaffirmations.
 
 Document bodies are GFM-subset Markdown; markdown_doc.py owns the format
 decision and is the only thing that renders one to HTML. Nothing in this
@@ -31,6 +41,12 @@ Endpoints:
   POST   /orgs/{org_id}/documents/{document_id}/objective-tags       Tag an objective
   DELETE /orgs/{org_id}/documents/{document_id}/objective-tags/{id}  Untag
   POST   /orgs/{org_id}/documents/{document_id}/publish              Approve current version
+  GET    /orgs/{org_id}/documents/{document_id}/approvals            Approval history (N.3)
+  POST   /orgs/{org_id}/documents/{document_id}/reaffirm             Re-approve, unchanged (N.3)
+
+`GET /documents` takes `review_status` alongside `doc_type` -- the cadence
+verdict is derived, so that filter is applied after the query, not as a
+WHERE clause.
 
 Uses {document_id} (the internal UUID), not roadmap N's illustrative
 {doc_id} path notation -- every other resource in this API keys its URL on
@@ -65,6 +81,14 @@ from ..audit import identity_out, log_event, parse_actor_uuid, resolve_identitie
 from ..auth import require_org_access, require_write
 from ..db import get_session
 from ..document_diff import BodyDiff, diff_bodies, diff_sets
+from ..document_reviews import (
+    DocumentReviewError,
+    approvals_for_document,
+    latest_approval,
+    reaffirm,
+    record_approval,
+    review_state,
+)
 from ..models import (
     Assessment,
     AssessmentObjective,
@@ -72,6 +96,7 @@ from ..models import (
     Contact,
     ControlState,
     Document,
+    DocumentApproval,
     DocumentObjectiveTag,
     DocumentVersion,
     Evidence,
@@ -86,6 +111,12 @@ router = APIRouter(
 
 _DOC_TYPES = frozenset({"policy", "procedure", "plan", "list", "sop", "form", "other"})
 _MANUAL_VERSION_STATUSES = frozenset({"draft", "under_review"})
+
+# N.3 review-cadence filter vocabulary. The four are document_reviews.py's
+# own status values; `needs_attention` is the union an operator actually
+# wants, kept as a named filter rather than making callers pass three.
+_NEEDS_ATTENTION = frozenset({"never_approved", "due_soon", "overdue"})
+_REVIEW_FILTERS = frozenset({*_NEEDS_ATTENTION, "current", "needs_attention"})
 
 # doc_id lands in Evidence.reference_location once published and is meant
 # to be usable as a storage-path component later (N.4) -- treated as the
@@ -115,6 +146,46 @@ class DocumentVersionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ReviewStateOut(BaseModel):
+    """Where this document stands against its review cadence -- N.3.
+
+    Computed on every read, never stored (document_reviews.py's module
+    docstring has the reasoning). `status` is one of never_approved /
+    current / due_soon / overdue.
+
+    Carried on every DocumentOut so the library list can show overdue
+    without a second round trip -- §4's "make overdue visible" starts
+    here, and a field the list already has is harder to forget to render
+    than a separate endpoint.
+    """
+
+    status: str
+    last_approved_at: datetime | None
+    next_due_at: datetime | None
+    days_until_due: int | None
+
+
+class ApprovalOut(BaseModel):
+    """One approval decision -- initial or reaffirmation.
+
+    `approver_*` is the named Contact whose decision satisfies the cadence.
+    The authenticated user who *recorded* it is a different fact and is
+    deliberately not here: it lives in audit_log and is surfaced by
+    `GET .../history`, the same place N.2 put document history rather than
+    duplicating it. See DocumentApproval's docstring -- these are usually
+    two different people and the UI must not imply the clicker approved it.
+    """
+
+    id: uuid.UUID
+    document_version_id: uuid.UUID
+    version_number: int | None
+    approval_type: str
+    approved_at: datetime
+    approved_by_contact_id: uuid.UUID | None
+    approver_name: str
+    note: str | None
+
+
 class DocumentOut(BaseModel):
     id: uuid.UUID
     doc_id: str
@@ -124,6 +195,7 @@ class DocumentOut(BaseModel):
     is_template_derived: bool
     template_ref: str | None
     current_version: DocumentVersionOut | None
+    review: ReviewStateOut
     created_at: datetime
     updated_at: datetime
 
@@ -252,6 +324,29 @@ def _version_out(v: DocumentVersion) -> DocumentVersionOut:
     return DocumentVersionOut.model_validate(v)
 
 
+def _review_out(session: Session, doc: Document, *, now: datetime | None = None) -> ReviewStateOut:
+    """The cadence verdict, from the newest approval of any kind.
+
+    Reads document_approval, never DocumentVersion.approved_at -- that
+    column is a denormalized snapshot of the *initial* approval only and
+    knows nothing about reaffirmations, so using it here would report a
+    document re-approved four times as last reviewed on its original date.
+    DocumentApproval's docstring says the same thing from the other side.
+    """
+    approval = latest_approval(session, document_id=doc.id)
+    state = review_state(
+        last_approved_at=approval.approved_at if approval else None,
+        cadence_months=doc.cadence_months,
+        now=now or datetime.now(UTC),
+    )
+    return ReviewStateOut(
+        status=state.status,
+        last_approved_at=state.last_approved_at,
+        next_due_at=state.next_due_at,
+        days_until_due=state.days_until_due,
+    )
+
+
 def _document_out(session: Session, doc: Document) -> DocumentOut:
     current = (
         session.get(DocumentVersion, doc.current_version_id) if doc.current_version_id else None
@@ -261,6 +356,7 @@ def _document_out(session: Session, doc: Document) -> DocumentOut:
         cadence_months=doc.cadence_months, is_template_derived=doc.is_template_derived,
         template_ref=doc.template_ref,
         current_version=_version_out(current) if current is not None else None,
+        review=_review_out(session, doc),
         created_at=doc.created_at, updated_at=doc.updated_at,
     )
 
@@ -338,11 +434,20 @@ def list_documents(
     org_id: uuid.UUID,
     session: Session = Depends(get_session),
     doc_type: str | None = None,
+    review_status: str | None = None,
 ) -> list[DocumentOut]:
     """`doc_type` backs the Library nav's per-type views (Policies,
     Procedures, Plans) -- validated against the same vocabulary the create
     and patch bodies use, so an unknown value is a 422 rather than a
     silently empty list that reads like "you have no policies".
+
+    `review_status` (N.3) filters on the *derived* cadence verdict, so it
+    is applied in Python after the query rather than as a WHERE clause --
+    "overdue" is not a column and deliberately is not one (see
+    document_reviews.py). `needs_attention` is the useful one: everything
+    an operator should act on, which is never_approved + due_soon +
+    overdue rather than just overdue. Validated the same way doc_type is,
+    for the same reason.
     """
     query = select(Document).where(Document.org_id == org_id)
     if doc_type is not None:
@@ -351,8 +456,18 @@ def list_documents(
                 status_code=422, detail=f"doc_type must be one of: {sorted(_DOC_TYPES)}"
             )
         query = query.where(Document.doc_type == doc_type)
+    if review_status is not None and review_status not in _REVIEW_FILTERS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"review_status must be one of: {sorted(_REVIEW_FILTERS)}",
+        )
     docs = session.scalars(query.order_by(Document.doc_id)).all()
-    return [_document_out(session, d) for d in docs]
+    out = [_document_out(session, d) for d in docs]
+    if review_status == "needs_attention":
+        return [d for d in out if d.review.status in _NEEDS_ATTENTION]
+    if review_status is not None:
+        return [d for d in out if d.review.status == review_status]
+    return out
 
 
 @router.get("/{org_id}/documents/{document_id}", response_model=DocumentDetailOut)
@@ -700,6 +815,19 @@ def publish_document(
     version.approved_at = now
     version.approved_by_contact_id = body.approved_by_contact_id
     session.flush()
+
+    # N.3: the authoritative approval record. The two lines above are now a
+    # denormalized snapshot of *this* row -- see DocumentApproval's
+    # docstring. Written here, inside the one path that can grant approval,
+    # so there is no way to become approved without an approval record.
+    record_approval(
+        session,
+        document=doc,
+        version=version,
+        contact=contact,
+        approval_type="initial",
+        now=now,
+    )
 
     # Republish: supersede any other version of this document still marked
     # approved, and archive the evidence links its own Evidence row(s)
@@ -1145,3 +1273,126 @@ def get_document_diff(
         objective_basis_note=note,
         events=events,
     )
+
+
+# ---------------------------------------------------------------------------
+# N.3 -- approval history and re-approval
+# ---------------------------------------------------------------------------
+
+
+class ReaffirmIn(BaseModel):
+    """Re-approve the currently approved version, unchanged.
+
+    `approved_by_contact_id` is the named person whose decision this is --
+    required, never defaulted to the authenticated caller, because the whole
+    point of the Contact/User split is that the approver frequently is not a
+    login (DocumentApproval's docstring). Defaulting it would quietly record
+    the operator as the approver, which is the misattribution this design
+    exists to avoid.
+    """
+
+    approved_by_contact_id: uuid.UUID
+    note: str | None = None
+
+
+def _approval_out(session: Session, approval: DocumentApproval) -> ApprovalOut:
+    version = session.get(DocumentVersion, approval.document_version_id)
+    return ApprovalOut(
+        id=approval.id,
+        document_version_id=approval.document_version_id,
+        version_number=version.version_number if version is not None else None,
+        approval_type=approval.approval_type,
+        approved_at=approval.approved_at,
+        approved_by_contact_id=approval.approved_by_contact_id,
+        approver_name=approval.approver_name,
+        note=approval.note,
+    )
+
+
+@router.get(
+    "/{org_id}/documents/{document_id}/approvals",
+    response_model=list[ApprovalOut],
+)
+def list_document_approvals(
+    org_id: uuid.UUID, document_id: uuid.UUID, session: Session = Depends(get_session)
+) -> list[ApprovalOut]:
+    """Full approval history, newest first -- "reviewed and still current on
+    <date> by <person>", which is what a periodic-review control asks for.
+
+    Readable by `c3pao_assessor`: this is exactly the evidence an assessor
+    wants, and `require_write` (applied at router level) gates methods, not
+    routes, so a GET stays open to read-only roles while the reaffirm POST
+    below does not.
+    """
+    _get_document(session, org_id, document_id)
+    return [
+        _approval_out(session, a)
+        for a in approvals_for_document(session, document_id=document_id)
+    ]
+
+
+@router.post(
+    "/{org_id}/documents/{document_id}/reaffirm",
+    response_model=DocumentDetailOut,
+)
+def reaffirm_document(
+    org_id: uuid.UUID,
+    document_id: uuid.UUID,
+    body: ReaffirmIn,
+    session: Session = Depends(get_session),
+) -> DocumentDetailOut:
+    """Record that the approved version was reviewed and is still current.
+
+    **Creates no new version, and mutates nothing.** The approved version's
+    body stays byte-identical, its status stays `approved`, its evidence
+    links stay exactly as they are, and N.2's diff history gains no entry --
+    because nothing changed. A byte-identical version would fake an edit and
+    answer "what changed in this policy" with noise for every annual review
+    that changed nothing. All that happens is one appended
+    `document_approval` row, which moves the derived cadence verdict back to
+    `current`.
+
+    Requires an already-approved version. A draft has nothing to reaffirm,
+    and treating "reaffirm a draft" as approval would grant approval outside
+    `publish_document` -- the only path that attaches evidence.
+
+    Refused for `c3pao_assessor` by the router-level `require_write` gate:
+    an assessor reads approvals, never grants one.
+    """
+    try:
+        approval = reaffirm(
+            session,
+            org_id=org_id,
+            document_id=document_id,
+            contact_id=body.approved_by_contact_id,
+            now=datetime.now(UTC),
+            note=body.note,
+        )
+    except DocumentReviewError as e:
+        message = str(e)
+        if "not found" in message:
+            raise HTTPException(status_code=404, detail=message) from e
+        if "must be a contact" in message:
+            raise HTTPException(status_code=422, detail=message) from e
+        raise HTTPException(status_code=409, detail=message) from e
+
+    doc = _get_document(session, org_id, document_id)
+    log_event(
+        session,
+        org_id=org_id,
+        action="document.reaffirm",
+        entity_type="document",
+        entity_id=doc.id,
+        context={
+            "doc_id": doc.doc_id,
+            "document_version_id": str(approval.document_version_id),
+            # The named approver. Who was authenticated is resolved by
+            # log_event itself, onto the actor columns -- two different
+            # facts, and this is the one the cadence is satisfied by.
+            "approver_name": approval.approver_name,
+            "approved_by_contact_id": str(approval.approved_by_contact_id),
+            "cadence_months": doc.cadence_months,
+        },
+    )
+    session.commit()
+    return _document_detail_out(session, doc)
