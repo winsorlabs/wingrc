@@ -188,6 +188,33 @@ def upgrade() -> None:
         ["contact_id"],
     )
 
+    # Pre-existing defect, fixed here because it is the same subject: N.1
+    # declared document_version.approved_by_contact_id with no ON DELETE
+    # clause, making it the only nullable contact FK in this schema without
+    # one (ReviewCycleReviewer.user_id,
+    # SprsSubmission.submitted_by_contact_id,
+    # LiongardSyncNotification.contact_id and AssetApproval all use SET
+    # NULL). The effect was that a contact who had ever approved a document
+    # could not be deleted: the DELETE raised a ForeignKeyViolation, which
+    # breaks ADR 0006's anonymize/hard-delete path outright.
+    #
+    # Found by a test in this slice deleting an approver, not by reading the
+    # schema. Nulling the column loses nothing now that document_approval is
+    # the authoritative record and denormalizes approver_name.
+    op.drop_constraint(
+        "document_version_approved_by_contact_id_fkey",
+        "document_version",
+        type_="foreignkey",
+    )
+    op.create_foreign_key(
+        "document_version_approved_by_contact_id_fkey",
+        "document_version",
+        "contact",
+        ["approved_by_contact_id"],
+        ["id"],
+        ondelete="SET NULL",
+    )
+
     _rls("document_approval")
     _rls("document_review_notification")
 
@@ -248,6 +275,18 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_constraint(
+        "document_version_approved_by_contact_id_fkey",
+        "document_version",
+        type_="foreignkey",
+    )
+    op.create_foreign_key(
+        "document_version_approved_by_contact_id_fkey",
+        "document_version",
+        "contact",
+        ["approved_by_contact_id"],
+        ["id"],
+    )
     op.execute("DROP FUNCTION IF EXISTS auth.orgs_with_documents()")
     op.execute(
         "DROP POLICY IF EXISTS document_review_notification_tenant_isolation "

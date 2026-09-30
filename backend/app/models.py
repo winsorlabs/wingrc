@@ -2890,8 +2890,22 @@ class DocumentVersion(Base):
     # captured separately, by audit_log (via log_event's actor
     # resolution) -- these are two different facts, deliberately not
     # merged into one.
+    # ON DELETE SET NULL, added by migration 0062. N.1 declared this FK with
+    # no ondelete at all -- the only nullable contact FK in this schema
+    # without one, where ReviewCycleReviewer.user_id,
+    # SprsSubmission.submitted_by_contact_id,
+    # LiongardSyncNotification.contact_id and AssetApproval all use SET NULL
+    # for the same reason. The effect was that a contact who had ever
+    # approved a document could not be deleted at all: the delete raised a
+    # ForeignKeyViolation, which breaks ADR 0006's anonymize/hard-delete
+    # path. Found by N.3's own test deleting an approver
+    # (test_digest_reports_when_nobody_can_be_notified), not by inspection.
+    #
+    # Nulling this loses nothing: document_approval is the authoritative
+    # record and denormalizes approver_name, so "who approved it" survives
+    # the contact being deleted.
     approved_by_contact_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("contact.id"), nullable=True
+        UUID(as_uuid=True), ForeignKey("contact.id", ondelete="SET NULL"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
