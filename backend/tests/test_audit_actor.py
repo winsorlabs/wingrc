@@ -47,7 +47,20 @@ from app.models import (
 )
 from tests.conftest import _app_session, _authed, _grant
 
-pytestmark = pytest.mark.integration
+# `integration` is applied per test below, not to the whole module,
+# because not every test in this file needs a database.
+#
+# This is marker *accuracy*, not recovered coverage -- a distinction
+# worth stating because the opposite was assumed and measured false. A
+# marker never causes a skip; the `db_session` fixture does. CI's
+# no-database job runs plain `pytest -q` with no `-m` filter, so these
+# tests already ran there with the module marker in place (verified
+# directly: the no-DB total was 458 before and after this change).
+#
+# What a module-level marker actually broke is *selection*:
+# `-m integration` pulled in tests needing no database, and
+# `-m "not integration"` dropped tests that would have run fine. See
+# `docs/roadmap.md`'s N.3 entry.
 
 
 @pytest.fixture
@@ -78,6 +91,7 @@ def _last_row(db_session, action: str, org_id: uuid.UUID) -> AuditLog:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_bundle_export_attributes_to_authenticated_user(client, db_session, fake_msp_admin):
     """The sharpest case: bundle.export is the record of who generated the
     package handed to a C3PAO — it must not say "system"."""
@@ -98,6 +112,7 @@ def test_bundle_export_attributes_to_authenticated_user(client, db_session, fake
     assert row.actor_type == "user"
 
 
+@pytest.mark.integration
 def test_contacts_create_attributes_to_authenticated_user(client, db_session, fake_msp_admin):
     org = _org(db_session, fake_msp_admin.org_id)
     _grant(db_session, fake_msp_admin)
@@ -114,6 +129,7 @@ def test_contacts_create_attributes_to_authenticated_user(client, db_session, fa
     assert row.actor_type == "user"
 
 
+@pytest.mark.integration
 def test_evidence_collect_reference_attributes_to_authenticated_user(
     client, db_session, fake_msp_admin
 ):
@@ -159,6 +175,7 @@ def test_evidence_collect_reference_attributes_to_authenticated_user(
     assert row.actor_type == "user"
 
 
+@pytest.mark.integration
 def test_orgs_patch_profile_attributes_to_authenticated_user(client, db_session, fake_msp_admin):
     org = _org(db_session, fake_msp_admin.org_id)
     _grant(db_session, fake_msp_admin)
@@ -172,6 +189,7 @@ def test_orgs_patch_profile_attributes_to_authenticated_user(client, db_session,
     assert row.actor_type == "user"
 
 
+@pytest.mark.integration
 def test_scope_create_entity_attributes_to_authenticated_user(client, db_session, fake_msp_admin):
     org = _org(db_session, fake_msp_admin.org_id)
     _grant(db_session, fake_msp_admin)
@@ -188,6 +206,7 @@ def test_scope_create_entity_attributes_to_authenticated_user(client, db_session
     assert row.actor_type == "user"
 
 
+@pytest.mark.integration
 def test_assessments_deactivate_product_attributes_to_authenticated_user(
     client, db_session, fake_msp_admin
 ):
@@ -229,6 +248,7 @@ def test_assessments_deactivate_product_attributes_to_authenticated_user(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_api_token_authenticated_action_attributes_to_the_user_behind_the_token(
     client, db_session, fake_msp_admin
 ):
@@ -270,6 +290,7 @@ def test_api_token_authenticated_action_attributes_to_the_user_behind_the_token(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_log_event_called_directly_outside_a_request_defaults_to_system(db_session):
     """Mirrors test_audit_log.py's IP-address equivalent. No ambient
     request/ContextVar in this path (log_event called directly from plain
@@ -323,6 +344,7 @@ def test_log_event_outside_any_request_never_raises_no_db_required():
     assert session.added is entry
 
 
+@pytest.mark.integration
 def test_explicit_system_actor_wins_over_a_set_contextvar(db_session):
     """A caller that means a real system-triggered action must be able to
     force actor="system" explicitly even if the ContextVar happens to be

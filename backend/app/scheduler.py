@@ -140,12 +140,18 @@ from sqlalchemy import create_engine, select, text, update
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
-from . import email_service, liongard_sync, review_cycles
+from . import document_reviews, email_service, liongard_sync, review_cycles
 from .audit import log_event
 from .config import get_settings
 from .connectors import liongard as liongard_connector
 from .db import SessionLocal
-from .models import JobRun, LiongardSyncNotification, ReviewCycle, ReviewCycleReviewer
+from .models import (
+    DocumentReviewNotification,
+    JobRun,
+    LiongardSyncNotification,
+    ReviewCycle,
+    ReviewCycleReviewer,
+)
 from .rls import set_current_org
 from .storage import get_storage_client
 
@@ -611,6 +617,131 @@ def _liongard_daily_sync(session: Session) -> dict:
     }
 
 
+_DOC_REVIEW_DIGEST_SUBJECT = "Documents are due for review in WinGRC"
+_DOC_REVIEW_DIGEST_BODY = (
+    "One or more documents are due for review and re-approval in WinGRC.\n\n"
+    "Sign in to review: {link}\n"
+)
+
+
+def _document_review_digest(session: Session) -> dict:
+    """N.3: surface documents due for re-approval and notify. Per-org loop
+    over every org that has any document
+    (auth.orgs_with_documents(), migration 0062 -- `document` is
+    RLS-protected, so cross-org discovery needs the same SECURITY DEFINER
+    mechanism auth.orgs_with_liongard_mapping() uses).
+
+    **Changes no document state. At all.** It writes only
+    document_review_notification rows. It does not create versions, does not
+    touch DocumentVersion.status, does not expire or unpublish anything, does
+    not create or archive Evidence or EvidenceStateLink rows, and does not
+    touch control_state or any SPRS score. An overdue document stays exactly
+    as it was, still approved, with its evidence still attached -- "overdue"
+    is a derived verdict a person acts on, not a state a clock writes. This
+    is the same refusal that governs the whole codebase: a scheduled job may
+    surface something for review, never apply one unattended (see this
+    module's own docstring and _liongard_daily_sync's).
+
+    The due set itself is computed by document_reviews.py in Python, not in
+    SQL, so the digest counts exactly what the API reports as needing
+    attention -- one implementation of "overdue", not two that can drift.
+
+    **A digest, not one email per document.** One email per recipient per
+    org per run, naming no document, count, or org -- email_service.py's
+    content rule is "something needs your attention, sign in to WinGRC"
+    plus a link, because mail leaves the deployment's trust boundary. The
+    count is recorded server-side on the notification row instead. An MSP
+    with forty tenants and a dozen policies each would otherwise generate
+    hundreds of messages per sweep, which is how a notification channel
+    gets ignored -- the same argument D.3 applied to asset approvals.
+
+    **"Nobody holds that role" is reported, never swallowed.** Counted as
+    orgs_with_no_contact and logged, exactly as _liongard_daily_sync does;
+    that specific bug -- a notification silently dropped because no contact
+    held the role -- has been fixed twice in this codebase, so it is handled
+    explicitly rather than treated as "nothing to do". Recipients are each
+    due document's own named approver plus every contact holding
+    security_officer or it_admin, so a deleted or never-set approver still
+    does not mean nobody hears about it.
+    """
+    org_rows = session.execute(text("SELECT org_id FROM auth.orgs_with_documents()")).all()
+    now = datetime.now(UTC)
+
+    orgs_checked = 0
+    orgs_with_due = 0
+    orgs_with_no_contact = 0
+    documents_due = 0
+    notifications_sent = 0
+    errors = 0
+
+    for (org_id,) in org_rows:
+        set_current_org(session, org_id)
+        orgs_checked += 1
+
+        due = document_reviews.documents_needing_attention(
+            session, org_id=org_id, now=now
+        )
+        if not due:
+            continue
+        orgs_with_due += 1
+        documents_due += len(due)
+
+        candidates = document_reviews.notify_candidates_for_org(
+            session, org_id=org_id, due=due
+        )
+        if not candidates:
+            logger.warning(
+                "Document review digest: no recipient for org=%s (%d document(s) due) -- "
+                "no contact holds security_officer or it_admin and no due document has a "
+                "named approver on record",
+                org_id,
+                len(due),
+            )
+            orgs_with_no_contact += 1
+            continue
+
+        link, link_error = _review_link_or_error()
+        for cand in candidates:
+            notification = DocumentReviewNotification(
+                org_id=org_id,
+                contact_id=cand.contact_id,
+                recipient_name=cand.name,
+                recipient_email=cand.email,
+                document_count=len(due),
+            )
+            session.add(notification)
+            session.flush()
+            if link is None:
+                document_reviews.record_notification_result(
+                    session, notification=notification, sent=False, error=link_error
+                )
+                continue
+            r = email_service.send(
+                session,
+                to=cand.email,
+                subject=_DOC_REVIEW_DIGEST_SUBJECT,
+                body=_DOC_REVIEW_DIGEST_BODY.format(link=link),
+                template="document_review_digest",
+            )
+            document_reviews.record_notification_result(
+                session, notification=notification, sent=r.sent, error=r.error
+            )
+            if r.sent:
+                notifications_sent += 1
+            else:
+                errors += 1
+        session.commit()
+
+    return {
+        "orgs_checked": orgs_checked,
+        "orgs_with_due": orgs_with_due,
+        "orgs_with_no_contact": orgs_with_no_contact,
+        "documents_due": documents_due,
+        "notifications_sent": notifications_sent,
+        "errors": errors,
+    }
+
+
 JOB_REGISTRY: dict[str, JobSpec] = {
     spec.name: spec
     for spec in (
@@ -654,6 +785,18 @@ JOB_REGISTRY: dict[str, JobSpec] = {
             # schedule would need.
             interval=timedelta(hours=24),
             run=_liongard_daily_sync,
+        ),
+        JobSpec(
+            name="document_review_digest",
+            # Daily, same shape as every other cadence check here: a
+            # per-document cadence measured in months (Document.
+            # cadence_months) needs "check daily whether anything is due,"
+            # not "fire on the anniversary" -- see the module docstring's
+            # Timezone section for why a fixed 24h interval is the only
+            # schedule type this scheduler supports and why that is fine
+            # for a business cadence in months.
+            interval=timedelta(hours=24),
+            run=_document_review_digest,
         ),
     )
 }

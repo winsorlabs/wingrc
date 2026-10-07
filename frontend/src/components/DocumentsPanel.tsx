@@ -16,7 +16,7 @@ import { api } from "../api";
 import { deriveCanWrite } from "../lib/roles";
 import { DocumentDiffView } from "./DocumentDiffView";
 import { DocumentHistoryPanel } from "./DocumentHistoryPanel";
-import type { Contact, DocumentDetail, DocumentRow, DocumentType } from "../types";
+import type { Contact, DocumentDetail, DocumentReviewState, DocumentReviewStatus, DocumentRow, DocumentType } from "../types";
 
 // TipTap and ProseMirror are ~700 kB of the production bundle, and every
 // screen that is not this one pays for them on first load otherwise. Split
@@ -138,6 +138,138 @@ function CreateForm({
   );
 }
 
+const REVIEW_LABEL: Record<DocumentReviewStatus, string> = {
+  never_approved: "never approved",
+  current: "review current",
+  due_soon: "review due soon",
+  overdue: "review overdue",
+};
+
+/**
+ * The cadence verdict (N.3), shown wherever a document is listed.
+ *
+ * `current` renders nothing: a badge on every healthy document is noise
+ * that trains people to stop reading badges, which is the opposite of what
+ * this is for.
+ */
+function ReviewBadge({ review }: { review: DocumentReviewState }) {
+  if (review.status === "current") return null;
+  return (
+    <span className={`doc-review doc-review-${review.status}`}>
+      {REVIEW_LABEL[review.status]}
+    </span>
+  );
+}
+
+function reviewDetail(review: DocumentReviewState): string {
+  const last = review.last_approved_at
+    ? `Last approved ${new Date(review.last_approved_at).toLocaleDateString()}.`
+    : "Never approved.";
+  if (review.next_due_at === null) return last;
+  const due = new Date(review.next_due_at).toLocaleDateString();
+  if (review.days_until_due !== null && review.days_until_due < 0) {
+    return `${last} Review was due ${due} (${Math.abs(review.days_until_due)} days ago).`;
+  }
+  return `${last} Next review due ${due}.`;
+}
+
+/**
+ * Re-approve an already-approved document without changing it (N.3).
+ *
+ * Deliberately does not offer an "edit and re-approve" shortcut: editing
+ * creates a draft version and goes through Publish, which is what attaches
+ * evidence. This button exists for the other case -- reviewed, unchanged,
+ * still current -- and records exactly that.
+ */
+function ReaffirmControl({
+  orgId,
+  doc,
+  contacts,
+  onReaffirmed,
+  canEdit,
+}: {
+  orgId: string;
+  doc: DocumentDetail;
+  contacts: Contact[];
+  onReaffirmed: () => void;
+  canEdit: boolean;
+}) {
+  const [contactId, setContactId] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const current = doc.current_version;
+  if (!current || current.status !== "approved") return null;
+
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.reaffirmDocument(orgId, doc.id, contactId, note);
+      setNote("");
+      setContactId("");
+      onReaffirmed();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not record the review.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="doc-publish">
+      <p className="field-hint">
+        Version {current.version_number} is approved
+        {current.approved_at
+          ? ` (${new Date(current.approved_at).toLocaleDateString()})`
+          : ""}
+        . <ReviewBadge review={doc.review} /> {reviewDetail(doc.review)}
+      </p>
+      {canEdit && (
+        <>
+          <label>
+            Reviewed and approved by
+            <select value={contactId} onChange={(e) => setContactId(e.target.value)}>
+              <option value="">Select a contact…</option>
+              {contacts.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.affiliation})
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Note (optional)
+            <input
+              type="text"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="e.g. Annual review, no changes required"
+            />
+          </label>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={submit}
+            disabled={busy || !contactId}
+          >
+            {busy ? "Recording…" : "Record review — still current"}
+          </button>
+          <p className="field-hint">
+            Records that the named person above reviewed this document and it is still
+            current. It creates <strong>no new version</strong> and changes nothing about the
+            approved text. You are recorded separately as the person who entered it — see
+            History.
+          </p>
+        </>
+      )}
+      {error && <div className="doc-notice doc-notice-error">{error}</div>}
+    </div>
+  );
+}
+
+
 function PublishControl({
   orgId,
   doc,
@@ -155,14 +287,9 @@ function PublishControl({
 
   const current = doc.current_version;
   if (!current) return null;
-  if (current.status === "approved") {
-    return (
-      <p className="field-hint">
-        Version {current.version_number} is approved
-        {current.approved_at ? ` (${new Date(current.approved_at).toLocaleDateString()})` : ""}.
-      </p>
-    );
-  }
+  // The approved case belongs to ReaffirmControl (N.3), which shows the
+  // cadence verdict and offers re-approval rather than a dead sentence.
+  if (current.status === "approved") return null;
   if (current.status === "superseded") return null;
 
   const publish = async () => {
@@ -305,6 +432,7 @@ export function DocumentsPanel({
                       {d.current_version.version_number}
                     </span>
                   )}
+                  <ReviewBadge review={d.review} />
                 </button>
               </li>
             ))}
@@ -358,6 +486,21 @@ export function DocumentsPanel({
                     }}
                   />
                 </Suspense>
+                {/* Outside the canEdit gate on purpose: a read-only role
+                    (c3pao_assessor) must still see where a document stands
+                    against its cadence -- that is exactly what an assessor
+                    is looking for. ReaffirmControl gates only its form on
+                    canEdit, not the verdict it displays. */}
+                <ReaffirmControl
+                  orgId={orgId}
+                  doc={selected}
+                  contacts={contacts}
+                  canEdit={canEdit}
+                  onReaffirmed={() => {
+                    void refreshSelected();
+                    void loadList();
+                  }}
+                />
                 {canEdit && (
                   <PublishControl
                     orgId={orgId}

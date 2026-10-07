@@ -1966,6 +1966,15 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .doc-status-approved { background: var(--met-bg); color: var(--met-fg); }
 .doc-status-superseded { background: var(--pending-bg); color: var(--pending-fg); }
 
+/* N.3 review cadence. Reuses the existing status palette rather than
+   introducing new colours: overdue reads like not_met, due_soon like
+   partial, never_approved like pending. `current` renders no badge at
+   all, so it needs no class. */
+.doc-review { display: inline-block; font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 3px; margin-left: 0.3rem; }
+.doc-review-overdue { background: var(--not-met-bg); color: var(--not-met-fg); }
+.doc-review-due_soon { background: var(--partial-bg); color: var(--partial-fg); }
+.doc-review-never_approved { background: var(--pending-bg); color: var(--pending-fg); }
+
 .doc-tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 0.75rem; }
 .doc-tab { background: transparent; border: none; border-bottom: 2px solid transparent;
   padding: 0.4rem 0.75rem; cursor: pointer; font-size: 0.875rem; color: var(--muted); text-transform: capitalize; }

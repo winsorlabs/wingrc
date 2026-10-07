@@ -65,7 +65,20 @@ from app.models import (
     SystemDescription,
 )
 
-pytestmark = pytest.mark.integration
+# `integration` is applied per test below, not to the whole module,
+# because not every test in this file needs a database.
+#
+# This is marker *accuracy*, not recovered coverage -- a distinction
+# worth stating because the opposite was assumed and measured false. A
+# marker never causes a skip; the `db_session` fixture does. CI's
+# no-database job runs plain `pytest -q` with no `-m` filter, so these
+# tests already ran there with the module marker in place (verified
+# directly: the no-DB total was 458 before and after this change).
+#
+# What a module-level marker actually broke is *selection*:
+# `-m integration` pulled in tests needing no database, and
+# `-m "not integration"` dropped tests that would have run fine. See
+# `docs/roadmap.md`'s N.3 entry.
 
 
 def _seed_full_graph_org(
@@ -468,6 +481,7 @@ class TestResetDevCommandGuard:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 class TestPreflightBackupGating:
     """Invocation-level coverage that a failed pre-flight backup stops
     reset-dev before _reset_dev() is ever called. Uses the real db_session
@@ -544,7 +558,6 @@ class TestPreflightBackupGating:
         assert order == ["backup", "reset"]
 
 
-@pytest.mark.integration
 class TestPreflightBackupReal:
     """Exercises the real pg_dump binary against a real reachable Postgres
     (WINGRC_TEST_DATABASE_URL) -- the actual mechanism, not a stub. Only
@@ -552,6 +565,7 @@ class TestPreflightBackupReal:
     container image built from backend/Dockerfile); skipped otherwise
     rather than failing a plain local run."""
 
+    @pytest.mark.integration
     def test_creates_a_nonempty_dump_file(self, tmp_path, monkeypatch):
         test_url = os.environ.get("WINGRC_TEST_DATABASE_URL")
         if not test_url:
@@ -596,6 +610,7 @@ class TestPreflightBackupReal:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 class TestYesPrintsSummary:
     runner = CliRunner()
 

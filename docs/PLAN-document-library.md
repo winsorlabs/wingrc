@@ -5,14 +5,16 @@ split, the status transition table, the republish decision). **N.2 ✅ DONE**
 (2026-09-28, no migration — GFM-subset Markdown as the body format, TipTap
 on a constrained schema, structured server-side diffs, versions-plus-
 audit_log history, approved documents rendered into the bundle and PDF).
-See `docs/roadmap.md`'s Done entries for both writeups, including N.2's §0
-format decision and its cost, and the post-commit RLS audit N.2 section 8
-asked for. N.3–N.5 not started. This document is the sequencing spec and
-the cross-cutting rules; each slice gets its own prompt when it starts.
-**N.3 or N.5 next** — N.3 is now unblocked (it wanted N.2 in place so
-approval attaches to something a human can read and diff); N.5 is
-independent of both; N.4 wants N.1's versioning exercised for a while
-first.
+**N.3 ✅ DONE** (2026-09-30, migration 0062 — `document_approval` as the
+single authoritative approval record, a derived review cadence that is
+never stored, and a digest job that changes no document state). See
+`docs/roadmap.md`'s Done entries for all three writeups, including N.2's §0
+format decision and its cost, the post-commit RLS audit N.2 section 8 asked
+for, and N.3's §0 record design. N.4–N.5 not started. This document is the
+sequencing spec and the cross-cutting rules; each slice gets its own prompt
+when it starts. **N.5 or N.4 next** — N.5 is independent of everything
+shipped so far; N.4 wants N.1's versioning exercised for a while first and
+is the larger of the two.
 
 **Reconciles two prior specs, both superseded by this one:** `ROADMAP.md`'s
 item F ("Template document library") and `docs/roadmap.md`'s original item
@@ -164,7 +166,7 @@ Two things below are now settled by that slice rather than open: the
 "editing can be a plain text area" note under N.1 is superseded, and
 N.3's dependency on N.2 is satisfied.
 
-### N.3 — Approval and review cadence
+### N.3 — Approval and review cadence ✅ DONE (2026-09-30)
 
 Approval per document version — a version is approved, not a document, or
 editing after approval silently changes an approved artifact.
@@ -178,6 +180,32 @@ not be conflated in the schema or the UI.
 Re-approval of an unchanged document is a real event with its own record:
 "reviewed and still current on <date> by <person>" is exactly what a
 periodic-review control wants.
+
+**As built.** `document_approval` (append-only, one row per decision,
+`approval_type` initial/reaffirmation) is the single authoritative record;
+`DocumentVersion.approved_at`/`approved_by_contact_id` are now a documented
+denormalized snapshot of the *initial* approval only, pinned by a test, and
+never read to answer a cadence question. Overdue is **derived** on every
+read from the newest approval plus `cadence_months` — there is no
+`next_due_at` column, deliberately, because it would go stale the moment an
+operator changed the cadence.
+
+Overdue **flags, never invalidates**: evidence links stay unarchived,
+`control_state` is untouched, the SPRS score does not move. The scheduled
+digest (`scheduler.py:_document_review_digest`) notifies each due
+document's named approver plus every `security_officer`/`it_admin`, one
+email per recipient per org naming nothing, and writes only
+`document_review_notification` rows.
+
+Cross-cutting rule 6 was honoured by reusing the review-cycle *machinery*
+(`email_service`, the digest shape, the `notified_at`-set-once discipline)
+but **not** its tables: `ReviewCycleReviewer` is `cycle_id`-scoped to the
+users/devices attestation cycle and its reviewers are Users, while document
+approvers are Contacts who often have no login. D.3 hit the same wall and
+answered it the same way with `LiongardSyncNotification`.
+
+Still open, raised rather than settled: whether overdue review state
+belongs in the SSP narrative or the exported bundle.
 
 ### N.4 — MSP template library
 

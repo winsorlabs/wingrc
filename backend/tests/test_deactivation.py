@@ -66,7 +66,20 @@ from app.models import (
 )
 from tests.conftest import _app_session, _authed, _grant
 
-pytestmark = pytest.mark.integration
+# `integration` is applied per test below, not to the whole module,
+# because not every test in this file needs a database.
+#
+# This is marker *accuracy*, not recovered coverage -- a distinction
+# worth stating because the opposite was assumed and measured false. A
+# marker never causes a skip; the `db_session` fixture does. CI's
+# no-database job runs plain `pytest -q` with no `-m` filter, so these
+# tests already ran there with the module marker in place (verified
+# directly: the no-DB total was 458 before and after this change).
+#
+# What a module-level marker actually broke is *selection*:
+# `-m integration` pulled in tests needing no database, and
+# `-m "not integration"` dropped tests that would have run fine. See
+# `docs/roadmap.md`'s N.3 entry.
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -180,6 +193,7 @@ def client(db_session: Session, fake_msp_admin):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_deactivate_sets_org_product_decommissioned(db_session: Session, ref: dict):
     a, _ = _setup(db_session, ref)
     deactivate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
@@ -200,6 +214,7 @@ def test_deactivate_sets_org_product_decommissioned(db_session: Session, ref: di
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_deactivate_flips_auto_controls_to_needs_review(db_session: Session, ref: dict):
     a, _ = _setup(db_session, ref)
     deactivate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
@@ -215,6 +230,7 @@ def test_deactivate_flips_auto_controls_to_needs_review(db_session: Session, ref
     assert _contributor_product_ids(db_session, ac_state.id) == set()
 
 
+@pytest.mark.integration
 def test_deactivate_writes_history_for_auto_controls(db_session: Session, ref: dict):
     a, _ = _setup(db_session, ref)
     deactivate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
@@ -236,6 +252,7 @@ def test_deactivate_writes_history_for_auto_controls(db_session: Session, ref: d
     assert "Test Tool" in history[0].change_reason
 
 
+@pytest.mark.integration
 def test_deactivate_does_not_touch_customer_owns(db_session: Session, ref: dict):
     a, _ = _setup(db_session, ref)
     deactivate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
@@ -255,6 +272,7 @@ def test_deactivate_does_not_touch_customer_owns(db_session: Session, ref: dict)
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_deactivate_reverts_tool_sourced_met_to_needs_review(
     db_session: Session, ref: dict
 ):
@@ -283,6 +301,7 @@ def test_deactivate_reverts_tool_sourced_met_to_needs_review(
     assert result["controls_flagged"] == 1
 
 
+@pytest.mark.integration
 def test_deactivate_does_not_touch_independent_met_state(
     db_session: Session, ref: dict
 ):
@@ -313,6 +332,7 @@ def test_deactivate_does_not_touch_independent_met_state(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_deactivate_archives_open_tasks(db_session: Session, ref: dict):
     a, _ = _setup(db_session, ref)
     deactivate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
@@ -327,6 +347,7 @@ def test_deactivate_archives_open_tasks(db_session: Session, ref: dict):
     assert t.status == "na"
 
 
+@pytest.mark.integration
 def test_deactivate_archives_collected_tasks_preserving_status(
     db_session: Session, ref: dict
 ):
@@ -351,6 +372,7 @@ def test_deactivate_archives_collected_tasks_preserving_status(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_deactivate_archives_evidence_links_on_auto_states(
     db_session: Session, ref: dict
 ):
@@ -383,6 +405,7 @@ def test_deactivate_archives_evidence_links_on_auto_states(
     assert result["evidence_links_archived"] == 1
 
 
+@pytest.mark.integration
 def test_deactivate_archives_evidence_on_tool_sourced_met_state(
     db_session: Session, ref: dict
 ):
@@ -417,6 +440,7 @@ def test_deactivate_archives_evidence_on_tool_sourced_met_state(
     assert result["evidence_links_archived"] == 1
 
 
+@pytest.mark.integration
 def test_deactivate_does_not_archive_evidence_on_independent_state(
     db_session: Session, ref: dict
 ):
@@ -455,6 +479,7 @@ def test_deactivate_does_not_archive_evidence_on_independent_state(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_deactivate_recomputes_sprs(db_session: Session, ref: dict):
     a, _ = _setup(db_session, ref)
     score_before = db_session.get(Assessment, a.id).sprs_score
@@ -475,6 +500,7 @@ def test_deactivate_recomputes_sprs(db_session: Session, ref: dict):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_deactivate_produces_audit_entries(db_session: Session, ref: dict):
     a, _ = _setup(db_session, ref)
     deactivate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
@@ -490,6 +516,7 @@ def test_deactivate_produces_audit_entries(db_session: Session, ref: dict):
     assert "evidence_task.archive" in actions
 
 
+@pytest.mark.integration
 def test_audit_entries_carry_deactivation_context(db_session: Session, ref: dict):
     a, _ = _setup(db_session, ref)
     deactivate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
@@ -513,6 +540,7 @@ def test_audit_entries_carry_deactivation_context(db_session: Session, ref: dict
         assert entry.created_at is not None
 
 
+@pytest.mark.integration
 def test_audit_entries_have_before_and_after_values(db_session: Session, ref: dict):
     a, _ = _setup(db_session, ref)
     deactivate_org_product(db_session, ref["org"].id, ref["product"].id, a.id)
@@ -549,6 +577,7 @@ def test_audit_service_has_no_mutating_paths():
     assert ".delete(" not in source, "audit.py must not call .delete() on ORM objects"
 
 
+@pytest.mark.integration
 def test_audit_log_creates_distinct_row_per_event(db_session: Session, ref: dict):
     """Calling log_event twice creates two rows — never upserts into one."""
     from app.audit import log_event
@@ -589,6 +618,7 @@ def test_audit_log_creates_distinct_row_per_event(db_session: Session, ref: dict
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_patch_archived_task_returns_422(client, db_session: Session, ref: dict, fake_msp_admin):
     a, _ = _setup(db_session, ref)
     db_session.flush()
@@ -610,6 +640,7 @@ def test_patch_archived_task_returns_422(client, db_session: Session, ref: dict,
     assert r.status_code == 422
 
 
+@pytest.mark.integration
 def test_patch_active_task_updates_status(client, db_session: Session, ref: dict, fake_msp_admin):
     a, _ = _setup(db_session, ref)
     db_session.flush()
@@ -635,6 +666,7 @@ def test_patch_active_task_updates_status(client, db_session: Session, ref: dict
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_reactivate_restores_archived_open_task(db_session: Session, ref: dict):
     """An open task archived during deactivation is restored to open on reactivation."""
     a, _ = _setup(db_session, ref)
@@ -655,6 +687,7 @@ def test_reactivate_restores_archived_open_task(db_session: Session, ref: dict):
     assert task.status == "open"
 
 
+@pytest.mark.integration
 def test_reactivate_restores_collected_task_preserving_status(
     db_session: Session, ref: dict
 ):
@@ -680,6 +713,7 @@ def test_reactivate_restores_collected_task_preserving_status(
     assert task.status == "collected"
 
 
+@pytest.mark.integration
 def test_reactivate_restores_archived_evidence_links(db_session: Session, ref: dict):
     """Evidence-state links archived on deactivation are unarchived on reactivation."""
     a, _ = _setup(db_session, ref)
@@ -713,6 +747,7 @@ def test_reactivate_restores_archived_evidence_links(db_session: Session, ref: d
     assert lnk.archived_by_product is None
 
 
+@pytest.mark.integration
 def test_reactivate_sets_needs_review_for_restored_states(
     db_session: Session, ref: dict
 ):
@@ -742,6 +777,7 @@ def test_reactivate_sets_needs_review_for_restored_states(
     assert ac_state.status == "needs_review"
 
 
+@pytest.mark.integration
 def test_reactivate_fresh_control_gets_pending_evidence(db_session: Session, ref: dict):
     """First activation (no prior archived evidence) → pending_evidence, not needs_review."""
     a = start_assessment(db_session, ref["org"].id, ref["fw"].id, "Fresh test")
@@ -757,6 +793,7 @@ def test_reactivate_fresh_control_gets_pending_evidence(db_session: Session, ref
     assert ac_state.status == "pending_evidence"
 
 
+@pytest.mark.integration
 def test_full_cycle_deactivate_reactivate_preserves_needs_review(
     db_session: Session, ref: dict
 ):
@@ -796,6 +833,7 @@ def test_full_cycle_deactivate_reactivate_preserves_needs_review(
     assert lnk.archived_by_product is None
 
 
+@pytest.mark.integration
 def test_reactivate_independent_control_unaffected(db_session: Session, ref: dict):
     """A control with no product source is never touched by deactivate or reactivate."""
     a, _ = _setup(db_session, ref)

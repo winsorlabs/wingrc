@@ -2890,8 +2890,22 @@ class DocumentVersion(Base):
     # captured separately, by audit_log (via log_event's actor
     # resolution) -- these are two different facts, deliberately not
     # merged into one.
+    # ON DELETE SET NULL, added by migration 0062. N.1 declared this FK with
+    # no ondelete at all -- the only nullable contact FK in this schema
+    # without one, where ReviewCycleReviewer.user_id,
+    # SprsSubmission.submitted_by_contact_id,
+    # LiongardSyncNotification.contact_id and AssetApproval all use SET NULL
+    # for the same reason. The effect was that a contact who had ever
+    # approved a document could not be deleted at all: the delete raised a
+    # ForeignKeyViolation, which breaks ADR 0006's anonymize/hard-delete
+    # path. Found by N.3's own test deleting an approver
+    # (test_digest_reports_when_nobody_can_be_notified), not by inspection.
+    #
+    # Nulling this loses nothing: document_approval is the authoritative
+    # record and denormalizes approver_name, so "who approved it" survives
+    # the contact being deleted.
     approved_by_contact_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("contact.id"), nullable=True
+        UUID(as_uuid=True), ForeignKey("contact.id", ondelete="SET NULL"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -2936,4 +2950,183 @@ class DocumentObjectiveTag(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class DocumentApproval(Base):
+    """One approval decision about one `DocumentVersion` -- roadmap N.3.
+    Append-only: rows here are never updated or deleted, the same
+    discipline `DocumentVersion` itself and `SprsSnapshot` follow.
+
+    **Why this table exists at all, rather than re-approval writing a new
+    version.** Re-approving an unchanged policy must not create a new
+    `DocumentVersion`. A version whose body is byte-identical to its
+    predecessor fakes an edit, and it would pollute exactly the diff
+    history N.2 built -- "what changed in this policy" would answer with
+    noise for every annual review that changed nothing. But re-approval is
+    a real, durable event: "reviewed and still current on <date> by
+    <person>" is precisely what a periodic-review control wants to see.
+    So the decision is recorded separately from the thing decided about,
+    the same shape `AssetApproval` uses for scope entities and
+    `ReviewCycleReviewer` uses for attestations.
+
+    **This table is the single authoritative record of approval.**
+    `DocumentVersion.approved_at`/`approved_by_contact_id` (added in N.1,
+    before this table existed) are now a denormalized snapshot of the
+    *initial* approval only -- the `approval_type='initial'` row here --
+    kept because `publish_document` sets them and because the bundle and
+    SSP PDF already read them. They are NOT authoritative and must never
+    be read to answer a cadence question: they know nothing about
+    reaffirmations, so a document re-approved four times still shows its
+    original `approved_at` there. Anything asking "when was this last
+    reviewed" reads the newest row here. `test_document_approval.py`
+    asserts the two agree for the initial approval, so the mirror is
+    pinned rather than assumed.
+
+    That split is deliberate rather than tidy. Leaving the columns as
+    "first approval" and this table as "subsequent approvals" was the
+    alternative, and it is the `sourced_from_product_id` mistake: two
+    places that both look authoritative, where a reader has to already
+    know which holds what. One place answers every approval question; the
+    columns are a cache of one row in it, and say so.
+
+    **`approval_type`**: `initial` for the approval that publishing grants
+    (exactly one per version, enforced by a partial unique index -- see
+    `__table_args__`), `reaffirmation` for every later "still current"
+    decision about that same already-approved version. A reaffirmation
+    never changes `DocumentVersion.status`, never touches `body`, and
+    never creates a version.
+
+    **No `next_due_at` column, deliberately.** When the next review falls
+    due is derived -- newest approval's `approved_at` plus
+    `Document.cadence_months` (`document_reviews.py:review_state`) -- not
+    stored. Storing it would create a second place that looks
+    authoritative and would go stale the moment an operator changes the
+    cadence: a document moved from annual to semi-annual review should
+    become due six months after its last approval, not on whatever date
+    was computed under the old policy. Cadence is a current fact about the
+    document, not a historical fact about the approval.
+
+    **`approver_name` is denormalized** at decision time and
+    `approved_by_contact_id` is `ON DELETE SET NULL`, so the record of who
+    approved survives that contact later being deleted -- same reasoning
+    and same shape as `ReviewCycleReviewer.reviewer_name`/`user_id` and
+    `SprsSubmission.submitted_by_contact_id`.
+
+    **The approver is a Contact, not the authenticated actor, and this
+    table records only the approver.** The person granting approval (a
+    customer's President signing a policy) is frequently not a WinGRC
+    login at all, which is why N.1 chose `Contact` here; the cadence is
+    satisfied by *that named person's* decision. Who was authenticated
+    when the decision was recorded is a different fact, and it is already
+    captured by `audit_log` via `log_event`'s actor resolution -- it is
+    deliberately NOT duplicated onto this row, the same call N.2 made when
+    it surfaced document history from `audit_log` rather than building a
+    parallel history table. The two are usually different people and the
+    UI must not imply the clicker approved it.
+    """
+
+    __tablename__ = "document_approval"
+    __table_args__ = (
+        CheckConstraint(
+            "approval_type IN ('initial', 'reaffirmation')",
+            name="ck_document_approval_type",
+        ),
+        # Exactly one 'initial' approval per version. Reaffirmations are
+        # unconstrained -- every one is a distinct real event, and two in
+        # one day is odd but not wrong.
+        Index(
+            "uq_document_approval_initial",
+            "document_version_id",
+            unique=True,
+            postgresql_where=text("approval_type = 'initial'"),
+        ),
+        Index(
+            "ix_document_approval_document_id_approved_at",
+            "document_id",
+            "approved_at",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("document.id", ondelete="CASCADE"), index=True
+    )
+    document_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("document_version.id", ondelete="CASCADE"),
+        index=True,
+    )
+    # Denormalized from document.org_id -- see DocumentVersion.org_id's own
+    # comment for why every RLS-enabled child table here carries its own.
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    approval_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    approved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    approved_by_contact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contact.id", ondelete="SET NULL"), nullable=True
+    )
+    approver_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class DocumentReviewNotification(Base):
+    """One digest notification attempt to one recipient about documents due
+    for re-approval -- roadmap N.3's scheduled job.
+
+    Same `notified_at`/`notification_error` tracking shape as
+    `ReviewCycleReviewer` and `LiongardSyncNotification`, for the same
+    reason: without it, a failed or never-attempted send leaves no trace,
+    which is a real bug that was found on wl-util-1 and is not being
+    reintroduced here.
+
+    **A digest, not one row per document.** One row per (org, recipient,
+    job run), carrying `document_count` as the size of what was due at
+    send time. An MSP with forty tenants and a dozen policies each would
+    otherwise generate hundreds of emails per sweep, which trains people
+    to ignore them -- the same volume argument D.3 applied to asset
+    approvals. `document_count` is recorded here, on the server, and is
+    deliberately NOT in the email body: `email_service.py`'s content rule
+    is "something needs your attention, sign in to WinGRC" plus a link,
+    naming no org, count, or item detail, because mail leaves the
+    deployment's trust boundary.
+
+    `contact_id` is `ON DELETE SET NULL` with `recipient_name`/
+    `recipient_email` denormalized at send time, so a later-deleted
+    contact does not take the delivery record with it.
+
+    This table is written by the scheduler only. It records that people
+    were told; it is not a workflow state, and nothing reads it to decide
+    whether a document is overdue -- that is derived from
+    `document_approval` (`document_reviews.py:review_state`).
+    """
+
+    __tablename__ = "document_review_notification"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    contact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contact.id", ondelete="SET NULL"), nullable=True
+    )
+    recipient_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    recipient_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    document_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    notified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    notification_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )

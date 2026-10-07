@@ -54,7 +54,20 @@ from tests.test_assessor_readonly import (
 )
 from tests.test_assessor_readonly import storage as storage  # noqa: F401 (fixture)
 
-pytestmark = pytest.mark.integration
+# `integration` is applied per test below, not to the whole module,
+# because not every test in this file needs a database.
+#
+# This is marker *accuracy*, not recovered coverage -- a distinction
+# worth stating because the opposite was assumed and measured false. A
+# marker never causes a skip; the `db_session` fixture does. CI's
+# no-database job runs plain `pytest -q` with no `-m` filter, so these
+# tests already ran there with the module marker in place (verified
+# directly: the no-DB total was 458 before and after this change).
+#
+# What a module-level marker actually broke is *selection*:
+# `-m integration` pulled in tests needing no database, and
+# `-m "not integration"` dropped tests that would have run fine. See
+# `docs/roadmap.md`'s N.3 entry.
 
 
 @pytest.fixture(autouse=True)
@@ -102,6 +115,7 @@ _DATA_CASE_IDS = [c for c in _CASE_IDS if c not in _ADMIN_GATED_CASES]
 
 
 @pytest.mark.parametrize("case_id", _DATA_CASE_IDS)
+@pytest.mark.integration
 def test_consultant_admin_can_write_compliance_data(db_session, storage, case_id):
     org_id = uuid.uuid4()
     d = _seed_scenario(db_session, org_id=org_id)
@@ -122,6 +136,7 @@ def test_consultant_admin_can_write_compliance_data(db_session, storage, case_id
 
 
 @pytest.mark.parametrize("case_id", sorted(_ADMIN_GATED_CASES))
+@pytest.mark.integration
 def test_consultant_admin_blocked_on_user_and_token_management(db_session, storage, case_id):
     org_id = uuid.uuid4()
     d = _seed_scenario(db_session, org_id=org_id)
@@ -134,6 +149,7 @@ def test_consultant_admin_blocked_on_user_and_token_management(db_session, stora
     )
 
 
+@pytest.mark.integration
 def test_consultant_admin_can_list_users(db_session, storage):
     """Corrected after a real bench-stack failure, not assumed: GET
     .../users is require_org_access() with no role restriction at all
@@ -151,6 +167,7 @@ def test_consultant_admin_can_list_users(db_session, storage):
     assert r.status_code == 200
 
 
+@pytest.mark.integration
 def test_consultant_admin_blocked_on_list_api_tokens(db_session, storage):
     org_id = uuid.uuid4()
     _seed_scenario(db_session, org_id=org_id)
@@ -164,6 +181,7 @@ def test_consultant_admin_blocked_on_list_api_tokens(db_session, storage):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_consultant_admin_blocked_on_audit_log(db_session, storage):
     org_id = uuid.uuid4()
     _seed_scenario(db_session, org_id=org_id)
@@ -172,6 +190,7 @@ def test_consultant_admin_blocked_on_audit_log(db_session, storage):
     assert r.status_code == 403
 
 
+@pytest.mark.integration
 def test_msp_admin_still_sees_audit_log(db_session, storage):
     """Regression guard: the audit-log exclusion is specific to
     consultant_admin, not an accidental tightening of the existing gate."""
@@ -187,6 +206,7 @@ def test_msp_admin_still_sees_audit_log(db_session, storage):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_consultant_admin_blocked_on_create_org(db_session):
     """require_role() (unlike require_org_access()) checks only the
     authenticated identity's own role, not org_membership -- no
@@ -234,6 +254,7 @@ def _seed_objective_for_notes(db_session):
     return obj
 
 
+@pytest.mark.integration
 def test_consultant_admin_blocked_on_practitioner_notes_edit(db_session):
     consultant = _as_role("consultant_admin", org_id=uuid.uuid4())
     obj = _seed_objective_for_notes(db_session)
@@ -257,6 +278,7 @@ def test_consultant_admin_blocked_on_practitioner_notes_edit(db_session):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_consultant_admin_can_list_integrations(db_session):
     consultant = _as_role("consultant_admin", org_id=uuid.uuid4())
     app.dependency_overrides[get_session] = _app_session(db_session)
@@ -269,6 +291,7 @@ def test_consultant_admin_can_list_integrations(db_session):
         app.dependency_overrides.clear()
 
 
+@pytest.mark.integration
 def test_consultant_admin_can_set_integration_credential(db_session):
     consultant = _as_role("consultant_admin", org_id=uuid.uuid4())
     app.dependency_overrides[get_session] = _app_session(db_session)
@@ -293,6 +316,7 @@ def test_consultant_admin_can_set_integration_credential(db_session):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_consultant_admin_can_create_scope_entity(db_session, storage):
     org_id = uuid.uuid4()
     org = Organization(id=org_id, name=f"ScopeTestOrg-{uuid.uuid4().hex[:8]}")
@@ -321,6 +345,7 @@ def test_consultant_admin_can_create_scope_entity(db_session, storage):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_consultant_admin_can_assign_raci(db_session, storage):
     org_id = uuid.uuid4()
     d = _seed_scenario(db_session, org_id=org_id)
@@ -341,6 +366,7 @@ def test_consultant_admin_can_assign_raci(db_session, storage):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_consultant_admin_can_export_bundle(db_session, storage):
     org_id = uuid.uuid4()
     d = _seed_scenario(db_session, org_id=org_id)

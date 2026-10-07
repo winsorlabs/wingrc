@@ -432,6 +432,34 @@ export interface RaciLoadWidgetData {
   by_contact: RaciLoadByContact[];
 }
 
+/**
+ * Documents whose review needs a person (N.3).
+ *
+ * Org-scoped, unlike every other widget on this dashboard -- documents
+ * outlive any one assessment. It is here because an overdue policy review
+ * is a finding, and the engineer running the assessment is who needs to
+ * see it.
+ *
+ * `items` is a capped preview; the counts are complete. The full list is
+ * the document library filtered by review_status=needs_attention.
+ */
+export interface DocumentReviewWidgetItem {
+  document_id: string;
+  doc_id: string;
+  title: string;
+  status: DocumentReviewStatus;
+  last_approved_at: string | null;
+  next_due_at: string | null;
+  days_until_due: number | null;
+}
+
+export interface DocumentReviewWidgetData {
+  overdue_count: number;
+  due_soon_count: number;
+  never_approved_count: number;
+  items: DocumentReviewWidgetItem[];
+}
+
 export interface DashboardData {
   family_heatmap: FamilyHeatmapEntry[];
   sprs: SprsWidgetData;
@@ -444,6 +472,7 @@ export interface DashboardData {
   raci_open_tasks: RaciBucket[];
   poam_summary: PoamSummary;
   raci_load: RaciLoadWidgetData;
+  document_reviews: DocumentReviewWidgetData;
 }
 
 export interface AuthUser {
@@ -1206,6 +1235,49 @@ export interface DocumentVersionDetail extends DocumentVersionRow {
   objective_basis: "published" | "current";
 }
 
+/**
+ * Where a document stands against its review cadence (N.3).
+ *
+ * Derived server-side on every read, never stored -- see
+ * backend/app/document_reviews.py. `never_approved` is distinct from
+ * `overdue` on purpose: a document that has never been approved has not
+ * lapsed, it has not yet been through the control at all, and an operator
+ * does something different about each.
+ */
+export type DocumentReviewStatus = "never_approved" | "current" | "due_soon" | "overdue";
+
+export interface DocumentReviewState {
+  status: DocumentReviewStatus;
+  last_approved_at: string | null;
+  /** null when there is no approval to count from, or cadence_months <= 0. */
+  next_due_at: string | null;
+  /** Negative once overdue. */
+  days_until_due: number | null;
+}
+
+export type DocumentApprovalType = "initial" | "reaffirmation";
+
+/**
+ * One approval decision.
+ *
+ * `approver_name` is the named Contact whose decision satisfies the
+ * cadence -- NOT whoever was signed in when it was recorded. Those are
+ * usually different people (the approver is often a customer signatory
+ * with no login at all), and the UI must not imply the clicker approved
+ * it. The authenticated actor is in the audit timeline, which
+ * DocumentHistoryPanel already shows.
+ */
+export interface DocumentApprovalRow {
+  id: string;
+  document_version_id: string;
+  version_number: number | null;
+  approval_type: DocumentApprovalType;
+  approved_at: string;
+  approved_by_contact_id: string | null;
+  approver_name: string;
+  note: string | null;
+}
+
 export interface DocumentRow {
   id: string;
   doc_id: string;
@@ -1215,6 +1287,7 @@ export interface DocumentRow {
   is_template_derived: boolean;
   template_ref: string | null;
   current_version: DocumentVersionRow | null;
+  review: DocumentReviewState;
   created_at: string;
   updated_at: string;
 }
