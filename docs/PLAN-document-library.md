@@ -225,6 +225,28 @@ UI — that is the question this design exists to answer, and the same one
 **Jarrod's existing document set gets generalized as part of this slice** —
 turning his real documents into templates is the acceptance test.
 
+**Two inputs that arrived before this slice did (Lists slice, 2026-10-07)
+— design for them, don't rediscover them:**
+
+- **`[PLACEHOLDER - reason]` is already a convention in Jarrod's real
+  data.** His Authorized-Entities workbook marks missing values as
+  `[PLACEHOLDER - not in Datto RMM export]`,
+  `[PLACEHOLDER - BIOS FW version not collected]`: a value *deliberately
+  absent, with the reason recorded*. The Lists slice made it first-class
+  (`domain.placeholder_reason()`, stored verbatim, rendered distinctly).
+  N.4's `{Company Name}` is the other half — a value *to be filled*. The
+  variable registry should treat both: an unresolved `{Variable}` is
+  reported (as above), and a `[PLACEHOLDER - reason]` is preserved as a
+  stated gap, not flagged as an error and not stripped. One syntax family,
+  not two unrelated schemes.
+- **Documents reference lists.** His `Windows 11 Workstation Baseline`
+  says *"Authorized devices are recorded in New Lists/AC/3.1.1c Authorized
+  Devices"* and names other lists the same way. A list is a live view
+  (`catalog.py` `ListView.id`, e.g. `3.1.1c-authorized-devices`), not a
+  document, so a reference should resolve to the view — and in the bundle,
+  to that list as exported at the same point in time — rather than to a
+  path in someone's file share. Not built; a requirement for N.4 to design.
+
 ### N.5 — Suggested documentation
 
 A new environment/platform profile per org (identity: AD / Entra / hybrid;

@@ -119,6 +119,14 @@ are called "baseline" for good, independent reasons. G.10 below uses
 textually distinct; nothing about the existing product baseline library
 changes.
 
+**Resolved 2026-10-07 (Lists slice).** This note was right, and a later
+`SideNav.tsx` comment drifted from it, asserting the nav's Baselines meant
+the product baseline library. Jarrod's real `Windows 11 Workstation
+Baseline.docx` settled it: the nav entry is now the `baseline` document
+type (plain `baseline`, migration 0063, not "Security Baseline"), and the
+product side was renamed in the UI instead -- AdminArea's "Tools" section
+is now "Product Baselines" -- so the two no longer share a word on screen.
+
 ---
 
 ## Sequencing rationale
@@ -1224,8 +1232,8 @@ through the real endpoint. Full details and the corrected numbers are in
 | Assessments → templates | `Framework` catalog model (single-framework only) | Decision needed; framework authoring UI + endpoints if (a) (G.8) |
 | Tools → activate/deactivate | Full | None |
 | Tools → baseline library management | YAML parsing logic (CLI-only) | Shipped 2026-09-11 (G.9): admin-tier endpoints + UI, `product_document` table, `is_published` enforcement + backfill migration, `product_deployment_footprint()` SECURITY DEFINER function — verified on an isolated bench stack (867/867 backend, `tsc -b`/`vitest`/`vite build` clean); live nav-parity check not completed, see `docs/roadmap.md`'s Done section |
-| Library → Lists | View/export logic + endpoint | Frontend wrapper only |
-| Library → Baselines/Plans/Policies/Procedures | Nothing | **New `Document` model**, full CRUD, **entire frontend** (G.10) |
+| Library → Lists | View/export logic + endpoint | Shipped 2026-10-07: lives at Scope › Lists (Library › Lists points there); export fixed (per-request, GET) and an operator overlay a sync cannot erase — see `docs/roadmap.md`'s Lists entry |
+| Library → Baselines/Plans/Policies/Procedures (Baselines = the `baseline` doc_type since 2026-10-07, not the product baseline library, now AdminArea's "Product Baselines") | Nothing | **New `Document` model**, full CRUD, **entire frontend** (G.10) |
 | Security → Users, API Tokens, Audit Log | Full | Nav relocation only |
 | Org dashboard | Nothing | One new small table (G.2), aggregation endpoint(s), **entire frontend** (G.3/G.4) |
 | Pre-org admin (grant access) | `org_membership` model + grant primitive (M.2), deployment-tier host shell (`AdminArea.tsx`, 2026-09-11) | Shipped 2026-09-12 (M.7/M.8/G.11): `auth.all_users_directory()`, `POST`/`DELETE /orgs/{org_id}/memberships`, `UserDirectoryPanel.tsx` — verified on an isolated bench stack and live against real Postgres, see `docs/roadmap.md`'s Done section |

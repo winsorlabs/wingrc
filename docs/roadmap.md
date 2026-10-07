@@ -5028,6 +5028,217 @@ live, confirmed by direct query afterward.
 
 ---
 
+### Lists: the frontend, the operator overlay, and two export defects ✅ DONE (2026-10-07)
+
+Migration 0063. Grounded in Jarrod's real `Authorized-Entities.xlsx` and
+`Windows 11 Workstation Baseline.docx` (seen by the advisory session that
+wrote the slice prompt; this session worked from that description, the
+repo's `samples/authorized-entities.example.xlsx`, and the code). Two PRs:
+`lists-export-isolation` (§0, landed first on its own) and `lists-slice`.
+
+#### §0 — two export defects, found by reading, not by testing
+
+Neither came from a test, a user report, or a monitoring signal. Both were
+found by reading `routers/scope.py` while grounding a feature request. That
+belongs beside the three "reported green while checking nothing" signals in
+the 2026-09-30 entry below: those were green signals that checked nothing;
+these had no signal at all. Nothing exercised the export over HTTP, so
+there was nothing to go red.
+
+1. **Every org's export was written to one path.** `export_view` rendered
+   to `tempdir/{view_id}.xlsx` and returned a `FileResponse`, which reads
+   the path only when the response is sent. Two orgs exporting the same
+   view could interleave so that one was served the other's device
+   inventory. Not reproduced live; the shared path was enough. Fixed by
+   `render.py:render_view_bytes()`, which renders into a `BytesIO`. The
+   export writes no file, so the shared resource is gone rather than
+   narrowed. The regression test calls the handler twice, the way the race
+   interleaved (A returns, B runs, then A's body is read). It fails on the
+   old code and needs no database, so it runs in CI's `backend` job.
+2. **`c3pao_assessor` could not export a list.** The export was a `POST`
+   that writes nothing, and `require_write()` rejects read-only roles on
+   every non-idempotent method. It is now a `GET`, which is both the fix
+   and the correct verb.
+
+#### The sync-does-not-clobber invariant
+
+**An import or sync may not clear or overwrite an operator-entered field it
+has no source for.** `repo.upsert()` assigned every field wholesale, so
+applying a Liongard CHANGED row did more than the slice prompt suspected:
+
+- It erased any attribute key the sync did not carry. That is every
+  hand-entered field, because Liongard's incoming record is its own raw
+  record plus canonical keys.
+- It reset `scope_category` to `None`, erasing Asset Type.
+- **It put a rejected device back in scope.** Every fresh pull carries
+  `in_boundary=True, status=active` by default. A device a reviewer had
+  rejected (`in_boundary=False`), or one later marked decommissioned, went
+  back in-boundary and active if a CHANGED row for it was ever applied,
+  for example after a hostname rename. `reject_change`'s docstring said
+  rejection was sticky because re-syncing "never re-flips this". That held
+  for NEW and not for CHANGED.
+
+This is the fourth time an older writer has routed around a newer gate on
+`scope_entity`. The fix sits at the one choke point again.
+`repo.upsert(..., operator_edit=False)` defaults to the safe behaviour, so
+a writer added later that forgets the flag can erase nothing:
+
+- For an import or sync, an overlay key the incoming entity does not carry
+  is kept from the existing row. A Liongard write never sets an overlay key
+  at all.
+- A `scope_category` of `None` keeps the existing value.
+- A Liongard write keeps `status` and `in_boundary`.
+- `POST`/`PATCH /scope` pass `operator_edit=True`. An operator can still
+  clear a field by sending it as `null`.
+
+`reconcile._field_diffs` skips an overlay key the incoming entity does not
+carry. Otherwise every annotated PROCESS/EXTERNAL_SERVICE row would show as
+CHANGED on each import (those types still compare every key).
+
+**Verified both ways.** The invariant tests were run against the pre-fix
+`repo.py`/`reconcile.py`, with a shim that accepted and ignored the new
+keyword argument. Exactly the eight invariant tests failed, including the
+rejected-device and Asset Type cases. With the fix, all of them pass.
+
+**Workbook import is deliberately not given the Liongard treatment for
+`status`/`in_boundary`.** The workbook is a human-authored list of
+authorized entities, and its Decommissioned Date column is a real source
+for status. If a workbook re-import should also stop re-including a
+rejected device, that is Jarrod's call. It was not changed here.
+
+#### The overlay: storage decision and trade-off
+
+The five columns no sync can supply are Location, Asset Type, In Service
+Date, Decommissioned Date, and Requested By/Responsible Party:
+
+- **Asset Type is `scope_category`.** That is already a real, indexed
+  column, constrained to `ScopeCategory`, and the workbook importer was
+  already parsing the "Asset Type" cell into it. A second field for the
+  same fact would have been the parallel-mechanism mistake. **Deviation
+  from the prompt:** the constraint is the full `ScopeCategory` enum (CUI
+  Asset, SPA, CRMA, Specialized Asset, ESP, CSP, Out of Scope,
+  Unclassified), not just CUI/CRMA/SPA. Specialized and Out of Scope are
+  real CMMC categories, and rejecting them would block legitimate
+  classifications. "Laptop" is rejected with a 422. Jarrod's cells say
+  "CUI", and `_CATEGORY_LOOKUP` only matches "CUI Asset", so a workbook
+  import of his sheet infers no category. That is an importer alias gap,
+  out of scope here (no workbook-import changes), and noted for whoever
+  next touches the importer.
+- **The other four live in `attributes`** under
+  `domain.OPERATOR_OVERLAY_ATTRIBUTES` (`location`, `in_service_date`,
+  `decommissioned_date`, `requested_by`). They are validated by
+  `routers/scope.py:OperatorOverlayAttributes`, with dates as ISO
+  `YYYY-MM-DD` or a placeholder. There is no migration. The trade-off:
+  they cannot be indexed, filtered, or sorted in SQL. Nothing filters on
+  them today, and Asset Type, the one a filter would want, is already a
+  column. If Location-based filtering arrives, promote `location` then.
+  The vocabulary is kept separate from `DEVICE_SOFTWARE_CANONICAL_ATTRIBUTES`
+  on purpose. Canonical keys are what a connector writes and reconcile
+  compares; overlay keys are written only by a person and never compared
+  against an import that lacks them. Merging the two sets would have put
+  overlay keys into the comparable allowlist, and every annotated device
+  would have shown CHANGED on every sync.
+
+#### Lists render for synced orgs, not only workbook orgs
+
+Found while grounding: `AUTHORIZED_DEVICES.columns` reads raw workbook
+headers ("Name", "Make", "OS"), but Liongard writes canonical keys
+(`display_name`, `make_oem`, `version`) beside its own raw record. For a
+Liongard-synced org, 3.1.1c would have exported with Name, Make, Model,
+and OS blank. `ListView.sources` gives each column an ordered source list
+across the three writers' key sets, plus `@scope_category` and
+`@natural_key`. `list_projection.py` is the one pure function that
+resolves a cell. It is shared by the export and `GET /lists/{view_id}`, so
+the screen and the workbook cannot disagree.
+
+**Noted, not changed:** a list includes every entity of its type, including
+`in_boundary=False` (rejected) devices. Whether "Authorized Devices" should
+exclude them changes what an assessor receives, so it is Jarrod's call.
+
+#### `[PLACEHOLDER - reason]`
+
+A cell like `[PLACEHOLDER - BIOS FW version not collected]` records *why*
+a value is missing. It is stored verbatim, never normalized to blank.
+`domain.placeholder_reason()` recognizes it. The export renders such cells
+highlighted, with a legend line, and the screen shows them with the reason
+as a tooltip. Both are distinct from a blank, which means nothing was
+recorded. Round-trip is tested: render, then `parse_workbook`, keeps the
+reason intact. It does not collide with the importer's bare `[placeholder]`
+token, which marks an illustrative example row, not a value.
+
+**N.4 overlap:** this is N.4's variable syntax arriving early. N.4's
+`{Company Name}` is a value to be filled in; `[PLACEHOLDER - reason]` is a
+value deliberately absent, with the reason recorded. N.4 should read both
+when it designs its variable registry, so that an unresolved variable and
+a deliberate placeholder are not two unrelated schemes. Recorded in
+`docs/PLAN-document-library.md`'s N.4 section.
+
+#### 3.1.1b is service accounts, and nothing populates it
+
+`AUTHORIZED_PROCESSES.entity_type` is `EntityType.PROCESS`, which fits.
+Only a workbook import or manual entry ever creates one; Liongard maps
+every identity to PERSON. An empty 3.1.1b is therefore the normal state,
+and both the screen and the exported sheet say so in place of a bare table
+that looks like a failed sync. The sheet puts this above the header, never
+as a data row a re-import would read as a process. Manual entry is the
+"+ Add process" form on Scope › Lists. No discovery integration was built.
+
+#### Baselines: a naming collision, corrected
+
+The nav's "Baselines" was said to mean the product baseline library.
+Jarrod's `Windows 11 Workstation Baseline.docx` showed otherwise. It is an
+org-level narrative document (tool inventory, change management, review
+cadence, tied to CM.L2-3.4.1/3.4.2) and belongs in the library beside
+Policies and Procedures. So:
+
+- `baseline` is a `DocumentType` (migration 0063, purely additive).
+- Library › Baselines filters to it.
+- AdminArea's "Tools" section is renamed **Product Baselines**, with
+  "Product Baseline Library" as the panel title. Two features sharing a
+  word is what produced the mistake, and renaming one of them stops it
+  recurring.
+- `SideNav.tsx`'s comment, which explained the half-wrong distinction, is
+  corrected.
+
+#### Cross-references: a requirement, not built
+
+Jarrod's baseline document says *"Authorized devices are recorded in New
+Lists/AC/3.1.1c Authorized Devices"*, and it names other lists the same
+way. Documents need to reference lists. Link resolution was deliberately
+not built here. Recorded in `docs/PLAN-document-library.md` for N.4 to
+design, with this example attached.
+
+#### Where things are
+
+- Scope › Lists is the screen (`ListsPanel.tsx`).
+- Library › Lists ↗ points there, with a hover title.
+- `GET /orgs/{org_id}/lists` returns the views with counts.
+- `GET /orgs/{org_id}/lists/{view_id}` returns the rows as JSON.
+- `GET /orgs/{org_id}/exports/{view_id}` returns the `.xlsx`.
+- The asset drawer edits Location and the two dates, and relabels scope
+  category as "Asset Type (scope category)".
+
+#### Verification
+
+- Bench, wl-util-1, isolated project `wingrc_verify_20261007`:
+  - Backend full suite: **1589 passed, 0 skipped**, with
+    `WINGRC_MIN_TESTS_RUN=500`. `ruff` clean.
+  - Migration 0063 applied on start.
+  - Frontend in `node:24-alpine`: `tsc -b` clean, **343/343** vitest, and
+    the build passes.
+- §0 alone: 1559 passed on the bench, and CI was green on all three jobs.
+- SPRS and `control_state` are asserted unchanged across overlay edits, a
+  sync apply, every list read, and every export.
+- RLS was checked through real HTTP (`_app_session`, `wingrc_app`) for
+  every new endpoint: cross-org returns 403 and each org sees only its own
+  rows.
+
+**Out of scope, unchanged:** inline grid editing, re-importing the
+workbook, N.4/N.5, and any SPRS or `control_state` effect. A list is not
+evidence.
+
+---
+
 ### Document library N.3: approval and the review cadence ✅ DONE (2026-09-30)
 
 Migration 0062. Turns the library from "you can write policies" into
