@@ -17,7 +17,7 @@ from openpyxl.utils import get_column_letter
 
 from .catalog import ListView
 from .domain import CanonicalEntity
-from .list_projection import project
+from .list_projection import excluded_count, excluded_note, project
 
 _HEADER_FILL = PatternFill("solid", fgColor="1F3B4D")
 _TITLE_FONT = Font(bold=True, size=13, color="1F3B4D")
@@ -71,6 +71,9 @@ def render_view_bytes(
     # read back as an entity if this sheet were ever imported.
     if not rows and view.empty_explanation:
         ws["A3"] = f"{ws['A3'].value} {view.empty_explanation}"
+    excluded = excluded_count(view, entities)
+    if excluded:
+        ws["A3"] = f"{ws['A3'].value} {excluded_note(excluded)}"
     ws["A3"].font = _META_FONT
     ws["A4"] = (
         "Highlighted [PLACEHOLDER - reason] cells are known absent for the stated "

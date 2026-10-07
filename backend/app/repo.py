@@ -92,12 +92,17 @@ def upsert(
       carry is kept from the existing row. A Liongard write never sets one
       at all -- Liongard is never the source of where a device sits.
     - `scope_category` is kept when the incoming entity has none.
-    - A Liongard write keeps the row's `status` and `in_boundary`. A
-      connector observing a device says nothing about whether a human put
-      it in the CUI boundary or decommissioned it; before this, applying a
-      CHANGED row for a device a reviewer had rejected (in_boundary=False)
-      quietly put it back in scope, because every fresh pull carries
-      in_boundary=True by default.
+    - No import or sync changes an existing row's `in_boundary`, and none
+      moves a row out of `decommissioned`. Whether an entity is inside the
+      CUI boundary, and whether it has come back into service, are human
+      decisions no feed has a source for; before this, applying a CHANGED
+      row for a device a reviewer had rejected (in_boundary=False) quietly
+      put it back in scope, because every fresh pull and every workbook row
+      carries in_boundary=True by default. Liongard was fixed 2026-10-07 and
+      the workbook path the same day after the asymmetry was noticed.
+    - A workbook may still *decommission* an entity -- its Decommissioned
+      Date column is a real source for that. Liongard keeps the row's
+      status outright: it has no source for decommissioning either.
 
     Before 2026-10-07 this assigned every field wholesale, so a sync
     applied after an operator filled in Location erased it.
@@ -137,9 +142,9 @@ def upsert(
         if row is not None:
             if scope_category is None:
                 scope_category = row.scope_category
-            if from_sync:
+            in_boundary = row.in_boundary
+            if from_sync or row.status == EntityStatus.DECOMMISSIONED.value:
                 status = row.status
-                in_boundary = row.in_boundary
 
     if row is None:
         row = ScopeEntity(org_id=org_id, entity_type=entity.entity_type.value)
