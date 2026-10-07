@@ -130,18 +130,41 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   FastAPI router files (see `backend/pyproject.toml`).
 - Work on branches, small commits. Push after every commit — dev server is a
   separate Linux box that must `git pull` first.
-- **Landing a slice, in order: bench-verify → merge → deploy → *watch CI go
-  green* → report.** The CI step is not optional and not "check later". Six
-  consecutive red runs on `main` went unnoticed (2026-09-28/29) purely
-  because nobody looked; the signal existed the whole time. A slice is not
-  done until `backend` and `integration` have both actually **run** and
-  passed on the merge commit — a skipped job is not a passed job. Read
-  status with `gh run list` / `gh run view`; if there is no GitHub
-  credential to hand, say so rather than assuming green.
+- **Landing a slice, in order: bench-verify → open a PR → *watch CI go
+  green* → merge → deploy → report.** The CI step is not optional and not
+  "check later". Six consecutive red runs on `main` went unnoticed
+  (2026-09-28/29) purely because nobody looked; the signal existed the
+  whole time. A slice is not done until `backend` and `integration` have
+  both actually **run** and passed — a skipped job is not a passed job.
+- **`main` is protected (since 2026-09-29): the merge path is a PR, not a
+  fast-forward push.** "Require status checks to pass" is on, with
+  `backend` and `integration` required and **`image` deliberately not** —
+  `image` keeps `needs: [backend, integration]`, so it legitimately skips
+  when either fails, and a skipped required check counts as *satisfied*.
+  Requiring it would wave through exactly the runs protection exists to
+  stop. So branches-not-direct-pushes is now enforced rather than
+  conventional, and "watch CI go green" is a precondition for merging
+  rather than a courtesy.
+- **Reading CI status needs no credential.** The repo is public, so run
+  conclusions and per-job/per-step results come back from
+  `api.github.com/repos/winsorlabs/wingrc/actions/runs` unauthenticated
+  (60 requests/hour per IP — poll sparingly, it is easy to exhaust). Raw
+  log download is the one thing that 403s, which is why the count floor
+  below exists: it fails the run in-process instead of relying on someone
+  with `Actions: read` noticing a wall of skips. A token is needed only to
+  *open or merge* a PR, never to watch one.
 - The no-database suite is the cheap local gate: `pytest -q` in `backend/`
   with no `WINGRC_*DATABASE_URL` set runs ~458 tests in **~10s**. Use it
   before every push. It is exactly the configuration CI's `backend` job
   uses, so it catches that whole class before a run is spent.
+- **A count floor makes a silently-skipping job fail.** Both CI jobs set
+  `WINGRC_MIN_TESTS_RUN` (200 for `backend`, 500 for `integration`) and
+  `backend/tests/conftest.py` fails the run when fewer tests than that
+  actually executed. It is off unless that variable is set, so narrow local
+  runs are unaffected by construction. Do not "fix" a floor failure by
+  lowering the number — it means the run verified nothing, and the cause is
+  almost always a missing `WINGRC_TEST_DATABASE_URL` or an unreachable
+  database.
 - When marking any slice done, grep `CLAUDE.md`, `ROADMAP.md`,
   `docs/roadmap.md`, and the relevant `PLAN-*.md` for that slice's own
   name/number and update every hit, not just the file you're actively

@@ -5028,6 +5028,172 @@ live, confirmed by direct query afterward.
 
 ---
 
+### A silently-skipping test job now fails ✅ DONE (2026-09-30)
+
+**This closes the third of three signals in this repo that reported success
+while checking nothing.** The pattern is more useful than any one of them,
+so all three together:
+
+| Signal | What it reported | What it was actually checking | Guarded by |
+|---|---|---|---|
+| `/health` returning a static dict | container healthy | nothing — a completely unmigrated database passed | `/health` now runs `SELECT 1` and compares `alembic_version` against the head the image ships |
+| `test_lifecycle.py`'s three-export comparison | bundle export reproducible | that rows happened to come back in the same order twice | totality guards in `tests/test_bundle_determinism.py`, static because the byte comparison could not catch a dropped tiebreak |
+| The `integration` job with `WINGRC_TEST_DATABASE_URL` unset | green | nothing — every DB test skipped cleanly | **this slice** |
+
+The shape is the same every time: **a green signal whose green does not
+depend on the thing it is supposed to be checking.** The third was the
+cheapest to trigger — one environment variable — and the only one that
+could recur without anybody writing a line of code.
+
+#### The mechanism, and why this one
+
+A session hook in `backend/tests/conftest.py`, gated on
+`WINGRC_MIN_TESTS_RUN`. It counts tests whose body actually executed and
+fails the run when that falls below the floor.
+
+Considered and rejected:
+
+- **Parsing pytest's summary line** in a workflow step. Rejected because
+  the summary's wording shifts with pytest version, with `-q`/`-v`, and
+  with installed plugins, so the grep rots silently — and a guard that rots
+  silently is the category of bug being fixed, not a fix for it. It also
+  needs a second step to read output, and *reading output is precisely what
+  was not happening*: raw CI log download requires `Actions: read`, which a
+  watcher on a public repo does not have.
+- **A workflow-level `--co -q` count compared against a floor.** Same
+  output-parsing fragility, and it would not protect a bench run.
+
+The hook fails the run in-process, so nothing downstream has to notice, and
+it behaves identically in CI, on the bench, and locally.
+
+**The floor lives in the environment rather than in a constant**, and the
+variable's *value is the threshold*: presence enables the check. That makes
+a narrow run (`pytest tests/test_health.py`) unable to trip it by
+construction — the default is off and only CI turns it on — so there is no
+list of "legitimate partial runs" to maintain and no way for the guard to
+become the thing people route around.
+
+**Counts executed, not collected.** A collected-but-skipped test is exactly
+what is being caught, so counting collection would make the guard
+self-defeating. A setup-phase error also counts as not run, which is right:
+a fixture failing wholesale leaves nothing verified.
+
+#### The floors, and why they never need touching
+
+**200 for `backend`** (458 run there today) and **500 for `integration`**
+(1027). Both under half the current count, deliberately. The guard answers
+"did this run verify anything at all", not "is the count exactly right", so
+it needs no edit when the suite grows, when tests move between the two
+jobs, or when a slice adds a file. A floor that tracked the real number
+would need updating every slice, would be updated carelessly, and would
+eventually be lowered to make a red run go away — which is the failure mode
+it exists to prevent. **If a floor failure appears, the run verified
+nothing; do not lower the number.** `CLAUDE.md` says so where someone will
+read it.
+
+#### Mutation-verified, not assumed
+
+Eight cases in the CI-shaped container. Both mutations fail on the first
+attempt:
+
+| Case | Tests run | Exit | |
+|---|---|---|---|
+| A1 `backend` job shape, floor 200 | 458 | 0 | passes unchanged |
+| **A2 mutation:** select only DB tests that cannot run | 28 | **1** | floor trips |
+| B1 `integration` job shape, floor 500 | 1027 | 0 | passes unchanged |
+| **B2 mutation:** `WINGRC_TEST_DATABASE_URL` unset — *the actual incident* | 28 | **1** | floor trips |
+| C1 narrow run, no floor set | 3 | 0 | does not fire |
+| C2 narrow run **with** a floor set | 3 | **1** | proves the variable is the gate, not luck |
+| C3 `--collect-only` with a floor set | — | 0 | exempt by design |
+| C4 malformed floor (`twenty`) | 3 | **4** | fails loudly rather than disarming |
+
+C2 matters as much as B2: without it, C1 passing would only show the guard
+*didn't* fire, not that the environment variable is what stops it.
+
+**An incidental finding, not fixed here:** both mutations report **28 tests
+running with no database at all**, meaning 28 tests carry
+`@pytest.mark.integration` without needing one. That is the mirror image of
+the marker-scope problem fixed on 2026-09-29 — over-applied rather than
+over-broad — and it means those 28 are skipped from the `backend` job for
+no reason. Harmless, and the floor catches wholesale skipping regardless of
+it, but worth a pass sometime.
+
+#### Verification
+
+Bench, CI-shaped `python:3.13-slim` container against a `postgres:18`
+service: **458 passed** no-database and **1027 passed, 1 skipped** with a
+database, `ruff` clean, **330/330** vitest across 26 files, `tsc -b` clean,
+`vite build` clean. No frontend files changed; run because the slice's
+verification list called for it rather than because it could plausibly
+break.
+
+#### Housekeeping closed out
+
+- `/home/claude/.secrets/` removed from wl-util-1. It held **0 bytes** — no
+  token ever landed there, so nothing was exposed. An empty `.secrets` path
+  is worse than none: it implies a credential exists, so the next reader
+  either hunts for one or assumes something is configured that is not.
+- `ci-red-fix` deleted locally and on the remote, after confirming it was an
+  ancestor of `origin/main` rather than assuming.
+- The bench worktree at `/home/claude/bench/ci307` removed. Its files were
+  root-owned by the containers that wrote them, so `git worktree remove`
+  failed with `Permission denied` and it had to go via a root container —
+  noting the mechanism because every bench worktree will have the same
+  problem.
+
+#### CI now runs on every branch push, not just `main`
+
+**The reason is the routine, not the coverage.** "Watch CI go green" is the
+step in the landing sequence that decays first, because it is the only one
+that depends on a human being present at a particular moment: with
+`push: [main]` plus `pull_request`, a pushed branch produced **no run at
+all** until somebody opened a PR. So the verification step was gated on an
+unrelated social act. It decayed exactly that way once already — six
+consecutive red runs — and it recurred immediately in this slice, where the
+work was finished, pushed, and bench-verified while CI had still never
+executed it.
+
+It also has no local substitute. The `backend` job's no-database
+configuration exists nowhere else: the bench always has a database, so the
+whole class of failure that produced runs #308-#312 is invisible outside
+that job. A branch run makes the signal exist the moment work is pushed,
+whoever is or isn't watching.
+
+`pull_request` stays, for forks, whose branch pushes never reach this repo.
+
+**Deduplication, and the bug in the obvious expression.** A same-repo PR
+would otherwise run twice per push. A `concurrency` group collapses them,
+but grouping on `github.ref` — the natural first guess — **does not work**:
+it is `refs/heads/<branch>` on a push and `refs/pull/<n>/merge` on a
+pull_request, so the two events land in two different groups and nothing is
+deduplicated. The group uses `github.head_ref || github.ref_name`;
+`ref_name` is the short branch name, and `head_ref` is set only on
+pull_request and equals the source branch, so both events collapse onto one
+group.
+
+`cancel-in-progress` is false on `main` and true elsewhere: superseding is
+right on a feature branch, but a follow-up push must never kill the run
+whose result is the record for a merge commit.
+
+The residual wrinkle, recorded in the workflow itself so a future blocked
+merge is diagnosable in seconds rather than re-derived: the loser of that
+collapse leaves *cancelled* check runs behind. The survivor is the later
+run, so it is normally the one branch protection reads, but a merge blocked
+by a check reading "cancelled" rather than "failed" is this, and another
+push clears it.
+
+#### Branch protection is now on
+
+`main` requires status checks: **`backend` and `integration` required,
+`image` deliberately not**, because `image` keeps
+`needs: [backend, integration]` and a skipped required check counts as
+satisfied. The merge path is a PR rather than a fast-forward push, so
+branches-not-direct-pushes is enforced rather than conventional and
+"watch CI go green" is a precondition for merging rather than a courtesy.
+Recorded in `CLAUDE.md`'s land-it routine.
+
+---
+
 ### CI was red on `main` for six consecutive runs ✅ FIXED (2026-09-29)
 
 **How long: six runs, roughly 13 hours of wall clock, 2026-09-28 23:12 to
