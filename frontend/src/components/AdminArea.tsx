@@ -31,7 +31,9 @@ import { UserDirectoryPanel } from "./UserDirectoryPanel";
 // two navs are visually/behaviorally identical by construction, not by
 // two copies of class-name strings that can drift.
 //
-// Tools (G.9) manages the baseline library itself -- import, publish/
+// Product Baselines (G.9; labelled "Tools" until 2026-10-07, renamed so it
+// no longer shares a word with the org-level "baseline" document type in
+// the tenant Library) manages the product baseline library itself -- import, publish/
 // unpublish, documentation attachments -- and never writes OrgProduct.
 // Users (G.11, this slice) is the deployment-wide user directory +
 // org-access grant/revoke (ADR 0009 M.7/M.8). Named "Users," not
@@ -92,7 +94,7 @@ export function AdminArea({ canWrite, currentUserRole }: Props) {
         </SideNavCategory>
         <SideNavCategory>
           <SideNavItem active={section === "tools"} onClick={() => setSection("tools")}>
-            Tools
+            Product Baselines
           </SideNavItem>
         </SideNavCategory>
         {showUsers && (

@@ -27,23 +27,30 @@ export type ScopeTab =
   | "assets"
   | "sprs"
   | "review-cycles"
-  | "liongard-sync";
+  | "liongard-sync"
+  | "lists";
 // RACI is assessment-scoped data (docs/PLAN-gui-restructure.md G.7's
 // 2026-09-09 move note) — "board" is the existing per-control assessment
 // view, "roles" is the Roles/RACI matrix, both live under Assessments now.
 export type AssessmentsTab = "board" | "roles";
 export type SecurityTab = "users" | "api-tokens" | "audit-log";
 // Library is the org's document library (roadmap N.1/N.2). "all" is every
-// document; the rest are doc_type filters, which is what the placeholder
-// subitems in this category were always standing in for.
+// document; the rest are doc_type filters.
 //
-// Deliberately NOT here: Lists and Baselines. `list` is a real doc_type, but
-// the nav's "Lists" entry means the scope-derived catalog views (CLAUDE.md:
-// "Lists are views over the scope graph, not separate documents"), and
-// Baselines means the product baseline library. Two different features that
-// happen to share an English word with a document type -- they stay disabled
-// rather than being quietly repointed at this screen.
-export type LibraryTab = "all" | "policy" | "procedure" | "plan";
+// "baseline" is a doc_type filter like the others: an org-level baseline
+// (e.g. a Windows 11 Workstation Baseline -- headings, tool inventory,
+// change management, review cadence, tied to CM.L2-3.4.1/3.4.2) is a
+// narrative document. It is NOT the product baseline library, which is
+// reference data about what a vendor's product covers and lives in
+// AdminArea as "Product Baselines". An earlier version of this comment
+// said the nav's Baselines meant that library; a real org baseline
+// document showed otherwise, and the AdminArea feature was renamed so the
+// two stop sharing a word.
+//
+// Lists is still not a doc_type filter here, despite `list` being one:
+// the CMMC lists are views over the scope graph (CLAUDE.md), so they live
+// at Scope > Lists, and the Library entry only points there.
+export type LibraryTab = "all" | "policy" | "procedure" | "plan" | "baseline";
 export type SystemDescriptionSection = "network_diagram" | "data_flow_diagram";
 
 interface Props {
@@ -145,6 +152,9 @@ export function SideNav({
             >
               Asset Approvals
             </SideNavSubitem>
+            <SideNavSubitem active={scopeTab === "lists"} onClick={() => onSelectScopeTab("lists")}>
+              Lists
+            </SideNavSubitem>
             {/* G.6: no separate pages — the diagrams live inside the System
                 Description editor. These entries route there and ask it to
                 scroll to/highlight the relevant section, so they light up
@@ -212,12 +222,24 @@ export function SideNav({
             >
               Plans
             </SideNavSubitem>
-            {/* Still not built, and not this screen -- see LibraryTab's own
-                comment for why these two are different features rather than
-                doc_type filters. Lists' backend export logic exists with no
-                frontend wrapper; Baselines lives in AdminArea. */}
-            <SideNavSubitem active={false} disabled>Lists</SideNavSubitem>
-            <SideNavSubitem active={false} disabled>Baselines</SideNavSubitem>
+            <SideNavSubitem
+              active={libraryTab === "baseline"}
+              onClick={() => onSelectLibraryTab("baseline")}
+            >
+              Baselines
+            </SideNavSubitem>
+            {/* Not a document filter -- see LibraryTab's comment. Goes to
+                Scope > Lists, and says so before the click does. */}
+            <SideNavSubitem
+              active={false}
+              title="Opens Scope › Lists — the CMMC lists (3.1.1a–c, External Services) are views over the scope graph, not documents"
+              onClick={() => {
+                onSelectCategory("scope");
+                onSelectScopeTab("lists");
+              }}
+            >
+              Lists ↗
+            </SideNavSubitem>
           </SideNavSubitems>
         )}
       </SideNavCategory>

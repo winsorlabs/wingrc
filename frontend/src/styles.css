@@ -2100,3 +2100,15 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
   .doc-timeline li { grid-template-columns: 1fr; }
   .doc-timeline-who { text-align: left; }
 }
+
+/* ── CMMC lists (ListsPanel) ── */
+.list-view-tabs { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1rem; }
+.list-view-tabs .active { background: var(--border); font-weight: 600; }
+.list-view-count { color: var(--muted); font-weight: normal; }
+/* Known absent, with a reason -- visibly not the same thing as empty. */
+.list-cell-placeholder { font-style: italic; color: #7a5c00; background: #fff4cc; }
+.list-cell-empty { color: var(--muted); }
+.list-legend { margin-top: 0.75rem; }
+.list-add-process { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.6rem; margin-bottom: 1rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: 6px; }
+.list-add-process label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; }
+.list-add-process-actions { display: flex; gap: 0.4rem; align-items: end; }
