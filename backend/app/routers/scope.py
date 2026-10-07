@@ -8,7 +8,9 @@ Endpoints:
   DELETE /orgs/{org_id}/scope/{entity_id}          Delete one entity
   POST   /orgs/{org_id}/imports/workbook/dry-run   Parse + reconcile, no writes
   POST   /orgs/{org_id}/imports/workbook/apply     Apply a confirmed diff
-  GET    /orgs/{org_id}/exports/{view_id}          Render a CMMC list
+  GET    /orgs/{org_id}/exports/{view_id}          Render a CMMC list (.xlsx)
+  GET    /orgs/{org_id}/lists                      The CMMC list views, with counts
+  GET    /orgs/{org_id}/lists/{view_id}            One list's rows, as JSON
 
   GET    /orgs/{org_id}/integrations/liongard/environments   Available Liongard Environments
   GET    /orgs/{org_id}/integrations/liongard/environment    This org's Environment mapping
@@ -54,7 +56,7 @@ import json
 import tempfile
 import uuid
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -68,11 +70,12 @@ from sqlalchemy.orm import Session
 from .. import liongard_sync, repo
 from ..audit import log_event
 from ..auth import require_org_access, require_write
-from ..catalog import VIEWS_BY_ID
+from ..catalog import ALL_VIEWS, VIEWS_BY_ID
 from ..connectors import liongard as liongard_connector
 from ..crypto import CredentialCipherError, decrypt_credential
 from ..db import get_session
 from ..domain import (
+    OPERATOR_OVERLAY_ATTRIBUTES,
     CanonicalEntity,
     ChangeType,
     DeviceSubtype,
@@ -81,8 +84,10 @@ from ..domain import (
     ScopeCategory,
     Source,
     normalize_mac_address,
+    placeholder_reason,
 )
 from ..importers.workbook import parse_workbook, resolve_canonical_device_attributes
+from ..list_projection import project
 from ..models import (
     AssetApproval,
     AssetApprovalChecklistItem,
@@ -207,6 +212,44 @@ def _validate_device_software_attributes(entity_type: str, attributes: dict[str,
             attributes[k] = value
 
 
+class OperatorOverlayAttributes(BaseModel):
+    """Validates domain.OPERATOR_OVERLAY_ATTRIBUTES, for any entity type.
+
+    Dates are ISO `YYYY-MM-DD`. Any field may instead hold a
+    `[PLACEHOLDER - reason]` string, stored verbatim -- see
+    domain.placeholder_reason for why that is a value, not a blank.
+    """
+
+    location: str | None = None
+    in_service_date: str | None = None
+    decommissioned_date: str | None = None
+    requested_by: str | None = None
+
+    @field_validator("in_service_date", "decommissioned_date")
+    @classmethod
+    def _iso_date_or_placeholder(cls, v: str | None) -> str | None:
+        if v is None or placeholder_reason(v) is not None:
+            return v
+        try:
+            return date.fromisoformat(v.strip()).isoformat()
+        except ValueError as exc:
+            raise ValueError(
+                "must be an ISO date (YYYY-MM-DD) or '[PLACEHOLDER - reason]'"
+            ) from exc
+
+
+def _validate_overlay_attributes(attributes: dict[str, Any]) -> None:
+    known = {k: v for k, v in attributes.items() if k in OPERATOR_OVERLAY_ATTRIBUTES}
+    if not known:
+        return
+    try:
+        validated = OperatorOverlayAttributes.model_validate(known)
+    except ValidationError as exc:
+        raise ValueError(f"Invalid overlay attributes: {exc}") from exc
+    for k in known:
+        attributes[k] = getattr(validated, k)
+
+
 class ScopeEntityIn(BaseModel):
     entity_type: str
     natural_key: str
@@ -246,6 +289,7 @@ class ScopeEntityIn(BaseModel):
     @model_validator(mode="after")
     def _validate_type_attributes(self) -> ScopeEntityIn:
         _validate_device_software_attributes(self.entity_type, self.attributes)
+        _validate_overlay_attributes(self.attributes)
         return self
 
 
@@ -472,7 +516,7 @@ def create_scope_entity(
         source_ref=None,
     )
     try:
-        row = repo.upsert(session, org_id, entity)
+        row = repo.upsert(session, org_id, entity, operator_edit=True)
     except PendingApprovalWriteError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     session.flush()
@@ -529,11 +573,12 @@ def patch_scope_entity(
     entity = replace(current, **kwargs)
     try:
         _validate_device_software_attributes(entity.entity_type.value, entity.attributes)
+        _validate_overlay_attributes(entity.attributes)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     try:
-        updated_row = repo.upsert(session, org_id, entity)
+        updated_row = repo.upsert(session, org_id, entity, operator_edit=True)
     except PendingApprovalWriteError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     session.flush()
@@ -822,6 +867,99 @@ def export_view(
         content=render_view_bytes(view, entities),
         media_type=_XLSX_MEDIA_TYPE,
         headers={"Content-Disposition": f'attachment; filename="{view_id}.xlsx"'},
+    )
+
+
+class ListViewSummaryOut(BaseModel):
+    id: str
+    sheet_title: str
+    title: str
+    control_ids: list[str]
+    description: str
+    entity_type: str
+    row_count: int
+
+
+class ListCellOut(BaseModel):
+    value: str
+    placeholder_reason: str | None
+
+
+class ListRowOut(BaseModel):
+    natural_key: str
+    cells: list[ListCellOut]
+
+
+class ListViewOut(BaseModel):
+    id: str
+    sheet_title: str
+    title: str
+    control_ids: list[str]
+    description: str
+    entity_type: str
+    columns: list[str]
+    rows: list[ListRowOut]
+    empty_explanation: str
+
+
+@router.get("/{org_id}/lists", response_model=list[ListViewSummaryOut])
+def list_views(
+    org_id: uuid.UUID,
+    session: Session = Depends(get_session),
+) -> list[ListViewSummaryOut]:
+    counts = dict(
+        session.execute(
+            select(ScopeEntity.entity_type, func.count())
+            .where(ScopeEntity.org_id == org_id)
+            .group_by(ScopeEntity.entity_type)
+        ).all()
+    )
+    return [
+        ListViewSummaryOut(
+            id=v.id,
+            sheet_title=v.sheet_title,
+            title=v.title,
+            control_ids=list(v.control_ids),
+            description=v.description,
+            entity_type=v.entity_type.value,
+            row_count=counts.get(v.entity_type.value, 0),
+        )
+        for v in ALL_VIEWS
+    ]
+
+
+@router.get("/{org_id}/lists/{view_id}", response_model=ListViewOut)
+def get_list_view(
+    org_id: uuid.UUID,
+    view_id: str,
+    session: Session = Depends(get_session),
+) -> ListViewOut:
+    """The same projection the .xlsx export renders (list_projection.py),
+    as JSON. A list is a read-only projection of the scope graph; entities
+    are edited where entities are edited."""
+    view = VIEWS_BY_ID.get(view_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail=f"Unknown view {view_id!r}")
+    rows = project(view, repo.list_entities(session, org_id, view.entity_type))
+    return ListViewOut(
+        id=view.id,
+        sheet_title=view.sheet_title,
+        title=view.title,
+        control_ids=list(view.control_ids),
+        description=view.description,
+        entity_type=view.entity_type.value,
+        columns=[display for _, display in view.columns],
+        rows=[
+            ListRowOut(
+                natural_key=r.natural_key,
+                cells=[
+                    ListCellOut(value=c.value, placeholder_reason=c.placeholder_reason)
+                    for c in r.cells
+                ],
+            )
+            for r in rows
+        ],
+        empty_explanation=view.empty_explanation,
     )
 
 

@@ -10,6 +10,7 @@ render loop unit-testable without standing up Postgres.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -208,6 +209,42 @@ PERSON_CANONICAL_ATTRIBUTES: frozenset[str] = frozenset(
 # last-activity data) and excluded from comparison here without also
 # touching reconcile.py.
 PERSON_COMPARABLE_ATTRIBUTES: frozenset[str] = PERSON_CANONICAL_ATTRIBUTES
+
+
+# Operator overlay (Lists slice, 2026-10-07): human knowledge about an
+# entity that no collector can observe -- where a device physically is,
+# when it entered and left service, who requested access. The fifth such
+# column in the Authorized-Entities workbook, Asset Type, is not here: it
+# is `scope_category`, a real column already constrained to ScopeCategory.
+#
+# Kept apart from the canonical vocabularies above on purpose. Those are
+# what a connector writes and what reconcile compares; these are written
+# only by a person, never compared against an import that lacks them, and
+# carried forward by repo.upsert() across any import or sync that does not
+# supply them. An import that never mentions Location must not erase it.
+OPERATOR_OVERLAY_ATTRIBUTES: frozenset[str] = frozenset(
+    {"location", "in_service_date", "decommissioned_date", "requested_by"}
+)
+
+# `[PLACEHOLDER - reason]`: a cell deliberately left without a value, with
+# the reason recorded (e.g. "[PLACEHOLDER - BIOS FW version not collected]").
+# An assessor reads "known absent, because X" very differently from blank,
+# so the string is stored verbatim and rendered distinctly, never
+# normalized to empty. The bare `[placeholder]` token importers/workbook.py
+# skips is a different thing -- an illustrative example row, not a value.
+_PLACEHOLDER_RE = re.compile(
+    r"^\s*\[\s*PLACEHOLDER\s*-\s*(?P<reason>.*?)\s*\]\s*$", re.IGNORECASE | re.DOTALL
+)
+
+
+def placeholder_reason(value: Any) -> str | None:
+    """The stated reason if `value` is a `[PLACEHOLDER - reason]` cell."""
+    if not isinstance(value, str):
+        return None
+    m = _PLACEHOLDER_RE.match(value)
+    if m is None or not m.group("reason"):
+        return None
+    return m.group("reason")
 
 
 _MAC_HEX_CHARS = "0123456789abcdef"
