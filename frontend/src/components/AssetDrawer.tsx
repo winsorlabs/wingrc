@@ -80,6 +80,11 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
   const [deviceSubtypeOther, setDeviceSubtypeOther] = useState("");
   const [assetTag, setAssetTag] = useState("");
   const [macAddresses, setMacAddresses] = useState<string[]>([]);
+  // Operator overlay (backend domain.OPERATOR_OVERLAY_ATTRIBUTES): facts no
+  // sync can observe. repo.upsert() keeps them across every import/sync.
+  const [location, setLocation] = useState("");
+  const [inServiceDate, setInServiceDate] = useState("");
+  const [decommissionedDate, setDecommissionedDate] = useState("");
   const [contacts, setContacts] = useState<Contact[]>([]);
 
   const [saving, setSaving] = useState(false);
@@ -133,6 +138,9 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
       setDeviceSubtypeOther((asset.attributes.device_subtype_other as string | null) ?? "");
       setAssetTag((asset.attributes.asset_tag as string | null) ?? "");
       setMacAddresses((asset.attributes.mac_addresses as string[] | null) ?? []);
+      setLocation((asset.attributes.location as string | null) ?? "");
+      setInServiceDate((asset.attributes.in_service_date as string | null) ?? "");
+      setDecommissionedDate((asset.attributes.decommissioned_date as string | null) ?? "");
     } else {
       setEntityType("device");
       setNaturalKey("");
@@ -147,6 +155,9 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
       setDeviceSubtypeOther("");
       setAssetTag("");
       setMacAddresses([]);
+      setLocation("");
+      setInServiceDate("");
+      setDecommissionedDate("");
     }
     setError(null);
     setConfirmDelete(false);
@@ -178,6 +189,9 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
       mac_addresses: macAddresses.filter((m) => m.trim()).length
         ? macAddresses.filter((m) => m.trim())
         : null,
+      location: location.trim() || null,
+      in_service_date: inServiceDate.trim() || null,
+      decommissioned_date: decommissionedDate.trim() || null,
     };
     try {
       let saved: ScopeEntity;
@@ -354,7 +368,7 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
             </div>
 
             <div className="form-field">
-              <label>Scope Category</label>
+              <label>Asset Type (scope category)</label>
               <select value={scopeCategory} onChange={(e) => setScopeCategory(e.target.value)}>
                 <option value="">— Unset —</option>
                 {SCOPE_CATEGORIES.map((c) => (
@@ -376,6 +390,43 @@ export function AssetDrawer({ orgId, asset, canWrite, onClose, onSaved, onDelete
                 </div>
               )}
             </div>
+
+            {entityType === "device" && (
+              <>
+                <div className="form-field">
+                  <label>Location</label>
+                  <input
+                    type="text"
+                    value={location}
+                    onChange={(e) => setLocation(e.target.value)}
+                    placeholder="HQ - Suite 200"
+                  />
+                </div>
+                <div className="form-field">
+                  <label>In Service Date</label>
+                  <input
+                    type="text"
+                    value={inServiceDate}
+                    onChange={(e) => setInServiceDate(e.target.value)}
+                    placeholder="YYYY-MM-DD or [PLACEHOLDER - reason]"
+                  />
+                </div>
+                <div className="form-field">
+                  <label>Decommissioned Date</label>
+                  <input
+                    type="text"
+                    value={decommissionedDate}
+                    onChange={(e) => setDecommissionedDate(e.target.value)}
+                    placeholder="YYYY-MM-DD or [PLACEHOLDER - reason]"
+                  />
+                  <div className="field-hint">
+                    Location and dates are yours to set — no sync can observe them, and none
+                    overwrites them. Write <code>[PLACEHOLDER - reason]</code> to record why a value
+                    is missing; the lists show it as known absent, not blank.
+                  </div>
+                </div>
+              </>
+            )}
 
             {entityType === "device" && (
               <>

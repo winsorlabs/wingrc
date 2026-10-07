@@ -2753,7 +2753,8 @@ class Document(Base):
     __table_args__ = (
         UniqueConstraint("org_id", "doc_id", name="uq_document_doc_id"),
         CheckConstraint(
-            "doc_type IN ('policy', 'procedure', 'plan', 'list', 'sop', 'form', 'other')",
+            "doc_type IN "
+            "('policy', 'procedure', 'plan', 'baseline', 'list', 'sop', 'form', 'other')",
             name="ck_document_doc_type",
         ),
     )

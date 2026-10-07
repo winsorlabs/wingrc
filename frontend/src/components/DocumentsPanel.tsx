@@ -2,12 +2,11 @@
  * The document library screen (roadmap N.1/N.2) — list, create, edit,
  * diff, history.
  *
- * Lives under the Library nav category, whose Policies/Procedures/Plans
- * subitems were placeholders until this slice; `docType` is how they filter.
- * "Lists" and "Baselines" stay separate features and are still disabled in
- * the nav — Lists in particular is a *view over the scope graph*, not a
- * document, however much the `list` doc_type looks like it should be the
- * same thing.
+ * Lives under the Library nav category; its Policies/Procedures/Plans/
+ * Baselines subitems are `docType` filters. "Baselines" here are org-level
+ * baseline documents, not AdminArea's Product Baselines. "Lists" is not a
+ * filter: the CMMC lists are a *view over the scope graph* (Scope > Lists),
+ * however much the `list` doc_type looks like it should be the same thing.
  */
 
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
@@ -28,7 +27,7 @@ const DocumentEditor = lazy(() =>
   import("./DocumentEditor").then((m) => ({ default: m.DocumentEditor })),
 );
 
-const DOC_TYPES: DocumentType[] = ["policy", "procedure", "plan", "list", "sop", "form", "other"];
+const DOC_TYPES: DocumentType[] = ["policy", "procedure", "plan", "baseline", "list", "sop", "form", "other"];
 
 type Tab = "edit" | "history" | "diff";
 

@@ -38,9 +38,9 @@ describe("AdminArea", () => {
     await screen.findByText(/Configuring a credential here/);
     expect(api.listToolsLibrary).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Tools" }));
+    fireEvent.click(screen.getByRole("button", { name: "Product Baselines" }));
 
-    await screen.findByText("Baseline Library");
+    await screen.findByText("Product Baseline Library");
     expect(api.listToolsLibrary).toHaveBeenCalled();
   });
 

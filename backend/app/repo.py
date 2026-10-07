@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .domain import (
+    OPERATOR_OVERLAY_ATTRIBUTES,
     CanonicalEntity,
     EntityStatus,
     EntityType,
@@ -73,7 +74,34 @@ def list_entities(
     return [to_canonical(r) for r in session.scalars(stmt)]
 
 
-def upsert(session: Session, org_id: uuid.UUID, entity: CanonicalEntity) -> ScopeEntity:
+def upsert(
+    session: Session,
+    org_id: uuid.UUID,
+    entity: CanonicalEntity,
+    *,
+    operator_edit: bool = False,
+) -> ScopeEntity:
+    """The only writer of a ScopeEntity row.
+
+    `operator_edit=True` is for a person editing the entity directly
+    (POST/PATCH /scope): what they send is what is stored. Every other
+    caller is an import or a sync, and the default is the safe one, so a
+    new writer that forgets the flag cannot erase anything:
+
+    - An OPERATOR_OVERLAY_ATTRIBUTES key the incoming entity does not
+      carry is kept from the existing row. A Liongard write never sets one
+      at all -- Liongard is never the source of where a device sits.
+    - `scope_category` is kept when the incoming entity has none.
+    - A Liongard write keeps the row's `status` and `in_boundary`. A
+      connector observing a device says nothing about whether a human put
+      it in the CUI boundary or decommissioned it; before this, applying a
+      CHANGED row for a device a reviewer had rejected (in_boundary=False)
+      quietly put it back in scope, because every fresh pull carries
+      in_boundary=True by default.
+
+    Before 2026-10-07 this assigned every field wholesale, so a sync
+    applied after an operator filled in Location erased it.
+    """
     stmt = select(ScopeEntity).where(
         ScopeEntity.org_id == org_id,
         ScopeEntity.entity_type == entity.entity_type.value,
@@ -94,16 +122,35 @@ def upsert(session: Session, org_id: uuid.UUID, entity: CanonicalEntity) -> Scop
             "approval -- resolve it via the approve/reject workflow, not a direct edit."
         )
 
+    attributes = dict(entity.attributes)
+    scope_category = entity.scope_category.value if entity.scope_category else None
+    status = entity.status.value
+    in_boundary = entity.in_boundary
+    if not operator_edit:
+        from_sync = entity.source == Source.LIONGARD
+        existing = dict(row.attributes or {}) if row is not None else {}
+        for key in OPERATOR_OVERLAY_ATTRIBUTES:
+            if from_sync:
+                attributes.pop(key, None)
+            if key not in attributes and key in existing:
+                attributes[key] = existing[key]
+        if row is not None:
+            if scope_category is None:
+                scope_category = row.scope_category
+            if from_sync:
+                status = row.status
+                in_boundary = row.in_boundary
+
     if row is None:
         row = ScopeEntity(org_id=org_id, entity_type=entity.entity_type.value)
         session.add(row)
     row.natural_key = entity.natural_key
-    row.scope_category = entity.scope_category.value if entity.scope_category else None
-    row.status = entity.status.value
-    row.in_boundary = entity.in_boundary
+    row.scope_category = scope_category
+    row.status = status
+    row.in_boundary = in_boundary
     row.source = entity.source.value
     row.source_ref = entity.source_ref
-    row.attributes = entity.attributes
+    row.attributes = attributes
     row.last_verified_at = datetime.now(UTC)
     return row
 

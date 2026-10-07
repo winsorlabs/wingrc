@@ -45,7 +45,7 @@ export function ToolsLibraryPanel() {
   return (
     <div className="tools-library-panel">
       <div className="products-panel-header" style={{ padding: 0, border: "none", marginBottom: "0.75rem" }}>
-        <span className="products-panel-title">Baseline Library</span>
+        <span className="products-panel-title">Product Baseline Library</span>
         <button className="btn-primary btn-sm" onClick={() => setShowImport(true)}>Import baseline</button>
       </div>
 

@@ -109,7 +109,9 @@ router = APIRouter(
     dependencies=[Depends(require_org_access()), Depends(require_write())],
 )
 
-_DOC_TYPES = frozenset({"policy", "procedure", "plan", "list", "sop", "form", "other"})
+_DOC_TYPES = frozenset(
+    {"policy", "procedure", "plan", "baseline", "list", "sop", "form", "other"}
+)
 _MANUAL_VERSION_STATUSES = frozenset({"draft", "under_review"})
 
 # N.3 review-cadence filter vocabulary. The four are document_reviews.py's

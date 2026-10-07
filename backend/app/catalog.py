@@ -16,6 +16,11 @@ from dataclasses import dataclass
 
 from .domain import EntityType
 
+# Pseudo-sources for ListView.sources: values that live on the scope_entity
+# row itself rather than in `attributes`.
+SCOPE_CATEGORY = "@scope_category"
+NATURAL_KEY = "@natural_key"
+
 
 @dataclass(frozen=True)
 class ListView:
@@ -28,6 +33,23 @@ class ListView:
     # workbook header captured at import time, so round-trips are faithful.
     columns: tuple[tuple[str, str], ...]
     description: str = ""
+    # Where a column's value may come from, in priority order, for columns
+    # whose value is not only ever under the raw workbook header. Three
+    # writers fill scope_entity.attributes with different key sets -- the
+    # workbook keeps its raw headers, Liongard writes canonical keys
+    # (make_oem, display_name, ...) beside its own raw record, and an
+    # operator writes the overlay keys -- and a list must show the value
+    # whichever writer supplied it. Columns absent here read their own key.
+    sources: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    # Shown in place of an empty table, in the UI and in the exported
+    # sheet, when nothing populates this view on its own.
+    empty_explanation: str = ""
+
+    def column_sources(self, attr_key: str) -> tuple[str, ...]:
+        for key, srcs in self.sources:
+            if key == attr_key:
+                return srcs
+        return (attr_key,)
 
 
 AUTHORIZED_USERS = ListView(
@@ -46,6 +68,11 @@ AUTHORIZED_USERS = ListView(
         ("End Date", "End Date"),
     ),
     description="All authorized AD users in the CUI boundary.",
+    sources=(
+        ("First Name", ("First Name", "FirstName")),
+        ("Last Name", ("Last Name", "LastName")),
+        ("Requested By/Responsible Party", ("requested_by", "Requested By/Responsible Party")),
+    ),
 )
 
 AUTHORIZED_PROCESSES = ListView(
@@ -61,6 +88,14 @@ AUTHORIZED_PROCESSES = ListView(
         ("Description / Purpose", "Description / Purpose"),
     ),
     description="Service accounts and scheduled tasks acting on behalf of users.",
+    # EntityType.PROCESS has no connector: only a workbook import or manual
+    # entry ever creates one, so an empty list here is the normal state,
+    # not a failed sync.
+    empty_explanation=(
+        "No processes recorded. Service accounts and agents acting on behalf of "
+        "users (e.g. an RMM agent's service account) are not discovered by any "
+        "sync -- add them manually."
+    ),
 )
 
 AUTHORIZED_DEVICES = ListView(
@@ -91,6 +126,22 @@ AUTHORIZED_DEVICES = ListView(
         ("Heimdal Installed", "Heimdal Installed"),
     ),
     description="Every authorized device in the CUI boundary with installed agents.",
+    sources=(
+        ("Name", ("Name", "display_name", "Hostname", NATURAL_KEY)),
+        ("Make", ("Make", "make_oem")),
+        ("Model", ("Model", "model")),
+        ("Device Subtype", ("Device Subtype", "device_subtype")),
+        ("Serial # or Asset Tag", ("Serial # or Asset Tag", "asset_tag", "SerialNumber")),
+        ("Mac Address", ("Mac Address", "mac_addresses")),
+        ("OS", ("OS", "version")),
+        # Operator overlay first: it is the edit surface, so a hand
+        # correction outranks the value an earlier workbook import stored.
+        ("Location", ("location", "Location")),
+        # The constrained column, not the free-text cell it was parsed from.
+        ("Asset Type", (SCOPE_CATEGORY, "Asset Type")),
+        ("In Service Date", ("in_service_date", "In Service Date")),
+        ("Decommissioned Date", ("decommissioned_date", "Decommissioned Date")),
+    ),
 )
 
 EXTERNAL_SERVICES = ListView(
@@ -105,6 +156,7 @@ EXTERNAL_SERVICES = ListView(
         ("Asset Type", "Asset Type"),
     ),
     description="External/cloud services that interact with the boundary (ESP/CSP).",
+    sources=(("Asset Type", (SCOPE_CATEGORY, "Asset Type")),),
 )
 
 ALL_VIEWS: tuple[ListView, ...] = (

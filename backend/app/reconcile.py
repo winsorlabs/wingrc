@@ -62,6 +62,7 @@ from __future__ import annotations
 
 from .domain import (
     DEVICE_SOFTWARE_COMPARABLE_ATTRIBUTES,
+    OPERATOR_OVERLAY_ATTRIBUTES,
     PERSON_COMPARABLE_ATTRIBUTES,
     CanonicalEntity,
     ChangeType,
@@ -101,6 +102,10 @@ def _field_diffs(
     allowlist = _COMPARABLE_ATTRIBUTES_BY_ENTITY_TYPE.get(current.entity_type)
     if allowlist is not None:
         keys &= allowlist
+    # An overlay field the import does not carry is kept by repo.upsert(),
+    # so its absence is not a change -- reporting it would mark every
+    # hand-annotated device CHANGED on every sync.
+    keys -= OPERATOR_OVERLAY_ATTRIBUTES - set(incoming.attributes)
     for k in keys:
         a = current.attributes.get(k)
         b = incoming.attributes.get(k)

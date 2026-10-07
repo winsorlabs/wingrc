@@ -189,10 +189,11 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
 | `frontend/src/lib/markdown.tsx` | Browser counterpart to `markdown_doc.py` — Markdown → React elements, never `dangerouslySetInnerHTML` |
 | `frontend/src/lib/tiptapMarkdown.ts` | Editor bridge: stored Markdown ↔ TipTap document, owned in-repo so the subset stays the subset |
 | `backend/app/routers/` | FastAPI routers: `assessments`, `bundle`, `contacts`, `evidence`, `frameworks`, `orgs` |
+| `backend/app/list_projection.py` | The one function that decides a CMMC list cell (shared by the `.xlsx` export and Scope › Lists); `catalog.py`'s `ListView.sources` says where each column's value may come from |
 | `backend/app/storage.py` | `StorageClient` ABC + `MinIOClient` + `NullStorageClient` |
 | `backend/app/audit.py` | `log_event()` — writes `AuditLog` rows; also the actor-resolution helpers both audit views share |
 | `backend/app/rls.py` | The only place `app.current_org` is written, plus the `after_begin` hook that makes it survive a commit — read before touching anything org-scoped |
-| `backend/app/migrations/` | Alembic migrations (currently 0001–0040) |
+| `backend/app/migrations/` | Alembic migrations (currently 0001–0063) |
 | `backend/baselines/` | YAML product baselines (`rocketcyber.yaml`, …) — not repo-root `baselines/`; `seeds/baselines.py:_BASELINES_DIR` resolves here, and a stale repo-root duplicate that drifted out of sync with a real coverage_basis reclassification was removed 2026-09-19 (see `docs/roadmap.md`'s tenant lifecycle consolidation pass entry) |
 | `docs/fips.md` | FIPS 140-2/140-3 crypto boundary documentation |
 | `docs/architecture.md` | Authoritative architecture description (the five layers) — companion to this file's terse session version |
@@ -216,6 +217,16 @@ Everything listed here has passing tests and is deployed on the dev server.
 dry-run reconcile diff, apply. Catalog views (CUI Assets, CUI Users, etc.) as
 enumerated view definitions. Lists are views over the scope graph, not separate
 documents. Scope is the denominator for control evaluation.
+
+**Lists (2026-10-07):** Scope › Lists shows the four CMMC lists, and
+`GET …/exports/{view_id}` is the `.xlsx` export (a GET, rendered in memory —
+it once shared one temp path across orgs). **An import or sync may not clear
+or overwrite an operator-entered field it has no source for:**
+`repo.upsert()` carries `domain.OPERATOR_OVERLAY_ATTRIBUTES` and
+`scope_category` forward, and a Liongard write keeps `status`/`in_boundary`,
+unless the caller passes `operator_edit=True` (only `POST`/`PATCH /scope`
+do). Asset Type *is* `scope_category`. `[PLACEHOLDER - reason]` cells are
+values, stored verbatim. See `docs/roadmap.md`'s Lists entry.
 
 ### Assessment engine (migrations 0002–0006)
 Full model set: `Framework → Control → AssessmentObjective → ControlState`;

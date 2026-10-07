@@ -38,11 +38,13 @@ export function SideNavSubitem({
   active,
   onClick,
   disabled = false,
+  title,
   children,
 }: {
   active: boolean;
   onClick?: () => void;
   disabled?: boolean;
+  title?: string;
   children: ReactNode;
 }) {
   return (
@@ -50,6 +52,7 @@ export function SideNavSubitem({
       className={`side-nav-subitem${active ? " active" : ""}`}
       onClick={onClick}
       disabled={disabled}
+      title={title}
     >
       {children}
     </button>

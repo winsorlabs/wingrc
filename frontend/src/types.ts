@@ -1208,7 +1208,45 @@ export interface AssetApprovalResult {
 // lib/markdown.tsx, which is what keeps the SPA free of
 // dangerouslySetInnerHTML. See that module and backend/app/markdown_doc.py.
 
-export type DocumentType = "policy" | "procedure" | "plan" | "list" | "sop" | "form" | "other";
+export type DocumentType =
+  | "policy"
+  | "procedure"
+  | "plan"
+  | "baseline"
+  | "list"
+  | "sop"
+  | "form"
+  | "other";
+
+// CMMC list views (backend catalog.py / list_projection.py). A list is a
+// read-only projection of the scope graph; rows are edited as entities.
+export interface ListViewSummary {
+  id: string;
+  sheet_title: string;
+  title: string;
+  control_ids: string[];
+  description: string;
+  entity_type: string;
+  row_count: number;
+}
+
+export interface ListCell {
+  value: string;
+  // Set for a "[PLACEHOLDER - reason]" cell: known absent, for this reason.
+  placeholder_reason: string | null;
+}
+
+export interface ListViewData {
+  id: string;
+  sheet_title: string;
+  title: string;
+  control_ids: string[];
+  description: string;
+  entity_type: string;
+  columns: string[];
+  rows: { natural_key: string; cells: ListCell[] }[];
+  empty_explanation: string;
+}
 
 export type DocumentVersionStatus = "draft" | "under_review" | "approved" | "superseded";
 
