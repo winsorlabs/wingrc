@@ -67,6 +67,7 @@ from .domain import (
     CanonicalEntity,
     ChangeType,
     EntityChange,
+    EntityStatus,
     EntityType,
     ReconcileResult,
 )
@@ -111,6 +112,16 @@ def _field_diffs(
         b = incoming.attributes.get(k)
         if _comparable(a) != _comparable(b):
             diffs[k] = (a, b)
+    # Status is otherwise not compared (a sync's default status=active says
+    # nothing; repo.upsert() keeps the row's). The one status an import can
+    # genuinely assert is decommissioned -- a workbook's Decommissioned Date
+    # -- and without this a row whose only change was gaining that date
+    # reconciled as UNCHANGED and was never applied.
+    if (
+        incoming.status == EntityStatus.DECOMMISSIONED
+        and current.status != EntityStatus.DECOMMISSIONED
+    ):
+        diffs["status"] = (current.status.value, incoming.status.value)
     return diffs
 
 

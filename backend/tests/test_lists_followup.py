@@ -131,7 +131,12 @@ def test_unknown_categories_do_not_resolve(raw):
     assert resolve_category(raw) is None
 
 
-def test_alias_match_is_logged_and_canonical_is_not(caplog):
+def test_alias_match_is_logged_and_canonical_is_not(caplog, monkeypatch):
+    # conftest's Alembic run calls fileConfig(), whose default
+    # disable_existing_loggers=True switches off every logger already
+    # imported -- this one included -- for the rest of the session. A
+    # suite-only artifact: production runs migrations in its own process.
+    monkeypatch.setattr(logging.getLogger("app.importers.workbook"), "disabled", False)
     with caplog.at_level(logging.INFO, logger="app.importers.workbook"):
         resolve_category("CUI")
         resolve_category("CUI Asset")
@@ -370,3 +375,21 @@ def test_liongard_and_workbook_writes_both_leave_in_boundary_alone(db_session):
         repo.upsert(db_session, org.id, incoming)
         db_session.flush()
         assert _row(db_session, org.id, key).in_boundary is False, source
+
+
+def test_reconcile_surfaces_an_import_asserted_decommission():
+    """A workbook row whose only change is gaining a Decommissioned Date
+    used to reconcile as UNCHANGED (status was never compared), so it was
+    never applied. A sync's default status=active must still not register."""
+    from app.domain import ChangeType
+    from app.reconcile import reconcile
+
+    current = _device("OLD-1")
+    gone = _device("OLD-1", status=EntityStatus.DECOMMISSIONED)
+    [change] = reconcile([current], [gone]).changes
+    assert change.change_type == ChangeType.CHANGED
+    assert change.field_diffs["status"] == ("active", "decommissioned")
+
+    already = _device("OLD-1", status=EntityStatus.DECOMMISSIONED)
+    [change] = reconcile([already], [_device("OLD-1")]).changes
+    assert change.change_type == ChangeType.UNCHANGED

@@ -5148,6 +5148,13 @@ claiming the account is deactivated.
      moves a row out of `decommissioned`.
    - A workbook may still *decommission* a row, because its Decommissioned
      Date column is a source for that. Liongard keeps status outright.
+   - **Found while testing that:** it never worked. `reconcile` compared
+     attributes only, and for devices only an allowlist that excludes the
+     raw date column. So a row whose only change was gaining a
+     Decommissioned Date reconciled as UNCHANGED and was never applied.
+     `_field_diffs` now reports `status` when an import asserts
+     `decommissioned` on a row that isn't. A sync's default `active` still
+     never registers.
    - This is the fifth instance of an older writer routing around a newer
      gate, and the fourth on `scope_entity`. The asymmetry was the defect.
      It was small enough to fix here, at the same choke point.
