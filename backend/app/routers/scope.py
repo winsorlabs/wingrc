@@ -8,7 +8,7 @@ Endpoints:
   DELETE /orgs/{org_id}/scope/{entity_id}          Delete one entity
   POST   /orgs/{org_id}/imports/workbook/dry-run   Parse + reconcile, no writes
   POST   /orgs/{org_id}/imports/workbook/apply     Apply a confirmed diff
-  POST   /orgs/{org_id}/exports/{view_id}          Render a CMMC list
+  GET    /orgs/{org_id}/exports/{view_id}          Render a CMMC list
 
   GET    /orgs/{org_id}/integrations/liongard/environments   Available Liongard Environments
   GET    /orgs/{org_id}/integrations/liongard/environment    This org's Environment mapping
@@ -59,7 +59,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
@@ -91,7 +91,7 @@ from ..models import (
     ScopeEntity,
 )
 from ..reconcile import reconcile
-from ..render import render_view
+from ..render import render_view_bytes
 from ..repo import PendingApprovalWriteError
 
 router = APIRouter(
@@ -802,19 +802,27 @@ def import_apply(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/{org_id}/exports/{view_id}")
+_XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+# GET, not POST: an export writes nothing, and require_write() rejects
+# read-only roles on every non-idempotent method -- as a POST this 403'd
+# c3pao_assessor on the one artifact an assessor most wants to read.
+@router.get("/{org_id}/exports/{view_id}")
 def export_view(
     org_id: uuid.UUID,
     view_id: str,
     session: Session = Depends(get_session),
-) -> FileResponse:
+) -> Response:
     view = VIEWS_BY_ID.get(view_id)
     if view is None:
         raise HTTPException(status_code=404, detail=f"Unknown view {view_id!r}")
     entities = repo.list_entities(session, org_id, view.entity_type)
-    out = Path(tempfile.gettempdir()) / f"{view_id}.xlsx"
-    render_view(view, entities, out)
-    return FileResponse(out, filename=f"{view_id}.xlsx")
+    return Response(
+        content=render_view_bytes(view, entities),
+        media_type=_XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="{view_id}.xlsx"'},
+    )
 
 
 # ---------------------------------------------------------------------------

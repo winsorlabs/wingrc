@@ -8,6 +8,7 @@ output is defensible at assessment time rather than "someone edited a sheet."
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from io import BytesIO
 from pathlib import Path
 
 import openpyxl
@@ -29,6 +30,25 @@ def render_view(
     out_path: str | Path,
     generated_by: str = "WinGRC",
 ) -> Path:
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(render_view_bytes(view, entities, generated_by))
+    return out
+
+
+def render_view_bytes(
+    view: ListView,
+    entities: list[CanonicalEntity],
+    generated_by: str = "WinGRC",
+) -> bytes:
+    """The workbook as bytes, never touching the filesystem.
+
+    The HTTP export uses this rather than render_view(): it once wrote to
+    `tempdir/{view_id}.xlsx`, one path shared by every org, so a response
+    still streaming could serve a file another tenant's export had just
+    overwritten. Rendering in memory removes the shared resource rather
+    than narrowing the window.
+    """
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = view.sheet_title[:31]
@@ -62,10 +82,9 @@ def render_view(
         width = max(len(display) + 2, 14)
         ws.column_dimensions[get_column_letter(col_idx)].width = min(width, 40)
 
-    out = Path(out_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    wb.save(out)
-    return out
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 def _stringify(value) -> str:
