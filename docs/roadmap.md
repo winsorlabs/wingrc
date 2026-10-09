@@ -5442,6 +5442,41 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### One natural key for every importer, and source precedence ✅ DONE (2026-10-09)
+
+Found by a live dry-run of Jarrod's populated workbook, which would have
+duplicated WL-DT26 and Jarrod Winsor (see "Workbook importer: scope" in
+Planned).
+
+- **`app/natural_key.py` is the one key derivation.**
+  - Devices are keyed by serial, then hostname. A serial counts as absent
+    when it is blank, a `[PLACEHOLDER…]` cell, or an OEM placeholder,
+    including an annotated one ("System Serial Number (not set by OEM - …)").
+  - People are keyed by email, then username, then name.
+  - The Liongard and workbook importers both call it. The placeholder
+    vocabulary moved there from `importers/liongard.py`; migration 0058
+    keeps its own frozen copy, as migrations must.
+  - `tests/test_natural_key.py` asserts both importers produce the same key
+    for the same device, WL-DT26 verbatim included. A row with no usable
+    identifier is skipped and logged, never keyed by placeholder text.
+- **A name-keyed person never merges into an email-keyed one.** The keys
+  differ, so reconcile cannot match them. The workbook dry-run adds a
+  "possible match, not merged" warning for a person to confirm.
+- **Source precedence.**
+  - On a connector-sourced row (Liongard, Datto RMM, Entra), an import
+    from a non-connector source never overwrites a field the connector
+    supplied: the canonical device/person vocabulary, minus
+    `responsible_contact_id`, which no connector supplies. It never takes
+    over the row's `source` either. Enforced in `repo.upsert()`.
+  - The dry-run drops each such field from the diff and reports it as
+    "Conflict, not applied".
+  - Fields only the workbook supplies (the overlay, Asset Type, owner)
+    still land.
+- **MISSING rows are never acted on.** This is now pinned by a test that
+  applies a dry-run's *full* change list, missing rows included.
+
+---
+
 ### Document library N.3: approval and the review cadence ✅ DONE (2026-09-30)
 
 Migration 0062. Turns the library from "you can write policies" into

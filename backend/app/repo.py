@@ -11,12 +11,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .domain import (
+    CONNECTOR_SOURCES,
     OPERATOR_OVERLAY_ATTRIBUTES,
     CanonicalEntity,
     EntityStatus,
     EntityType,
     ScopeCategory,
     Source,
+    connector_supplied_fields,
 )
 from .models import Organization, ScopeEntity
 
@@ -128,6 +130,7 @@ def upsert(
         )
 
     attributes = dict(entity.attributes)
+    source, source_ref = entity.source, entity.source_ref
     scope_category = entity.scope_category.value if entity.scope_category else None
     status = entity.status.value
     in_boundary = entity.in_boundary
@@ -139,6 +142,17 @@ def upsert(
                 attributes.pop(key, None)
             if key not in attributes and key in existing:
                 attributes[key] = existing[key]
+        if (
+            row is not None
+            and Source(row.source) in CONNECTOR_SOURCES
+            and entity.source not in CONNECTOR_SOURCES
+        ):
+            # A transcription never overwrites what a connector observed,
+            # and never takes over the row's provenance (2026-10-09). The
+            # dry-run reports each such field as a conflict.
+            for key in connector_supplied_fields(entity.entity_type, existing):
+                attributes[key] = existing[key]
+            source, source_ref = Source(row.source), row.source_ref
         if row is not None:
             if scope_category is None:
                 scope_category = row.scope_category
@@ -153,8 +167,8 @@ def upsert(
     row.scope_category = scope_category
     row.status = status
     row.in_boundary = in_boundary
-    row.source = entity.source.value
-    row.source_ref = entity.source_ref
+    row.source = source.value
+    row.source_ref = source_ref
     row.attributes = attributes
     row.last_verified_at = datetime.now(UTC)
     return row

@@ -38,6 +38,7 @@ from ..domain import (
     normalize_mac_address,
 )
 from ..models import Contact, ScopeEntity
+from ..natural_key import device_natural_key, identifying_value, person_natural_key
 
 logger = logging.getLogger(__name__)
 
@@ -105,16 +106,19 @@ def _header_row_index(rows: list[tuple], view: ListView) -> int:
 
 
 def _natural_key(view: ListView, attributes: dict[str, Any]) -> str:
+    """Delegates to natural_key.py, the derivation the Liongard importer
+    uses too -- a device keyed differently here than there is a duplicate."""
     if view is AUTHORIZED_USERS:
-        return f"{attributes.get('First Name', '')} {attributes.get('Last Name', '')}".strip()
-    if view is AUTHORIZED_PROCESSES:
-        return str(attributes.get("Process Name", "")).strip()
+        parts = (attributes.get("First Name"), attributes.get("Last Name"))
+        name = " ".join(p for p in map(identifying_value, parts) if p)
+        return person_natural_key(email=attributes.get("Email"), display_name=name)
     if view is AUTHORIZED_DEVICES:
-        serial = attributes.get("Serial # or Asset Tag")
-        return str(serial or attributes.get("Name", "")).strip()
+        return device_natural_key(attributes.get("Serial # or Asset Tag"), attributes.get("Name"))
+    if view is AUTHORIZED_PROCESSES:
+        return identifying_value(attributes.get("Process Name")) or ""
     if view is EXTERNAL_SERVICES:
-        return str(attributes.get("Name", "")).strip()
-    return str(next(iter(attributes.values()), "")).strip()
+        return identifying_value(attributes.get("Name")) or ""
+    return identifying_value(next(iter(attributes.values()), None)) or ""
 
 
 def _entity_type(view: ListView) -> EntityType:
@@ -182,6 +186,12 @@ def parse_workbook(
 
             natural_key = _natural_key(view, attributes)
             if not natural_key:
+                # Nothing on the row identifies it (serial and name both
+                # blank or stated gaps). Skipped rather than keyed by
+                # placeholder text, but never silently.
+                logger.warning(
+                    "workbook import: %s row skipped -- no usable identifier", view.sheet_title
+                )
                 continue
 
             category = _infer_category(attributes)
