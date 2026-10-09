@@ -87,6 +87,15 @@ bench work.
    name, no port publishing overrides needed since nothing outside the
    compose network needs to reach it; use `docker compose exec` for
    shell access into `backend`/`db`/etc.
+   **Bring up `backend minio worker`, not the whole file:** `nginx`
+   publishes host ports 80/443 and cannot start beside the live stack, and
+   `minio` is not a dependency of `backend`, so naming only `backend` leaves
+   the storage-backed tests failing on name resolution (2026-10-07).
+   **The containers run the image's baked code (since 2026-10-08), not the
+   clone.** After changing a file in the bench clone, `up -d --build
+   backend worker` before re-running tests -- an edit is invisible until
+   then. A negative control (old file swapped in) needs the same rebuild,
+   then `git checkout --` and a rebuild to restore.
 3. Backend: `docker compose -p wingrc_verify_<date> exec backend pytest -q`
    (full suite, not just `-m "not integration"` — that's the local-only
    subset). **The full suite in one process, never a per-file run.**

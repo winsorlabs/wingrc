@@ -9,6 +9,7 @@ scoped to any one org).
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -138,14 +139,23 @@ def health(response: Response, db: Session = Depends(get_session)) -> dict:
     the point. There is no window where that costs anything in this
     deployment shape -- the backend's own command is
     `alembic upgrade head && exec uvicorn`, so uvicorn never starts until
-    migrations finish, and the worker has healthchecks disabled. A
+    migrations finish, and the worker has healthchecks disabled. (That
+    stopped being true while live bind-mounted a git checkout under
+    `--reload`: a `git pull` swapped the code with no restart and no
+    migration. Removed 2026-10-08; see docker-compose.yml.) A
     multi-replica rollout would see a genuine window, and being marked
     unhealthy during it is still the correct answer.
 
     `alembic_version` carries no RLS policy and is readable by
     `wingrc_app`, so this works identically before and after the cutover.
     """
-    detail: dict = {"status": "ok", "app": settings.app_name, "version": "0.1.0"}
+    detail: dict = {
+        "status": "ok",
+        "app": settings.app_name,
+        "version": "0.1.0",
+        # The commit the running image was built from (deploy/deploy.sh).
+        "build": os.environ.get("WINGRC_BUILD_SHA", "unknown"),
+    }
 
     try:
         db.execute(text("SELECT 1"))

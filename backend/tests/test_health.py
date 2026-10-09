@@ -143,3 +143,13 @@ def test_engine_sets_a_connect_timeout():
         "multiplied by the number of addresses the host resolves to"
     )
     assert timeout == get_settings().db_connect_timeout
+
+
+def test_health_reports_the_commit_the_image_was_built_from(health_probe_client, monkeypatch):
+    """docker-compose.yml no longer bind-mounts a checkout under the live
+    backend, so the running code is the image's -- and /health says which
+    commit that image was built from (deploy/deploy.sh waits for it)."""
+    monkeypatch.setenv("WINGRC_BUILD_SHA", "0123abcd")
+    assert health_probe_client.get("/health").json()["build"] == "0123abcd"
+    monkeypatch.delenv("WINGRC_BUILD_SHA")
+    assert health_probe_client.get("/health").json()["build"] == "unknown"

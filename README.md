@@ -71,9 +71,10 @@ the importer at your own workbook to populate a real environment.
 docker compose up --build   # builds the image, starts Postgres + MinIO + backend + frontend
 ```
 
-The backend container mounts `./backend` into `/app`, so Python edits on the
-host are live inside the container without a rebuild.  Uvicorn runs with
-`--reload`, so it picks up file changes automatically.
+The backend runs the code baked into its image. For live-editing, copy
+`docker-compose.override.yml.example` to `docker-compose.override.yml`: it
+mounts `./backend` into `/app` and runs uvicorn with `--reload`. Never put
+that override on a deployed host -- see `docs/deployment.md`.
 
 Migrations run automatically at container startup (`alembic upgrade head` is
 baked into the CMD).  After adding a new migration file, restart the backend

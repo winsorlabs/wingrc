@@ -190,10 +190,25 @@ exact two things a tenant would notice first.
 
 ```bash
 cd ~/dev/wingrc
-git pull --ff-only
-docker compose build backend worker nginx   # nginx bundles the frontend build — rebuild it whenever frontend/ changed, not just backend/
-docker compose up -d --no-deps backend worker nginx   # migrations run automatically via backend's `alembic upgrade head && exec uvicorn ...` startup command
+deploy/deploy.sh            # deploys origin/main; or: deploy/deploy.sh <commit-sha>
 ```
+
+`deploy/deploy.sh` replaces the old `git pull --ff-only` + build + up
+sequence. It refuses a dirty working tree or a `docker-compose.override.yml`
+on the host, checks out the exact commit detached, builds `backend worker
+nginx` with that commit stamped in as `WINGRC_BUILD_SHA`, recreates them with
+`--no-deps`, then waits for `/health` to report `status: ok` **and** that
+same commit as `build`. A deploy is done when `/health` names the commit you
+meant to ship, not when the commands exit.
+
+**The live stack runs from images, not from this checkout (2026-10-08).**
+The checkout is only the build context. A stray `git pull` here no longer
+changes anything that is running; until 2026-10-08 it did, because compose
+bind-mounted `./backend` under `uvicorn --reload`, and that is what took
+live down on 2026-10-07 — code moved to N.3, the schema stayed at 0061,
+`/health` went 503 for three hours. Do not add a
+`docker-compose.override.yml` on a deployed host; the script refuses to run
+if one exists.
 
 **When these commands run inside a docker-CLI helper container (`claude`'s
 setup on wl-util-1: no direct filesystem access to `~wladmin/dev/wingrc`,

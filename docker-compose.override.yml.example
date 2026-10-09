@@ -12,6 +12,21 @@
 # docs/deployment.md.
 
 services:
+  # Local development only -- never copy this onto a deployed host. Mounts the
+  # working tree over the image's baked code and reloads on edit. The base
+  # docker-compose.yml deliberately does neither (see its backend comment).
+  backend:
+    volumes:
+      - ./backend:/app
+      - backend_backups:/backups
+    command: >
+      sh -c "alembic upgrade head &&
+             exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  worker:
+    volumes:
+      - ./backend:/app
+
   frontend:
     build: ./frontend
     restart: unless-stopped
