@@ -65,9 +65,30 @@ def cell_for(view: ListView, entity: CanonicalEntity, attr_key: str) -> Cell:
 
 def project(view: ListView, entities: list[CanonicalEntity]) -> list[ProjectedRow]:
     """Rows in the order given -- repo.list_entities() already totally
-    orders them, which the export's determinism depends on."""
+    orders them, which the export's determinism depends on.
+
+    Out-of-boundary entities (in_boundary=False -- e.g. a device a reviewer
+    rejected) are excluded: they were never authorized, and these are lists
+    of authorized entities. Decommissioned ones stay, with their date --
+    the Authorized-Entities workbook has a Decommissioned Date column for
+    exactly that. Callers must report excluded_count() alongside, so the
+    filter is visible to whoever assesses the list.
+    """
     return [
         ProjectedRow(e.natural_key, tuple(cell_for(view, e, key) for key, _ in view.columns))
         for e in entities
-        if e.entity_type == view.entity_type
+        if e.entity_type == view.entity_type and e.in_boundary
     ]
+
+
+def excluded_count(view: ListView, entities: list[CanonicalEntity]) -> int:
+    """How many entities of this view's type project() left out as out of
+    boundary."""
+    return sum(1 for e in entities if e.entity_type == view.entity_type and not e.in_boundary)
+
+
+def excluded_note(count: int) -> str:
+    if not count:
+        return ""
+    noun = "entity" if count == 1 else "entities"
+    return f"{count} {noun} excluded as out of the CUI boundary (in_boundary = false)."

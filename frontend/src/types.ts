@@ -1227,7 +1227,9 @@ export interface ListViewSummary {
   control_ids: string[];
   description: string;
   entity_type: string;
+  // In-boundary entities only; out-of-boundary ones are counted separately.
   row_count: number;
+  excluded_out_of_boundary: number;
 }
 
 export interface ListCell {
@@ -1246,6 +1248,10 @@ export interface ListViewData {
   columns: string[];
   rows: { natural_key: string; cells: ListCell[] }[];
   empty_explanation: string;
+  // Out-of-boundary entities are left out of an authorized list; this says
+  // how many, so the filter is never invisible to an assessor.
+  excluded_out_of_boundary: number;
+  excluded_note: string;
 }
 
 export type DocumentVersionStatus = "draft" | "under_review" | "approved" | "superseded";

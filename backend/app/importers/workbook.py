@@ -11,6 +11,7 @@ rendering are shared downstream.
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from pathlib import Path
@@ -38,8 +39,47 @@ from ..domain import (
 )
 from ..models import Contact, ScopeEntity
 
+logger = logging.getLogger(__name__)
+
 _PLACEHOLDER_TOKENS = ("[placeholder]",)
-_CATEGORY_LOOKUP = {c.value.lower(): c for c in ScopeCategory}
+
+
+def _category_key(raw: str) -> str:
+    """Case-, whitespace- and "Asset"-suffix-insensitive form of a
+    category cell: "CUI", "cui asset" and "CUI Asset" all become "cui"."""
+    key = " ".join(raw.lower().split())
+    for suffix in (" assets", " asset"):
+        if key.endswith(suffix):
+            key = key[: -len(suffix)]
+    return key
+
+
+# Every ScopeCategory under its own name with and without " Asset", plus the
+# long forms the CMMC scoping guide spells out. A human writing "CUI" in an
+# Asset Type column means CUI Asset; rejecting that was an importer bug
+# (Jarrod's real workbook says CUI/CRMA/SPA).
+_CATEGORY_LOOKUP: dict[str, ScopeCategory] = {_category_key(c.value): c for c in ScopeCategory}
+_CATEGORY_LOOKUP.update(
+    {
+        "controlled unclassified information": ScopeCategory.CUI_ASSET,
+        "security protection": ScopeCategory.SPA,
+        "contractor risk managed": ScopeCategory.CRMA,
+        "external service provider": ScopeCategory.ESP,
+        "cloud service provider": ScopeCategory.CSP,
+        "out-of-scope": ScopeCategory.OUT_OF_SCOPE,
+    }
+)
+
+
+def resolve_category(raw: Any) -> ScopeCategory | None:
+    """The ScopeCategory a workbook cell names, or None. Logs the alias
+    whenever the cell is not already the canonical spelling."""
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    cat = _CATEGORY_LOOKUP.get(_category_key(raw))
+    if cat is not None and raw.strip() != cat.value:
+        logger.info("workbook import: category %r read as alias for %r", raw.strip(), cat.value)
+    return cat
 
 
 def _is_placeholder(value: Any) -> bool:
@@ -51,11 +91,9 @@ def _is_placeholder(value: Any) -> bool:
 def _infer_category(attributes: dict[str, Any]) -> ScopeCategory | None:
     """Look for a known CMMC category token in the columns that tend to hold it."""
     for col in ("Asset Type", "Owner / Primary User"):
-        raw = attributes.get(col)
-        if isinstance(raw, str):
-            cat = _CATEGORY_LOOKUP.get(raw.strip().lower())
-            if cat:
-                return cat
+        cat = resolve_category(attributes.get(col))
+        if cat:
+            return cat
     return None
 
 
@@ -147,6 +185,12 @@ def parse_workbook(path: str | Path, source_ref: str | None = None) -> list[Cano
                 continue
 
             category = _infer_category(attributes)
+            # Store the resolved spelling, not the alias: an exported list
+            # renders the canonical category, so keeping "CUI" here would make
+            # re-importing that export look like an edit.
+            asset_type = resolve_category(attributes.get("Asset Type"))
+            if asset_type is not None:
+                attributes["Asset Type"] = asset_type.value
             decommissioned = bool(attributes.get("Decommissioned Date"))
 
             entities.append(

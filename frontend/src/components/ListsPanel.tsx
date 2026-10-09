@@ -213,6 +213,12 @@ export function ListsPanel({ orgId, canWrite }: { orgId: string; canWrite: boole
             />
           )}
 
+          {data.excluded_note && (
+            <div className="contact-sub list-excluded-note" role="note">
+              {data.excluded_note}
+            </div>
+          )}
+
           {data.rows.length === 0 ? (
             <div className="contacts-empty">
               {data.empty_explanation || `No entries in ${data.sheet_title} yet.`}

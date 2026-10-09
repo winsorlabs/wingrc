@@ -87,7 +87,7 @@ from ..domain import (
     placeholder_reason,
 )
 from ..importers.workbook import parse_workbook, resolve_canonical_device_attributes
-from ..list_projection import project
+from ..list_projection import excluded_count, excluded_note, project
 from ..models import (
     AssetApproval,
     AssetApprovalChecklistItem,
@@ -878,6 +878,7 @@ class ListViewSummaryOut(BaseModel):
     description: str
     entity_type: str
     row_count: int
+    excluded_out_of_boundary: int
 
 
 class ListCellOut(BaseModel):
@@ -900,6 +901,8 @@ class ListViewOut(BaseModel):
     columns: list[str]
     rows: list[ListRowOut]
     empty_explanation: str
+    excluded_out_of_boundary: int
+    excluded_note: str
 
 
 @router.get("/{org_id}/lists", response_model=list[ListViewSummaryOut])
@@ -907,13 +910,14 @@ def list_views(
     org_id: uuid.UUID,
     session: Session = Depends(get_session),
 ) -> list[ListViewSummaryOut]:
-    counts = dict(
-        session.execute(
-            select(ScopeEntity.entity_type, func.count())
+    counts: dict[tuple[str, bool], int] = {
+        (etype, in_boundary): n
+        for etype, in_boundary, n in session.execute(
+            select(ScopeEntity.entity_type, ScopeEntity.in_boundary, func.count())
             .where(ScopeEntity.org_id == org_id)
-            .group_by(ScopeEntity.entity_type)
+            .group_by(ScopeEntity.entity_type, ScopeEntity.in_boundary)
         ).all()
-    )
+    }
     return [
         ListViewSummaryOut(
             id=v.id,
@@ -922,7 +926,8 @@ def list_views(
             control_ids=list(v.control_ids),
             description=v.description,
             entity_type=v.entity_type.value,
-            row_count=counts.get(v.entity_type.value, 0),
+            row_count=counts.get((v.entity_type.value, True), 0),
+            excluded_out_of_boundary=counts.get((v.entity_type.value, False), 0),
         )
         for v in ALL_VIEWS
     ]
@@ -940,7 +945,9 @@ def get_list_view(
     view = VIEWS_BY_ID.get(view_id)
     if view is None:
         raise HTTPException(status_code=404, detail=f"Unknown view {view_id!r}")
-    rows = project(view, repo.list_entities(session, org_id, view.entity_type))
+    entities = repo.list_entities(session, org_id, view.entity_type)
+    rows = project(view, entities)
+    excluded = excluded_count(view, entities)
     return ListViewOut(
         id=view.id,
         sheet_title=view.sheet_title,
@@ -960,6 +967,8 @@ def get_list_view(
             for r in rows
         ],
         empty_explanation=view.empty_explanation,
+        excluded_out_of_boundary=excluded,
+        excluded_note=excluded_note(excluded),
     )
 
 

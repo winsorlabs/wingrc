@@ -2112,3 +2112,4 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .list-add-process { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.6rem; margin-bottom: 1rem; padding: 0.75rem; border: 1px solid var(--border); border-radius: 6px; }
 .list-add-process label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; }
 .list-add-process-actions { display: flex; gap: 0.4rem; align-items: end; }
+.list-excluded-note { margin: 0 0 0.6rem; font-style: italic; }

@@ -28,12 +28,12 @@ const SUMMARIES: ListViewSummary[] = [
   {
     id: "3.1.1c-authorized-devices", sheet_title: "3.1.1c Authorized Devices",
     title: "Authorized Devices", control_ids: ["AC.L2-3.1.1"], description: "",
-    entity_type: "device", row_count: 1,
+    entity_type: "device", row_count: 1, excluded_out_of_boundary: 1,
   },
   {
     id: "3.1.1b-auth-processes", sheet_title: "3.1.1b Auth Processes",
     title: "Processes Acting on Behalf of Authorized Users", control_ids: ["AC.L2-3.1.1"],
-    description: "", entity_type: "process", row_count: 0,
+    description: "", entity_type: "process", row_count: 0, excluded_out_of_boundary: 0,
   },
 ];
 
@@ -54,6 +54,8 @@ const DEVICES: ListViewData = {
     },
   ],
   empty_explanation: "",
+  excluded_out_of_boundary: 1,
+  excluded_note: "1 entity excluded as out of the CUI boundary (in_boundary = false).",
 };
 
 const PROCESSES: ListViewData = {
@@ -61,6 +63,8 @@ const PROCESSES: ListViewData = {
   columns: ["Process Name", "Running On", "Associated Account", "Description / Purpose"],
   rows: [],
   empty_explanation: "No processes recorded. ... add them manually.",
+  excluded_out_of_boundary: 0,
+  excluded_note: "",
 };
 
 function mockViews() {
@@ -81,6 +85,14 @@ describe("ListsPanel", () => {
     expect(cell.getAttribute("title")).toContain("BIOS FW version not collected");
     expect(screen.getByText("—").closest("td")?.className ?? "").not.toContain(
       "list-cell-placeholder",
+    );
+  });
+
+  it("states how many entities were excluded as out of boundary", async () => {
+    mockViews();
+    render(<ListsPanel orgId="org-1" canWrite={false} />);
+    expect((await screen.findByRole("note")).textContent).toMatch(
+      /1 entity excluded as out of the CUI boundary/,
     );
   });
 

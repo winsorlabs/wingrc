@@ -5028,6 +5028,150 @@ live, confirmed by direct query afterward.
 
 ---
 
+### Lists deploy, the unhealthy backend, and Jarrod's three follow-up answers ✅ DONE (2026-10-07)
+
+#### The unhealthy backend: a bare `git pull` on a bind-mounted live checkout
+
+`wingrc-backend-1` was reported as "unhealthy for two days". That was
+wrong, and the error was this session's. `docker compose ps` said
+`Up 2 days (unhealthy)`: the container had been up since the host rebooted
+on 2026-10-05, but it was **unhealthy for about three hours**, not two
+days. The evidence:
+
+- The last `/health` 200 was at 17:23:58 UTC. The first 503 was at
+  17:24:29.
+- In between, at 17:24:22, an interactive `wladmin` login (pts/0, from
+  10.10.24.39) ran `git pull` on `/home/wladmin/dev/wingrc`. That
+  fast-forwarded the live checkout to the N.3 merge (`d1b51fb`, migration
+  0062).
+- The backend bind-mounts `./backend:/app` and runs `uvicorn --reload`, so
+  the new code went live within seconds. `alembic upgrade head` runs only
+  at container start, so the database stayed at 0061.
+- No image was rebuilt. nginx kept serving the old frontend.
+
+`/health`'s body said exactly that:
+`{"status":"error","migration":"0061_rls_transitive_policies","migration_expected":"0062_document_approval_review","database":"schema does not match this build"}`.
+
+It was not only the probe. Real requests failed:
+`GET …/dashboard` → 500, `relation "document_approval" does not exist`.
+
+**The 2026-09-30 `/health` fix worked.** The probe named the exact mismatch
+within 30 seconds, and nothing acted on it for three hours. That makes it
+the fourth signal in this repo that worked while nobody looked, and the
+first one that was *right*.
+
+**The mechanism is the lesson.** On this host, `git pull` alone *is* a
+deploy: code changes and schema doesn't. The documented routine (`pull` →
+`build` → `up -d --no-deps`) is safe only because `up` restarts the
+container, and that restart is what runs the migrations. A pull without the
+rest of the routine leaves the stack in the state `/health` exists to catch.
+It is worth considering a startup or reload hook, or dropping `--reload` in
+the live compose file, so a pull cannot outrun the schema. That is not done
+here, and it is Jarrod's call.
+
+#### Deploy (both Lists PRs, #8 and #9)
+
+- `pg_dump` taken first (`/home/claude/predeploy-lists-20261007.dump`, 459
+  KiB).
+- `alembic` went 0061 → 0062 → 0063 on container start.
+- `/health` →
+  `{"status":"ok","migration":"0063_document_type_baseline","database":"ok"}`.
+- `backend` and `db` are healthy. `minio`, `nginx` and `worker` define no
+  healthcheck, so they report only "Up".
+- Counts are unchanged except `document_approval` 0 → 1 (0062's intended
+  backfill of the one approved version) and the alembic version.
+- SPRS is unchanged: Acme −199, Winsorlabs −204.
+
+Live verification used throwaway identities and 2-hour tokens, all deleted
+afterwards:
+
+- **Export isolation:** 10 concurrent downloads of
+  `3.1.1c-authorized-devices` (5 per org) all returned 200. Each contained
+  only its own org's devices (Acme: ASSET-0001..3; Winsorlabs: WL-DT26,
+  PF3Y6K26).
+- **`c3pao_assessor`:** 200 on the export and the list endpoint for all four
+  views. 403 on `PATCH` and `POST /scope`.
+- **Lists render populated for the Liongard org:** WL-DT26 fills 7/18
+  columns and PF3Y6K26 fills 6/18 (Name, Make, Model, Subtype, Serial, MAC,
+  OS). Both came through the canonical-key sources and would have been
+  blank before.
+- **Sync invariant, against real Liongard data:**
+  - Location and Asset Type were set by hand on WL-DT26.
+  - A real dry-run reported WL-DT26 CHANGED on `hostname` only. Neither
+    overlay field appeared as a diff.
+  - WL-DT26's real pulled record was applied through the apply endpoint.
+    Both fields survived.
+  - Both were then restored to their prior values (unset).
+- **Liongard timed out twice first** (`Timed out connecting to Liongard.`,
+  the connector's 20 s per-request limit). A timed pull minutes later took
+  3.0 s, 1.3 s and 0.5 s per page. The slowness was transient on
+  Liongard's side, and the day's 15:21 scheduled sync had succeeded.
+- **Expect one `hostname` CHANGED for PF3Y6K26 on the next daily sync.**
+  The stored Liongard rows predate the canonical `hostname` key, and the
+  worker now runs current code. This was not introduced by the Lists
+  slices: their reconcile change only *removes* keys from comparison.
+
+#### Found while verifying: a non-home-org API token can never authenticate
+
+The `user` table's RLS policy is `home_org_id = app.current_org`.
+`_resolve_api_token` sets the org to the *token's* org, then calls
+`db.get(User, …)`. For a token minted in any org other than the user's home
+org, that returns nothing, and the request fails with **403 "Account
+deactivated"**. The message is wrong as well as the outcome.
+
+`routers/users.py`'s token-creation path for the caller's own account
+(`target_user_id = current_user.id`) accepts any org the caller is a member
+of, so a multi-org user (ADR 0009) can mint such a token today.
+
+Not fixed here: it is outside this slice, and auth changes follow
+`docs/PLAN-auth-rbac-completion.md`. **Named item: API tokens for
+non-home-org memberships.** Either refuse to mint them, or resolve the
+token's user through a SECURITY DEFINER lookup like `resolve_api_token`
+already does for the token row. Whichever is chosen, the error must stop
+claiming the account is deactivated.
+
+#### Follow-up slice (`lists-followup`): Jarrod's three answers
+
+1. **Lists exclude out-of-boundary entities and say so; decommissioned
+   entities stay.**
+   - `list_projection.project()` drops `in_boundary = false`.
+     Decommissioned entities stay with their Decommissioned Date.
+   - The count is stated on screen and appended to the sheet's A3
+     provenance line ("n entities excluded as out of the CUI boundary").
+   - `GET /lists` reports `row_count` (in-boundary) and
+     `excluded_out_of_boundary` separately. An assessor who cannot see a
+     filter cannot assess it.
+   - This applies to all four lists, not just devices. A rejected identity
+     was never an authorized user either.
+2. **Workbook imports honour the boundary/status invariant.**
+   - No import or sync changes an existing row's `in_boundary`, and none
+     moves a row out of `decommissioned`.
+   - A workbook may still *decommission* a row, because its Decommissioned
+     Date column is a source for that. Liongard keeps status outright.
+   - **Found while testing that:** it never worked. `reconcile` compared
+     attributes only, and for devices only an allowlist that excludes the
+     raw date column. So a row whose only change was gaining a
+     Decommissioned Date reconciled as UNCHANGED and was never applied.
+     `_field_diffs` now reports `status` when an import asserts
+     `decommissioned` on a row that isn't. A sync's default `active` still
+     never registers.
+   - This is the fifth instance of an older writer routing around a newer
+     gate, and the fourth on `scope_entity`. The asymmetry was the defect.
+     It was small enough to fix here, at the same choke point.
+3. **Category aliases.**
+   - `importers/workbook.py:resolve_category()` is case-, whitespace- and
+     "Asset"-suffix-insensitive for every `ScopeCategory`, plus the long
+     forms (Security Protection Asset, Contractor Risk Managed Asset,
+     …). Each alias match is logged.
+   - The raw "Asset Type" cell is stored in its canonical spelling, so a
+     re-import of an export is not a spelling-only edit.
+   - **Round-trip guard:** import a workbook spelled the way Jarrod's is,
+     plus the sample. Export each view and dry-run the export. Zero
+     NEW/CHANGED rows are proposed. This catches the class of mismatch,
+     not just one spelling.
+
+---
+
 ### Lists: the frontend, the operator overlay, and two export defects ✅ DONE (2026-10-07)
 
 Migration 0063. Grounded in Jarrod's real `Authorized-Entities.xlsx` and
@@ -5100,8 +5244,9 @@ CHANGED on each import (those types still compare every key).
 keyword argument. Exactly the eight invariant tests failed, including the
 rejected-device and Asset Type cases. With the fix, all of them pass.
 
-**Workbook import is deliberately not given the Liongard treatment for
-`status`/`in_boundary`.** The workbook is a human-authored list of
+**Superseded the same day:** workbook imports now honour the same rule (see
+the follow-up entry above). Original note: **Workbook import was deliberately
+not given the Liongard treatment for `status`/`in_boundary`.** The workbook is a human-authored list of
 authorized entities, and its Decommissioned Date column is a real source
 for status. If a workbook re-import should also stop re-including a
 rejected device, that is Jarrod's call. It was not changed here.
@@ -5151,9 +5296,8 @@ across the three writers' key sets, plus `@scope_category` and
 resolves a cell. It is shared by the export and `GET /lists/{view_id}`, so
 the screen and the workbook cannot disagree.
 
-**Noted, not changed:** a list includes every entity of its type, including
-`in_boundary=False` (rejected) devices. Whether "Authorized Devices" should
-exclude them changes what an assessor receives, so it is Jarrod's call.
+**Since decided (same day):** out-of-boundary entities are now excluded, and the
+exclusion is stated. See the follow-up entry above.
 
 #### `[PLACEHOLDER - reason]`
 

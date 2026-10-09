@@ -223,9 +223,11 @@ documents. Scope is the denominator for control evaluation.
 it once shared one temp path across orgs). **An import or sync may not clear
 or overwrite an operator-entered field it has no source for:**
 `repo.upsert()` carries `domain.OPERATOR_OVERLAY_ATTRIBUTES` and
-`scope_category` forward, and a Liongard write keeps `status`/`in_boundary`,
-unless the caller passes `operator_edit=True` (only `POST`/`PATCH /scope`
-do). Asset Type *is* `scope_category`. `[PLACEHOLDER - reason]` cells are
+`scope_category` forward. No import or sync changes an existing row's
+`in_boundary` or moves it out of `decommissioned` (a workbook may still
+decommission a row; Liongard keeps status outright), unless the caller passes
+`operator_edit=True` (only `POST`/`PATCH /scope` do). Lists exclude
+out-of-boundary entities and state how many were excluded. Asset Type *is* `scope_category`. `[PLACEHOLDER - reason]` cells are
 values, stored verbatim. See `docs/roadmap.md`'s Lists entry.
 
 ### Assessment engine (migrations 0002–0006)
