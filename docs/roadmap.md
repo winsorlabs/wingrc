@@ -5239,6 +5239,48 @@ evidence.
 
 ---
 
+### API tokens outside the user's home org: refuse creation, say what is true ✅ PARTIAL (2026-10-08)
+
+Found while verifying the Lists deploy. **It fails closed: a correctness and
+usability defect, not a security hole.** No token ever authenticates beyond
+what it should. A class of tokens simply never authenticates at all.
+
+**Mechanism.** The `user` table's RLS policy is
+`home_org_id = app.current_org`. `_resolve_api_token` sets the org to the
+*token's* org, then calls `db.get(User, …)`. For a token issued in any org
+other than its user's home org, that lookup returns nothing.
+`api_token.user_id` cascades on delete, so that is the *only* way the lookup
+can come back empty. Until now the request failed as 403
+"Account deactivated", which sent whoever was debugging to a user record
+with nothing wrong with it. `POST /orgs/{org_id}/api-tokens` with no
+`user_id` (self-issue) would mint such a token for any org the caller is a
+member of. On-behalf-of tokens could not hit this, because `_get_user` only
+finds users homed in the path org.
+
+**Landed now (two separable pieces):**
+
+1. **Creation is refused.** Self-issue in a non-home org now returns 422,
+   with a message naming the home-org rule. The route reads the
+   request-cached `get_current_user` identity: `require_org_access`
+   returns a `replace()`d copy, so the original still carries the home org.
+   The API Tokens panel offers "+ Create Token" only in the home org and
+   explains why everywhere else.
+2. **The message is true.** A missing user on the API-token path now says
+   the token was issued outside its user's home org and needs reissuing
+   from there. A genuinely inactive user still gets "Account deactivated".
+   Existing cross-org tokens, if any were minted, now explain themselves.
+
+**Left for the auth plan (`docs/PLAN-auth-rbac-completion.md`).** The real
+fix is letting a multi-org user hold a working token in a second org.
+`_resolve_api_token` already computes the effective role from the
+membership in the *token's* org (`_role_for_membership(db, user.id,
+row.org_id, …)`), so cross-org tokens were evidently intended. What blocks
+them is only the user lookup. It needs a SECURITY DEFINER resolver like
+`auth.resolve_api_token`, which is RLS machinery and belongs in that plan.
+When it lands, remove the 422 and the panel note together.
+
+---
+
 ### Document library N.3: approval and the review cadence ✅ DONE (2026-09-30)
 
 Migration 0062. Turns the library from "you can write policies" into
