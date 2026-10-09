@@ -35,6 +35,39 @@ docker compose build backend worker nginx
 # --no-deps is not optional: see docs/deployment.md (it once recreated db).
 docker compose up -d --no-deps backend worker nginx
 
+# A record per deploy, next to nothing else: what was deployed, from which
+# images, and a vulnerability scan of *those* images. CI scans an image it
+# builds and discards; this attaches a scan to the artifact actually serving
+# requests. Report-only, like CI's own Trivy step -- a scan that cannot run
+# is noted in the record, never a reason to undo a healthy deploy.
+TRIVY_IMAGE="aquasec/trivy:0.69.3"
+record_deploy() {
+  local dir
+  dir="${WINGRC_DEPLOY_RECORD_DIR:-$HOME/wingrc-deploys}/$(date -u +%Y%m%dT%H%M%SZ)-${sha:0:12}"
+  mkdir -p "$dir"
+  {
+    echo "commit:   $sha"
+    echo "deployed: $(date -u +%Y-%m-%dT%H:%M:%SZ) by $(id -un)"
+    echo "health:   $1"
+    for svc in backend worker nginx; do
+      echo "image:    $svc $(docker compose images -q "$svc" 2>/dev/null | head -1)"
+    done
+  } > "$dir/deploy.txt"
+  local project
+  project="$(docker compose config --format json 2>/dev/null \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])' 2>/dev/null || echo wingrc)"
+  for svc in backend nginx; do
+    if docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache/ \
+         "$TRIVY_IMAGE" image --quiet --scanners vuln --format table "${project}-${svc}:latest" \
+         > "$dir/trivy-$svc.txt" 2>&1; then
+      echo "scan $svc: $(grep -c 'CVE-\|GHSA-' "$dir/trivy-$svc.txt" || true) findings -> $dir/trivy-$svc.txt"
+    else
+      echo "scan $svc: did not run (see $dir/trivy-$svc.txt); deploy stands" | tee -a "$dir/deploy.txt"
+    fi
+  done
+  echo "deploy record: $dir"
+}
+
 echo "waiting for /health to report $sha ..."
 for _ in $(seq 60); do
   body="$(docker compose exec -T backend python -c \
@@ -45,6 +78,7 @@ except Exception as e: print(getattr(e, "read", lambda: str(e).encode())().decod
      && printf '%s' "$body" | grep -q "\"build\":\"$sha\""; then
     echo "$body"
     echo "deployed $sha"
+    record_deploy "$body"
     exit 0
   fi
   sleep 5

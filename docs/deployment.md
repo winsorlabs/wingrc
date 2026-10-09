@@ -201,6 +201,16 @@ nginx` with that commit stamped in as `WINGRC_BUILD_SHA`, recreates them with
 same commit as `build`. A deploy is done when `/health` names the commit you
 meant to ship, not when the commands exit.
 
+Then it writes a deploy record to `~/wingrc-deploys/<UTC>-<sha>/`
+(`WINGRC_DEPLOY_RECORD_DIR` overrides): `deploy.txt` (commit, time, user,
+`/health`, image IDs) and `trivy-backend.txt` / `trivy-nginx.txt`, a
+vulnerability scan of the images *actually deployed*, by a pinned
+`aquasec/trivy` container. Report-only, like CI's own Trivy step: a scan
+that fails to run is noted in the record and does not undo a healthy
+deploy. CI's scan covers an image it discards; this one covers what runs
+(see `docs/roadmap.md` item R for the registry step that would make the
+two identical).
+
 **The live stack runs from images, not from this checkout (2026-10-08).**
 The checkout is only the build context. A stray `git pull` here no longer
 changes anything that is running; until 2026-10-08 it did, because compose

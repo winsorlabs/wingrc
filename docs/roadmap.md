@@ -5412,6 +5412,14 @@ finds users homed in the path org.
 
 **Landed now (two separable pieces):**
 
+> **The 422 below is a provisional gate, not the design.** Cross-org tokens
+> are evidently *intended*: `_resolve_api_token` already derives the role
+> from the membership in the token's org (see "Left for the auth plan").
+> The block exists only because the user lookup cannot see across orgs
+> yet. A reader who finds the 422 must not conclude that cross-org tokens
+> are deliberately unsupported. The fix is to make them work, then remove
+> the gate.
+
 1. **Creation is refused.** Self-issue in a non-home org now returns 422,
    with a message naming the home-org rule. The route reads the
    request-cached `get_current_user` identity: `require_org_access`
@@ -7646,6 +7654,59 @@ No scaffolding, no columns added in anticipation. When this is picked up it
 gets its own plan doc and its own prompt, like the document library did.
 
 ---
+
+### R. Deploy the image CI scanned, not an equivalent one (registry)
+
+**State (2026-10-09):**
+
+- Live runs images built on the host from one pinned commit
+  (`deploy/deploy.sh`; `/health` reports `build`). Since the
+  deploy-scan-record change, those exact images are also Trivy-scanned at
+  deploy time, with a per-deploy record kept on the host.
+- CI's `image` job builds and scans the backend image *and discards it*.
+  It never builds nginx.
+- The artifact serving requests is therefore *equivalent* to the one CI
+  scanned (same commit, same Dockerfile) but not *identical*. Dependencies
+  resolve at build time, and nginx's `npm install` has no lockfile. CI's
+  scan result does not attach to anything that runs.
+
+**The fix:** CI pushes both images to a registry, tagged by commit, and
+live pulls them by digest. Then the checkout on the host stops mattering
+at all.
+
+**Trigger — do this when either becomes true; not before:**
+
+- someone other than Jarrod can deploy, or
+- a customer or assessor asks what was scanned.
+
+Either makes "equivalent" stop being good enough.
+
+### S. Backup, retention and restore-test policy for WinGRC's own deployment
+
+**WinGRC's own production database has no defined backup, retention, or
+restore-test policy.** It holds two tenants' compliance records.
+
+Until 2026-10-09, 24 ad-hoc pre-deploy `pg_dump` files (Sep 12 – Oct 7)
+papered over that. They sat in `~claude/backups` and the live
+`wingrc_backend_backups` volume. They are being deleted deliberately, once
+the Lists follow-up deploy's verification passes, because an untracked
+full copy of production data is a liability, not a backup.
+They were never a regime: unscheduled, unencrypted, unrotated, on the same
+host as the database, and never restored. **The restore has never been
+exercised.** That is the part that usually turns out to matter.
+
+Not designed here. Whoever picks this up decides at least:
+
+- schedule;
+- retention and rotation;
+- off-host destination;
+- encryption at rest;
+- who can read the dumps;
+- a periodic restore into an isolated stack, with row counts and a
+  `recompute_sprs` check (the technique in the bench-verification doc's
+  live-copy procedure).
+
+The restore test is the deliverable. The dump alone is not.
 
 ## Sequencing
 
