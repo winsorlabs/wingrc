@@ -5162,7 +5162,16 @@ claiming the account is deactivated.
    - `importers/workbook.py:resolve_category()` is case-, whitespace- and
      "Asset"-suffix-insensitive for every `ScopeCategory`, plus the long
      forms (Security Protection Asset, Contractor Risk Managed Asset,
-     …). Each alias match is logged.
+     …). ~~Each alias match is logged.~~ **Corrected 2026-10-09:** it was
+     logged at INFO, and nothing in the app configures logging, so the root
+     logger's WARNING threshold dropped every line. Tests passed (`caplog`
+     captures regardless), and a live dry-run of a `CUI` cell resolved the
+     category correctly while writing **zero** log lines. Each alias is now
+     a per-row dry-run warning, shown to the person confirming the import,
+     and a WARNING-level log line. **Named gap:** WinGRC has no logging
+     configuration, so *every* INFO line from an `app.*` logger is
+     discarded in production. Nothing else is known to rely on one, but
+     nothing would notice if it did.
    - The raw "Asset Type" cell is stored in its canonical spelling, so a
      re-import of an export is not a spelling-only edit.
    - **Round-trip guard:** import a workbook spelled the way Jarrod's is,

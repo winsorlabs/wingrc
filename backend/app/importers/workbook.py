@@ -72,14 +72,10 @@ _CATEGORY_LOOKUP.update(
 
 
 def resolve_category(raw: Any) -> ScopeCategory | None:
-    """The ScopeCategory a workbook cell names, or None. Logs the alias
-    whenever the cell is not already the canonical spelling."""
+    """The ScopeCategory a workbook cell names, or None."""
     if not isinstance(raw, str) or not raw.strip():
         return None
-    cat = _CATEGORY_LOOKUP.get(_category_key(raw))
-    if cat is not None and raw.strip() != cat.value:
-        logger.info("workbook import: category %r read as alias for %r", raw.strip(), cat.value)
-    return cat
+    return _CATEGORY_LOOKUP.get(_category_key(raw))
 
 
 def _is_placeholder(value: Any) -> bool:
@@ -125,7 +121,11 @@ def _entity_type(view: ListView) -> EntityType:
     return view.entity_type
 
 
-def parse_workbook(path: str | Path, source_ref: str | None = None) -> list[CanonicalEntity]:
+def parse_workbook(
+    path: str | Path,
+    source_ref: str | None = None,
+    notes: dict[tuple[str, str], list[str]] | None = None,
+) -> list[CanonicalEntity]:
     """Parse every supported tab of the workbook into canonical entities.
 
     `source_ref` overrides the provenance filename stamped on each entity
@@ -188,9 +188,28 @@ def parse_workbook(path: str | Path, source_ref: str | None = None) -> list[Cano
             # Store the resolved spelling, not the alias: an exported list
             # renders the canonical category, so keeping "CUI" here would make
             # re-importing that export look like an edit.
-            asset_type = resolve_category(attributes.get("Asset Type"))
+            raw_asset_type = attributes.get("Asset Type")
+            asset_type = resolve_category(raw_asset_type)
             if asset_type is not None:
                 attributes["Asset Type"] = asset_type.value
+                if str(raw_asset_type).strip() != asset_type.value:
+                    # Reported where the import is reviewed (a dry-run row
+                    # warning, via `notes`) and in the server log. WARNING,
+                    # not INFO: nothing configures app logging, so INFO from
+                    # app loggers is dropped -- the first version of this
+                    # line was, and only a live check showed it.
+                    message = (
+                        f"Asset Type {str(raw_asset_type).strip()!r} "
+                        f"read as {asset_type.value!r}"
+                    )
+                    logger.warning(
+                        "workbook import: %s (%s %r)", message, view.entity_type.value,
+                        natural_key,
+                    )
+                    if notes is not None:
+                        notes.setdefault(
+                            (view.entity_type.value, natural_key.strip().lower()), []
+                        ).append(message)
             decommissioned = bool(attributes.get("Decommissioned Date"))
 
             entities.append(

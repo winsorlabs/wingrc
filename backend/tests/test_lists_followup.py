@@ -131,17 +131,26 @@ def test_unknown_categories_do_not_resolve(raw):
     assert resolve_category(raw) is None
 
 
-def test_alias_match_is_logged_and_canonical_is_not(caplog, monkeypatch):
+def test_alias_matches_are_reported_per_row_and_logged_at_warning(tmp_path, caplog, monkeypatch):
+    """Each alias is reported against its row (the dry-run shows it to the
+    person confirming the import) and logged at WARNING. The first version
+    logged at INFO, which nothing in the app configures -- so on live it was
+    silently dropped, and only a live check found that out (2026-10-09)."""
     # conftest's Alembic run calls fileConfig(), whose default
     # disable_existing_loggers=True switches off every logger already
     # imported -- this one included -- for the rest of the session. A
     # suite-only artifact: production runs migrations in its own process.
     monkeypatch.setattr(logging.getLogger("app.importers.workbook"), "disabled", False)
-    with caplog.at_level(logging.INFO, logger="app.importers.workbook"):
-        resolve_category("CUI")
-        resolve_category("CUI Asset")
-    messages = [r.getMessage() for r in caplog.records]
-    assert messages == ["workbook import: category 'CUI' read as alias for 'CUI Asset'"]
+    notes: dict = {}
+    with caplog.at_level(logging.WARNING, logger="app.importers.workbook"):
+        parse_workbook(_jarrod_style_workbook(tmp_path / "w.xlsx"), notes=notes)
+    assert notes[("device", "sn-dt26")] == ["Asset Type 'CUI' read as 'CUI Asset'"]
+    assert notes[("device", "sn-fw01")] == ["Asset Type 'spa' read as 'SPA'"]
+    assert notes[("device", "sn-prn01")] == ["Asset Type 'crma asset' read as 'CRMA'"]
+    assert notes[("external_service", "liongard")] == ["Asset Type 'Spa' read as 'SPA'"]
+    assert len(notes) == 4, "a canonical spelling must not be reported"
+    assert [r.levelno for r in caplog.records] == [logging.WARNING] * 4
+    assert "'CUI' read as 'CUI Asset'" in caplog.records[0].getMessage()
 
 
 def _jarrod_style_workbook(path: Path) -> Path:
@@ -279,6 +288,17 @@ def test_export_then_reimport_changes_nothing(db_session, tmp_path):
             if c["change_type"] in ("new", "changed") and c["entity_type"] == view.entity_type.value
         ]
         assert edits == [], f"{view.id}: re-importing its own export proposed {edits}"
+
+
+@pytest.mark.integration
+def test_dry_run_shows_the_alias_on_the_row(db_session, tmp_path):
+    client, org_id = _client(db_session)
+    changes = _dry_run(
+        client, org_id, "j.xlsx", _jarrod_style_workbook(tmp_path / "j.xlsx").read_bytes()
+    )
+    row = next(c for c in changes if c["natural_key"] == "SN-DT26")
+    assert row["incoming"]["scope_category"] == "CUI Asset"
+    assert "Asset Type 'CUI' read as 'CUI Asset'" in row["warnings"]
 
 
 @pytest.mark.integration

@@ -719,11 +719,14 @@ async def import_dry_run(
     try:
         # Parsing reads from the temp file, but provenance must record the
         # name the user actually uploaded, not the generated temp filename.
-        incoming = parse_workbook(tmp_path, source_ref=file.filename)
+        alias_notes: dict[tuple[str, str], list[str]] = {}
+        incoming = parse_workbook(tmp_path, source_ref=file.filename, notes=alias_notes)
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
     attr_warnings = resolve_canonical_device_attributes(session, org_id, incoming)
+    for key, messages in alias_notes.items():
+        attr_warnings.setdefault(key, []).extend(messages)
     current = repo.list_entities(session, org_id)
     result = reconcile(current, incoming)
     return DryRunOut(
