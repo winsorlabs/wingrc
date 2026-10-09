@@ -60,6 +60,11 @@ COPY --from=deps /usr/local/bin /usr/local/bin
 COPY backend/ .
 # Fixture data referenced by tests via parents[2] from /app/tests/
 COPY samples/ /samples/
+# The commit this image was built from; /health reports it. Set by
+# deploy/deploy.sh via docker-compose.yml's build args.
+ARG WINGRC_BUILD_SHA=unknown
+ENV WINGRC_BUILD_SHA=${WINGRC_BUILD_SHA}
+LABEL org.opencontainers.image.revision=${WINGRC_BUILD_SHA}
 # reset-dev's pre-flight pg_dump lands here (WINGRC_RESET_DEV_BACKUP_DIR
 # overrides for tests) — a dedicated, non-source directory so backup files
 # never land inside the bind-mounted, git-tracked ./backend on a dev box.

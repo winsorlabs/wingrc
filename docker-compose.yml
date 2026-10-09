@@ -99,26 +99,33 @@ services:
     volumes:
       - minio_data:/data
 
+  # Runs the code baked into the image, never a host checkout. Until
+  # 2026-10-08 this bind-mounted ./backend over /app and ran uvicorn
+  # --reload, so a bare `git pull` on the live host replaced the running
+  # code within seconds while `alembic upgrade head` -- which only runs at
+  # container start -- did not run at all. That is exactly what took the
+  # live backend down on 2026-10-07 (docs/roadmap.md). It also meant the
+  # code serving requests was "whatever was in the checkout", not an image
+  # anyone built, scanned, or could name. Live-editing for local development
+  # is opt-in via docker-compose.override.yml (see the .example).
+  #
+  # WINGRC_BUILD_SHA is stamped into the image and reported by /health, so
+  # "which code is serving this" has an answer. deploy/deploy.sh sets it.
   backend:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        WINGRC_BUILD_SHA: ${WINGRC_BUILD_SHA:-unknown}
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
     environment: *backend-env
     volumes:
-      - ./backend:/app
-      # reset-dev's pre-flight pg_dump (cli.py) writes here — a named
-      # volume, not a path under the bind-mounted ./backend above, so
-      # backups survive a container recreate/rebuild instead of living
-      # inside a git-tracked source directory.
+      # reset-dev's pre-flight pg_dump (cli.py) writes here -- a named
+      # volume, so backups survive a container recreate/rebuild.
       - backend_backups:/backups
-    # --reload picks up host edits without a rebuild (volume mount keeps /app in sync).
-    command: >
-      sh -c "alembic upgrade head &&
-             exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
   # The job scheduler's worker process (scheduler.py) -- same image as
   # backend, different command, so scheduled jobs (currently: expiring
@@ -140,6 +147,8 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        WINGRC_BUILD_SHA: ${WINGRC_BUILD_SHA:-unknown}
     restart: unless-stopped
     depends_on:
       backend:
@@ -157,8 +166,6 @@ services:
     # HTTP endpoint of its own to probe instead.
     healthcheck:
       disable: true
-    volumes:
-      - ./backend:/app
     command: wingrc worker
 
   # Sole host-facing entry point (ports 80/443). Reverse-proxies to backend
@@ -169,6 +176,8 @@ services:
     build:
       context: .
       dockerfile: deploy/nginx/Dockerfile
+      args:
+        WINGRC_BUILD_SHA: ${WINGRC_BUILD_SHA:-unknown}
     restart: unless-stopped
     depends_on:
       - backend
