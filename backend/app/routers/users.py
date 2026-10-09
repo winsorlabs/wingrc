@@ -68,6 +68,7 @@ from ..auth import (
     CurrentUser,
     actor_type_for,
     generate_secret,
+    get_current_user,
     require_org_access,
     require_write,
     revoke_user_sessions,
@@ -855,11 +856,29 @@ def create_api_token(
     body: CreateTokenIn,
     db: Session = Depends(get_session),
     current_user: CurrentUser = Depends(require_org_access("msp_admin", "msp_engineer")),
+    # The same request-cached identity require_org_access copied from, before
+    # it overwrote org_id with the path org: its org_id is the caller's home org.
+    caller: CurrentUser = Depends(get_current_user),
 ):
     if body.role not in _VALID_ROLES:
         raise HTTPException(status_code=422, detail=f"Invalid role: {body.role}")
 
     on_behalf_of = body.user_id is not None and body.user_id != current_user.id
+    # A token can only resolve its user inside the user's home org (the
+    # `user` RLS policy is home_org_id = app.current_org), so one issued in
+    # any other org could never authenticate. Refuse it rather than mint a
+    # dead credential. On-behalf-of tokens can't hit this: _get_user only
+    # finds users homed in org_id. The full fix -- letting a multi-org user
+    # hold a working token in a second org -- belongs to the auth plan.
+    if not on_behalf_of and org_id != caller.org_id:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "API tokens can only be issued in your home organization. A token "
+                "issued in this organization could never authenticate. Switch to "
+                "your home organization to create one."
+            ),
+        )
     if on_behalf_of:
         if current_user.role != "msp_admin":
             raise HTTPException(

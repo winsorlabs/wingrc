@@ -10,9 +10,14 @@ function formatDate(iso: string): string {
 interface Props {
   orgId: string;
   currentUserRole: string;
+  // The signed-in user's home org (AuthUser.org_id). A token issued in any
+  // other org can never authenticate -- the backend refuses it -- so the
+  // panel doesn't offer it.
+  homeOrgId: string;
 }
 
-export function ApiTokensPanel({ orgId, currentUserRole }: Props) {
+export function ApiTokensPanel({ orgId, currentUserRole, homeOrgId }: Props) {
+  const canIssueHere = orgId === homeOrgId;
   const [tokens, setTokens] = useState<ApiTokenRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -124,9 +129,16 @@ export function ApiTokensPanel({ orgId, currentUserRole }: Props) {
   return (
     <div className="api-tokens-panel">
       <div className="api-tokens-panel-header">
-        <button className="btn-primary btn-sm" onClick={openCreate}>
-          + Create Token
-        </button>
+        {canIssueHere ? (
+          <button className="btn-primary btn-sm" onClick={openCreate}>
+            + Create Token
+          </button>
+        ) : (
+          <div className="contact-sub" role="note">
+            API tokens can only be issued in your home organization — a token issued here
+            could never authenticate. Switch to your home organization to create one.
+          </div>
+        )}
       </div>
 
       {error && <div className="form-error">{error}</div>}

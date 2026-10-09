@@ -397,7 +397,7 @@ export function App() {
                 <UsersPanel orgId={org.id} currentUserId={user.id} />
               )}
               {securityTab === "api-tokens" && canSeeApiTokens(user.role) && (
-                <ApiTokensPanel orgId={org.id} currentUserRole={user.role} />
+                <ApiTokensPanel orgId={org.id} currentUserRole={user.role} homeOrgId={user.org_id} />
               )}
               {securityTab === "audit-log" && canSeeAuditLog(user.role) && (
                 <AuditLogPanel orgId={org.id} />

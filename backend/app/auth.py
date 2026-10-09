@@ -731,7 +731,21 @@ def _resolve_api_token(db: Session, raw: str) -> CurrentUser:
     db.commit()
 
     user = db.get(User, row.user_id)
-    if user is None or not user.is_active:
+    if user is None:
+        # api_token.user_id cascades on delete, so a token whose user is
+        # invisible here was issued in an org other than that user's home
+        # org: the `user` RLS policy only shows a row inside its home org.
+        # This used to say "Account deactivated", which sent people to a
+        # user record with nothing wrong with it.
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "This API token was issued in an organization other than its user's "
+                "home organization, so it cannot authenticate. Revoke it and issue a "
+                "new one from the user's home organization."
+            ),
+        )
+    if not user.is_active:
         raise HTTPException(status_code=403, detail="Account deactivated")
 
     # Clamp to whichever is lower: the role frozen on the token at mint time,
