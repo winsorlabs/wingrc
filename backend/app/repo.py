@@ -142,6 +142,12 @@ def upsert(
                 attributes.pop(key, None)
             if key not in attributes and key in existing:
                 attributes[key] = existing[key]
+        if row is not None and Source(row.source) != entity.source:
+            # A different source speaks to only some of the entity's fields;
+            # what it doesn't mention stays. Same-source writes still replace
+            # wholesale, so a connector's raw record refreshes rather than
+            # accumulating stale keys.
+            attributes = {**existing, **attributes}
         if (
             row is not None
             and Source(row.source) in CONNECTOR_SOURCES

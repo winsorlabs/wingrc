@@ -5474,6 +5474,32 @@ Planned).
     still land.
 - **MISSING rows are never acted on.** This is now pinned by a test that
   applies a dry-run's *full* change list, missing rows included.
+- **"Workbook wins" made to stick.** Checking what an apply of the real
+  file would *write* showed three gaps, all fixed here:
+  - The workbook's Location, In Service Date, Decommissioned Date and
+    Requested By lived only under raw column keys. The next same-source
+    Liongard refresh dropped them. They now also land under the protected
+    overlay keys.
+  - A workbook write onto a Liongard row replaced Liongard's raw record.
+    Cross-source writes now merge; same-source writes still replace, so a
+    connector's raw record refreshes rather than accumulating stale keys.
+  - The dry-run hid overlay changes behind the device allowlist. Reconcile
+    now shows overlay fields an import actually carries.
+- **A stated gap is never a value.**
+  - `[PLACEHOLDER - still in service]` in Decommissioned Date used to
+    decommission the device. It no longer does.
+  - Placeholder cells, and an OEM placeholder serial as `asset_tag`, no
+    longer become canonical attributes. The raw cell keeps the reason.
+  - A conflict is reported only when the import *states* a different
+    value. Silence is not disagreement.
+- **Real file, re-checked after the fix** (offline, in memory, against
+  Liongard-shaped copies of live's devices):
+  - WL-DT26 and PF3Y6K26 match as CHANGED, not NEW+MISSING.
+  - The two placeholder-serial devices key by their names (`WL-HV1`,
+    `jarrod.winsor_Android (personal/BYOD)`).
+  - The only conflicts are the OS spellings. The only applied changes are
+    workbook-only fields and genuinely new values.
+  - The users tab is unchanged in scope: it stays L.1's.
 
 ---
 

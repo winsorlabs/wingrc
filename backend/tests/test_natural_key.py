@@ -311,3 +311,81 @@ def test_dry_run_shows_conflicts_and_possible_matches(db_session, tmp_path):
     assert "model" not in pf["field_diffs"]
     assert any("Conflict, not applied" in w and "model" in w for w in pf["warnings"])
     assert any("Possible match" in w for w in changes["Jarrod Winsor"]["warnings"])
+
+
+# ---------------------------------------------------------------------------
+# "Workbook wins" for the fields only a workbook supplies
+# ---------------------------------------------------------------------------
+
+
+def test_workbook_overlay_columns_land_under_the_protected_keys(tmp_path):
+    path = _workbook(
+        tmp_path / "w.xlsx",
+        devices=[
+            {
+                "Name": "WS-1",
+                "Serial # or Asset Tag": "SN-1",
+                "Location": "Office",
+                "In Service Date": "2025-01-10",
+                "Decommissioned Date": "[PLACEHOLDER - still in service]",
+            }
+        ],
+    )
+    [d] = [e for e in parse_workbook(path) if e.entity_type == EntityType.DEVICE]
+    assert d.attributes["location"] == "Office"
+    assert d.attributes["in_service_date"] == "2025-01-10"
+    assert d.attributes["decommissioned_date"] == "[PLACEHOLDER - still in service]"
+    assert d.status.value == "active", "a stated gap must never decommission a device"
+
+
+def test_reconcile_shows_an_overlay_field_the_import_carries():
+    current = _entity(EntityType.DEVICE, "SN-1", Source.LIONGARD, model="X")
+    incoming = _entity(EntityType.DEVICE, "SN-1", Source.WORKBOOK, model="X", location="Office")
+    [c] = reconcile([current], [incoming]).changes
+    assert c.change_type == ChangeType.CHANGED
+    assert c.field_diffs == {"location": (None, "Office")}
+
+
+@pytest.mark.integration
+def test_workbook_location_survives_a_later_liongard_sync_and_raw_record_survives_workbook(
+    db_session,
+):
+    from app import repo
+
+    _, org_id = _client(db_session)
+    synced = _liongard_device("SN-9", "WS-9")
+    synced.attributes["LastSeen"] = "2026-10-09"
+    repo.upsert(db_session, org_id, synced)
+    repo.upsert(
+        db_session,
+        org_id,
+        _entity(EntityType.DEVICE, "SN-9", Source.WORKBOOK, location="Office", Location="Office"),
+    )
+    db_session.flush()
+
+    def row():
+        db_session.expire_all()
+        return db_session.scalars(
+            select(ScopeEntity).where(
+                ScopeEntity.org_id == org_id, ScopeEntity.natural_key == "SN-9"
+            )
+        ).one()
+
+    assert row().attributes["LastSeen"] == "2026-10-09", "a workbook write keeps the raw record"
+    repo.upsert(db_session, org_id, _liongard_device("SN-9", "WS-9"))  # same-source refresh
+    db_session.flush()
+    assert row().attributes["location"] == "Office"
+
+
+def test_a_placeholder_never_becomes_a_canonical_value():
+    from app.importers.workbook import _add_canonical_device_aliases
+
+    attrs = {
+        "Serial # or Asset Tag": WL_DT26_WORKBOOK_SERIAL,
+        "Make": "[PLACEHOLDER - not in Datto RMM export]",
+        "Model": "21CD000HUS",
+    }
+    _add_canonical_device_aliases(attrs)
+    assert "asset_tag" not in attrs and "make_oem" not in attrs
+    assert attrs["model"] == "21CD000HUS"
+    assert attrs["Make"] == "[PLACEHOLDER - not in Datto RMM export]", "the raw record of why stays"

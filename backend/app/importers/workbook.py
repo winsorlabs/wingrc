@@ -38,7 +38,12 @@ from ..domain import (
     normalize_mac_address,
 )
 from ..models import Contact, ScopeEntity
-from ..natural_key import device_natural_key, identifying_value, person_natural_key
+from ..natural_key import (
+    device_natural_key,
+    identifying_value,
+    is_placeholder_serial,
+    person_natural_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +88,14 @@ def _is_placeholder(value: Any) -> bool:
     return isinstance(value, str) and any(
         t in value.lower() for t in _PLACEHOLDER_TOKENS
     )
+
+
+_OVERLAY_COLUMNS: dict[str, str] = {
+    "Location": "location",
+    "In Service Date": "in_service_date",
+    "Decommissioned Date": "decommissioned_date",
+    "Requested By/Responsible Party": "requested_by",
+}
 
 
 def _infer_category(attributes: dict[str, Any]) -> ScopeCategory | None:
@@ -220,7 +233,20 @@ def parse_workbook(
                         notes.setdefault(
                             (view.entity_type.value, natural_key.strip().lower()), []
                         ).append(message)
-            decommissioned = bool(attributes.get("Decommissioned Date"))
+            # The workbook is a human source for the operator overlay --
+            # facts no sync observes. Stored under the overlay keys too, which
+            # repo.upsert() protects from every later sync; the raw header
+            # stays for round-trip fidelity. Without this a Liongard re-sync
+            # dropped a workbook's Location with the rest of the raw columns.
+            for raw_header, overlay_key in _OVERLAY_COLUMNS.items():
+                value = attributes.get(raw_header)
+                if value is not None and str(value).strip():
+                    attributes[overlay_key] = (
+                        value.date().isoformat() if hasattr(value, "date") else value
+                    )
+            # A stated gap ("[PLACEHOLDER - still in service]") is not a date
+            # and must never decommission anything.
+            decommissioned = identifying_value(attributes.get("Decommissioned Date")) is not None
 
             entities.append(
                 CanonicalEntity(
@@ -287,8 +313,14 @@ def _add_canonical_device_aliases(attributes: dict[str, Any]) -> None:
         if attributes.get(canonical_key):
             continue  # never clobber an existing canonical value
         raw_value = attributes.get(raw_header)
-        if raw_value:
-            attributes[canonical_key] = raw_value
+        # A stated gap or an OEM placeholder serial stays in the raw column
+        # (that is the record of why it is missing) but never becomes a
+        # canonical value -- an asset_tag of "System Serial Number" is false.
+        if identifying_value(raw_value) is None:
+            continue
+        if canonical_key == "asset_tag" and is_placeholder_serial(raw_value):
+            continue
+        attributes[canonical_key] = raw_value
 
 
 def _resolve_device_subtype(attributes: dict[str, Any]) -> str | None:

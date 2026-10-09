@@ -104,7 +104,10 @@ def _field_diffs(
     keys = set(current.attributes) | set(incoming.attributes)
     allowlist = _COMPARABLE_ATTRIBUTES_BY_ENTITY_TYPE.get(current.entity_type)
     if allowlist is not None:
-        keys &= allowlist
+        # Overlay fields an import actually carries are real, reviewable
+        # changes (a workbook setting Location); the allowlist alone would
+        # hide them.
+        keys = (keys & allowlist) | (OPERATOR_OVERLAY_ATTRIBUTES & set(incoming.attributes))
     # An overlay field the import does not carry is kept by repo.upsert(),
     # so its absence is not a change -- reporting it would mark every
     # hand-annotated device CHANGED on every sync.
@@ -191,6 +194,8 @@ def source_precedence_conflicts(result: ReconcileResult) -> dict[tuple[str, str]
         owned = connector_supplied_fields(c.entity_type, c.current.attributes)
         for k in sorted(owned & set(c.field_diffs)):
             current_value, incoming_value = c.field_diffs.pop(k)
+            if incoming_value in (None, "", []):
+                continue  # the import is silent on it, not disagreeing; the merge keeps it
             conflicts.setdefault(c.current.key(), []).append(
                 f"Conflict, not applied: {c.current.source.value} supplies {k}="
                 f"{current_value!r}; the import says {incoming_value!r}."
