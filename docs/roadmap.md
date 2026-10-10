@@ -7655,6 +7655,41 @@ gets its own plan doc and its own prompt, like the document library did.
 
 ---
 
+### Workbook importer: scope, and the shared natural key (2026-10-09)
+
+Check 3 of the Lists follow-up deploy ("import Jarrod's real workbook")
+**passed as a dry run; the apply is deferred to L.1.** The dry run proved
+what the check existed for:
+
+- `CUI` resolved to `CUI Asset`.
+- `[PLACEHOLDER - reason]` cells survived verbatim.
+- No alias row warning appeared, because live predated that fix.
+
+It wrote nothing. The apply was not run because the dry run showed it
+would have created duplicates:
+
+- WL-DT26 under its placeholder serial, because Liongard keyed it by
+  hostname.
+- Jarrod by name, because Liongard keyed him by email.
+- 32 malformed "persons" from a multi-section users tab.
+
+**Missing rows are never acted on:** every apply path writes NEW/CHANGED
+only. The real WL-DT26 and Jarrod would have survived beside their
+duplicates, not been replaced.
+
+**Scope:** the workbook importer reads the Authorized-Entities *sample*
+shape, one header per tab. Jarrod's real 44-workbook library follows a
+richer convention (`docs/PLAN-list-library.md` §3) and needs L.1's
+importer. The two importers should converge, not coexist. Multi-section
+tabs are deliberately not taught to this one: §2a of that plan explains why
+`3.1.1a`'s rows are accounts, not people.
+
+**Next slice:** one natural-key derivation shared by both importers
+(placeholder serial → hostname fallback; email before name for people,
+with a name-keyed row surfaced as a possible match, never auto-merged), and
+source precedence on CHANGED rows (a connector-supplied field is reported
+as a conflict, never overwritten by a workbook).
+
 ### R. Deploy the image CI scanned, not an equivalent one (registry)
 
 **State (2026-10-09):**
@@ -7707,6 +7742,25 @@ Not designed here. Whoever picks this up decides at least:
   live-copy procedure).
 
 The restore test is the deliverable. The dump alone is not.
+
+**Consequence as of 2026-10-09: the live database has no backup at all.**
+That afternoon the 24 ad-hoc deploy dumps were deleted:
+
+- 4 in `~claude` on wl-util-1;
+- 20 in the `wingrc_backend_backups` volume. An earlier count of "21" was
+  a miscount.
+
+So was an orphaned Docker volume, `70ccd0…` (created 2026-09-23 and left by
+a bench live-copy restore). It turned out to hold a **full copy of
+production**: Acme MSP, Winsorlabs, Test Customer A, the same scope rows,
+5 users and 2 contacts. Nothing tracked it, which is the argument for this
+item in one example.
+
+No database copy of any kind now exists on that host. That is the correct
+state for ad-hoc deploy dumps and the wrong state for a production system;
+this item is what fixes it.
+
+**The restore has never been exercised. Not once, by anyone.**
 
 ## Sequencing
 
