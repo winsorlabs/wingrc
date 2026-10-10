@@ -5442,6 +5442,54 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### CI triggers on branch pushes only; one run per commit ✅ DONE (2026-10-10)
+
+**What happened.** Commit `fdf6747` (PR #17) ran CI twice, once for the
+branch push and once for the `pull_request` event:
+
+- The concurrency group (Sep 30) **cancelled** the push run.
+- The pull_request run's `backend` job **failed** in its `Test` step,
+  while `integration` passed.
+- The failure never reproduced: not locally, and not in that job's exact
+  no-database configuration on Linux (543 passed). The raw log needs a
+  token, so its cause was never established. The next commit was green.
+
+**Recorded as the inverse of the reported-green incidents, with one
+qualification.** Those signals said green while checking nothing; this one
+said red where every reproduction found nothing wrong. Part of it is
+certainly the setup's fault: every PR commit carried a cancelled check by
+design, which reads as trouble and isn't. But the *failed* run was not a
+cancellation, and "nothing was wrong" is unproven, because nobody read the
+log. The Sep 30 entry below predicted the cancelled-check wrinkle. A
+throwaway PR probing the dual trigger at the time would have shown it
+before a real merge did.
+
+**The change.**
+
+- `on: push: branches: ['**']`; `pull_request` is removed.
+- One run per commit, and the push run's checks land on the PR's head
+  commit, which branch protection reads.
+- The concurrency group stays, as a safety net for rapid pushes, not as
+  the mechanism that picks a survivor.
+
+**Rejected:** `push: [main]` plus `pull_request`. That is exactly the
+configuration the Sep 30 entry below abandoned, because a pushed branch
+then gets no run until someone opens a PR. Every slice since has been
+CI-verified on its branch before a PR existed.
+
+**Accepted costs:** fork PRs get no CI, and CI tests the branch head, not
+GitHub's speculative merge with `main`.
+
+**Verified on the change's own branch:**
+
+- Commit `1d16039` produced one run (event `push`) and exactly three
+  check runs (`backend`, `integration`, `image`), all success, none
+  cancelled.
+- To re-check once its PR is opened: still one run, and no
+  `pull_request` event.
+
+---
+
 ### List library L.1: the model and the template importer ✅ DONE (2026-10-10)
 
 Migration 0064. Spec: `docs/PLAN-list-library.md`.
