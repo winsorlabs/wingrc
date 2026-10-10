@@ -95,7 +95,7 @@ from ..models import (
     OrgLiongardEnvironment,
     ScopeEntity,
 )
-from ..reconcile import reconcile
+from ..reconcile import possible_person_matches, reconcile, source_precedence_conflicts
 from ..render import render_view_bytes
 from ..repo import PendingApprovalWriteError
 
@@ -729,6 +729,9 @@ async def import_dry_run(
         attr_warnings.setdefault(key, []).extend(messages)
     current = repo.list_entities(session, org_id)
     result = reconcile(current, incoming)
+    for notes in (source_precedence_conflicts(result), possible_person_matches(result, current)):
+        for key, messages in notes.items():
+            attr_warnings.setdefault(key, []).extend(messages)
     return DryRunOut(
         summary=result.summary(),
         changes=[

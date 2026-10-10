@@ -5442,6 +5442,67 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### One natural key for every importer, and source precedence ✅ DONE (2026-10-09)
+
+Found by a live dry-run of Jarrod's populated workbook, which would have
+duplicated WL-DT26 and Jarrod Winsor (see "Workbook importer: scope" in
+Planned).
+
+- **`app/natural_key.py` is the one key derivation.**
+  - Devices are keyed by serial, then hostname. A serial counts as absent
+    when it is blank, a `[PLACEHOLDER…]` cell, or an OEM placeholder,
+    including an annotated one ("System Serial Number (not set by OEM - …)").
+  - People are keyed by email, then username, then name.
+  - The Liongard and workbook importers both call it. The placeholder
+    vocabulary moved there from `importers/liongard.py`; migration 0058
+    keeps its own frozen copy, as migrations must.
+  - `tests/test_natural_key.py` asserts both importers produce the same key
+    for the same device, WL-DT26 verbatim included. A row with no usable
+    identifier is skipped and logged, never keyed by placeholder text.
+- **A name-keyed person never merges into an email-keyed one.** The keys
+  differ, so reconcile cannot match them. The workbook dry-run adds a
+  "possible match, not merged" warning for a person to confirm.
+- **Source precedence.**
+  - On a connector-sourced row (Liongard, Datto RMM, Entra), an import
+    from a non-connector source never overwrites a field the connector
+    supplied: the canonical device/person vocabulary, minus
+    `responsible_contact_id`, which no connector supplies. It never takes
+    over the row's `source` either. Enforced in `repo.upsert()`.
+  - The dry-run drops each such field from the diff and reports it as
+    "Conflict, not applied".
+  - Fields only the workbook supplies (the overlay, Asset Type, owner)
+    still land.
+- **MISSING rows are never acted on.** This is now pinned by a test that
+  applies a dry-run's *full* change list, missing rows included.
+- **"Workbook wins" made to stick.** Checking what an apply of the real
+  file would *write* showed three gaps, all fixed here:
+  - The workbook's Location, In Service Date, Decommissioned Date and
+    Requested By lived only under raw column keys. The next same-source
+    Liongard refresh dropped them. They now also land under the protected
+    overlay keys.
+  - A workbook write onto a Liongard row replaced Liongard's raw record.
+    Cross-source writes now merge; same-source writes still replace, so a
+    connector's raw record refreshes rather than accumulating stale keys.
+  - The dry-run hid overlay changes behind the device allowlist. Reconcile
+    now shows overlay fields an import actually carries.
+- **A stated gap is never a value.**
+  - `[PLACEHOLDER - still in service]` in Decommissioned Date used to
+    decommission the device. It no longer does.
+  - Placeholder cells, and an OEM placeholder serial as `asset_tag`, no
+    longer become canonical attributes. The raw cell keeps the reason.
+  - A conflict is reported only when the import *states* a different
+    value. Silence is not disagreement.
+- **Real file, re-checked after the fix** (offline, in memory, against
+  Liongard-shaped copies of live's devices):
+  - WL-DT26 and PF3Y6K26 match as CHANGED, not NEW+MISSING.
+  - The two placeholder-serial devices key by their names (`WL-HV1`,
+    `jarrod.winsor_Android (personal/BYOD)`).
+  - The only conflicts are the OS spellings. The only applied changes are
+    workbook-only fields and genuinely new values.
+  - The users tab is unchanged in scope: it stays L.1's.
+
+---
+
 ### Document library N.3: approval and the review cadence ✅ DONE (2026-09-30)
 
 Migration 0062. Turns the library from "you can write policies" into

@@ -61,6 +61,7 @@ this record," never a live value, and never anything authoritative
 from __future__ import annotations
 
 from .domain import (
+    CONNECTOR_SOURCES,
     DEVICE_SOFTWARE_COMPARABLE_ATTRIBUTES,
     OPERATOR_OVERLAY_ATTRIBUTES,
     PERSON_COMPARABLE_ATTRIBUTES,
@@ -70,6 +71,7 @@ from .domain import (
     EntityStatus,
     EntityType,
     ReconcileResult,
+    connector_supplied_fields,
 )
 
 # Entity types with a defined "meaningful attributes" allowlist. Absent
@@ -102,7 +104,10 @@ def _field_diffs(
     keys = set(current.attributes) | set(incoming.attributes)
     allowlist = _COMPARABLE_ATTRIBUTES_BY_ENTITY_TYPE.get(current.entity_type)
     if allowlist is not None:
-        keys &= allowlist
+        # Overlay fields an import actually carries are real, reviewable
+        # changes (a workbook setting Location); the allowlist alone would
+        # hide them.
+        keys = (keys & allowlist) | (OPERATOR_OVERLAY_ATTRIBUTES & set(incoming.attributes))
     # An overlay field the import does not carry is kept by repo.upsert(),
     # so its absence is not a change -- reporting it would mark every
     # hand-annotated device CHANGED on every sync.
@@ -172,3 +177,57 @@ def reconcile(
             )
 
     return result
+
+
+def source_precedence_conflicts(result: ReconcileResult) -> dict[tuple[str, str], list[str]]:
+    """For a non-connector import (a workbook) against connector-sourced
+    rows: drop from each CHANGED row's diff every field a connector supplied,
+    and return a conflict message per dropped field, keyed like
+    CanonicalEntity.key(). repo.upsert() keeps those fields regardless; this
+    makes the dry-run say so instead of showing an edit that won't happen."""
+    conflicts: dict[tuple[str, str], list[str]] = {}
+    for c in result.changes:
+        if c.change_type != ChangeType.CHANGED or c.current is None or c.incoming is None:
+            continue
+        if c.current.source not in CONNECTOR_SOURCES or c.incoming.source in CONNECTOR_SOURCES:
+            continue
+        owned = connector_supplied_fields(c.entity_type, c.current.attributes)
+        for k in sorted(owned & set(c.field_diffs)):
+            current_value, incoming_value = c.field_diffs.pop(k)
+            if incoming_value in (None, "", []):
+                continue  # the import is silent on it, not disagreeing; the merge keeps it
+            conflicts.setdefault(c.current.key(), []).append(
+                f"Conflict, not applied: {c.current.source.value} supplies {k}="
+                f"{current_value!r}; the import says {incoming_value!r}."
+            )
+    return conflicts
+
+
+def possible_person_matches(
+    result: ReconcileResult, current: list[CanonicalEntity]
+) -> dict[tuple[str, str], list[str]]:
+    """A NEW person keyed by name whose name matches an existing person keyed
+    by something else (an email). Never merged -- the keys differ, so
+    reconcile cannot -- only surfaced for a human to confirm."""
+    by_name: dict[str, list[str]] = {}
+    for e in current:
+        if e.entity_type != EntityType.PERSON:
+            continue
+        names = {
+            str(e.attributes.get("display_name") or ""),
+            f"{e.attributes.get('First Name') or ''} {e.attributes.get('Last Name') or ''}",
+        }
+        for n in names:
+            n = " ".join(n.lower().split())
+            if n and n != e.natural_key.strip().lower():
+                by_name.setdefault(n, []).append(e.natural_key)
+    matches: dict[tuple[str, str], list[str]] = {}
+    for c in result.changes:
+        if c.change_type != ChangeType.NEW or c.entity_type != EntityType.PERSON or not c.incoming:
+            continue
+        for existing_key in by_name.get(" ".join(c.natural_key.lower().split()), []):
+            matches.setdefault(c.incoming.key(), []).append(
+                f"Possible match: existing person {existing_key!r} has this name. "
+                "Not merged -- confirm by hand before applying."
+            )
+    return matches

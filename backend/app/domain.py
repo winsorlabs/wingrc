@@ -211,6 +211,22 @@ PERSON_CANONICAL_ATTRIBUTES: frozenset[str] = frozenset(
 PERSON_COMPARABLE_ATTRIBUTES: frozenset[str] = PERSON_CANONICAL_ATTRIBUTES
 
 
+# Source precedence (2026-10-09). A connector observes these fields; a
+# workbook is a human transcribing them. When both have spoken about the same
+# entity, the connector's value stands and the workbook's differing value is
+# reported as a conflict, never written -- the mirror of the rule that a sync
+# may not overwrite a field it has no source for. responsible_contact_id is
+# deliberately absent: no connector supplies an owner (see
+# importers/liongard.py:device_profile_to_canonical), so the workbook's
+# Owner column is the only source for it.
+
+
+def connector_supplied_fields(entity_type: EntityType, attributes: dict) -> set[str]:
+    """The fields of `attributes` a connector actually supplied a value for."""
+    vocab = _CONNECTOR_FIELDS.get(entity_type, frozenset())
+    return {k for k in vocab if attributes.get(k) not in (None, "", [])}
+
+
 # Operator overlay (Lists slice, 2026-10-07): human knowledge about an
 # entity that no collector can observe -- where a device physically is,
 # when it entered and left service, who requested access. The fifth such
@@ -324,3 +340,14 @@ class ReconcileResult:
         for c in self.changes:
             counts[c.change_type.value] += 1
         return counts
+
+
+CONNECTOR_SOURCES: frozenset[Source] = frozenset(
+    {Source.LIONGARD, Source.DATTO_RMM, Source.ENTRA}
+)
+
+_CONNECTOR_FIELDS: dict[EntityType, frozenset[str]] = {
+    EntityType.DEVICE: DEVICE_SOFTWARE_CANONICAL_ATTRIBUTES - {"responsible_contact_id"},
+    EntityType.SOFTWARE: DEVICE_SOFTWARE_CANONICAL_ATTRIBUTES - {"responsible_contact_id"},
+    EntityType.PERSON: PERSON_CANONICAL_ATTRIBUTES,
+}

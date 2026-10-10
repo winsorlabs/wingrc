@@ -38,6 +38,12 @@ from ..domain import (
     normalize_mac_address,
 )
 from ..models import Contact, ScopeEntity
+from ..natural_key import (
+    device_natural_key,
+    identifying_value,
+    is_placeholder_serial,
+    person_natural_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +90,14 @@ def _is_placeholder(value: Any) -> bool:
     )
 
 
+_OVERLAY_COLUMNS: dict[str, str] = {
+    "Location": "location",
+    "In Service Date": "in_service_date",
+    "Decommissioned Date": "decommissioned_date",
+    "Requested By/Responsible Party": "requested_by",
+}
+
+
 def _infer_category(attributes: dict[str, Any]) -> ScopeCategory | None:
     """Look for a known CMMC category token in the columns that tend to hold it."""
     for col in ("Asset Type", "Owner / Primary User"):
@@ -105,16 +119,19 @@ def _header_row_index(rows: list[tuple], view: ListView) -> int:
 
 
 def _natural_key(view: ListView, attributes: dict[str, Any]) -> str:
+    """Delegates to natural_key.py, the derivation the Liongard importer
+    uses too -- a device keyed differently here than there is a duplicate."""
     if view is AUTHORIZED_USERS:
-        return f"{attributes.get('First Name', '')} {attributes.get('Last Name', '')}".strip()
-    if view is AUTHORIZED_PROCESSES:
-        return str(attributes.get("Process Name", "")).strip()
+        parts = (attributes.get("First Name"), attributes.get("Last Name"))
+        name = " ".join(p for p in map(identifying_value, parts) if p)
+        return person_natural_key(email=attributes.get("Email"), display_name=name)
     if view is AUTHORIZED_DEVICES:
-        serial = attributes.get("Serial # or Asset Tag")
-        return str(serial or attributes.get("Name", "")).strip()
+        return device_natural_key(attributes.get("Serial # or Asset Tag"), attributes.get("Name"))
+    if view is AUTHORIZED_PROCESSES:
+        return identifying_value(attributes.get("Process Name")) or ""
     if view is EXTERNAL_SERVICES:
-        return str(attributes.get("Name", "")).strip()
-    return str(next(iter(attributes.values()), "")).strip()
+        return identifying_value(attributes.get("Name")) or ""
+    return identifying_value(next(iter(attributes.values()), None)) or ""
 
 
 def _entity_type(view: ListView) -> EntityType:
@@ -182,6 +199,12 @@ def parse_workbook(
 
             natural_key = _natural_key(view, attributes)
             if not natural_key:
+                # Nothing on the row identifies it (serial and name both
+                # blank or stated gaps). Skipped rather than keyed by
+                # placeholder text, but never silently.
+                logger.warning(
+                    "workbook import: %s row skipped -- no usable identifier", view.sheet_title
+                )
                 continue
 
             category = _infer_category(attributes)
@@ -210,7 +233,20 @@ def parse_workbook(
                         notes.setdefault(
                             (view.entity_type.value, natural_key.strip().lower()), []
                         ).append(message)
-            decommissioned = bool(attributes.get("Decommissioned Date"))
+            # The workbook is a human source for the operator overlay --
+            # facts no sync observes. Stored under the overlay keys too, which
+            # repo.upsert() protects from every later sync; the raw header
+            # stays for round-trip fidelity. Without this a Liongard re-sync
+            # dropped a workbook's Location with the rest of the raw columns.
+            for raw_header, overlay_key in _OVERLAY_COLUMNS.items():
+                value = attributes.get(raw_header)
+                if value is not None and str(value).strip():
+                    attributes[overlay_key] = (
+                        value.date().isoformat() if hasattr(value, "date") else value
+                    )
+            # A stated gap ("[PLACEHOLDER - still in service]") is not a date
+            # and must never decommission anything.
+            decommissioned = identifying_value(attributes.get("Decommissioned Date")) is not None
 
             entities.append(
                 CanonicalEntity(
@@ -277,8 +313,14 @@ def _add_canonical_device_aliases(attributes: dict[str, Any]) -> None:
         if attributes.get(canonical_key):
             continue  # never clobber an existing canonical value
         raw_value = attributes.get(raw_header)
-        if raw_value:
-            attributes[canonical_key] = raw_value
+        # A stated gap or an OEM placeholder serial stays in the raw column
+        # (that is the record of why it is missing) but never becomes a
+        # canonical value -- an asset_tag of "System Serial Number" is false.
+        if identifying_value(raw_value) is None:
+            continue
+        if canonical_key == "asset_tag" and is_placeholder_serial(raw_value):
+            continue
+        attributes[canonical_key] = raw_value
 
 
 def _resolve_device_subtype(attributes: dict[str, Any]) -> str | None:
