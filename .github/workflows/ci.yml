@@ -16,35 +16,28 @@ name: ci
 # consecutive red runs (2026-09-28/29), and it has no local equivalent,
 # because the `backend` job's no-database configuration exists nowhere else.
 # A branch run means the signal is available the moment work is pushed,
-# whoever is or isn't watching. `pull_request` stays for forks, whose branch
-# pushes never reach this repo.
+# whoever is or isn't watching.
+#
+# Why push only, with no `pull_request` trigger (2026-10-10): with both, every
+# commit on a same-repo PR ran twice, and the concurrency group below decided
+# which survived, leaving a cancelled `backend`/`integration` check behind on
+# every PR commit. A run triggered by the branch push already reports its
+# checks on the PR's head commit, which is what branch protection reads, so
+# the second trigger added nothing but the duplicate. The cost, accepted
+# deliberately: a PR from a fork gets no CI (its pushes never reach this
+# repo), and CI tests the branch head rather than GitHub's speculative merge
+# with `main`. If a fork PR ever needs CI, run it from a branch here.
 on:
   push:
     branches: ['**']  # all branches, but not tags
-  pull_request:
 
-# A same-repo PR would otherwise run twice: once for the branch push and once
-# for the pull_request event. These collapse onto one group so only one
-# survives.
-#
-# `github.ref_name` rather than `github.ref` is load-bearing. `github.ref` is
-# `refs/heads/<branch>` on a push but `refs/pull/<n>/merge` on a
-# pull_request, so grouping on it produces two *different* groups and
-# deduplicates nothing. `ref_name` is the short name, and `head_ref` (set
-# only on pull_request, and equal to the source branch) takes precedence, so
-# both events land on the same group.
-#
-# `cancel-in-progress` is false on `main` deliberately: a follow-up push must
-# never kill a run whose result is the record for a merge commit. On feature
-# branches superseding is what you want.
-#
-# If a PR merge is ever blocked by a `backend`/`integration` check reading
-# "cancelled" rather than failed, this is why: the loser of that collapse
-# leaves cancelled check runs behind. The surviving run is the later one, so
-# it is normally also the one branch protection reads -- but pushing again
-# clears it, and that is a faster diagnosis than re-deriving this.
+# A safety net for rapid pushes, no longer the thing that picks between two
+# simultaneous runs of one commit -- there is only one per commit now. A newer
+# push to a feature branch supersedes an older in-flight run;
+# `cancel-in-progress` is false on `main` so a follow-up push never kills the
+# run that is the record for a merge commit.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  group: ${{ github.workflow }}-${{ github.ref_name }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
