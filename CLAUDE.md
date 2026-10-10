@@ -190,10 +190,11 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
 | `frontend/src/lib/tiptapMarkdown.ts` | Editor bridge: stored Markdown ↔ TipTap document, owned in-repo so the subset stays the subset |
 | `backend/app/routers/` | FastAPI routers: `assessments`, `bundle`, `contacts`, `evidence`, `frameworks`, `orgs` |
 | `backend/app/list_projection.py` | The one function that decides a CMMC list cell (shared by the `.xlsx` export and Scope › Lists); `catalog.py`'s `ListView.sources` says where each column's value may come from |
+| `backend/app/list_templates.py` / `list_library.py` | The list library (roadmap L): the template importer, whose contract is the template header convention, and the append-only versioned list model. A list is a definition plus its own rows -- read `docs/PLAN-list-library.md` before touching either |
 | `backend/app/storage.py` | `StorageClient` ABC + `MinIOClient` + `NullStorageClient` |
 | `backend/app/audit.py` | `log_event()` — writes `AuditLog` rows; also the actor-resolution helpers both audit views share |
 | `backend/app/rls.py` | The only place `app.current_org` is written, plus the `after_begin` hook that makes it survive a commit — read before touching anything org-scoped |
-| `backend/app/migrations/` | Alembic migrations (currently 0001–0063) |
+| `backend/app/migrations/` | Alembic migrations (currently 0001–0064) |
 | `backend/baselines/` | YAML product baselines (`rocketcyber.yaml`, …) — not repo-root `baselines/`; `seeds/baselines.py:_BASELINES_DIR` resolves here, and a stale repo-root duplicate that drifted out of sync with a real coverage_basis reclassification was removed 2026-09-19 (see `docs/roadmap.md`'s tenant lifecycle consolidation pass entry) |
 | `docs/fips.md` | FIPS 140-2/140-3 crypto boundary documentation |
 | `docs/architecture.md` | Authoritative architecture description (the five layers) — companion to this file's terse session version |

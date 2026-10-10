@@ -36,6 +36,7 @@ from .routers import (
     frameworks,
     integrations,
     liongard_sync,
+    list_definitions,
     objectives,
     orgs,
     raci,
@@ -90,6 +91,7 @@ app.include_router(sprs_submissions.router)
 app.include_router(review_cycles.router)
 app.include_router(liongard_sync.router)
 app.include_router(documents.router)
+app.include_router(list_definitions.router)
 
 
 @lru_cache(maxsize=1)

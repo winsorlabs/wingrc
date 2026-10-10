@@ -123,7 +123,7 @@ row 6   Replace every [PLACEHOLDER] with customer-specific data before use.
 row 8   Updated Date:        Updated By:
 row 9   Organizational Risk Register
 row 10  Risk ID | Risk Description | Affected Asset/Process | Likelihood | ...
-row 11+ data, with [PLACEHOLDER - reason] example rows
+row 11+ data, with bare [PLACEHOLDER] example rows (see the correction below)
 ```
 
 Every field a list definition needs is in the file:
@@ -147,8 +147,10 @@ Note the convergences, and do not build parallel mechanisms for them:
 - `Review cadence` is N.3's `cadence_months`, on a list instead of a
   document.
 - `Responsible` is `ContactDocumentationRole`'s vocabulary.
-- `[PLACEHOLDER - reason]` is the convention already recorded for N.4's
-  variables.
+- `[PLACEHOLDER]` and `[PLACEHOLDER - reason]` are N.4's two placeholder
+  conventions -- see the 2026-10-10 correction below; they are not the same
+  thing. (Was: "`[PLACEHOLDER - reason]` is the convention already recorded for N.4's
+  variables.")
 - Multi-valued row 2 is `ListView.control_ids`, which is already a tuple.
 
 **Four non-conforming files**, all from an earlier generation (they carry a
@@ -157,6 +159,22 @@ Note the convergences, and do not build parallel mechanisms for them:
 `MA/CMMC_372_Controls`. Do not write a second parser for four files.
 Normalize them into the convention by hand, once, and let the importer be
 one code path. Record that decision.
+
+**Correction, 2026-10-10: two placeholder conventions, at two lifecycle
+stages.** An earlier version of this plan called `[PLACEHOLDER - reason]` a
+*template* convention. L.1's import of the real library showed it is not:
+the 44 blank templates carry only bare `[PLACEHOLDER]` (zero reason-form
+cells across all 45 imported lists), and the reason form appears only in
+*filled-in* workbooks (the populated WinsorLabs `Authorized-Entities.xlsx`).
+
+| Form | Where | Means | N.4 substitution must |
+|---|---|---|---|
+| `[PLACEHOLDER]` | blank templates | "fill this in" | resolve it (or report it unresolved) |
+| `[PLACEHOLDER - reason]` | filled documents | "knowably absent, and here is why" | leave it alone, verbatim |
+
+They are not one convention, so treating them as one would make N.4 either
+strip a stated gap or leave a blank unfilled. L.1 stores both verbatim and
+keys rows on neither.
 
 ## 4. De-duplication — the concrete targets
 
@@ -315,15 +333,62 @@ the same profile and `OrgProduct` inputs. The 3.1.7a tool partition in §4.1
 is the obvious first rule — a tenant without Tailscale does not need the
 Tailscale privileged-functions rows.
 
-## 8. Open questions for Jarrod — do not settle these alone
+## 8. Answered, 2026-10-10 — these are settled, not open
 
-- **The `Archive/` and `Changelog/` trees.** Are those prior versions of
-  the same lists? If so, they are version history for the template
-  versioning N.4 already specifies, and the import should know about them
-  rather than treating `New Lists` as if nothing preceded it.
-- **The 3.1.20 collision** (§4.3) — which workbook wins.
-- **The device-inventory overlap** (§4.4) — one tagged list, or two.
-- **Which lists are per-tenant and which are MSP-level templates.** His set
-  is MSP-level; the rows are examples. The template-versioning model from
-  the document library plan should carry over, but confirm rather than
-  assume.
+**`Archive/` and `Changelog/`: do not ingest Archive as v1.**
+Verified by reading them. `Archive/Lists` holds six files only — AC 3.1.1,
+3.1.2, 3.1.3, 3.1.4, 3.1.5 and SC 3.13.1 — all dated May, all superseded
+by a `New Lists` file at the same control path. `Changelog/Lists` holds
+six hand-written markdown changelogs with dates, authorship and rationale
+(e.g. *"Replaced generic example rows with real FenixPyre evidence, CMVP
+#4825"*).
+
+They are genuine prior versions, but of six of the forty-four, and the
+changelogs describe several revisions between May and June. Importing the
+May files as v1 and the June set as v2 would assert a two-step history
+that did not happen — a fabricated record in a product whose purpose is
+defensible records.
+
+So: **import `New Lists` as v1.** Attach the matching changelog markdown
+as a provenance note where one exists. Record the six Archive files as
+deliberately not ingested, with their path, so it reads as a decision
+rather than an oversight. Ingesting them later is a six-file follow-up.
+
+**3.1.20 collision: `External Systems and Connections.xlsx` wins.**
+It conforms to the §3 template convention; the `CMMC_`-prefixed file is
+one of the four older non-conforming ones. The loser goes to `Archive/`
+rather than being deleted.
+
+**Device inventories: one list, two tags.** `CM/3.4.1a Hardware` and
+`AC/3.1.1c Authorized Devices` become a single device list tagged
+`AC.L2-3.1.1` and `CM.L2-3.4.1`, rendering the union of columns. This is
+the de-duplication the control tags exist for and the strongest test of
+the model — if it does not work here it does not work.
+
+**These are MSP-level templates, not tenant data.** The changelog states
+each file ships with "2–3 illustrative `[PLACEHOLDER]` example rows." The
+template-versioning model from the document library plan carries over
+unchanged: a client copy records the template version it came from, and a
+master edit creates a new version that client orgs adopt deliberately.
+
+**The device union's column mapping (decided 2026-10-10, during L.1).** The
+two sheets do not clash under one name; they hold the *same facts under
+different names and granularity*, so a literal union would store five facts
+twice. Jarrod chose one list on 3.1.1c's finer-grained schema (Make and
+Model separate, OS and BIOS separate) plus two columns with no equivalent:
+
+| 3.4.1a Hardware | becomes |
+|---|---|
+| Asset Name | Name |
+| Owner / User | Owner / Primary User |
+| Make / Model | Make |
+| Serial / Asset Tag | Serial # or Asset Tag |
+| OS / Firmware | OS |
+| Location | Location |
+| Type *(device class)* | **Device Type** *(added -- not 3.1.1c's Asset Type, a CMMC category)* |
+| Baseline Ref | **Baseline Ref** *(added)* |
+
+3.4.1a's example rows are not carried: they are illustrative, and its
+combined columns would land half-mapped. Recorded in code as
+`list_templates.DEVICE_MERGE`; an absorbed column with no recorded mapping
+fails the import rather than being guessed.
