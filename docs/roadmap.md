@@ -5539,11 +5539,17 @@ parser is written for them):
    - An absorbed column with no recorded mapping fails the import, so a
      merge is never guessed.
 
-**Watch the target org.** `lists-import` defaults to
-`deployment_settings.msp_org_id`, which on the live deployment names
-**Acme MSP**, the test tenant, not Winsorlabs. Found before the first live
-import; that import passes `--org-id` for Winsorlabs explicitly. Whether
-the setting itself is wrong is Jarrod's call.
+**`--org-id` is required; there is no default target.** The first version
+defaulted to `deployment_settings.msp_org_id`, which on the live
+deployment names **Acme MSP**, a leftover demo org. Jarrod confirmed
+Winsorlabs is the real MSP. A run without the flag would have put 45 MSP
+templates into the demo tenant; it was caught only because the target was
+checked before the first live run.
+
+This is the same shape as every "older writer routing around a newer
+gate" defect, applied to targeting rather than fields. The command now
+refuses to run without `--org-id` and prints the target org's name before
+acting. The setting itself is not changed here: see the readers audit.
 
 **Imported lists are MSP templates** (`is_template`, in the MSP org). A
 client copy will record its template version in

@@ -713,7 +713,7 @@ def lists_import_cmd(
         ..., help="Template library root: holds 'New Lists', 'Changelog/Lists', 'Archive/Lists'"
     ),
     org_id: str = typer.Option(
-        "", help="Target org id (default: the MSP org, deployment_settings.msp_org_id)"
+        ..., help="Target org id. Required: there is deliberately no default."
     ),
     apply: bool = typer.Option(False, help="Write the import (default: dry-run only)"),
 ) -> None:
@@ -724,12 +724,18 @@ def lists_import_cmd(
     same folder proposes nothing. Runs as whatever WINGRC_DATABASE_URL names,
     scoped to the target org through row-level security: unlike seed/
     seed-catalog it writes one tenant's rows, so it needs no owner override.
+
+    `--org-id` is required and nothing is inferred. This once defaulted to
+    deployment_settings.msp_org_id, which on the live deployment named a
+    leftover demo org (2026-10-10): a run without the flag would have put 45
+    MSP templates into the wrong tenant. A command that writes this much
+    names its target explicitly, and prints the org's name before acting.
     """
     import uuid as _uuid
 
     from .list_library import apply_import, diff_import
     from .list_templates import plan_import
-    from .models import DeploymentSettings
+    from .models import Organization
     from .rls import set_current_org
 
     lists_root = library / "New Lists"
@@ -741,15 +747,17 @@ def lists_import_cmd(
 
     session = SessionLocal()
     try:
-        if org_id:
+        try:
             target = _uuid.UUID(org_id)
-        else:
-            settings = session.get(DeploymentSettings, 1)
-            if settings is None:
-                typer.echo("No MSP org configured (deployment_settings); pass --org-id", err=True)
-                raise typer.Exit(2)
-            target = settings.msp_org_id
+        except ValueError:
+            typer.echo(f"--org-id {org_id!r} is not a UUID", err=True)
+            raise typer.Exit(2) from None
         set_current_org(session, target)
+        org = session.get(Organization, target)
+        if org is None:
+            typer.echo(f"No organization {target}", err=True)
+            raise typer.Exit(2)
+        typer.echo(f"Target org: {org.name} ({target}){' -- WRITING' if apply else ''}")
 
         by_status: dict[str, list] = {}
         for sh in plan.sheets:

@@ -347,3 +347,16 @@ def test_import_and_edit_never_touch_sprs_or_control_state(db_session, tmp_path)
         == 201
     )
     assert snapshot() == before
+
+
+def test_lists_import_refuses_to_run_without_an_explicit_org(tmp_path):
+    """No default target: on live, the old default (deployment_settings.
+    msp_org_id) named a leftover demo org."""
+    from typer.testing import CliRunner
+
+    from app.cli import app as cli_app
+
+    root = build_library(tmp_path)
+    result = CliRunner().invoke(cli_app, ["lists-import", str(root)])
+    assert result.exit_code != 0
+    assert "org-id" in result.output.lower()
