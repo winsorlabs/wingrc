@@ -707,6 +707,86 @@ def reset_dev(
         session.close()
 
 
+@app.command(name="lists-import")
+def lists_import_cmd(
+    library: Path = typer.Argument(
+        ..., help="Template library root: holds 'New Lists', 'Changelog/Lists', 'Archive/Lists'"
+    ),
+    org_id: str = typer.Option(
+        "", help="Target org id (default: the MSP org, deployment_settings.msp_org_id)"
+    ),
+    apply: bool = typer.Option(False, help="Write the import (default: dry-run only)"),
+) -> None:
+    """Import the list template library (roadmap L.1). Dry-run by default.
+
+    Reports every sheet -- importable, non-conforming, needs normalization,
+    merged, superseded -- and what an apply would create. Re-running on the
+    same folder proposes nothing. Runs as whatever WINGRC_DATABASE_URL names,
+    scoped to the target org through row-level security: unlike seed/
+    seed-catalog it writes one tenant's rows, so it needs no owner override.
+    """
+    import uuid as _uuid
+
+    from .list_library import apply_import, diff_import
+    from .list_templates import plan_import
+    from .models import DeploymentSettings
+    from .rls import set_current_org
+
+    lists_root = library / "New Lists"
+    if not lists_root.is_dir():
+        typer.echo(f"No 'New Lists' folder under {library}", err=True)
+        raise typer.Exit(2)
+    changelog_root = library / "Changelog" / "Lists"
+    plan = plan_import(lists_root, changelog_root, library / "Archive" / "Lists")
+
+    session = SessionLocal()
+    try:
+        if org_id:
+            target = _uuid.UUID(org_id)
+        else:
+            settings = session.get(DeploymentSettings, 1)
+            if settings is None:
+                typer.echo("No MSP org configured (deployment_settings); pass --org-id", err=True)
+                raise typer.Exit(2)
+            target = settings.msp_org_id
+        set_current_org(session, target)
+
+        by_status: dict[str, list] = {}
+        for sh in plan.sheets:
+            by_status.setdefault(sh.status, []).append(sh)
+        files = {sh.file for sh in plan.sheets}
+        typer.echo(f"Library: {len(files)} workbooks, {len(plan.sheets)} sheet results")
+        for status in ("non_conforming", "superseded", "needs_normalization", "merged"):
+            for sh in by_status.get(status, []):
+                typer.echo(f"  [{status}] {sh.file}#{sh.sheet}: {sh.reason}")
+        for path in plan.not_ingested:
+            typer.echo(f"  [not ingested, by decision] {path}")
+        defs = plan.definitions
+        pending = by_status.get("needs_normalization", [])
+        typer.echo(
+            f"Distinct list definitions: {len(defs)} importable + {len(pending)} needing "
+            f"normalization = {len(defs) + len(pending)} "
+            f"(non-conforming files not counted: {len(by_status.get('non_conforming', []))})"
+        )
+        with_logs = [d for d in defs if d.changelogs]
+        typer.echo(f"Changelog provenance attached to {len(with_logs)} list(s)")
+
+        diff = (apply_import if apply else diff_import)(
+            session, target, plan, **({"changelog_root": changelog_root} if apply else {})
+        )
+        for action in ("create", "new_version", "unchanged"):
+            typer.echo(f"  {action}: {len(diff.of(action))}")
+        for a in diff.of("new_version"):
+            typer.echo(f"    {a.sheet.list_key}: {', '.join(a.changed_fields)}")
+        if apply:
+            session.commit()
+            typer.echo("Applied.")
+        else:
+            typer.echo("Dry-run only. Re-run with --apply to write.")
+    finally:
+        session.close()
+
+
 @app.command(name="seed-baselines")
 def seed_baselines_cmd(
     db_url: str = typer.Option(None, "--db-url", help="Override DATABASE_URL"),

@@ -5442,6 +5442,109 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### List library L.1: the model and the template importer ✅ DONE (2026-10-10)
+
+Migration 0064. Spec: `docs/PLAN-list-library.md`.
+
+**The inversion, and the evidence for it.** `catalog.py` treats a list as a
+projection over the scope graph. That holds for roughly ten of the 83
+sheets in Jarrod's library. The other seventy are standalone registers (the
+Change Log, Incident Log, Risk Register, POA&M, Visitor Log, Sanitization
+Log, Training Roster) whose rows exist nowhere else.
+
+So a list is now a **definition plus its own rows**:
+
+- `list_definition` holds identity.
+- `list_version` holds content.
+- `list_control_tag` holds the practice tags.
+- "Projected from the scope graph" is a property some lists have
+  (`projection_view_id`, metadata only until L.6), not the premise of all
+  lists.
+
+The four `ListView`s and `/orgs/{org}/lists` are unchanged. The new API
+lives at `/orgs/{org}/list-definitions`. The clearest single piece of
+evidence came from real data: `3.1.1a`'s rows are accounts, not people
+(plan §2a).
+
+**Versioned from this migration.**
+
+- `list_version` is append-only, and a database trigger rejects any
+  `UPDATE` of it.
+- Editing rows (`POST …/versions`) creates a version, names the version it
+  was based on, and is refused with 409 if that version is stale.
+- The prior version stays byte-identical, which is tested.
+- Rows carry no identity key, so a `[PLACEHOLDER - reason]` cell is stored
+  verbatim and can never become one.
+
+**The template convention is the import contract** (plan §3):
+
+- Row 1 is the title. It is merged and sits in column C, which is why a
+  naive A1 scan reports zero conformance.
+- Row 2 holds the practices, multi-valued, with the family written on the
+  first id only.
+- Row 4 is the description; row 5 holds the responsible party and the
+  cadence.
+- Row 9 is the section title, row 10 the columns, and row 11 onwards the
+  rows.
+- **The unit is a sheet, not a workbook.** `Hardware and Software Asset
+  Inventory.xlsx` is two lists.
+
+`wingrc lists-import <library> [--apply]` is a dry-run by default. It
+targets the MSP org from `deployment_settings` and runs inside that org's
+RLS.
+
+**Real figures** (dry-run over Jarrod's `CMMC Prep` folder, 2026-10-10):
+
+- 44 workbooks, 83 sheets.
+- **45 lists importable**, including the merged device list.
+- **5 need normalization**, which the importer reports and does not
+  flatten:
+  - multi-section `3.1.1a`, `3.1.2a` and `3.1.5a` (26–28 sections each:
+    the tool is a column value, not a list boundary);
+  - wide `3.1.5c` (a repeated column triple);
+  - wide `3.13.3ab` (17 side-by-side sections).
+- **So 50 distinct list definitions among the parseable sheets.** The
+  plan's estimate was 45–50 across all 83 sheets; that was inference from
+  column analysis. 50 is the fact, and it excludes the four unparseable
+  files below, which hold at least two or three more lists once
+  normalized (3.1.7a alone collapses 26 sheets into one).
+
+**Four non-conforming files**, reported by name and not parsed (no second
+parser is written for them):
+
+- `AC/3.1.15/CMMC_3.1.15_Remote_Privileged_Execution.xlsx`
+- `AC/3.1.20/CMMC_3.1.20_External_Connections.xlsx` (also superseded; see
+  below)
+- `AC/3.1.7/CMMC_3.1.7a_Privileged_Functions.xlsx` (26 sheets, one per
+  tool)
+- `MA/CMMC_372_Controls.xlsx`
+
+**The three settled decisions, applied:**
+
+1. **`New Lists` imports as v1.** Changelog markdown is attached verbatim
+   as provenance on the 8 lists a changelog names. The six `Archive/Lists`
+   files are listed in the report as deliberately not ingested: importing
+   May as v1 and June as v2 would assert a two-step history that did not
+   happen.
+2. **3.1.20:** `External Systems and Connections.xlsx` wins. The `CMMC_`
+   file is non-conforming anyway, so the rule is consistent rather than a
+   special case.
+3. **The device lists are one list**, tagged `AC.L2-3.1.1`, `CM.L2-3.4.1`
+   and `CM.L2-3.4.2`:
+   - The union turned out incoherent as a *literal* union: the same facts
+     under different names and granularity. That stopped work and went to
+     Jarrod.
+   - His choice: 3.1.1c's finer-grained schema plus `Device Type` and
+     `Baseline Ref`, by an explicit column mapping (plan §8).
+   - An absorbed column with no recorded mapping fails the import, so a
+     merge is never guessed.
+
+**Imported lists are MSP templates** (`is_template`, in the MSP org). A
+client copy will record its template version in
+`template_list_version_id`, reserved now.
+
+---
+
 ### One natural key for every importer, and source precedence ✅ DONE (2026-10-09)
 
 Found by a live dry-run of Jarrod's populated workbook, which would have

@@ -3131,3 +3131,135 @@ class DocumentReviewNotification(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+# ---------------------------------------------------------------------------
+# List library -- roadmap L (docs/PLAN-list-library.md), slice L.1
+# ---------------------------------------------------------------------------
+
+
+class ListDefinition(Base):
+    """One list an org keeps: a definition plus its own versioned rows.
+
+    The model this replaces as the *premise* is catalog.py's: "a list is a
+    projection over the scope graph." That is true of about ten of the 83
+    sheets in Jarrod's library; the other seventy are standalone registers
+    (Change Log, Incident Log, Risk Register, POA&M, Visitor Log...) whose
+    rows exist nowhere else and never will. So a list is a definition plus
+    its own rows, and "projected from the scope graph" becomes a property
+    some lists have -- `projection_view_id`, metadata only until L.6 joins
+    them -- not the premise all lists share. The four catalog ListViews keep
+    working exactly as they do.
+
+    Identity only, like `Document`: the content (title, columns, rows,
+    description, responsible, cadence) lives on the immutable
+    `ListVersion`, because the content is what an assessor relies on and
+    must never be rewritten in place.
+
+    Imported definitions are MSP-level *templates* (Jarrod, 2026-10-10): the
+    rows are illustrative examples, and they live in the MSP's own org with
+    `is_template` set. A client copy, when it exists, will record the
+    template version it came from in `template_list_version_id` -- reserved
+    now so adoption does not need a migration that rewrites identity later.
+    """
+
+    __tablename__ = "list_definition"
+    __table_args__ = (UniqueConstraint("org_id", "list_key", name="uq_list_definition_key"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    # Stable and human-readable: the sheet name slugged ("3-11-1a-risk-register").
+    list_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    is_template: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    # Where an imported definition came from: "<path under New Lists>#<sheet>".
+    source_ref: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    projection_view_id: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    template_list_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("list_version.id", name="fk_list_definition_template_version"),
+        nullable=True,
+    )
+    current_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("list_version.id", name="fk_list_definition_current_version"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ListVersion(Base):
+    """One immutable snapshot of a list's content. Append-only from this
+    first migration: editing rows creates a new version and never mutates
+    one -- roadmap item P's lesson (mutable baseline mappings, silent
+    rewrites, five tables and two migrations to retrofit) applied before
+    the first row exists, because a list often *is* the evidence rather
+    than pointing at it. Migration 0064 enforces it in the database: a
+    trigger rejects any UPDATE of this table.
+
+    `rows` holds cell text verbatim, aligned to `columns`. A
+    `[PLACEHOLDER - reason]` cell is stored as written; rows have no
+    identity key at all, so a placeholder can never become one.
+    """
+
+    __tablename__ = "list_version"
+    __table_args__ = (
+        UniqueConstraint("list_id", "version_number", name="uq_list_version_identity"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    list_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("list_definition.id", ondelete="CASCADE"), index=True
+    )
+    # Denormalized from list_definition.org_id, like every RLS child table here.
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(400), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    responsible: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_cadence: Mapped[str | None] = mapped_column(Text, nullable=True)
+    columns: Mapped[list] = mapped_column(JSONB, nullable=False)
+    rows: Mapped[list] = mapped_column(JSONB, nullable=False)
+    # Where this content came from: the source file and its SHA-256, the
+    # sheets merged into it, any matching changelog markdown verbatim, or
+    # the API edit that produced it.
+    provenance: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class ListControlTag(Base):
+    """A list is reachable from every practice it names. Keyed by the
+    practice id string ("CM.L2-3.4.1"), not a `control` row: templates are
+    imported before, and independently of, any framework catalog."""
+
+    __tablename__ = "list_control_tag"
+    __table_args__ = (UniqueConstraint("list_id", "control_key", name="uq_list_control_tag"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    list_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("list_definition.id", ondelete="CASCADE"), index=True
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    control_key: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
