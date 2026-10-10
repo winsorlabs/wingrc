@@ -349,14 +349,19 @@ def test_import_and_edit_never_touch_sprs_or_control_state(db_session, tmp_path)
     assert snapshot() == before
 
 
-def test_lists_import_refuses_to_run_without_an_explicit_org(tmp_path):
+def test_lists_import_refuses_to_run_without_an_explicit_org(tmp_path, monkeypatch):
     """No default target: on live, the old default (deployment_settings.
-    msp_org_id) named a leftover demo org."""
+    msp_org_id) named a leftover demo org. Asserted on the exit code and on
+    the import never being reached -- not on the rendered error text, whose
+    formatting (rich boxes, ANSI, terminal width) differs between runners."""
     from typer.testing import CliRunner
 
+    from app import list_templates
     from app.cli import app as cli_app
 
-    root = build_library(tmp_path)
-    result = CliRunner().invoke(cli_app, ["lists-import", str(root)])
-    assert result.exit_code != 0
-    assert "org-id" in result.output.lower()
+    def _reached(*_a, **_k):
+        raise AssertionError("the import ran without an explicit --org-id")
+
+    monkeypatch.setattr(list_templates, "plan_import", _reached)
+    result = CliRunner().invoke(cli_app, ["lists-import", str(build_library(tmp_path))])
+    assert result.exit_code == 2, (result.exit_code, result.output)
