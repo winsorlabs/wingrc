@@ -123,7 +123,7 @@ row 6   Replace every [PLACEHOLDER] with customer-specific data before use.
 row 8   Updated Date:        Updated By:
 row 9   Organizational Risk Register
 row 10  Risk ID | Risk Description | Affected Asset/Process | Likelihood | ...
-row 11+ data, with [PLACEHOLDER - reason] example rows
+row 11+ data, with bare [PLACEHOLDER] example rows (see the correction below)
 ```
 
 Every field a list definition needs is in the file:
@@ -147,8 +147,10 @@ Note the convergences, and do not build parallel mechanisms for them:
 - `Review cadence` is N.3's `cadence_months`, on a list instead of a
   document.
 - `Responsible` is `ContactDocumentationRole`'s vocabulary.
-- `[PLACEHOLDER - reason]` is the convention already recorded for N.4's
-  variables.
+- `[PLACEHOLDER]` and `[PLACEHOLDER - reason]` are N.4's two placeholder
+  conventions -- see the 2026-10-10 correction below; they are not the same
+  thing. (Was: "`[PLACEHOLDER - reason]` is the convention already recorded for N.4's
+  variables.")
 - Multi-valued row 2 is `ListView.control_ids`, which is already a tuple.
 
 **Four non-conforming files**, all from an earlier generation (they carry a
@@ -157,6 +159,22 @@ Note the convergences, and do not build parallel mechanisms for them:
 `MA/CMMC_372_Controls`. Do not write a second parser for four files.
 Normalize them into the convention by hand, once, and let the importer be
 one code path. Record that decision.
+
+**Correction, 2026-10-10: two placeholder conventions, at two lifecycle
+stages.** An earlier version of this plan called `[PLACEHOLDER - reason]` a
+*template* convention. L.1's import of the real library showed it is not:
+the 44 blank templates carry only bare `[PLACEHOLDER]` (zero reason-form
+cells across all 45 imported lists), and the reason form appears only in
+*filled-in* workbooks (the populated WinsorLabs `Authorized-Entities.xlsx`).
+
+| Form | Where | Means | N.4 substitution must |
+|---|---|---|---|
+| `[PLACEHOLDER]` | blank templates | "fill this in" | resolve it (or report it unresolved) |
+| `[PLACEHOLDER - reason]` | filled documents | "knowably absent, and here is why" | leave it alone, verbatim |
+
+They are not one convention, so treating them as one would make N.4 either
+strip a stated gap or leave a blank unfilled. L.1 stores both verbatim and
+keys rows on neither.
 
 ## 4. De-duplication — the concrete targets
 

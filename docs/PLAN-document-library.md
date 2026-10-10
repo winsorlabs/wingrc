@@ -239,6 +239,14 @@ turning his real documents into templates is the acceptance test.
   reported (as above), and a `[PLACEHOLDER - reason]` is preserved as a
   stated gap, not flagged as an error and not stripped. One syntax family,
   not two unrelated schemes.
+  **Corrected 2026-10-10:** the two forms belong to *different lifecycle
+  stages*, not one convention. Blank templates carry only bare
+  `[PLACEHOLDER]` ("fill this in"); the reason form appears only in
+  filled-in documents ("knowably absent, and here is why"). L.1's import
+  of the 44-workbook template library found zero reason-form cells. So N.4's
+  substitution must *resolve* `[PLACEHOLDER]` (or report it unresolved) and
+  must *leave* `[PLACEHOLDER - reason]` exactly as written -- see
+  `docs/PLAN-list-library.md`'s two-stage table.
 - **Documents reference lists.** His `Windows 11 Workstation Baseline`
   says *"Authorized devices are recorded in New Lists/AC/3.1.1c Authorized
   Devices"* and names other lists the same way. A list is a live view

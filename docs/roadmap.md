@@ -5539,6 +5539,12 @@ parser is written for them):
    - An absorbed column with no recorded mapping fails the import, so a
      merge is never guessed.
 
+**Watch the target org.** `lists-import` defaults to
+`deployment_settings.msp_org_id`, which on the live deployment names
+**Acme MSP**, the test tenant, not Winsorlabs. Found before the first live
+import; that import passes `--org-id` for Winsorlabs explicitly. Whether
+the setting itself is wrong is Jarrod's call.
+
 **Imported lists are MSP templates** (`is_template`, in the MSP org). A
 client copy will record its template version in
 `template_list_version_id`, reserved now.
