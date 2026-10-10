@@ -132,6 +132,10 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   because a skipped required status check counts as satisfied, and
   because gating it once hid a real failure for five runs. The runner is
   pinned to `ubuntu-24.04`; revisit after 2026-10-19.
+  It triggers on **branch pushes only** (since 2026-10-10): every pushed
+  branch gets one run per commit before any PR exists, and that run's
+  checks are what the PR shows. There is no `pull_request` trigger; it
+  only duplicated runs (see `docs/roadmap.md`'s CI-triggers entry).
 - `ruff check` must be clean before merge. B008 is suppressed per-file for
   FastAPI router files (see `backend/pyproject.toml`).
 - Work on branches, small commits. Push after every commit — dev server is a
