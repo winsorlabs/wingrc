@@ -5450,19 +5450,53 @@ branch push and once for the `pull_request` event:
 - The concurrency group (Sep 30) **cancelled** the push run.
 - The pull_request run's `backend` job **failed** in its `Test` step,
   while `integration` passed.
-- The failure never reproduced: not locally, and not in that job's exact
-  no-database configuration on Linux (543 passed). The raw log needs a
-  token, so its cause was never established. The next commit was green.
+- At the time it did not reproduce, either locally or in that job's
+  no-database configuration on Linux (543 passed). It was first recorded
+  here as unexplained. The next commit (`bfbf96f`) was green, because it
+  rewrote the test.
 
-**Recorded as the inverse of the reported-green incidents, with one
-qualification.** Those signals said green while checking nothing; this one
-said red where every reproduction found nothing wrong. Part of it is
-certainly the setup's fault: every PR commit carried a cancelled check by
-design, which reads as trouble and isn't. But the *failed* run was not a
-cancellation, and "nothing was wrong" is unproven, because nobody read the
-log. The Sep 30 entry below predicted the cancelled-check wrinkle. A
-throwaway PR probing the dual trigger at the time would have shown it
-before a real merge did.
+**Cause, resolved 2026-10-13: the test asserted on Rich-rendered text, and
+CI renders it differently.** The failing test checked
+`"org-id" in result.output` on `lists-import` run without `--org-id`. That
+text is Click's usage error, rendered by Typer through Rich.
+
+- When `GITHUB_ACTIONS` (or `FORCE_COLOR`/`PY_COLORS`) is set, Typer forces
+  terminal mode (`typer/rich_utils.py`, `FORCE_TERMINAL`).
+- Its option highlighter then styles `--org-id` hyphen-segment by segment:
+  `-`, `-org`, `-id`, each wrapped in its own ANSI escape. The substring
+  `org-id` no longer exists in the output.
+- Nothing else sets that variable, so every reproduction outside Actions
+  printed plain text and passed.
+- Reproduced 2026-10-13 with typer 0.26.8 and rich 15.0.0:
+  - with `GITHUB_ACTIONS=true` the assertion fails at 80, 60 and 40
+    columns;
+  - without it, it passes at all three.
+- Width plays no part: the panel line is 26 characters and never wraps.
+  The 80-column panel in the trace is Rich's default width in either
+  case.
+
+The product was right: the command refused with exit 2, as intended. The
+test was wrong, in a way only the CI environment could expose.
+
+**The inverse of the reported-green incidents.** Those signals said green
+while checking nothing. This one said red while the code under test was
+correct, because the assertion depended on the environment. Part of the
+noise was the setup's fault too: every PR commit carried a cancelled check
+by design, which reads as trouble and isn't. The Sep 30 entry below
+predicted that wrinkle. A throwaway PR probing the dual trigger at the time
+would have shown it before a real merge did.
+
+**Sibling sweep (2026-10-13).** Every other `CliRunner` assertion
+(`test_cli_reset_dev.py`, `test_cli_rotate_credential_keys.py`) checks text
+the command prints with `typer.echo`. That text is Click's plain output,
+which Typer's highlighter never touches. Only Typer's own error and help
+rendering goes through Rich. The one assertion on Rich text was this test,
+and it has been rewritten to check the exit code and that the import is
+never reached. Empirically, the no-DB suite passes with
+`GITHUB_ACTIONS=true COLUMNS=40` (543 passed). The integration job already
+runs those CLI tests under `GITHUB_ACTIONS` and passes. The rule: assert
+on exit codes and effects. Assert on rendered CLI text only when the
+command itself `echo`es it, never on Click/Typer's own messages.
 
 **The change.**
 
@@ -5485,8 +5519,13 @@ GitHub's speculative merge with `main`.
 - Commit `1d16039` produced one run (event `push`) and exactly three
   check runs (`backend`, `integration`, `image`), all success, none
   cancelled.
-- To re-check once its PR is opened: still one run, and no
-  `pull_request` event.
+- Commit `0b32289`'s run **was** cancelled. It was superseded 20 seconds
+  later by the push of `3478b1b`, which was green and was the PR's head.
+  That is the safety net doing its job on a rapid push. It is not a
+  duplicate run of one commit. (It was reported at the time as "none
+  cancelled", which was wrong.)
+- PR #19, once opened and merged: no `pull_request` run appeared, and the
+  merge commit `e636fd8` had one `push` run, green.
 
 ---
 
