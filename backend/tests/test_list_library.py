@@ -365,3 +365,164 @@ def test_lists_import_refuses_to_run_without_an_explicit_org(tmp_path, monkeypat
     monkeypatch.setattr(list_templates, "plan_import", _reached)
     result = CliRunner().invoke(cli_app, ["lists-import", str(build_library(tmp_path))])
     assert result.exit_code == 2, (result.exit_code, result.output)
+
+
+# ---------------------------------------------------------------------------
+# L.2: what the screen reads, the conflict it shows, and the edit audit
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_the_merged_device_list_says_what_it_merged(db_session, tmp_path):
+    org_id, _ = _imported(db_session, tmp_path)
+    client = _client(db_session, org_id)
+    [devices] = [
+        d for d in client.get(f"/orgs/{org_id}/list-definitions").json()
+        if d["list_key"] == "3-1-1c-authorized-devices"
+    ]
+    # 3.1.1c's own practice plus every one the absorbed hardware sheet named.
+    assert devices["control_keys"] == ["AC.L2-3.1.1", "CM.L2-3.4.1", "CM.L2-3.4.2"]
+    assert devices["merged_from"] == [
+        "CM/3.4.1/Hardware and Software Asset Inventory.xlsx#3.4.1a Hardware"
+    ]
+    merge = client.get(f"/orgs/{org_id}/list-definitions/{devices['id']}").json()["merge"]
+    assert merge["absorbed_ref"].endswith("#3.4.1a Hardware")
+    mapped = {c["source_column"]: (c["target_column"], c["added"]) for c in merge["columns"]}
+    assert mapped["Type"] == ("Device Type", True)
+    assert mapped["Asset Name"] == ("Name", False)
+    assert set(mapped) == set(DEVICE_MERGE.column_map)
+
+    others = [
+        client.get(f"/orgs/{org_id}/list-definitions/{d['id']}").json()["merge"]
+        for d in client.get(f"/orgs/{org_id}/list-definitions").json()
+        if d["id"] != devices["id"]
+    ]
+    assert others == [None, None, None]
+
+
+@pytest.mark.integration
+def test_summaries_carry_when_a_list_changed_and_its_changelog(db_session, tmp_path):
+    org_id, _ = _imported(db_session, tmp_path)
+    client = _client(db_session, org_id)
+    by_key = {d["list_key"]: d for d in client.get(f"/orgs/{org_id}/list-definitions").json()}
+    assert by_key["3-11-1a-risk-register"]["has_changelog"] is True
+    assert by_key["3-12-2a-poam"]["has_changelog"] is False
+    assert all(d["updated_at"] and d["saved_by"] is None for d in by_key.values())
+
+
+@pytest.mark.integration
+def test_a_stale_save_says_who_saved_the_newer_version(db_session, tmp_path):
+    org_id, _ = _imported(db_session, tmp_path)
+    first = _client(db_session, org_id)
+    [risk] = first.get(
+        f"/orgs/{org_id}/list-definitions", params={"control_key": "RA.L2-3.11.1"}
+    ).json()
+    base = first.get(f"/orgs/{org_id}/list-definitions/{risk['id']}").json()["current"]
+    saved = first.post(
+        f"/orgs/{org_id}/list-definitions/{risk['id']}/versions",
+        json={"base_version_id": base["id"], "rows": [["R-1", "Phishing", "Open"]]},
+    )
+    assert saved.status_code == 201
+    assert saved.json()["saved_by"]
+
+    second = _client(db_session, org_id)
+    stale = second.post(
+        f"/orgs/{org_id}/list-definitions/{risk['id']}/versions",
+        json={"base_version_id": base["id"], "rows": [["R-2", "Lost laptop", "Open"]]},
+    )
+    assert stale.status_code == 409
+    detail = stale.json()["detail"]
+    assert detail["base_version_id"] == base["id"]
+    assert detail["current_version_id"] == saved.json()["id"]
+    assert detail["current_version_number"] == 2
+    assert detail["saved_by"] == saved.json()["saved_by"]
+    assert detail["saved_at"]
+    # Nothing was written by the refused save.
+    versions = second.get(f"/orgs/{org_id}/list-definitions/{risk['id']}/versions").json()
+    assert [v["version_number"] for v in versions] == [1, 2]
+
+
+@pytest.mark.integration
+def test_every_edit_is_audited_with_what_changed(db_session, tmp_path):
+    from app.models import AuditLog
+
+    org_id, _ = _imported(db_session, tmp_path)
+    client = _client(db_session, org_id)
+    [risk] = client.get(
+        f"/orgs/{org_id}/list-definitions", params={"control_key": "RA.L2-3.11.1"}
+    ).json()
+    base = client.get(f"/orgs/{org_id}/list-definitions/{risk['id']}").json()["current"]
+    kept = base["rows"][0]
+    r = client.post(
+        f"/orgs/{org_id}/list-definitions/{risk['id']}/versions",
+        json={
+            "base_version_id": base["id"],
+            "rows": [kept, ["R-1", "Phishing", "Open"]],
+            "note": "first real risk",
+        },
+    )
+    assert r.status_code == 201
+    [event] = db_session.scalars(
+        select(AuditLog).where(
+            AuditLog.org_id == org_id, AuditLog.action == "list.version_create"
+        )
+    ).all()
+    assert event.entity_id == uuid.UUID(risk["id"])
+    assert event.before_value["version_number"] == 1
+    # The two template rows are identical; one was kept, one replaced.
+    assert event.after_value == {
+        "version_number": 2, "row_count": 2, "rows_added": 1, "rows_removed": 1,
+    }
+    assert event.context["note"] == "first real risk"
+
+
+@pytest.mark.integration
+def test_the_import_report_says_what_was_never_imported(db_session, tmp_path):
+    from app.list_library import record_import
+
+    org_id = _org(db_session)
+    root = build_library(tmp_path)
+    plan = _plan(root)
+    record_import(db_session, org_id, plan, apply_import(db_session, org_id, plan))
+    db_session.flush()
+
+    client = _client(db_session, org_id)
+    report = client.get(f"/orgs/{org_id}/list-library/import-report").json()
+    assert report["recorded_at"]
+    statuses = {n["source_ref"]: n["status"] for n in report["not_imported"]}
+    assert statuses == {
+        s.source_ref: s.status for s in plan.sheets if s.status != "importable"
+    }
+    assert "merged" in statuses.values()
+    assert report["not_ingested"] == plan.not_ingested
+
+    empty = _org(db_session)
+    other = _client(db_session, empty)
+    assert other.get(f"/orgs/{empty}/list-library/import-report").json() == {
+        "recorded_at": None, "not_imported": [], "not_ingested": [],
+    }
+    assert other.get(f"/orgs/{org_id}/list-library/import-report").status_code == 403
+
+
+@pytest.mark.integration
+def test_c3pao_assessor_can_read_the_import_report(db_session, tmp_path):
+    org_id, _ = _imported(db_session, tmp_path)
+    client = _client(db_session, org_id, role="c3pao_assessor")
+    assert client.get(f"/orgs/{org_id}/list-library/import-report").status_code == 200
+
+
+@pytest.mark.integration
+def test_a_document_can_no_longer_be_called_a_list(db_session):
+    org_id = _org(db_session)
+    client = _client(db_session, org_id)
+    r = client.post(
+        f"/orgs/{org_id}/documents",
+        json={"doc_id": "LST-1", "doc_type": "list", "title": "Not a list", "body": ""},
+    )
+    assert r.status_code == 422
+    assert "Library > Lists" in r.text
+    ok = client.post(
+        f"/orgs/{org_id}/documents",
+        json={"doc_id": "POL-1", "doc_type": "policy", "title": "A policy", "body": ""},
+    )
+    assert ok.status_code == 201, ok.text

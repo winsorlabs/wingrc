@@ -112,6 +112,19 @@ router = APIRouter(
 _DOC_TYPES = frozenset(
     {"policy", "procedure", "plan", "baseline", "list", "sop", "form", "other"}
 )
+# `list` stays in the CHECK constraint and as a read filter, but nothing new
+# is created with it (L.2, 2026-10-13): lists are kept in the list library
+# (Library > Lists), and a document called a list was a second feature
+# sharing the word. No live document had used it.
+_WRITABLE_DOC_TYPES = _DOC_TYPES - {"list"}
+
+
+def _doc_type_error(v: str) -> str:
+    if v == "list":
+        return "lists are kept in the list library (Library > Lists), not as documents"
+    return f"doc_type must be one of: {sorted(_WRITABLE_DOC_TYPES)}"
+
+
 _MANUAL_VERSION_STATUSES = frozenset({"draft", "under_review"})
 
 # N.3 review-cadence filter vocabulary. The four are document_reviews.py's
@@ -229,8 +242,8 @@ class DocumentCreateIn(BaseModel):
     @field_validator("doc_type")
     @classmethod
     def _check_doc_type(cls, v: str) -> str:
-        if v not in _DOC_TYPES:
-            raise ValueError(f"doc_type must be one of: {sorted(_DOC_TYPES)}")
+        if v not in _WRITABLE_DOC_TYPES:
+            raise ValueError(_doc_type_error(v))
         return v
 
     @field_validator("cadence_months")
@@ -257,8 +270,8 @@ class DocumentPatchIn(BaseModel):
     @field_validator("doc_type")
     @classmethod
     def _check_doc_type(cls, v: str | None) -> str | None:
-        if v is not None and v not in _DOC_TYPES:
-            raise ValueError(f"doc_type must be one of: {sorted(_DOC_TYPES)}")
+        if v is not None and v not in _WRITABLE_DOC_TYPES:
+            raise ValueError(_doc_type_error(v))
         return v
 
     @field_validator("cadence_months")

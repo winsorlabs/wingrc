@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 //
 // The Library's Baselines entry is the org-level `baseline` document
-// filter, and the Lists entry points at Scope > Lists. The product baseline
+// filter, and Lists is the one list screen (L.2). The product baseline
 // library is AdminArea's "Product Baselines" -- a different feature that
 // once shared this word, which is what sent Baselines to the wrong place.
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -10,9 +10,9 @@ import { SideNav } from "./SideNav";
 
 afterEach(cleanup);
 
-function renderLibrary() {
+function renderNav(category: "library" | "scope") {
   const props = {
-    category: "library" as const,
+    category,
     onSelectCategory: vi.fn(),
     scopeTab: "profile" as const,
     onSelectScopeTab: vi.fn(),
@@ -30,6 +30,8 @@ function renderLibrary() {
   return props;
 }
 
+const renderLibrary = () => renderNav("library");
+
 describe("SideNav Library", () => {
   it("Baselines filters the document library to the baseline type", () => {
     const props = renderLibrary();
@@ -44,12 +46,15 @@ describe("SideNav Library", () => {
     expect(screen.queryByText(/Product Baseline/)).toBeNull();
   });
 
-  it("Lists says where it goes and goes there", () => {
+  it("Lists opens the list library, in the Library", () => {
     const props = renderLibrary();
-    const entry = screen.getByRole("button", { name: /Lists/ });
-    expect(entry.getAttribute("title")).toMatch(/Scope › Lists/);
-    fireEvent.click(entry);
-    expect(props.onSelectCategory).toHaveBeenCalledWith("scope");
-    expect(props.onSelectScopeTab).toHaveBeenCalledWith("lists");
+    fireEvent.click(screen.getByRole("button", { name: "Lists" }));
+    expect(props.onSelectLibraryTab).toHaveBeenCalledWith("lists");
+    expect(props.onSelectCategory).not.toHaveBeenCalled();
+  });
+
+  it("is the only place called Lists: Scope no longer has one", () => {
+    renderNav("scope");
+    expect(screen.queryByRole("button", { name: /Lists/ })).toBeNull();
   });
 });

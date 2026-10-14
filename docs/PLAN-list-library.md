@@ -295,7 +295,10 @@ import.
 view and edit rows, with audit and with every edit creating a version.
 Merged with what was going to be a separate editing slice: a list you can
 see but not edit is not yet the portal, and versioning is already in the
-model from L.1.
+model from L.1. **✅ Done 2026-10-13** -- Library › Lists is the one Lists
+screen (Scope › Lists folded into it); a stale save re-applies the second
+editor's draft onto the newer version for review. See `docs/roadmap.md`'s
+L.2 entry, including what the real library showed.
 
 **L.3 — export and bundle inclusion.** Export a list for an assessor, and
 make lists first-class contributors to the point-in-time bundle per §5.

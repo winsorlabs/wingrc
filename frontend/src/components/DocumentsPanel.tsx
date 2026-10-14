@@ -5,8 +5,9 @@
  * Lives under the Library nav category; its Policies/Procedures/Plans/
  * Baselines subitems are `docType` filters. "Baselines" here are org-level
  * baseline documents, not AdminArea's Product Baselines. "Lists" is not a
- * filter: the CMMC lists are a *view over the scope graph* (Scope > Lists),
- * however much the `list` doc_type looks like it should be the same thing.
+ * filter here: it is the list library, its own screen (ListLibraryPanel,
+ * L.2). The `list` doc_type is no longer offered for new documents, so
+ * the word means one thing.
  */
 
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
@@ -27,7 +28,9 @@ const DocumentEditor = lazy(() =>
   import("./DocumentEditor").then((m) => ({ default: m.DocumentEditor })),
 );
 
-const DOC_TYPES: DocumentType[] = ["policy", "procedure", "plan", "baseline", "list", "sop", "form", "other"];
+// No "list": lists are kept in the list library (Library > Lists, L.2), and
+// the API refuses a new document of that type.
+const DOC_TYPES: DocumentType[] = ["policy", "procedure", "plan", "baseline", "sop", "form", "other"];
 
 type Tab = "edit" | "history" | "diff";
 

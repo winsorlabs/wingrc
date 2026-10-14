@@ -5363,7 +5363,7 @@ design, with this example attached.
 
 #### Where things are
 
-- Scope › Lists is the screen (`ListsPanel.tsx`).
+- Scope › Lists is the screen (`ListsPanel.tsx`). (Moved into Library › Lists in L.2, 2026-10-13.)
 - Library › Lists ↗ points there, with a hover title.
 - `GET /orgs/{org_id}/lists` returns the views with counts.
 - `GET /orgs/{org_id}/lists/{view_id}` returns the rows as JSON.
@@ -5439,6 +5439,125 @@ row.org_id, …)`), so cross-org tokens were evidently intended. What blocks
 them is only the user lookup. It needs a SECURITY DEFINER resolver like
 `auth.resolve_api_token`, which is RLS machinery and belongs in that plan.
 When it lands, remove the 422 and the panel note together.
+
+---
+
+### List library L.2: the screen, and editing ✅ DONE (2026-10-13)
+
+No migration. Spec: `docs/PLAN-list-library.md` §6.
+`frontend/src/components/ListLibraryPanel.tsx` and `lib/listLibrary.ts`.
+
+**One place called Lists.**
+
+- Library › Lists is the only Lists entry.
+  - Until now there was also a Scope › Lists (the four scope-drawn
+    ListViews).
+  - The Library entry was only a pointer to it: two features shared one
+    word, and that is what confused people in the first place.
+- Scope › Lists is gone. The four scope-drawn lists appear on the one
+  screen, marked *live from scope*. They are still edited where entities
+  are edited.
+- A library list whose `projection_view_id` names one of them links to it.
+  The library list is kept by hand, and the scope list follows the scope
+  graph. Joining them is L.6.
+- The `list` document type is no longer offered: the UI drops it, and the
+  API refuses a new one, pointing at Library › Lists. No live document
+  had used it.
+
+**Browsing.**
+
+- Family chips, a practice filter and search.
+- A list is one entry in each family and practice view it belongs to, and
+  one entry overall. Its tags are visible, and clicking one filters by it.
+- Each list shows its version, when it last changed, and who saved it, or
+  "template import".
+- Badges: *template*, *changelog* (the 8 with provenance; the text is
+  readable on the list) and *merged*.
+- The merged device list states that it is one list serving its practices,
+  and shows the recorded column mapping with the added columns marked.
+  The mapping comes from `list_templates.MERGES`, matched by
+  `provenance.merged_from`.
+- The screen says what is **not** in the library, from the last import's
+  record:
+  - 9 sheets not imported: 5 needing normalization and 4 non-conforming
+    files;
+  - the merge, listed separately because it is not missing;
+  - the 6 archived files, not ingested by decision.
+- That record is a `list.import` audit event the CLI now writes on every
+  apply, a no-op one included. `GET …/list-library/import-report` reads
+  the latest. There is no second store: the import is an audited action,
+  and its audit row is the record.
+
+**Editing, and what the second editor sees.**
+
+- Add, edit and remove rows, then "Save as version n+1", with an optional
+  change note.
+- The version records who saved it. The audit row (`list.version_create`)
+  records rows added and removed, by content.
+- A save on a stale base gets a structured 409 naming the newer version,
+  who saved it, and when. The second editor sees:
+  - **"Version 4 was saved by [name] at [time] while you were editing
+    version 3. Your edit was not saved, and it is still here."**
+  - What the other editor changed: rows added and removed.
+  - How many of their own changes re-apply exactly.
+- The draft tracks where each row came from (`origin`). Re-applying is
+  therefore exact for every row the other editor did not touch.
+- A row both editors touched is listed, not guessed: "left as they have
+  it". An edited one can be added as a new row by ticking a box.
+- "Re-apply my changes onto version 4" puts the result in front of them
+  to review. Saving it is an ordinary save onto version 4.
+- Save is disabled while the conflict is open, because the base is stale
+  until they re-apply or discard. Found in the browser walkthrough: it was
+  enabled, and could only have 409'd again.
+- `c3pao_assessor`: "Edit rows" is disabled and says why. The API returns
+  403 if bypassed.
+
+**Verified on the bench, against the real library** (a fresh import of
+Jarrod's `CMMC Prep` folder into a bench org):
+
+- 45 created, then 0 changes on the rerun, with the same per-status counts
+  as the 2026-10-10 live import.
+- Over HTTP:
+  - Each of the merged list's three tags reaches it once.
+  - A second engineer's stale save gets 409 naming the first; version 1 is
+    byte-identical afterwards (2969 bytes); a direct `UPDATE` is refused
+    by the trigger.
+  - The assessor reads every endpoint, and gets 403 on write.
+  - Another org gets 403 on this org's paths and 404 on a list id through
+    its own, with an empty library of its own.
+  - SPRS (−204) and all 320 control states are byte-identical across an
+    edit, on an org with an assessment.
+- In a browser, as two engineers in two tabs: B saved version 4 while A
+  was editing version 3. A got the message above, re-applied, and saved
+  version 5, which holds both edits.
+- Suite and checks: full backend 1673 passed, ruff clean, `tsc -b` clean,
+  vitest 368 passed, build clean.
+
+**What the real library made obvious that the dry-run counts did not:**
+
+- **No list in the real library spans three families.**
+  - 8 lists carry three tags, but each sits within one family, except the
+    merged device list, which spans two.
+  - So "reachable from all three family views" is proven in unit tests
+    (`lib/listLibrary.test.ts`, `ListLibraryPanel.test.tsx`). On real data
+    it holds for the device list's two families and three practices.
+- **The merged device list carries `CM.L2-3.4.2` as well as
+  `CM.L2-3.4.1`.** The absorbed 3.4.1a sheet names both, so the list
+  serves three practices, not two.
+  - It reads as one list. But it is 19 columns wide, and 3.1.1c's
+    `Asset Type` (a CMMC category) sits beside the merge's `Device Type`
+    (a device class).
+  - Both decisions are recorded (§8, 2026-10-10). Whether an assessor
+    wants that union is still Jarrod's call, not a bug.
+- **Ordering by list key scattered the families** (PE before RA before
+  AC). The index now sorts by the standard family order, then practice
+  number.
+
+**Live.** Deployed with `deploy/deploy.sh`. Read-only verification runs
+against the real 45 lists in Winsorlabs. A no-op import rerun writes the
+first `list.import` record there, so the screen can state what was never
+imported. No template was edited on live: versions are permanent, and the
+edit and conflict paths were proven on the bench against the same lists.
 
 ---
 

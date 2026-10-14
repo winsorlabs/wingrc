@@ -27,8 +27,7 @@ export type ScopeTab =
   | "assets"
   | "sprs"
   | "review-cycles"
-  | "liongard-sync"
-  | "lists";
+  | "liongard-sync";
 // RACI is assessment-scoped data (docs/PLAN-gui-restructure.md G.7's
 // 2026-09-09 move note) — "board" is the existing per-control assessment
 // view, "roles" is the Roles/RACI matrix, both live under Assessments now.
@@ -47,10 +46,12 @@ export type SecurityTab = "users" | "api-tokens" | "audit-log";
 // document showed otherwise, and the AdminArea feature was renamed so the
 // two stop sharing a word.
 //
-// Lists is still not a doc_type filter here, despite `list` being one:
-// the CMMC lists are views over the scope graph (CLAUDE.md), so they live
-// at Scope > Lists, and the Library entry only points there.
-export type LibraryTab = "all" | "policy" | "procedure" | "plan" | "baseline";
+// "lists" is not a document filter: it is the list library (roadmap L.2),
+// one screen holding both the lists an org keeps and the four drawn live
+// from the scope graph. Until L.2 there was a Scope > Lists as well, and
+// this entry only pointed there -- two features sharing one word, which is
+// what confused people in the first place. There is one Lists now, here.
+export type LibraryTab = "all" | "policy" | "procedure" | "plan" | "baseline" | "lists";
 export type SystemDescriptionSection = "network_diagram" | "data_flow_diagram";
 
 interface Props {
@@ -152,9 +153,6 @@ export function SideNav({
             >
               Asset Approvals
             </SideNavSubitem>
-            <SideNavSubitem active={scopeTab === "lists"} onClick={() => onSelectScopeTab("lists")}>
-              Lists
-            </SideNavSubitem>
             {/* G.6: no separate pages — the diagrams live inside the System
                 Description editor. These entries route there and ask it to
                 scroll to/highlight the relevant section, so they light up
@@ -228,17 +226,12 @@ export function SideNav({
             >
               Baselines
             </SideNavSubitem>
-            {/* Not a document filter -- see LibraryTab's comment. Goes to
-                Scope > Lists, and says so before the click does. */}
+            {/* Not a document filter -- see LibraryTab's comment. */}
             <SideNavSubitem
-              active={false}
-              title="Opens Scope › Lists — the CMMC lists (3.1.1a–c, External Services) are views over the scope graph, not documents"
-              onClick={() => {
-                onSelectCategory("scope");
-                onSelectScopeTab("lists");
-              }}
+              active={libraryTab === "lists"}
+              onClick={() => onSelectLibraryTab("lists")}
             >
-              Lists ↗
+              Lists
             </SideNavSubitem>
           </SideNavSubitems>
         )}

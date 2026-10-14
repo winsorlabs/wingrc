@@ -1,4 +1,4 @@
-import type { ApiTokenRow, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary } from "./types";
+import type { ApiTokenRow, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport } from "./types";
 
 const BASE = "/api";
 
@@ -35,6 +35,19 @@ export class ApiError extends Error {
 export class DocumentConflictError extends Error {
   conflict: DocumentSaveConflict;
   constructor(conflict: DocumentSaveConflict) {
+    super(conflict.message);
+    this.conflict = conflict;
+  }
+}
+
+/**
+ * Thrown when a list save lost a race (roadmap L.2). Carries the version that
+ * won and who saved it, so the editor can re-apply the caller's edit onto it
+ * instead of discarding it.
+ */
+export class ListConflictError extends Error {
+  conflict: LibraryListSaveConflict;
+  constructor(conflict: LibraryListSaveConflict) {
     super(conflict.message);
     this.conflict = conflict;
   }
@@ -686,6 +699,43 @@ export const api = {
 
   getListView: (orgId: string, viewId: string) =>
     req<ListViewData>(`/orgs/${orgId}/lists/${encodeURIComponent(viewId)}`),
+
+  listLibrary: (orgId: string) => req<LibraryListSummary[]>(`/orgs/${orgId}/list-definitions`),
+
+  getLibraryList: (orgId: string, listId: string) =>
+    req<LibraryListDetail>(`/orgs/${orgId}/list-definitions/${listId}`),
+
+  getLibraryListVersions: (orgId: string, listId: string) =>
+    req<LibraryListVersion[]>(`/orgs/${orgId}/list-definitions/${listId}/versions`),
+
+  getListImportReport: (orgId: string) =>
+    req<ListImportReport>(`/orgs/${orgId}/list-library/import-report`),
+
+  createLibraryListVersion: async (
+    orgId: string,
+    listId: string,
+    rows: string[][],
+    baseVersionId: string,
+    note: string,
+  ): Promise<LibraryListVersion> => {
+    const r = await fetch(`${BASE}/orgs/${orgId}/list-definitions/${listId}/versions`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ base_version_id: baseVersionId, rows, note: note || null }),
+    });
+    const payload = await r.json().catch(() => ({}));
+    if (r.status === 409 && payload.detail && typeof payload.detail === "object") {
+      throw new ListConflictError(payload.detail as LibraryListSaveConflict);
+    }
+    if (!r.ok) {
+      throw new ApiError(
+        typeof payload.detail === "string" ? payload.detail : `${r.status} ${r.statusText}`,
+        r.status,
+      );
+    }
+    return payload as LibraryListVersion;
+  },
 
   exportListView: async (orgId: string, viewId: string): Promise<void> => {
     const r = await fetch(`${BASE}/orgs/${orgId}/exports/${encodeURIComponent(viewId)}`);

@@ -10,17 +10,20 @@ Endpoints:
   GET  /orgs/{org_id}/list-definitions/{list_id}/versions    every version
   GET  /orgs/{org_id}/list-definitions/{list_id}/versions/{n}
   POST /orgs/{org_id}/list-definitions/{list_id}/versions    edit = new version
+  GET  /orgs/{org_id}/list-library/import-report             what was never imported
 
 The only write is creating a version. It names the version it was based on
 and is refused if that is no longer current -- the same optimistic
 concurrency the document library uses, so two editors cannot silently
-overwrite each other. L.1's scope ends at proving the model; the editing
-screen is L.2.
+overwrite each other. The 409 says who saved the newer version and when,
+because the person who gets it has to decide what to do with their edit
+(L.2's screen re-applies it onto the newer version; it is never dropped).
 """
 
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
@@ -29,9 +32,9 @@ from sqlalchemy.orm import Session
 
 from .. import list_library
 from ..audit import log_event
-from ..auth import require_org_access, require_write
+from ..auth import CurrentUser, get_current_user, require_org_access, require_write
 from ..db import get_session
-from ..models import ListControlTag, ListDefinition, ListVersion
+from ..models import AuditLog, ListControlTag, ListDefinition, ListVersion
 
 router = APIRouter(
     prefix="/orgs",
@@ -45,11 +48,16 @@ class ListSummaryOut(BaseModel):
     list_key: str
     title: str
     is_template: bool
+    source_ref: str | None
     projection_view_id: str | None
     control_keys: list[str]
     version_number: int
     column_count: int
     row_count: int
+    updated_at: datetime
+    saved_by: str | None
+    merged_from: list[str]
+    has_changelog: bool
 
 
 class ListVersionOut(BaseModel):
@@ -62,6 +70,24 @@ class ListVersionOut(BaseModel):
     columns: list[str]
     rows: list[list[str]]
     provenance: dict
+    created_at: datetime
+    saved_by: str | None
+
+
+class MergeColumnOut(BaseModel):
+    source_column: str
+    target_column: str
+    added: bool
+
+
+class MergeOut(BaseModel):
+    """The recorded de-duplication that made this one list out of two
+    template sheets, so the screen can show it rather than leave it
+    implied by two tags."""
+
+    target_ref: str
+    absorbed_ref: str
+    columns: list[MergeColumnOut]
 
 
 class ListDetailOut(BaseModel):
@@ -71,7 +97,20 @@ class ListDetailOut(BaseModel):
     source_ref: str | None
     projection_view_id: str | None
     control_keys: list[str]
+    merge: MergeOut | None
     current: ListVersionOut
+
+
+class NotImportedOut(BaseModel):
+    source_ref: str
+    status: str
+    reason: str
+
+
+class ImportReportOut(BaseModel):
+    recorded_at: datetime | None
+    not_imported: list[NotImportedOut]
+    not_ingested: list[str]
 
 
 class NewVersionIn(BaseModel):
@@ -94,11 +133,30 @@ def _definition(session: Session, org_id: uuid.UUID, list_id: uuid.UUID) -> List
     return d
 
 
+def _saved_by(v: ListVersion) -> str | None:
+    return (v.provenance or {}).get("saved_by")
+
+
 def _version_out(v: ListVersion) -> ListVersionOut:
     return ListVersionOut(
         id=v.id, version_number=v.version_number, title=v.title, description=v.description,
         responsible=v.responsible, review_cadence=v.review_cadence, columns=list(v.columns),
         rows=[list(r) for r in v.rows], provenance=v.provenance or {},
+        created_at=v.created_at, saved_by=_saved_by(v),
+    )
+
+
+def _merge_out(d: ListDefinition, v: ListVersion) -> MergeOut | None:
+    rule = list_library.merge_rule_for((v.provenance or {}).get("merged_from") or [])
+    if rule is None:
+        return None
+    return MergeOut(
+        target_ref=d.source_ref or f"{rule.target[0]}#{rule.target[1]}",
+        absorbed_ref=f"{rule.absorbed[0]}#{rule.absorbed[1]}",
+        columns=[
+            MergeColumnOut(source_column=src, target_column=dst, added=dst in rule.added_columns)
+            for src, dst in rule.column_map.items()
+        ],
     )
 
 
@@ -121,10 +179,12 @@ def list_definitions(
         out.append(
             ListSummaryOut(
                 id=d.id, list_key=d.list_key, title=v.title, is_template=d.is_template,
-                projection_view_id=d.projection_view_id,
+                source_ref=d.source_ref, projection_view_id=d.projection_view_id,
                 control_keys=list(list_library.tags_of(session, d.id)),
                 version_number=v.version_number, column_count=len(v.columns),
-                row_count=len(v.rows),
+                row_count=len(v.rows), updated_at=v.created_at, saved_by=_saved_by(v),
+                merged_from=list((v.provenance or {}).get("merged_from") or []),
+                has_changelog=bool((v.provenance or {}).get("changelogs")),
             )
         )
     return out
@@ -135,11 +195,13 @@ def get_list_definition(
     org_id: uuid.UUID, list_id: uuid.UUID, session: Session = Depends(get_session)
 ) -> ListDetailOut:
     d = _definition(session, org_id, list_id)
+    v = session.get(ListVersion, d.current_version_id)
     return ListDetailOut(
         id=d.id, list_key=d.list_key, is_template=d.is_template, source_ref=d.source_ref,
         projection_view_id=d.projection_view_id,
         control_keys=list(list_library.tags_of(session, d.id)),
-        current=_version_out(session.get(ListVersion, d.current_version_id)),
+        merge=_merge_out(d, v),
+        current=_version_out(v),
     )
 
 
@@ -189,12 +251,24 @@ def create_list_version(
     list_id: uuid.UUID,
     body: NewVersionIn,
     session: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> ListVersionOut:
     d = _definition(session, org_id, list_id)
     if body.base_version_id != d.current_version_id:
+        current = session.get(ListVersion, d.current_version_id)
         raise HTTPException(
             status_code=409,
-            detail="This list changed since that version was read; reload and re-apply the edit.",
+            detail={
+                "message": (
+                    "This list changed while you were editing: someone saved a newer "
+                    "version. Your edit has not been saved, and has not been lost."
+                ),
+                "base_version_id": str(body.base_version_id),
+                "current_version_id": str(current.id),
+                "current_version_number": current.version_number,
+                "saved_by": _saved_by(current),
+                "saved_at": current.created_at.isoformat(),
+            },
         )
     base = session.get(ListVersion, d.current_version_id)
     columns = body.columns if body.columns is not None else list(base.columns)
@@ -207,14 +281,45 @@ def create_list_version(
     content = list_library.content_of(base) | {"columns": columns, "rows": body.rows}
     v = list_library.create_version(
         session, d, content,
-        {"via": "api", "based_on_version": base.version_number, "note": body.note or ""},
+        {
+            "via": "api",
+            "based_on_version": base.version_number,
+            "note": body.note or "",
+            "saved_by": current_user.display_name or current_user.email,
+        },
     )
     log_event(
         session, org_id=org_id, action="list.version_create", entity_type="list_definition",
         entity_id=d.id,
         before_value={"version_number": base.version_number, "row_count": len(base.rows)},
-        after_value={"version_number": v.version_number, "row_count": len(v.rows)},
-        context={"via": "api"},
+        after_value={
+            "version_number": v.version_number,
+            "row_count": len(v.rows),
+            **list_library.row_changes(base.rows, v.rows),
+        },
+        context={"via": "api", "list_key": d.list_key, "note": body.note or ""},
     )
     session.commit()
     return _version_out(v)
+
+
+@router.get("/{org_id}/list-library/import-report", response_model=ImportReportOut)
+def import_report(org_id: uuid.UUID, session: Session = Depends(get_session)) -> ImportReportOut:
+    """The latest template import's record of what it did *not* import.
+    Read from the `list.import` audit event the CLI writes on every apply,
+    not a second store: the import is an audited action, and its audit row
+    is the record. Empty when this org has never had an import."""
+    row = session.scalar(
+        select(AuditLog)
+        .where(AuditLog.org_id == org_id, AuditLog.action == "list.import")
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+        .limit(1)
+    )
+    if row is None:
+        return ImportReportOut(recorded_at=None, not_imported=[], not_ingested=[])
+    ctx = row.context or {}
+    return ImportReportOut(
+        recorded_at=row.created_at,
+        not_imported=[NotImportedOut(**n) for n in ctx.get("not_imported", [])],
+        not_ingested=list(ctx.get("not_ingested", [])),
+    )
