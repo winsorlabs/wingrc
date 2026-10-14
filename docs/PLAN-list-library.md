@@ -307,7 +307,10 @@ L.2.1 entry.
 **L.3 — export and bundle inclusion.** Export a list for an assessor, and
 make lists first-class contributors to the point-in-time bundle per §5.
 This is the slice that makes the library worth keeping things in, and it
-is mostly wiring into machinery that exists.
+is mostly wiring into machinery that exists. **✅ Done 2026-10-14** -- the operator
+chooses the lists at export (none by default, until L.4 links them as
+evidence); each is embedded as its current version, named by id. See
+`docs/roadmap.md`'s L.3 entry.
 
 **L.4 — evidence linking.** §5's first half. Small, and it closes the loop
 from list to control.

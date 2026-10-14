@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -25,6 +25,7 @@ router = APIRouter(
 def export_bundle(
     org_id: uuid.UUID,
     assessment_id: uuid.UUID,
+    list_id: list[uuid.UUID] = Query(default=[]),
     session: Session = Depends(get_session),
     storage: StorageClient = Depends(get_storage_client),
 ) -> Response:
@@ -33,6 +34,11 @@ def export_bundle(
     Recomputes the SPRS score, assembles all SSP content, embeds evidence file
     bytes, and returns a structured ZIP.  An audit record is written on each
     export.
+
+    `list_id` (repeatable) names the library lists to embed (roadmap L.3).
+    None by default: the bundle carries the lists the operator chose, each
+    as its current version by id, and lists/index.html says so. A list
+    this org does not have is a 404, never silently dropped.
     """
     org = session.get(Organization, org_id)
     if org is None:
@@ -42,7 +48,10 @@ def export_bundle(
     if assessment is None or assessment.org_id != org_id:
         raise HTTPException(status_code=404, detail="Assessment not found")
 
-    snapshot = snapshot_bundle(session, storage, org_id, assessment_id)
+    try:
+        snapshot = snapshot_bundle(session, storage, org_id, assessment_id, list_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="List not found") from None
     zip_bytes, filename, artifact_log_filename, artifact_log_hash = render_bundle(snapshot)
 
     log_event(
@@ -57,6 +66,11 @@ def export_bundle(
             "generated_at": snapshot.generated_at.isoformat(),
             "hashed_data_list": artifact_log_filename,
             "hash_value": artifact_log_hash,
+            "list_versions": [
+                {"list_id": s.list_id, "version_id": s.version_id,
+                 "version_number": s.version_number}
+                for s in snapshot.lists
+            ],
         },
         context={"filename": filename},
     )

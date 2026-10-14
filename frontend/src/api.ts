@@ -2,6 +2,13 @@ import type { ApiTokenRow, AssetApproval, Assessment, AuditLogPage, AuthUser, Ba
 
 const BASE = "/api";
 
+/** The lists a bundle should embed (roadmap L.3), as repeated `list_id`
+ * params. Empty means none: the bundle never includes a list by default. */
+export function bundleQuery(listIds: string[]): string {
+  if (listIds.length === 0) return "";
+  return "?" + listIds.map((id) => `list_id=${encodeURIComponent(id)}`).join("&");
+}
+
 // The backend has no idea it's mounted behind /api (that's an nginx/Vite-
 // dev-proxy detail, see vite.config.ts's proxy rewrite and deploy/nginx's
 // location block) -- so backend-constructed app-relative paths (Evidence.
@@ -737,6 +744,29 @@ export const api = {
     return payload as LibraryListVersion;
   },
 
+  // L.3: one list version as .xlsx -- the same bytes a bundle embeds. A GET,
+  // so an assessor can export what they cannot edit.
+  exportLibraryList: async (orgId: string, listId: string, versionNumber?: number): Promise<void> => {
+    const q = versionNumber !== undefined ? `?version=${versionNumber}` : "";
+    const r = await fetch(`${BASE}/orgs/${orgId}/list-definitions/${listId}/export${q}`, {
+      credentials: "include",
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(typeof body.detail === "string" ? body.detail : `${r.status} ${r.statusText}`);
+    }
+    const blob = await r.blob();
+    const match = (r.headers.get("Content-Disposition") ?? "").match(/filename="([^"]+)"/);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = match?.[1] ?? `${listId}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  },
+
   exportListView: async (orgId: string, viewId: string): Promise<void> => {
     const r = await fetch(`${BASE}/orgs/${orgId}/exports/${encodeURIComponent(viewId)}`);
     if (!r.ok) {
@@ -1202,8 +1232,9 @@ export const api = {
       method: "POST",
     }),
 
-  downloadBundle: async (orgId: string, assessmentId: string): Promise<void> => {
-    const r = await fetch(`/api/orgs/${orgId}/assessments/${assessmentId}/bundle`);
+  downloadBundle: async (orgId: string, assessmentId: string, listIds: string[] = []): Promise<void> => {
+    const q = bundleQuery(listIds);
+    const r = await fetch(`/api/orgs/${orgId}/assessments/${assessmentId}/bundle${q}`);
     if (!r.ok) {
       let msg = `${r.status} ${r.statusText}`;
       try { const body = await r.json(); if (body.detail) msg = body.detail; } catch { /* ignore */ }

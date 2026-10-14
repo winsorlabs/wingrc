@@ -266,6 +266,7 @@ function LibraryListView({
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<ConflictState | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -431,6 +432,25 @@ function LibraryListView({
               </select>
             </label>
           )}
+          <button
+            type="button"
+            className="btn-ghost btn-sm"
+            disabled={editing || exporting}
+            title={`Download version ${shown.version_number} as .xlsx, named by its version id -- the same file a bundle embeds`}
+            onClick={async () => {
+              setExporting(true);
+              setError(null);
+              try {
+                await api.exportLibraryList(orgId, listId, shown.version_number);
+              } catch (e) {
+                setError(e instanceof Error ? e.message : "Could not export this list");
+              } finally {
+                setExporting(false);
+              }
+            }}
+          >
+            {exporting ? "Exporting…" : `Export v${shown.version_number} (.xlsx)`}
+          </button>
           {!editing && !isOld && (
             <button
               type="button"

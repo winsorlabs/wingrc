@@ -15,6 +15,7 @@ from __future__ import annotations
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import delete, func, select
@@ -90,6 +91,57 @@ def tags_of(session: Session, list_id: uuid.UUID) -> tuple[str, ...]:
             .where(ListControlTag.list_id == list_id)
             .order_by(ListControlTag.control_key)
         )
+    )
+
+
+@dataclass(frozen=True)
+class ListVersionSnap:
+    """One list version, copied out for an export (roadmap L.3).
+
+    Named by `version_id`, never by the list: a list moves on, a version
+    does not (migration 0064 refuses an UPDATE of list_version). Everything
+    a rendered workbook shows comes from here, and nothing here is a
+    wall-clock time, so the workbook is a function of the version alone.
+    """
+
+    list_id: str
+    list_key: str
+    is_template: bool
+    control_keys: tuple[str, ...]
+    version_id: str
+    version_number: int
+    title: str
+    description: str
+    responsible: str
+    review_cadence: str
+    columns: tuple[str, ...]
+    rows: tuple[tuple[str, ...], ...]
+    saved_at: datetime
+    saved_by: str | None
+
+    @property
+    def filename(self) -> str:
+        return f"{self.list_key}_v{self.version_number}.xlsx"
+
+
+def snap_version(
+    definition: ListDefinition, version: ListVersion, control_keys: tuple[str, ...]
+) -> ListVersionSnap:
+    return ListVersionSnap(
+        list_id=str(definition.id),
+        list_key=definition.list_key,
+        is_template=definition.is_template,
+        control_keys=tuple(control_keys),
+        version_id=str(version.id),
+        version_number=version.version_number,
+        title=version.title,
+        description=version.description or "",
+        responsible=version.responsible or "",
+        review_cadence=version.review_cadence or "",
+        columns=tuple(version.columns),
+        rows=tuple(tuple(r) for r in version.rows),
+        saved_at=version.created_at,
+        saved_by=(version.provenance or {}).get("saved_by"),
     )
 
 

@@ -5442,6 +5442,86 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### List library L.3: export, and lists in the assessor bundle ✅ DONE (2026-10-14)
+
+No migration. Spec: `docs/PLAN-list-library.md` §5 and §6. A list joins
+the bundle as one more contributor; no export, zip or hash code was
+written.
+
+**Which lists a bundle carries: the ones the operator chose, and no
+others.** Not "every list in the org": most of an MSP's lists are
+unadopted templates and a bundle is one tenant's assessment. Until L.4
+links a list as evidence, the operator picks on the assessment board
+(*Lists in bundle*, `BundleListsPicker.tsx`), which sends repeated
+`list_id` on the existing `GET …/bundle`. None chosen is a bundle with no
+list files and a `lists/index.html` that says none were chosen -- the
+page always exists, so an absent list reads as not chosen rather than
+forgotten. A `list_id` this org does not have is a 404, never dropped.
+
+**Named by version, not by list.** `snapshot_bundle(…, list_ids)` copies
+each chosen list's current `list_version` into a frozen
+`ListVersionSnap`; the bundle writes `lists/{list_key}_v{n}.xlsx`,
+names the version id in the workbook's header, in `lists/index.html`
+(with each file's SHA-256), and in the `bundle.export` audit row
+(`after_value.list_versions`). Editing the list afterwards cannot reach
+a rendered bundle, and a later bundle names the later version.
+
+**The workbook is a function of the version alone**
+(`render.render_list_version_bytes`). `render_view()` did not fit:
+it projects scope entities through a `ListView`, and a version already
+is its rows, so bending it would invent a projection. The new renderer
+keeps its header shape (title, practices, provenance note) and adds the
+version id. It holds no wall-clock time: openpyxl stamps the save time
+into every zip entry and into `docProps/core.xml`'s `modified`, and
+`_pinned()` rewrites both to the version's own `created_at`. So two
+exports of one version are the same bytes, standalone or in any bundle,
+and an assessor can check a file against another export's hash.
+A cell is always text: openpyxl writes a string starting with `=` as a
+live formula, so those are forced to string type (found writing this,
+not reported).
+
+**Hashed like everything else.** `lists/index.html` and each workbook
+get an `artifact_log.txt` line, so the cover's second-order *Hash Value*
+covers them. The cover gains a *Lists* row saying how many were chosen.
+
+**Ordering.** Both new snapshot queries are totally ordered (definitions
+by `list_key, id`; tags by `list_id, control_key, id`) and sit in
+`bundle_service.py`, which the existing static guards scan wholesale, so
+the guards needed no extension. Mutation-tested on the bench, each
+mutation run against the test meant to catch it and then restored:
+dropping the definitions ORDER BY, dropping its `id` tiebreak, and
+dropping the tags ORDER BY each fail the static guards (the tags one
+also fails the perturbed byte comparison); keeping openpyxl's save time
+fails `test_the_workbook_carries_no_wall_clock_time` (byte comparison
+alone cannot catch it -- two exports inside one second match); joining
+every version instead of the current one fails
+`test_the_bundle_names_the_version_it_embedded_and_hashes_it`.
+
+**The standalone export is a `GET`**
+(`GET /orgs/{org}/list-definitions/{id}/export`, `?version=n`),
+rendered in memory, audited as `list.export` with the version id, and
+returned with `X-WinGRC-List-Version-Id`. An assessor exports; the same
+role's `POST …/versions` with a current base is still a 403. The list
+page has *Export vN (.xlsx)* for the version on screen, enabled for
+read-only roles.
+
+**Not changed:** `control_state`, SPRS, evidence. A list in a bundle is
+not a score (`test_lists_in_a_bundle_do_not_move_the_score`).
+
+Bench (`wingrc_verify_20261014l3`): backend 1685 passed in one process
+with the 500 floor, ruff clean, `tsc -b`, vitest 374, build. With the
+real 45-list library imported and an assessment started (SPRS −204): a
+bundle choosing the merged device template and the risk register carried
+exactly those two workbooks; both appear in `artifact_log.txt` with
+hashes matching the files; the cover's Hash Value is the SHA-256 of that
+log; `lists/index.html` names both version ids. The standalone export was
+byte-identical twice and equal to the bundle's copy. After an edit (v2),
+the first bundle's copy still equalled an export of v1, and a new bundle
+named v2 and not v1. No `list_id`, no list files. Assessor: export 200,
+edit 403. SPRS −204 throughout.
+
+---
+
 ### List library L.2.1: the index keeps the kinds of list apart ✅ DONE (2026-10-14)
 
 No migration. L.2's live check found the symptom: two device lists three
