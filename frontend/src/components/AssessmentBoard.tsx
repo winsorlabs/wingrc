@@ -7,6 +7,7 @@ import type { Assessment, ControlStateRow, Org } from "../types";
 import { ControlDrawer } from "./ControlDrawer";
 import { EvidenceTasksPanel } from "./EvidenceTasksPanel";
 import { FamilySection } from "./FamilySection";
+import { BundleListsPicker } from "./BundleListsPicker";
 
 // ---------------------------------------------------------------------------
 // SPRS: always computed from ALL rows, never from the filtered view
@@ -118,6 +119,7 @@ export function AssessmentBoard({ org, assessment, canWrite, currentUserRole }: 
   const [sortByWeight, setSortByWeight] = useState(false);
   const [generatingBundle, setGeneratingBundle] = useState(false);
   const [bundleError, setBundleError] = useState<string | null>(null);
+  const [bundleLists, setBundleLists] = useState<string[]>([]);
 
   // Local override of status/submitted_at after Complete/Reopen -- same
   // "optimistic local update" pattern handleStatusChange already uses
@@ -185,7 +187,7 @@ export function AssessmentBoard({ org, assessment, canWrite, currentUserRole }: 
     setGeneratingBundle(true);
     setBundleError(null);
     try {
-      await api.downloadBundle(org.id, assessment.id);
+      await api.downloadBundle(org.id, assessment.id, bundleLists);
     } catch (err: unknown) {
       setBundleError((err as Error).message);
     } finally {
@@ -239,6 +241,7 @@ export function AssessmentBoard({ org, assessment, canWrite, currentUserRole }: 
           </div>
           <div className="board-topbar-right">
             <div className="board-meta">{met} / {rows.length} objectives met</div>
+            <BundleListsPicker orgId={org.id} selected={bundleLists} onChange={setBundleLists} />
             <button
               className="btn-ghost btn-sm"
               onClick={handleGenerateBundle}

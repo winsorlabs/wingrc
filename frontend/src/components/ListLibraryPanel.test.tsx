@@ -23,6 +23,7 @@ vi.mock("../api", async () => {
       getLibraryListVersions: vi.fn(),
       createLibraryListVersion: vi.fn(),
       exportListView: vi.fn(),
+      exportLibraryList: vi.fn(),
     },
   };
 });
@@ -209,6 +210,16 @@ describe("editing", () => {
     fireEvent.click(screen.getByRole("button", { name: "Risk Register" }));
     return screen.findByRole("button", { name: "Edit rows" });
   }
+
+  it("lets a read-only role export the version it is looking at", async () => {
+    const edit = await openRisk(false);
+    expect((edit as HTMLButtonElement).disabled).toBe(true);
+    vi.mocked(api.exportLibraryList).mockResolvedValue(undefined);
+    const exportButton = screen.getByRole("button", { name: "Export v1 (.xlsx)" }) as HTMLButtonElement;
+    expect(exportButton.disabled).toBe(false);
+    fireEvent.click(exportButton);
+    await waitFor(() => expect(api.exportLibraryList).toHaveBeenCalledWith("org", "risk", 1));
+  });
 
   it("is a disabled control, with the reason, for a read-only role", async () => {
     const edit = await openRisk(false);
