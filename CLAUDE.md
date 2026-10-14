@@ -234,7 +234,10 @@ or overwrite an operator-entered field it has no source for:**
 decommission a row; Liongard keeps status outright), unless the caller passes
 `operator_edit=True` (only `POST`/`PATCH /scope` do). Lists exclude
 out-of-boundary entities and state how many were excluded. Asset Type *is* `scope_category`. `[PLACEHOLDER - reason]` cells are
-values, stored verbatim. See `docs/roadmap.md`'s Lists entry.
+values, stored verbatim. **No workbook evaluates a cell:** every one leaves
+`render.py` through `_save()`, which writes a cell starting with `=`, `+`,
+`-`, `@`, tab or carriage return as quote-prefixed text; a new renderer
+saves through it (`tests/test_workbook_formulas.py` fails otherwise). See `docs/roadmap.md`'s Lists entry.
 
 ### Assessment engine (migrations 0002–0006)
 Full model set: `Framework → Control → AssessmentObjective → ControlState`;

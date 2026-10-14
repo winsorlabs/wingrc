@@ -5567,7 +5567,8 @@ exports of one version are the same bytes, standalone or in any bundle,
 and an assessor can check a file against another export's hash.
 A cell is always text: openpyxl writes a string starting with `=` as a
 live formula, so those are forced to string type (found writing this,
-not reported).
+not reported). Since widened to every workbook and the
+full prefix set: see "No workbook evaluates what someone typed".
 
 **Hashed like everything else.** `lists/index.html` and each workbook
 get an `artifact_log.txt` line, so the cover's second-order *Hash Value*
@@ -5608,6 +5609,60 @@ byte-identical twice and equal to the bundle's copy. After an edit (v2),
 the first bundle's copy still equalled an export of v1, and a new bundle
 named v2 and not v1. No `list_id`, no list files. Assessor: export 200,
 edit 403. SPRS −204 throughout.
+
+---
+
+### No workbook evaluates what someone typed ✅ DONE (2026-10-14)
+
+No migration. L.3 found that a list cell starting with `=` became a live
+formula in the assessor's Excel, and fixed it in the one renderer it was
+writing. That made it a property of one renderer, not of the product,
+and only of `=`.
+
+**Every workbook leaves `render.py` through `_save()`**, which writes
+any string cell starting with a formula prefix -- the OWASP set: `=`,
+`+`, `-`, `@`, leading tab, leading carriage return -- as text with
+Excel's *quote prefix*. openpyxl writes `=...` as a formula outright;
+the others it stores as text, but Excel re-reads them as formulas when
+the cell is edited, or when the sheet is saved as CSV and opened again.
+With the quote prefix the cell is shown as typed and stays text on edit.
+The value is not altered: the CSV advice (prepend an apostrophe) would
+change the record an assessor is handed, and a list version's bytes are
+a function of its rows.
+
+**Which workbooks:** all of them. `render_view_bytes` (the four
+scope-drawn lists, `GET …/exports/{view_id}`, and the CLI's `render`)
+and `render_list_version_bytes` (the list export and the bundle's
+`lists/`). Nothing else in the app builds a workbook, and nothing else
+in the bundle is a spreadsheet the product wrote: evidence files are
+embedded as uploaded -- they are the customer's artifacts, hashed as
+received, and rewriting one would break that.
+`tests/test_workbook_formulas.py` pins both: a payload in every
+attribute of every scope view (a Notes field, a name) and in a list
+version's title, headers and rows; no `<f>` element in any sheet; and
+a static check that `render.py` calls `.save(` once, inside `_save`,
+and that no other module builds a workbook. Over HTTP,
+`test_a_cell_is_text_never_a_formula` checks the list export, the
+bundle's copy of it, and a scope export.
+
+**Mutation-tested** with a `+cmd|' /C calc'!A0` family of payloads, each
+mutant against `test_workbook_formulas.py`, `test_lists.py` and
+`test_list_bundle.py` and then restored: no pass at all (openpyxl's
+default), `=` only (the L.3 fix), the type without the quote prefix,
+and the set without carriage return each fail every renderer's test
+(the four scope views and the list version); `render_view_bytes`
+saving around `_save` fails the scope tests and the single-save check.
+
+**On live** (read-only count, 2026-10-14): no list-library cell, title
+or header starts with a prefix, so live list exports and bundles keep
+their bytes. One scope attribute does -- a person's *Phone*, `+1…` --
+which is exactly what this is for: Excel would have taken it for a
+number or a formula on edit.
+
+Bench (`wingrc_verify_20261014f`): backend 1692 passed in one process
+with the 500 floor, ruff clean (no frontend change). The HTTP test was
+mutated there too: with the prefix set cut to `=` it fails on the
+`+cmd|' /C calc'!A0` cell (`quotePrefix` false); restored, it passes.
 
 ---
 

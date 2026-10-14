@@ -342,9 +342,28 @@ def test_lists_in_a_bundle_do_not_move_the_score(db_session):
 
 @pytest.mark.integration
 def test_a_cell_is_text_never_a_formula(db_session):
-    org_id, _ = _org_with_assessment(db_session, "formula")
-    d = _list(db_session, org_id, "devices", [['=HYPERLINK("http://x","y")', "SN1"]])
-    r = _client(db_session, org_id).get(EXPORT.format(org=org_id, list=d.id))
-    ws = openpyxl.load_workbook(io.BytesIO(r.content)).active
-    cell = ws.cell(row=7, column=1)
-    assert cell.value == '=HYPERLINK("http://x","y")' and cell.data_type == "s"
+    """Over HTTP, every workbook an assessor can be handed: the list
+    export, the bundle's copy, and a scope-drawn list whose device name
+    and Notes are payloads. The full OWASP prefix set, not "=" alone
+    (tests/test_workbook_formulas.py covers each renderer directly)."""
+    from app.models import ScopeEntity
+    from tests.test_workbook_formulas import PAYLOADS, _check
+
+    org_id, a_id = _org_with_assessment(db_session, "formula")
+    d = _list(db_session, org_id, "devices", [[p, "SN1"] for p in PAYLOADS])
+    for i, p in enumerate(PAYLOADS):
+        db_session.add(ScopeEntity(
+            org_id=org_id, entity_type="device", natural_key=f"F-{i}",
+            scope_category="CUI Asset", status="active", in_boundary=True,
+            attributes={"Name": p, "notes": p},
+        ))
+    db_session.flush()
+    client = _client(db_session, org_id)
+
+    export = client.get(EXPORT.format(org=org_id, list=d.id)).content
+    assert _check(export) == set(PAYLOADS)
+    bundle = client.get(BUNDLE.format(org=org_id, a=a_id), params={"list_id": str(d.id)})
+    assert _member(_zip(bundle.content), "devices_v1.xlsx") == export
+    scope = client.get(f"/orgs/{org_id}/exports/3.1.1c-authorized-devices")
+    assert scope.status_code == 200
+    assert _check(scope.content) == set(PAYLOADS)
