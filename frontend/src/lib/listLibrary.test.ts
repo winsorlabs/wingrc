@@ -6,6 +6,7 @@ import {
   familyCounts,
   filterLists,
   isDirty,
+  kindOf,
   rebase,
   sortLists,
   type DraftRow,
@@ -16,6 +17,14 @@ const lists = [
   { title: "Authorized Devices", control_keys: ["AC.L2-3.1.1", "CM.L2-3.4.1"] },
   { title: "Risk Register", control_keys: ["RA.L2-3.11.1"] },
 ];
+
+describe("kindOf", () => {
+  it("keeps a live list, an org's own list and a template apart", () => {
+    expect(kindOf({ kind: "scope" })).toBe("sourced");
+    expect(kindOf({ kind: "library", library: { is_template: false } })).toBe("kept");
+    expect(kindOf({ kind: "library", library: { is_template: true } })).toBe("template");
+  });
+});
 
 describe("family and practice views", () => {
   it("reaches a three-family list from each family, once", () => {

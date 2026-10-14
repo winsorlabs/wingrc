@@ -93,7 +93,14 @@ def test_the_device_lists_merge_by_the_recorded_mapping(tmp_path):
     devices = _sheet(plan, "3.1.1c Authorized Devices")
     hardware = _sheet(plan, "3.4.1a Hardware")
     assert hardware.status == "merged"
-    assert devices.columns == tuple(DEVICE_COLUMNS) + ("Device Type", "Baseline Ref")
+    at = DEVICE_COLUMNS.index("Model") + 1
+    assert devices.columns == (
+        *DEVICE_COLUMNS[:at], "Device Type", "Baseline Ref", *DEVICE_COLUMNS[at:]
+    ), "the added columns sit beside the identity columns, in one fixed order"
+    assert devices.title == "Authorized Devices & Hardware Inventory"
+    assert all(r[at:at + 2] == ("", "") for r in devices.rows), (
+        "the examples are 3.1.1c's; the importer writes no content into the added columns"
+    )
     assert devices.control_keys == ("AC.L2-3.1.1", "CM.L2-3.4.1", "CM.L2-3.4.2")
     assert devices.absorbed == (
         "CM/3.4.1/Hardware and Software Asset Inventory.xlsx#3.4.1a Hardware",
@@ -114,6 +121,18 @@ def test_a_merge_is_never_guessed(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(list_templates, "MERGES", (incomplete,))
     with pytest.raises(ValueError, match="no recorded mapping"):
+        _plan(build_library(tmp_path))
+
+
+def test_a_merge_column_placement_is_never_guessed(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from app import list_templates
+
+    monkeypatch.setattr(
+        list_templates, "MERGES", (replace(DEVICE_MERGE, added_after="No Such Column"),)
+    )
+    with pytest.raises(ValueError, match="to place the added columns after"):
         _plan(build_library(tmp_path))
 
 
@@ -193,6 +212,43 @@ def test_a_changed_template_becomes_a_new_version_of_only_that_list(db_session, 
         ("3-11-1a-risk-register", "new_version")
     ]
     assert len(diff.of("unchanged")) == 3
+
+
+@pytest.mark.integration
+def test_the_merged_list_rename_lands_as_one_new_version(db_session, tmp_path, monkeypatch):
+    """L.2.1's rename and column move, as an org imported before it sees them:
+    one new version of the merged list, the earlier version untouched, no
+    other list moved."""
+    from dataclasses import replace
+
+    from app import list_templates
+
+    before_rule = replace(DEVICE_MERGE, title="", added_after="")
+    monkeypatch.setattr(list_templates, "MERGES", (before_rule,))
+    org_id, root = _imported(db_session, tmp_path)
+    devices = db_session.scalar(
+        select(ListDefinition).where(
+            ListDefinition.org_id == org_id,
+            ListDefinition.list_key == "3-1-1c-authorized-devices",
+        )
+    )
+    v1 = db_session.get(ListVersion, devices.current_version_id)
+    v1_content = (v1.title, list(v1.columns), [list(r) for r in v1.rows])
+    assert v1.columns[-2:] == ["Device Type", "Baseline Ref"]
+
+    monkeypatch.setattr(list_templates, "MERGES", (DEVICE_MERGE,))
+    diff = apply_import(db_session, org_id, _plan(root))
+    db_session.flush()
+    assert [(a.sheet.list_key, a.changed_fields) for a in diff.of("new_version")] == [
+        ("3-1-1c-authorized-devices", ("title", "columns", "rows"))
+    ]
+    v2 = db_session.get(ListVersion, devices.current_version_id)
+    assert v2.version_number == 2
+    assert v2.title == "Authorized Devices & Hardware Inventory"
+    at = v2.columns.index("Model") + 1
+    assert v2.columns[at:at + 2] == ["Device Type", "Baseline Ref"]
+    db_session.refresh(v1)
+    assert (v1.title, list(v1.columns), [list(r) for r in v1.rows]) == v1_content
 
 
 @pytest.mark.integration

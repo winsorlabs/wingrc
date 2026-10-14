@@ -105,12 +105,45 @@ describe("ListLibraryPanel index", () => {
     expect(titles()).toEqual(["Risk Register"]);
   });
 
-  it("puts the scope-drawn lists in the same place, marked live", async () => {
+  it("keeps live lists, this org's own lists and templates in separate sections", async () => {
+    const KEPT = summary({ id: "kept", title: "Kept Risk Register", is_template: false, control_keys: ["RA.L2-3.11.1"] });
+    mockIndex();
+    vi.mocked(api.listLibrary).mockResolvedValue([SOD, DEVICES, RISK, KEPT]);
+    render(<ListLibraryPanel orgId="org" canWrite={true} />);
+    await screen.findByText("Separation of Duties");
+    const section = (name: RegExp) => {
+      const head = screen.getByRole("rowheader", { name });
+      return head.closest("tbody") as HTMLElement;
+    };
+    const names = (el: HTMLElement) =>
+      within(el).queryAllByRole("button", { name: /Separation|Devices|Risk/ }).map((b) => b.textContent);
+    // Same title, different kinds: the live inventory and the template never share a section.
+    expect(names(section(/^Live from scope \(1\)/))).toEqual(["3.1.1c Authorized Devices"]);
+    expect(names(section(/^Templates \(3\)/))).toEqual([
+      "3.1.1c Authorized Devices", "Separation of Duties", "Risk Register",
+    ]);
+    expect(names(section(/^This org's lists \(1\)/))).toEqual(["Kept Risk Register"]);
+    expect(within(section(/^Templates/)).getByText(/illustrative examples/)).toBeTruthy();
+    expect(within(section(/^Live from scope/)).getByText(/Real records/)).toBeTruthy();
+  });
+
+  it("keeps a place for this org's own lists when it has none yet", async () => {
+    mockIndex();
+    render(<ListLibraryPanel orgId="org" canWrite={true} />);
+    const head = await screen.findByRole("rowheader", { name: /^This org's lists \(0\)/ });
+    expect(head.textContent).toMatch(/copied from a template/);
+  });
+
+  it("shows a merged template's practices in the index, not only on its page", async () => {
     mockIndex();
     render(<ListLibraryPanel orgId="org" canWrite={true} />);
     await screen.findByText("Separation of Duties");
-    expect(within(screen.getByRole("table")).getByText("live from scope")).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: "3.1.1c Authorized Devices" })).toHaveLength(2);
+    const row = screen
+      .getAllByRole("button", { name: "3.1.1c Authorized Devices" })
+      .map((b) => b.closest("tr") as HTMLElement)
+      .find((tr) => within(tr).queryByText(/merged:/))!;
+    expect(within(row).getByRole("button", { name: "AC.L2-3.1.1" })).toBeTruthy();
+    expect(within(row).getByRole("button", { name: "CM.L2-3.4.1" })).toBeTruthy();
   });
 
   it("says what was never imported, and does not count a merge as missing", async () => {
@@ -149,13 +182,17 @@ describe("the merged device list", () => {
     vi.mocked(api.getLibraryListVersions).mockResolvedValue([]);
     render(<ListLibraryPanel orgId="org" canWrite={true} />);
     await screen.findByText("Separation of Duties");
-    fireEvent.click(screen.getAllByRole("button", { name: "3.1.1c Authorized Devices" })[0]);
+    const templates = screen.getByRole("rowheader", { name: /^Templates/ }).closest("tbody") as HTMLElement;
+    fireEvent.click(within(templates).getByRole("button", { name: "3.1.1c Authorized Devices" }));
 
     const serves = await screen.findByRole("region", { name: "Practices this list serves" });
     expect(serves.textContent).toMatch(/One list serving 2 practices in 2 families/);
     const merge = screen.getByRole("region", { name: "How this list was merged" });
     expect(merge.textContent).toMatch(/3\.4\.1a Hardware/);
     expect(within(merge).getByText("Device Type").closest("td")?.textContent).toMatch(/added by the merge/);
+    // Why the added column is empty, said rather than filled: the examples are the target sheet's.
+    expect(merge.textContent).toMatch(/example rows come from the 3\.1\.1c Authorized Devices sheet/);
+    expect(merge.textContent).toMatch(/Device Type is empty in every one of them/);
     expect(screen.getByText(/drawn from Scope › Assets/)).toBeTruthy();
   });
 });

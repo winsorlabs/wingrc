@@ -196,3 +196,18 @@ export function changeCounts(base: string[][], theirs: string[][]): { added: num
   const removed = [...count.values()].reduce((a, b) => a + b, 0);
   return { added, removed };
 }
+
+/**
+ * The three kinds of list the index keeps apart (L.2.1). They share a shape
+ * and nothing else:
+ * - sourced: drawn live from the scope graph; its rows are real records.
+ * - kept: a library list this org keeps for itself. A copy adopted from a
+ *   template will be one of these -- it becomes the org's own records.
+ * - template: an MSP template; its rows are illustrative examples.
+ */
+export type ListKind = "sourced" | "kept" | "template";
+
+export function kindOf(entry: { kind: "library" | "scope"; library?: { is_template: boolean } }): ListKind {
+  if (entry.kind === "scope") return "sourced";
+  return entry.library?.is_template ? "template" : "kept";
+}

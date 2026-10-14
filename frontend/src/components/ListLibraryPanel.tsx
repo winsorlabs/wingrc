@@ -11,6 +11,12 @@
  *   and External Services). They follow Scope › Assets and are edited
  *   there; they appear here so there is one place called Lists.
  *
+ * The index keeps the kinds apart (L.2.1). A live list and a template can
+ * share a title and a practice -- "3.1.1c Authorized Devices" is real
+ * devices in a real boundary, the device template is examples -- so each
+ * kind is its own section, with a third waiting for the lists an org keeps
+ * for itself (a copy adopted from a template lands there).
+ *
  * Family is the first axis: a list tagged with three practices appears once
  * in each of their family views, and once overall. Its tags say it serves
  * all three, which is the model's central claim.
@@ -34,9 +40,11 @@ import {
   familyOf,
   filterLists,
   isDirty,
+  kindOf,
   sortLists,
   rebase,
   type DraftRow,
+  type ListKind,
   type RebaseResult,
 } from "../lib/listLibrary";
 import type {
@@ -59,6 +67,25 @@ interface Entry {
   library?: LibraryListSummary;
   scope?: ListViewSummary;
 }
+
+const SECTIONS: { kind: ListKind; title: string; hint: string; empty?: string }[] = [
+  {
+    kind: "sourced",
+    title: "Live from scope",
+    hint: "Real records in this org's boundary, drawn from Scope › Assets and edited there.",
+  },
+  {
+    kind: "kept",
+    title: "This org's lists",
+    hint: "Kept by hand for this org. Every save creates a new version.",
+    empty: "None yet. A list this org keeps for itself, including one copied from a template, goes here.",
+  },
+  {
+    kind: "template",
+    title: "Templates",
+    hint: "MSP templates. Their rows are illustrative examples, not this org's records.",
+  },
+];
 
 const READ_ONLY_HINT = "Your role can read lists but not change them.";
 
@@ -444,6 +471,14 @@ function LibraryListView({
             practices, so they are kept as this one list. {sheetOf(detail.merge.absorbed_ref)}'s columns map
             onto it as recorded below, and its example rows were not carried.
           </p>
+          {addedByMerge.size > 0 && (
+            <p className="field-hint">
+              The example rows come from the {sheetOf(detail.merge.target_ref)} sheet of the source workbook,
+              so {[...addedByMerge].join(" and ")} {addedByMerge.size === 1 ? "is" : "are"} empty in every one
+              of them. WinGRC does not write content into a template; whoever keeps it can fill them
+              with Edit rows.
+            </p>
+          )}
           <table className="contacts-table list-merge-map">
             <thead>
               <tr>
@@ -786,8 +821,8 @@ export function ListLibraryPanel({ orgId, canWrite }: { orgId: string; canWrite:
         <div>
           <h2>Lists</h2>
           <div className="contact-sub">
-            Every list this org keeps. Library lists are kept here, and every save creates a new version.
-            Lists marked <em>live from scope</em> are drawn from Scope › Assets and follow it.
+            Every list this org keeps, in three kinds: lists drawn live from scope, lists kept by hand for this
+            org, and templates whose rows are examples.
           </div>
         </div>
       </div>
@@ -867,51 +902,64 @@ export function ListLibraryPanel({ orgId, canWrite }: { orgId: string; canWrite:
                 <th>Rows</th>
               </tr>
             </thead>
-            <tbody>
-              {shown.map((e) => (
-                <tr key={`${e.kind}:${e.id}`}>
-                  <td>
-                    <button
-                      type="button"
-                      className="link-button"
-                      onClick={() => setSelection({ kind: e.kind, id: e.id })}
-                    >
-                      {e.title}
-                    </button>
-                    <div className="list-badges">
-                      {e.kind === "scope" && <span className="affiliation-badge">live from scope</span>}
-                      {e.library?.is_template && <span className="affiliation-badge">template</span>}
-                      {e.library && e.library.merged_from.length > 0 && (
-                        <span
-                          className="affiliation-badge"
-                          title={`Also replaces ${e.library.merged_from.join(", ")}`}
+            {SECTIONS.map((sec) => {
+              const inSection = shown.filter((e) => kindOf(e) === sec.kind);
+              const filtering = family !== null || practice !== null || search.trim() !== "";
+              if (inSection.length === 0 && (filtering || !sec.empty)) return null;
+              return (
+                <tbody key={sec.kind} className={`list-section list-section--${sec.kind}`}>
+                  <tr className="list-section-head">
+                    <th colSpan={5} scope="rowgroup">
+                      <span className="list-section-title">
+                        {sec.title} ({inSection.length})
+                      </span>{" "}
+                      <span className="field-hint">{inSection.length === 0 ? sec.empty : sec.hint}</span>
+                    </th>
+                  </tr>
+                  {inSection.map((e) => (
+                    <tr key={`${e.kind}:${e.id}`}>
+                      <td>
+                        <button
+                          type="button"
+                          className="link-button"
+                          onClick={() => setSelection({ kind: e.kind, id: e.id })}
                         >
-                          merged: {e.library.merged_from.map(sheetOf).join(", ")}
-                        </span>
-                      )}
-                      {e.library?.has_changelog && <span className="affiliation-badge">changelog</span>}
-                    </div>
-                  </td>
-                  <td>
-                    <PracticeChips keys={e.control_keys} onPick={setPractice} active={practice} />
-                  </td>
-                  <td>{e.library ? `v${e.library.version_number}` : "live"}</td>
-                  <td>
-                    {e.library ? (
-                      <>
-                        <span title={formatWhen(e.library.updated_at)}>
-                          {new Date(e.library.updated_at).toLocaleDateString()}
-                        </span>
-                        <div className="field-hint">{e.library.saved_by ?? "template import"}</div>
-                      </>
-                    ) : (
-                      <span className="field-hint">follows Scope</span>
-                    )}
-                  </td>
-                  <td>{e.library ? e.library.row_count : e.scope?.row_count}</td>
-                </tr>
-              ))}
-            </tbody>
+                          {e.title}
+                        </button>
+                        <div className="list-badges">
+                          {e.library && e.library.merged_from.length > 0 && (
+                            <span
+                              className="affiliation-badge"
+                              title={`Also replaces ${e.library.merged_from.join(", ")}`}
+                            >
+                              merged: {e.library.merged_from.map(sheetOf).join(", ")}
+                            </span>
+                          )}
+                          {e.library?.has_changelog && <span className="affiliation-badge">changelog</span>}
+                        </div>
+                      </td>
+                      <td>
+                        <PracticeChips keys={e.control_keys} onPick={setPractice} active={practice} />
+                      </td>
+                      <td>{e.library ? `v${e.library.version_number}` : "live"}</td>
+                      <td>
+                        {e.library ? (
+                          <>
+                            <span title={formatWhen(e.library.updated_at)}>
+                              {new Date(e.library.updated_at).toLocaleDateString()}
+                            </span>
+                            <div className="field-hint">{e.library.saved_by ?? "template import"}</div>
+                          </>
+                        ) : (
+                          <span className="field-hint">follows Scope</span>
+                        )}
+                      </td>
+                      <td>{e.library ? e.library.row_count : e.scope?.row_count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              );
+            })}
           </table>
         </div>
       )}
