@@ -109,7 +109,7 @@ describe("ListLibraryPanel index", () => {
     mockIndex();
     render(<ListLibraryPanel orgId="org" canWrite={true} />);
     await screen.findByText("Separation of Duties");
-    expect(screen.getByText("live from scope")).toBeTruthy();
+    expect(within(screen.getByRole("table")).getByText("live from scope")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "3.1.1c Authorized Devices" })).toHaveLength(2);
   });
 
