@@ -144,7 +144,9 @@ def ref(db_session: Session) -> dict:
     activate_org_product(db_session, org.id, product.id, assessment.id)
     db_session.flush()
     db_session.refresh(op)
-    assert op.baseline_version_id == v1.id  # sanity: pinned to v1 at activation
+    assert op.baseline_version_id == v1.id, (
+        "fixture must pin the product to v1 at activation or the move proves nothing"
+    )
 
     # --- v2 created by a later reimport, product moves to it as "current" ---
     v2 = ProductBaselineVersion(product_id=product.id, version_number=2)

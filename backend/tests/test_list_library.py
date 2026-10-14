@@ -676,7 +676,9 @@ def test_an_importer_change_is_recorded_as_one_not_as_an_edit(
     )
     history = history_of(db_session, devices.id)
     assert [v.provenance["cause"] for v in history] == ["first_import", "importer_changed"]
-    assert history[0].provenance["source_sha256"] != history[1].provenance["source_sha256"]
+    assert history[0].provenance["source_sha256"] != history[1].provenance["source_sha256"], (
+        "fixture must produce distinct file bytes or this test proves nothing"
+    )
     assert history[1].provenance["previous_import_version"] == 1
     assert history[1].provenance["changed_fields"] == ["title", "columns", "rows"]
     assert "saved_by" not in history[1].provenance

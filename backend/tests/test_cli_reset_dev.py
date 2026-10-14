@@ -302,8 +302,9 @@ def test_preview_counts_match_actual_deletion(db_session: Session):
     deleted = _reset_dev(db_session)
 
     assert counts_before == deleted
-    # Sanity: this isn't a trivially-all-zero comparison.
-    assert sum(deleted.values()) > 0
+    assert sum(deleted.values()) > 0, (
+        "fixture must seed rows to delete or the comparison above proves nothing"
+    )
 
 
 @pytest.mark.integration
