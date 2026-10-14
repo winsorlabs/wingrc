@@ -5442,6 +5442,57 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### An import never replaces a person's edit unless that edit is named ✅ DONE (2026-10-14)
+
+No migration. The follow-up the cause work exposed: `source_reapplied`
+recorded that an import had put the source back over a person's edit,
+but only after the fact. Answered from the code at the time: the dry
+run compared the planned content with the current version and nothing
+else, so a list about to lose a colleague's edit printed exactly like a
+list whose workbook changed; and `apply_import` wrote every
+`new_version`, whatever the current version was -- a changed source and
+an importer change replaced edits too, not only a re-apply.
+
+**The rule is the sync's:** an import has a source for the template,
+not for a person's edit, so it does not overwrite one. A list whose
+current version is an edit (`via: api`) and whose content the import
+would change is a `conflict` (`list_library.diff_import`), whatever the
+cause. A tags-only difference is not one -- it writes no version and
+touches no edit.
+
+**The dry run says so first,** before the counts:
+`CONFLICTS: n list(s) a person edited since import`, one line per list
+naming the edit as `list_key@vN`, who saved it, when, and the fields
+the import would change. **The apply leaves every conflict as it is**
+and the `list.import` audit row lists them (`conflicts`).
+
+**The override names the edits, never "edits in general".** A blanket
+flag is a foot-gun -- passed to get past one known list, it silently
+clobbers the ones nobody looked at. `--overwrite-edit list_key@vN`,
+repeated once per edit, authorizes exactly that edit, as asset approval
+is per item. The ref carries the version, so an edit someone saves
+after the dry run is a different edit the same authorization does not
+cover. Any ref that is not a current conflict -- a typo, a list with no
+edit, an edit since saved over -- refuses the whole apply with the list
+of current conflicts, before anything is written (`ImportRefused`).
+`--overwrite-edit` without `--apply` is refused outright. A replaced
+edit is recorded on the version (`replaces_edit_in_version`) and in the
+audit row (`overwrote_edits`).
+
+Bench (`wingrc_verify_20261014k`, the real 45-list library, two lists
+edited over HTTP by a throwaway engineer): the dry run printed both as
+`…@v2` conflicts with the editor and time, 43 unchanged; an apply with
+nothing named left both edits current; naming `@v1` was refused with
+nothing written (no audit row either); naming one edit replaced that
+list only (v3, `source_reapplied`) and left the other as a conflict;
+the audit rows say which. Backend 1693 passed with the 500 floor, ruff
+clean. Mutation-tested, each run against `test_list_library.py` and
+restored: dropping conflict detection fails four tests; accepting an
+unknown ref fails the refusal test; letting one ref authorize every
+conflict fails the named-edit test.
+
+---
+
 ### List versions say why they exist ✅ DONE (2026-10-14)
 
 No migration (`list_version.provenance` is JSONB). Prompted by L.2.1's
