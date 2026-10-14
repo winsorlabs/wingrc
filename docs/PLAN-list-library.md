@@ -299,6 +299,10 @@ model from L.1. **✅ Done 2026-10-13** -- Library › Lists is the one Lists
 screen (Scope › Lists folded into it); a stale save re-applies the second
 editor's draft onto the newer version for review. See `docs/roadmap.md`'s
 L.2 entry, including what the real library showed.
+**L.2.1 ✅ Done 2026-10-14** -- the index keeps live, kept and template
+lists in separate sections, and the merged device template is named for
+its breadth with its added columns in the first screen. See the roadmap's
+L.2.1 entry.
 
 **L.3 — export and bundle inclusion.** Export a list for an assessor, and
 make lists first-class contributors to the point-in-time bundle per §5.

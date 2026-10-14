@@ -5442,6 +5442,54 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### List library L.2.1: the index keeps the kinds of list apart ✅ DONE (2026-10-14)
+
+No migration. L.2's live check found the symptom: two device lists three
+rows apart in one flat index, and the one labelled `3.1.1c` was the one
+serving a single practice. The cause was that the index treated a
+**sourced list** (live from scope; its rows are real devices in a real
+boundary) and a **template** (its rows are examples) as siblings.
+
+- **Three sections, one table** (`ListLibraryPanel.tsx`,
+  `lib/listLibrary.ts`'s `kindOf`): *Live from scope*, *This org's lists*,
+  *Templates*, each with a one-line statement of what its rows are. The
+  middle one is where an adopted template copy will land; it shows,
+  empty, with that sentence, so the place exists before adoption does.
+  Family, practice and search filters cut across all three, and a
+  section with no matches hides while filtering.
+- **The merged template is named for its breadth**:
+  *Authorized Devices & Hardware Inventory*. The merge is WinGRC's
+  construction, so the name is recorded on the merge rule
+  (`list_templates.DEVICE_MERGE.title`), not typed into the content.
+- **Device Type and Baseline Ref sit after Model** (`added_after`),
+  columns 5 and 6, one fixed order for everyone. Beside Asset Type was
+  tried first, on the real sheet in a browser: that is column 11 and
+  still behind the horizontal scroll, so it did not meet the
+  requirement. A placement whose anchor column is missing raises, like
+  an unmapped column: a merge is never guessed.
+- **Not done, on purpose:** no column order that depends on the practice
+  the viewer arrived from (a record has one answer), and no example rows
+  written into the empty CM columns. Those rows are Jarrod's content; the
+  merge box says why they are empty (the examples came from the 3.1.1c
+  sheet of his workbook) and that he can fill them with Edit rows.
+
+**Landing on an org imported before this.** A rerun of `lists-import`
+proposes exactly one `new_version` (the merged list: title, columns,
+rows; the earlier version untouched) and 44 unchanged. On the bench the
+real library's rerun did exactly that
+(`test_the_merged_list_rename_lands_as_one_new_version` pins it). On live
+that is a write to a Winsorlabs template, so it runs only when Jarrod
+says so.
+
+Bench (`wingrc_verify_20261014`, real 45-list library): backend 1675
+passed in one process with the 500 floor, ruff clean, `tsc -b`, vitest
+371, build. In a browser, the index shows the live `3.1.1c Authorized
+Devices` under *Live from scope* and *Authorized Devices & Hardware
+Inventory* under *Templates* with its three practice chips, without
+opening either.
+
+---
+
 ### List library L.2: the screen, and editing ✅ DONE (2026-10-13)
 
 No migration. Spec: `docs/PLAN-list-library.md` §6.
