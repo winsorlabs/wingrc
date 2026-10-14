@@ -1,5 +1,6 @@
 /**
- * Scope > Lists: the CMMC lists (3.1.1a Authorized Users, 3.1.1b Auth
+ * The lists drawn from the scope graph, shown inside Library > Lists (L.2;
+ * this was its own Scope > Lists screen until then): the CMMC lists (3.1.1a Authorized Users, 3.1.1b Auth
  * Processes, 3.1.1c Authorized Devices, External Services) as live views
  * over the scope graph, with the same .xlsx export an assessor receives.
  *
@@ -106,9 +107,23 @@ function AddProcessForm({
   );
 }
 
-export function ListsPanel({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
+export function ListsPanel({
+  orgId,
+  canWrite,
+  viewId,
+}: {
+  orgId: string;
+  canWrite: boolean;
+  // Show this one view, without the tabs -- how the list library screen
+  // embeds a scope-sourced list among its own.
+  viewId?: string;
+}) {
   const [views, setViews] = useState<ListViewSummary[] | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(viewId ?? null);
+
+  useEffect(() => {
+    if (viewId) setSelectedId(viewId);
+  }, [viewId]);
   const [data, setData] = useState<ListViewData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -161,19 +176,21 @@ export function ListsPanel({ orgId, canWrite }: { orgId: string; canWrite: boole
 
   return (
     <div className="contacts-panel">
-      <div className="list-view-tabs" role="tablist">
-        {views.map((v) => (
-          <button
-            key={v.id}
-            role="tab"
-            aria-selected={v.id === selectedId}
-            className={`btn-ghost btn-sm${v.id === selectedId ? " active" : ""}`}
-            onClick={() => setSelectedId(v.id)}
-          >
-            {v.sheet_title} <span className="list-view-count">({v.row_count})</span>
-          </button>
-        ))}
-      </div>
+      {!viewId && (
+        <div className="list-view-tabs" role="tablist">
+          {views.map((v) => (
+            <button
+              key={v.id}
+              role="tab"
+              aria-selected={v.id === selectedId}
+              className={`btn-ghost btn-sm${v.id === selectedId ? " active" : ""}`}
+              onClick={() => setSelectedId(v.id)}
+            >
+              {v.sheet_title} <span className="list-view-count">({v.row_count})</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {error && <div className="form-error">{error}</div>}
 

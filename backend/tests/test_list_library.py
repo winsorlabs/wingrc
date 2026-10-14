@@ -380,7 +380,8 @@ def test_the_merged_device_list_says_what_it_merged(db_session, tmp_path):
         d for d in client.get(f"/orgs/{org_id}/list-definitions").json()
         if d["list_key"] == "3-1-1c-authorized-devices"
     ]
-    assert devices["control_keys"] == ["AC.L2-3.1.1", "CM.L2-3.4.1"]
+    # 3.1.1c's own practice plus every one the absorbed hardware sheet named.
+    assert devices["control_keys"] == ["AC.L2-3.1.1", "CM.L2-3.4.1", "CM.L2-3.4.2"]
     assert devices["merged_from"] == [
         "CM/3.4.1/Hardware and Software Asset Inventory.xlsx#3.4.1a Hardware"
     ]

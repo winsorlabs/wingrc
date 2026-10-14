@@ -19,7 +19,7 @@ import { ReviewCyclesPanel } from "./components/ReviewCyclesPanel";
 import { RolesPanel } from "./components/RolesPanel";
 import type { AssessmentsTab, LibraryTab, NavCategory, ScopeTab, SecurityTab, SystemDescriptionSection } from "./components/SideNav";
 import { DocumentsPanel } from "./components/DocumentsPanel";
-import { ListsPanel } from "./components/ListsPanel";
+import { ListLibraryPanel } from "./components/ListLibraryPanel";
 import { SideNav } from "./components/SideNav";
 import { SprsSubmissionsPanel } from "./components/SprsSubmissionsPanel";
 import { SystemDescriptionForm } from "./components/SystemDescriptionForm";
@@ -320,9 +320,6 @@ export function App() {
               {scopeTab === "liongard-sync" && (
                 <LiongardSyncPanel orgId={org.id} />
               )}
-              {scopeTab === "lists" && (
-                <ListsPanel orgId={org.id} canWrite={canWrite} />
-              )}
             </div>
           )}
 
@@ -373,13 +370,17 @@ export function App() {
               {/* The document library (roadmap N.1/N.2). G.10's original
                   "Library isn't built" placeholder covered five subitems;
                   Policies/Procedures/Plans/Baselines are doc_type views
-                  over this screen; Lists points to Scope > Lists -- see
-                  SideNav's LibraryTab comment. */}
-              <DocumentsPanel
-                orgId={org.id}
-                currentUserRole={user.role}
-                docType={libraryTab === "all" ? undefined : libraryTab}
-              />
+                  over this screen. Lists is the list library (L.2), its own
+                  screen -- see SideNav's LibraryTab comment. */}
+              {libraryTab === "lists" ? (
+                <ListLibraryPanel orgId={org.id} canWrite={canWrite} />
+              ) : (
+                <DocumentsPanel
+                  orgId={org.id}
+                  currentUserRole={user.role}
+                  docType={libraryTab === "all" ? undefined : libraryTab}
+                />
+              )}
             </div>
           )}
 

@@ -1417,3 +1417,85 @@ export interface DocumentSaveConflict {
   current_version_id: string | null;
   current_version_number: number | null;
 }
+
+// ── List library (roadmap L.1/L.2) ── a list is a definition plus its own
+// versioned rows; distinct from ListView* above, which are the four lists
+// drawn live from the scope graph.
+
+export interface LibraryListSummary {
+  id: string;
+  list_key: string;
+  title: string;
+  is_template: boolean;
+  source_ref: string | null;
+  projection_view_id: string | null;
+  control_keys: string[];
+  version_number: number;
+  column_count: number;
+  row_count: number;
+  updated_at: string;
+  // Who saved the current version; null for a template import.
+  saved_by: string | null;
+  merged_from: string[];
+  has_changelog: boolean;
+}
+
+export interface LibraryListChangelog {
+  path: string;
+  text: string;
+}
+
+export interface LibraryListVersion {
+  id: string;
+  version_number: number;
+  title: string;
+  description: string | null;
+  responsible: string | null;
+  review_cadence: string | null;
+  columns: string[];
+  rows: string[][];
+  provenance: {
+    via?: string;
+    source_file?: string;
+    source_sheet?: string;
+    merged_from?: string[];
+    changelogs?: LibraryListChangelog[];
+    based_on_version?: number;
+    note?: string;
+    saved_by?: string;
+  };
+  created_at: string;
+  saved_by: string | null;
+}
+
+export interface LibraryListMerge {
+  target_ref: string;
+  absorbed_ref: string;
+  columns: { source_column: string; target_column: string; added: boolean }[];
+}
+
+export interface LibraryListDetail {
+  id: string;
+  list_key: string;
+  is_template: boolean;
+  source_ref: string | null;
+  projection_view_id: string | null;
+  control_keys: string[];
+  merge: LibraryListMerge | null;
+  current: LibraryListVersion;
+}
+
+export interface LibraryListSaveConflict {
+  message: string;
+  base_version_id: string;
+  current_version_id: string;
+  current_version_number: number;
+  saved_by: string | null;
+  saved_at: string;
+}
+
+export interface ListImportReport {
+  recorded_at: string | null;
+  not_imported: { source_ref: string; status: string; reason: string }[];
+  not_ingested: string[];
+}

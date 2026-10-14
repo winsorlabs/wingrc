@@ -2113,3 +2113,33 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .list-add-process label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; }
 .list-add-process-actions { display: flex; gap: 0.4rem; align-items: end; }
 .list-excluded-note { margin: 0 0 0.6rem; font-style: italic; }
+
+/* ── List library (Library › Lists, ListLibraryPanel) ── */
+.link-button { background: none; border: none; padding: 0; color: var(--primary); cursor: pointer; font: inherit; text-align: left; }
+.link-button:hover { text-decoration: underline; }
+.list-filters { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin-bottom: 0.75rem; }
+.list-families { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.list-practices { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; }
+.list-practice { font-size: 0.72rem; padding: 0.05rem 0.4rem; }
+.list-badges { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.2rem; }
+.list-library-actions { display: flex; gap: 0.5rem; align-items: center; }
+.list-serves { margin: 0.5rem 0 0.75rem; }
+.list-serves p { margin: 0 0 0.35rem; }
+.list-merge { border: 1px solid var(--border); border-left: 3px solid var(--primary); border-radius: 6px; padding: 0.6rem 0.75rem; margin-bottom: 0.75rem; font-size: 0.85rem; }
+.list-merge-map { margin-top: 0.4rem; max-width: 32rem; }
+.list-merge-col { color: var(--primary); font-weight: normal; font-size: 0.72rem; }
+.list-meta { display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 0.75rem; font-size: 0.85rem; margin: 0 0 0.75rem; }
+.list-meta dt { color: var(--muted); }
+.list-meta dd { margin: 0; }
+.list-changelog { margin-bottom: 0.5rem; font-size: 0.85rem; }
+.list-changelog pre { white-space: pre-wrap; max-height: 20rem; overflow: auto; background: #f8f9fa; padding: 0.5rem; border-radius: 4px; }
+.list-cell-example { color: var(--muted); font-style: italic; }
+.list-rows input { width: 100%; min-width: 7rem; font: inherit; padding: 0.15rem 0.3rem; }
+.list-row-new { background: #eef6ff; }
+.list-edit-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.6rem; }
+.list-note { flex: 1; min-width: 12rem; padding: 0.25rem 0.4rem; }
+.list-conflict p { margin: 0 0 0.4rem; }
+.list-conflict-rows { margin: 0 0 0.5rem; padding-left: 1.2rem; }
+.list-import-report { margin-top: 1rem; font-size: 0.85rem; }
+.list-import-report summary { cursor: pointer; color: var(--muted); }
+.list-import-report h4 { margin: 0.6rem 0 0.2rem; font-size: 0.85rem; }
