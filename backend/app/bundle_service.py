@@ -26,6 +26,7 @@ import re
 import uuid
 import zipfile
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -33,6 +34,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from .engine import recompute_sprs
+from .list_library import ListVersionSnap, snap_version
 from .markdown_doc import render_html as render_document_html
 from .models import (
     Assessment,
@@ -54,6 +56,9 @@ from .models import (
     ImplementationStatement,
     LiongardSyncResult,
     LiongardSyncResultChange,
+    ListControlTag,
+    ListDefinition,
+    ListVersion,
     Organization,
     Product,
     RaciAssignment,
@@ -61,6 +66,7 @@ from .models import (
     SprsSubmission,
     SystemDescription,
 )
+from .render import render_list_version_bytes
 from .storage import StorageClient
 
 # ---------------------------------------------------------------------------
@@ -468,6 +474,9 @@ class BundleSnapshot:
     crm_rows: list[CrmRowSnap] = field(default_factory=list)
     sprs_submissions: list[SprsSubmissionSnap] = field(default_factory=list)
     documents: list[DocumentSnap] = field(default_factory=list)
+    # The lists the operator chose at export (roadmap L.3), each the version
+    # current at this snapshot. Empty means none were chosen -- never "all".
+    lists: list[ListVersionSnap] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -603,6 +612,7 @@ def snapshot_bundle(
     storage: StorageClient,
     org_id: uuid.UUID,
     assessment_id: uuid.UUID,
+    list_ids: Sequence[uuid.UUID] = (),
 ) -> BundleSnapshot:
     """Load all data into frozen snapshot dataclasses for bundle rendering.
 
@@ -1362,6 +1372,35 @@ def snapshot_bundle(
         for r in document_rows
     ]
 
+    # --- lists the operator chose (roadmap L.3) ---
+    # Never "every list in the org": most of an MSP's lists are unadopted
+    # templates, and a bundle is one tenant's assessment. Until a list can
+    # be linked as evidence (L.4) the operator names the lists at export,
+    # and lists/index.html records that choice. Each is embedded as the
+    # version current at this snapshot and named by that version's id --
+    # versions are append-only (migration 0064), so the id is the content.
+    lists: list[ListVersionSnap] = []
+    wanted = sorted(set(list_ids))
+    if wanted:
+        list_rows = session.execute(
+            select(ListDefinition, ListVersion)
+            .join(ListVersion, ListVersion.id == ListDefinition.current_version_id)
+            .where(ListDefinition.org_id == org_id, ListDefinition.id.in_(wanted))
+            .order_by(ListDefinition.list_key, ListDefinition.id)
+        ).all()
+        missing = set(wanted) - {d.id for d, _ in list_rows}
+        if missing:
+            raise LookupError(f"lists not found in this organization: {sorted(map(str, missing))}")
+        tag_rows = session.execute(
+            select(ListControlTag.list_id, ListControlTag.control_key)
+            .where(ListControlTag.list_id.in_(wanted))
+            .order_by(ListControlTag.list_id, ListControlTag.control_key, ListControlTag.id)
+        ).all()
+        tags: dict[uuid.UUID, list[str]] = {}
+        for list_id, key in tag_rows:
+            tags.setdefault(list_id, []).append(key)
+        lists = [snap_version(d, v, tuple(tags.get(d.id, ()))) for d, v in list_rows]
+
     # Stamp generated_at after all data is collected
     generated_at = datetime.now(UTC)
 
@@ -1383,6 +1422,7 @@ def snapshot_bundle(
         crm_rows=crm_rows,
         sprs_submissions=sprs_submissions,
         documents=documents,
+        lists=lists,
     )
 
 
@@ -1420,6 +1460,14 @@ def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
     crm_html = _render_crm(snapshot)
     documents_html = _render_documents(snapshot)
     manifest_html = _render_manifest(snapshot)
+    # Lists (L.3): each workbook is a function of its version alone
+    # (render.render_list_version_bytes), so it hashes the same in every
+    # bundle that embeds that version.
+    list_files = {
+        f"lists/{s.filename}": render_list_version_bytes(s) for s in snapshot.lists
+    }
+    list_hashes = {p: hashlib.sha256(b).hexdigest() for p, b in list_files.items()}
+    lists_html = _render_lists(snapshot, list_hashes)
     scoring_html = _render_scoring(snapshot)
     outstanding_html = _render_outstanding(snapshot)
 
@@ -1447,6 +1495,7 @@ def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
         (f"{root}/ssp/04_component_inventory.html", inventory_html),
         (f"{root}/ssp/05_customer_responsibility_matrix.html", crm_html),
         (f"{root}/ssp/06_documents.html", documents_html),
+        (f"{root}/lists/index.html", lists_html),
         (f"{root}/evidence/manifest.html", manifest_html),
         (f"{root}/summary/scoring.html", scoring_html),
         (f"{root}/summary/outstanding.html", outstanding_html),
@@ -1457,6 +1506,9 @@ def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
     ssp_pdf_rel_path = f"{root}/ssp/system_security_plan.pdf"
     ssp_pdf_hash = hashlib.sha256(ssp_pdf_bytes).hexdigest()
     log_lines.append(f"{_ARTIFACT_HASH_ALGO} | {ssp_pdf_hash} | {ssp_pdf_rel_path}")
+
+    for list_rel, list_hash in list_hashes.items():
+        log_lines.append(f"{_ARTIFACT_HASH_ALGO} | {list_hash} | {root}/{list_rel}")
 
     for zip_rel in snapshot.evidence_files:
         log_lines.append(
@@ -1482,6 +1534,9 @@ def render_bundle(snapshot: BundleSnapshot) -> tuple[bytes, str, str, str]:
         zf.writestr(f"{root}/ssp/05_customer_responsibility_matrix.html", crm_html)
         zf.writestr(f"{root}/ssp/06_documents.html", documents_html)
         zf.writestr(ssp_pdf_rel_path, ssp_pdf_bytes)
+        zf.writestr(f"{root}/lists/index.html", lists_html)
+        for list_rel, list_bytes in list_files.items():
+            zf.writestr(f"{root}/{list_rel}", list_bytes)
         zf.writestr(f"{root}/evidence/manifest.html", manifest_html)
         zf.writestr(f"{root}/summary/scoring.html", scoring_html)
         zf.writestr(f"{root}/summary/outstanding.html", outstanding_html)
@@ -1540,6 +1595,7 @@ def _render_cover(
         f"<tr><th>Address</th><td>{_esc(_na(address) if address else None)}</td></tr>",
         f"<tr><th>Phone</th><td>{_esc(_na(o.phone_primary))}</td></tr>",
         f"<tr><th>Website</th><td>{_esc(_na(o.website))}</td></tr>",
+        f"<tr><th>Lists</th><td>{_lists_summary(snapshot)}</td></tr>",
     ])
 
     emass_html = ""
@@ -2419,6 +2475,61 @@ def _render_outstanding(snapshot: BundleSnapshot) -> str:
     return _html_page("Outstanding Items", body)
 
 
+def _lists_summary(snapshot: BundleSnapshot) -> str:
+    n = len(snapshot.lists)
+    if n == 0:
+        return "None chosen at export (see lists/index.html)"
+    return (
+        f"{n} chosen at export, each embedded as one list version named by its id "
+        "(see lists/index.html)"
+    )
+
+
+def _render_lists(snapshot: BundleSnapshot, list_hashes: dict[str, str]) -> str:
+    """lists/index.html: which lists this bundle carries, and that the
+    operator chose them. The choice is the record -- an absent list was
+    not chosen, not forgotten -- so the page exists even when it is empty."""
+    head = (
+        f"{_stamp(snapshot)}<h1>Lists</h1>"
+        "<p>Lists are included in a bundle only when the operator chooses them at "
+        "export; no list is included by default. Each is embedded as the list version "
+        "that was current when this bundle was generated, named by that version's id. "
+        "A list version is never changed once saved, so the id identifies exactly the "
+        "rows below; the list itself may have moved on since, and this bundle does not.</p>"
+    )
+    if not snapshot.lists:
+        body = head + "<p class='no-stmt'>No lists were chosen for this bundle.</p>"
+        return _html_page("Lists", body)
+    rows = []
+    for s in snapshot.lists:
+        rel = f"lists/{s.filename}"
+        kind = (
+            " <span class='badge'>template: rows are examples</span>" if s.is_template else ""
+        )
+        rows.append(
+            "<tr>"
+            f"<td>{_esc(s.title)}{kind}</td>"
+            f"<td>{_esc(', '.join(s.control_keys))}</td>"
+            f"<td>{s.version_number}</td>"
+            f"<td><span class='ev-path'>{_esc(s.version_id)}</span></td>"
+            f"<td>{_esc(s.saved_at.strftime('%Y-%m-%d %H:%M UTC'))}"
+            f" by {_esc(s.saved_by or 'the template import')}</td>"
+            f"<td>{len(s.rows)}</td>"
+            f"<td><a href=\"{_esc(s.filename)}\">{_esc(s.filename)}</a><br>"
+            f"<span class='ev-path'>SHA-256 {_esc(list_hashes[rel])}</span></td>"
+            "</tr>"
+        )
+    body = (
+        head
+        + f"<p>{len(snapshot.lists)} list(s) chosen for this bundle.</p>"
+        "<table><tr><th>List</th><th>Serves</th><th>Version</th><th>Version id</th>"
+        "<th>Saved</th><th>Rows</th><th>File</th></tr>"
+        + "".join(rows)
+        + "</table>"
+    )
+    return _html_page("Lists", body)
+
+
 def _render_index(snapshot: BundleSnapshot) -> str:
     o = snapshot.org
     a = snapshot.assessment
@@ -2433,6 +2544,7 @@ def _render_index(snapshot: BundleSnapshot) -> str:
         ("SSP — Customer Responsibility Matrix", "ssp/05_customer_responsibility_matrix.html"),
         ("SSP — Approved Policies &amp; Procedures", "ssp/06_documents.html"),
         ("SSP — Consolidated PDF", "ssp/system_security_plan.pdf"),
+        (f"Lists ({len(snapshot.lists)} chosen at export)", "lists/index.html"),
         ("Evidence Manifest", "evidence/manifest.html"),
         ("SPRS Scoring Summary", "summary/scoring.html"),
         ("Outstanding Items", "summary/outstanding.html"),

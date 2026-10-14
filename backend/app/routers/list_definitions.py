@@ -9,6 +9,7 @@ Endpoints:
   GET  /orgs/{org_id}/list-definitions/{list_id}             current version
   GET  /orgs/{org_id}/list-definitions/{list_id}/versions    every version
   GET  /orgs/{org_id}/list-definitions/{list_id}/versions/{n}
+  GET  /orgs/{org_id}/list-definitions/{list_id}/export        .xlsx, ?version=n
   POST /orgs/{org_id}/list-definitions/{list_id}/versions    edit = new version
   GET  /orgs/{org_id}/list-library/import-report             what was never imported
 
@@ -26,6 +27,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -35,6 +37,7 @@ from ..audit import log_event
 from ..auth import CurrentUser, get_current_user, require_org_access, require_write
 from ..db import get_session
 from ..models import AuditLog, ListControlTag, ListDefinition, ListVersion
+from ..render import render_list_version_bytes
 
 router = APIRouter(
     prefix="/orgs",
@@ -239,6 +242,52 @@ def get_version(
     if v is None:
         raise HTTPException(status_code=404, detail="Version not found")
     return _version_out(v)
+
+
+@router.get("/{org_id}/list-definitions/{list_id}/export")
+def export_list(
+    org_id: uuid.UUID,
+    list_id: uuid.UUID,
+    version: int | None = Query(default=None, ge=1),
+    session: Session = Depends(get_session),
+) -> Response:
+    """One list version as .xlsx, for handing to an assessor (roadmap L.3).
+
+    A GET, so a read-only role -- the assessor -- can export: the lists
+    slice once built its export as a POST, which put it behind
+    require_write() and gave a C3PAO a 403 on the one artifact they most
+    want. Rendered in memory, never to a shared path. The same renderer
+    the bundle uses, so a list exported here and the same version in a
+    bundle are the same bytes. The version id is in the workbook, in the
+    X-WinGRC-List-Version-Id header, and in the audit row."""
+    d = _definition(session, org_id, list_id)
+    if version is None:
+        v = session.get(ListVersion, d.current_version_id)
+    else:
+        v = session.scalar(
+            select(ListVersion).where(
+                ListVersion.list_id == d.id, ListVersion.version_number == version
+            )
+        )
+        if v is None:
+            raise HTTPException(status_code=404, detail="Version not found")
+    snap = list_library.snap_version(d, v, list_library.tags_of(session, d.id))
+    body = render_list_version_bytes(snap)
+    log_event(
+        session, org_id=org_id, action="list.export", entity_type="list_definition",
+        entity_id=d.id,
+        after_value={"version_id": snap.version_id, "version_number": snap.version_number},
+        context={"list_key": d.list_key, "via": "api"},
+    )
+    session.commit()
+    return Response(
+        content=body,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{snap.filename}"',
+            "X-WinGRC-List-Version-Id": snap.version_id,
+        },
+    )
 
 
 @router.post(

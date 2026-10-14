@@ -1,12 +1,23 @@
-"""Render a `ListView` from the scope graph into an assessor-ready workbook.
+"""Render lists into assessor-ready workbooks.
 
-Every generated list carries a provenance header — control id, generated
-timestamp, and a note that it was projected from the live scope graph — so the
-output is defensible at assessment time rather than "someone edited a sheet."
+Two kinds of list, two functions, one header shape:
+
+- `render_view_bytes()`: a scope-graph `ListView`, projected from entities.
+  Its provenance header names the control ids, the generated timestamp and
+  that it was projected from the live scope graph -- so the output is
+  defensible at assessment time rather than "someone edited a sheet."
+- `render_list_version_bytes()` (L.3): a list-library version. It does not
+  reuse render_view(), because there is nothing to project: a version
+  already is its columns and rows, and bending a ListView around it would
+  invent a projection. It carries the same header, plus the version id,
+  and no wall-clock time at all -- so two exports of one version are the
+  same bytes, and an assessor can check one against another's hash.
 """
 
 from __future__ import annotations
 
+import re
+import zipfile
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
@@ -17,6 +28,7 @@ from openpyxl.utils import get_column_letter
 
 from .catalog import ListView
 from .domain import CanonicalEntity
+from .list_library import ListVersionSnap
 from .list_projection import excluded_count, excluded_note, project
 
 _HEADER_FILL = PatternFill("solid", fgColor="1F3B4D")
@@ -103,3 +115,88 @@ def render_view_bytes(
     wb.save(buf)
     return buf.getvalue()
 
+
+_PLACEHOLDER = re.compile(r"^\[PLACEHOLDER(?: - .+)?\]$")
+_CORE_MODIFIED = re.compile(rb"(<dcterms:modified[^>]*>)[^<]*(</dcterms:modified>)")
+
+
+def _pinned(xlsx: bytes, when: datetime) -> bytes:
+    """The same workbook with every time in it set to `when`.
+
+    openpyxl stamps the save time twice: each zip entry's date, and
+    docProps/core.xml's `modified` (its writer sets that on save, past any
+    property set beforehand). Both are rewritten here, entry order kept."""
+    when = when.astimezone(UTC)
+    stamp = max(when.timetuple()[:6], (1980, 1, 1, 0, 0, 0))
+    iso = when.strftime("%Y-%m-%dT%H:%M:%SZ").encode()
+    src = zipfile.ZipFile(BytesIO(xlsx))
+    out = BytesIO()
+    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as dst:
+        for info in src.infolist():
+            data = src.read(info.filename)
+            if info.filename == "docProps/core.xml":
+                data = _CORE_MODIFIED.sub(rb"\g<1>" + iso + rb"\g<2>", data)
+            pinned = zipfile.ZipInfo(info.filename, date_time=stamp)
+            pinned.compress_type = zipfile.ZIP_DEFLATED
+            pinned.external_attr = info.external_attr
+            dst.writestr(pinned, data)
+    return out.getvalue()
+
+
+def render_list_version_bytes(snap: ListVersionSnap, generated_by: str = "WinGRC") -> bytes:
+    """One list-library version as a workbook, in memory -- never a shared
+    path (the lists slice's export defect, 2026-10-07)."""
+    saved_at = snap.saved_at.astimezone(UTC)
+    wb = openpyxl.Workbook()
+    wb.properties.creator = generated_by
+    wb.properties.created = saved_at.replace(tzinfo=None)
+    ws = wb.active
+    ws.title = snap.list_key[:31]
+
+    ws["A1"] = snap.title
+    ws["A1"].font = _TITLE_FONT
+    ws["A2"] = "CMMC Practice / NIST 800-171: " + " / ".join(snap.control_keys)
+    ws["A2"].font = _META_FONT
+    ws["A3"] = (
+        f"List version {snap.version_number}, version id {snap.version_id}: saved "
+        f"{saved_at.strftime('%Y-%m-%d %H:%M UTC')} by "
+        f"{snap.saved_by or 'the template import'} ({len(snap.rows)} row(s))."
+    )
+    ws["A3"].font = _META_FONT
+    note = (
+        f"Exported by {generated_by} from its list library. A list version is fixed once "
+        "saved; this workbook is that version, not a hand-edited sheet."
+    )
+    if snap.is_template:
+        note += " This is an MSP template: its rows are illustrative examples."
+    ws["A4"] = note
+    ws["A4"].font = _META_FONT
+    ws["A5"] = (
+        "Highlighted [PLACEHOLDER] cells are template examples or known absent for the "
+        "stated reason; blank cells have no value recorded."
+    )
+    ws["A5"].font = _META_FONT
+
+    header_row_num = 6
+    for col_idx, display in enumerate(snap.columns, start=1):
+        cell = ws.cell(row=header_row_num, column=col_idx, value=display)
+        cell.font = _COLHEAD_FONT
+        cell.fill = _HEADER_FILL
+        cell.alignment = Alignment(horizontal="center", wrap_text=True)
+    for r_offset, row in enumerate(snap.rows, start=header_row_num + 1):
+        for col_idx, value in enumerate(row, start=1):
+            cell = ws.cell(row=r_offset, column=col_idx, value=value or None)
+            # A cell is what someone typed, never a formula: openpyxl would
+            # otherwise write "=..." as one, live in the assessor's Excel.
+            if value and value.startswith("="):
+                cell.data_type = "s"
+            if value and _PLACEHOLDER.match(value):
+                cell.font = _PLACEHOLDER_FONT
+                cell.fill = _PLACEHOLDER_FILL
+    for col_idx, display in enumerate(snap.columns, start=1):
+        width = min(max(len(display) + 2, 14), 40)
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+    buf = BytesIO()
+    wb.save(buf)
+    return _pinned(buf.getvalue(), saved_at)
