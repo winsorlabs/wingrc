@@ -2160,3 +2160,16 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .bundle-lists-panel ul { list-style: none; margin: 0.4rem 0 0; padding: 0; }
 .bundle-lists-panel li { padding: 0.2rem 0; font-size: 0.85rem; }
 .bundle-lists-panel .affiliation-badge { margin-left: 0.35rem; }
+
+/* List version history (2026-10-14): why each version exists, at a glance */
+.list-history { margin: 1rem 0; }
+.list-history h3 { font-size: .95rem; margin: 0 0 .4rem; }
+.list-history ol { list-style: none; margin: 0; padding: 0; }
+.list-history li { padding: .35rem .5rem; border-left: 3px solid var(--border, #d1d5db); margin-bottom: .25rem; }
+.list-history li.is-shown { background: var(--surface-2, rgba(0,0,0,.03)); }
+.list-history-why { font-size: .85rem; margin-top: .15rem; }
+.cause-badge { font-size: .75rem; padding: .05rem .4rem; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+.cause-edit { color: #1d4ed8; }
+.cause-first_import, .cause-source_changed { color: #4b5563; }
+.cause-importer_changed { color: #b45309; }
+.cause-source_reapplied { color: #b91c1c; }

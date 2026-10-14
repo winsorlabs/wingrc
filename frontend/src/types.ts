@@ -1436,9 +1436,19 @@ export interface LibraryListSummary {
   updated_at: string;
   // Who saved the current version; null for a template import.
   saved_by: string | null;
+  cause: VersionCause; // the current version's
   merged_from: string[];
   has_changelog: boolean;
 }
+
+// Why a list version exists (backend list_library.CAUSES): a person's edit,
+// the importer reading a changed source, or the importer itself changing.
+export type VersionCause =
+  | "edit"
+  | "first_import"
+  | "source_changed"
+  | "importer_changed"
+  | "source_reapplied";
 
 export interface LibraryListChangelog {
   path: string;
@@ -1463,9 +1473,15 @@ export interface LibraryListVersion {
     based_on_version?: number;
     note?: string;
     saved_by?: string;
+    cause?: VersionCause;
+    changed_fields?: string[];
+    previous_import_version?: number;
+    replaces_edit_in_version?: number;
+    importer_build?: string;
   };
   created_at: string;
   saved_by: string | null;
+  cause: VersionCause;
 }
 
 export interface LibraryListMerge {

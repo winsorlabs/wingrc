@@ -8,6 +8,7 @@
 // makes the re-apply exact for every row the other editor did not touch, and
 // honest about the ones they did.
 
+import type { LibraryListVersion, VersionCause } from "../types";
 import { FAMILY_ORDER } from "./families";
 
 export function familyOf(controlKey: string): string {
@@ -210,4 +211,56 @@ export type ListKind = "sourced" | "kept" | "template";
 export function kindOf(entry: { kind: "library" | "scope"; library?: { is_template: boolean } }): ListKind {
   if (entry.kind === "scope") return "sourced";
   return entry.library?.is_template ? "template" : "kept";
+}
+
+/**
+ * Why a version exists, said where a reader looks first: the version list,
+ * not the audit log. Importer-caused versions recur -- an importer change
+ * writes a version of every list it touches -- and must not read as a
+ * person having changed the template.
+ */
+export const CAUSE_LABELS: Record<VersionCause, string> = {
+  edit: "edited",
+  first_import: "imported",
+  source_changed: "source changed",
+  importer_changed: "importer changed",
+  source_reapplied: "source put back",
+};
+
+export function causeLabel(cause: VersionCause): string {
+  return CAUSE_LABELS[cause] ?? cause;
+}
+
+/** Who made the version: a person's name, or the product. */
+export function versionAuthor(v: Pick<LibraryListVersion, "cause" | "saved_by">): string {
+  return v.cause === "edit" ? (v.saved_by ?? "a person") : "WinGRC importer";
+}
+
+export function whyVersion(v: Pick<LibraryListVersion, "cause" | "saved_by" | "provenance">): string {
+  const p = v.provenance;
+  const since = p.previous_import_version ? ` since version ${p.previous_import_version}` : "";
+  const replaced = p.replaces_edit_in_version
+    ? ` It replaced the edit in version ${p.replaces_edit_in_version}.`
+    : "";
+  const fields =
+    (p.changed_fields?.length ? ` Changed: ${p.changed_fields.join(", ")}.` : "") + replaced;
+  switch (v.cause) {
+    case "edit":
+      return `Saved by ${versionAuthor(v)}${p.based_on_version ? `, from version ${p.based_on_version}` : ""}.`;
+    case "first_import":
+      return `Imported from ${p.source_file ?? "the template library"}${p.source_sheet ? ` (sheet ${p.source_sheet})` : ""}.`;
+    case "source_changed":
+      return `Re-imported because the source sheet changed${since}.${fields}`;
+    case "importer_changed":
+      return (
+        `Written by WinGRC, not by a person: the importer changed how it reads the source, ` +
+        `and the source sheet is unchanged${since}.${fields}`
+      );
+    case "source_reapplied":
+      return (
+        `Re-imported with the source unchanged${since}: its content replaced ` +
+        `${p.replaces_edit_in_version ? `the edit in version ${p.replaces_edit_in_version}` : "a later edit"}.`
+      );
+  }
+  return "";
 }

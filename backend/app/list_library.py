@@ -8,12 +8,21 @@ mutates one" holds for every writer, including ones not written yet
 Import is idempotent: `diff_import()` compares each planned definition's
 content against its current version and proposes create / new_version /
 unchanged. Re-importing the same folder proposes nothing.
+
+Every version says why it exists (`provenance["cause"]`, `CAUSES`): a
+person's edit, the importer reading a changed source, or the importer
+itself changing while the source did not. The last recurs -- every
+importer change that alters what it reads writes a version of every list
+it touches -- and without the distinction it reads as someone having
+changed the template.
 """
 
 from __future__ import annotations
 
+import os
 import uuid
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -37,6 +46,64 @@ def content_of(version: ListVersion) -> dict:
         "columns": list(version.columns),
         "rows": [list(r) for r in version.rows],
     }
+
+
+# Why a list version exists. Stored on every version written from
+# 2026-10-14 on, and derived the same way (`version_causes`) for the ones
+# before, from what each recorded -- the history is append-only, so the
+# derivation cannot drift.
+CAUSES = {
+    "edit": "a person saved it",
+    "first_import": "the first import of its source",
+    "source_changed": "the import read a changed source",
+    "importer_changed": "WinGRC's importer changed; the source did not",
+    "source_reapplied": "the import put the unchanged source back over a later edit",
+}
+
+
+def import_cause(
+    source_sha256: str, sheet_sha256: str, content: dict, last_import: ListVersion | None
+) -> str:
+    """Why an import writes a new version, judged against the last version
+    an import wrote. Same source in and different content out means the
+    importer changed. Compares the sheet's own cells when both versions
+    recorded them, else the workbook file (versions before 2026-10-14)."""
+    if last_import is None:
+        return "first_import"
+    prior = last_import.provenance or {}
+    if sheet_sha256 and prior.get("sheet_sha256"):
+        same_source = sheet_sha256 == prior["sheet_sha256"]
+    else:
+        same_source = source_sha256 == prior.get("source_sha256")
+    if not same_source:
+        return "source_changed"
+    return "source_reapplied" if content == content_of(last_import) else "importer_changed"
+
+
+def version_causes(history: Sequence[ListVersion]) -> dict[uuid.UUID, str]:
+    """Each version's cause, oldest first: the stored one, else derived."""
+    out: dict[uuid.UUID, str] = {}
+    last_import = None
+    for v in sorted(history, key=lambda v: v.version_number):
+        p = v.provenance or {}
+        if p.get("via") == "api":
+            out[v.id] = p.get("cause") or "edit"
+            continue
+        out[v.id] = p.get("cause") or import_cause(
+            p.get("source_sha256", ""), p.get("sheet_sha256", ""), content_of(v), last_import
+        )
+        last_import = v
+    return out
+
+
+def history_of(session: Session, list_id: uuid.UUID) -> list[ListVersion]:
+    return list(
+        session.scalars(
+            select(ListVersion)
+            .where(ListVersion.list_id == list_id)
+            .order_by(ListVersion.version_number, ListVersion.id)
+        )
+    )
 
 
 def _planned_content(s: SheetResult) -> dict:
@@ -151,6 +218,7 @@ class ImportAction:
     action: str  # create | new_version | unchanged
     definition: ListDefinition | None = None
     changed_fields: tuple[str, ...] = ()
+    version: ListVersion | None = None  # what an apply wrote
 
 
 @dataclass
@@ -228,12 +296,33 @@ def record_import(
 ) -> None:
     """Audits an apply, a no-op one included. The library screen reads the
     latest of these to say what was never imported and why
-    (routers/list_definitions.py's import-report)."""
+    (routers/list_definitions.py's import-report). Each version written is
+    named with its cause, so the row says whether the source or the
+    importer changed."""
+    versions = [
+        {
+            "list_key": a.definition.list_key,
+            "version_id": str(a.version.id),
+            "version_number": a.version.version_number,
+            "cause": a.version.provenance["cause"],
+            "changed_fields": list(a.changed_fields),
+        }
+        for a in diff.actions
+        if a.version is not None
+    ]
     log_event(
         session, org_id=org_id, action="list.import", entity_type="organization",
-        entity_id=org_id, context={"via": "cli", **import_report(plan, diff)},
+        entity_id=org_id,
+        context={
+            "via": "cli", "importer_build": _build(), "versions": versions,
+            **import_report(plan, diff),
+        },
         actor="cli:lists-import", actor_type="system",
     )
+
+
+def _build() -> str:
+    return os.environ.get("WINGRC_BUILD_SHA", "unknown")
 
 
 def _provenance(s: SheetResult, changelog_root: Path | None) -> dict:
@@ -250,6 +339,8 @@ def _provenance(s: SheetResult, changelog_root: Path | None) -> dict:
         "source_file": f"New Lists/{s.file}",
         "source_sheet": s.sheet,
         "source_sha256": s.file_sha256,
+        "sheet_sha256": s.sheet_sha256,
+        "importer_build": _build(),
         "merged_from": list(s.absorbed),
         "changelogs": changelogs,
     }
@@ -280,8 +371,19 @@ def apply_import(
             session.add(a.definition)
             session.flush()
         if a.action == "create" or set(a.changed_fields) - {"control_tags"}:
-            create_version(
-                session, a.definition, _planned_content(s), _provenance(s, changelog_root)
-            )
+            content = _planned_content(s)
+            history = [] if a.action == "create" else history_of(session, a.definition.id)
+            imports = [v for v in history if (v.provenance or {}).get("via") != "api"]
+            last_import = imports[-1] if imports else None
+            provenance = _provenance(s, changelog_root) | {
+                "cause": import_cause(s.file_sha256, s.sheet_sha256, content, last_import),
+                "changed_fields": list(a.changed_fields),
+            }
+            if last_import is not None:
+                provenance["previous_import_version"] = last_import.version_number
+            if history and (history[-1].provenance or {}).get("via") == "api":
+                # Says so plainly: an import is about to replace a person's edit.
+                provenance["replaces_edit_in_version"] = history[-1].version_number
+            a.version = create_version(session, a.definition, content, provenance)
         set_tags(session, a.definition, s.control_keys)
     return diff

@@ -25,6 +25,7 @@ collision silently. `plan_import()` returns what an apply would create;
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -136,6 +137,12 @@ class SheetResult:
     rows: tuple[tuple[str, ...], ...] = ()
     sections: tuple[str, ...] = ()
     file_sha256: str = ""
+    # The raw cells this list was read from, before any interpretation: the
+    # sheet's own, plus each absorbed sheet's for a merge. The file hash
+    # cannot say whether *this* sheet changed (a workbook holds several, and
+    # a merge reads a second workbook); this can, which is what tells a
+    # source change from an importer change (list_library.import_cause).
+    sheet_sha256: str = ""
     changelogs: tuple[str, ...] = ()  # paths relative to the Changelog root
     projection_view_id: str | None = None
     absorbed: tuple[str, ...] = ()  # "file#sheet" of sheets merged into this one
@@ -212,9 +219,15 @@ def _wide_repeat(columns: list[str]) -> tuple[str, ...] | None:
     return None
 
 
+def sheet_digest(ws) -> str:
+    cells = [["" if c is None else str(c) for c in row] for row in ws.iter_rows(values_only=True)]
+    return hashlib.sha256(json.dumps([ws.title, cells]).encode()).hexdigest()
+
+
 def read_sheet(ws, rel_file: str, file_sha256: str) -> SheetResult:
     res = SheetResult(
-        file=rel_file, sheet=ws.title, status="non_conforming", file_sha256=file_sha256
+        file=rel_file, sheet=ws.title, status="non_conforming", file_sha256=file_sha256,
+        sheet_sha256=sheet_digest(ws),
     )
     title = _row_text(ws, 1)
     practice = _PRACTICE_LINE.search(_row_text(ws, 2))
@@ -361,6 +374,9 @@ def plan_import(
             target.title = rule.title
         target.control_keys = tuple(dict.fromkeys(target.control_keys + absorbed.control_keys))
         target.absorbed = target.absorbed + (absorbed.source_ref,)
+        target.sheet_sha256 = hashlib.sha256(
+            (target.sheet_sha256 + absorbed.sheet_sha256).encode()
+        ).hexdigest()
         absorbed.status = "merged"
         absorbed.reason = f"merged into {target.sheet} (decision 2026-10-10)"
 

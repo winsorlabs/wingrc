@@ -22,7 +22,7 @@ function summary(over: Partial<LibraryListSummary>): LibraryListSummary {
   return {
     id: "x", list_key: "x", title: "x", is_template: true, source_ref: null, projection_view_id: null,
     control_keys: [], version_number: 1, column_count: 2, row_count: 1, updated_at: "2026-10-14T00:00:00Z",
-    saved_by: null, merged_from: [], has_changelog: false, ...over,
+    saved_by: null, cause: "first_import", merged_from: [], has_changelog: false, ...over,
   };
 }
 

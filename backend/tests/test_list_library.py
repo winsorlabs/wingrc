@@ -17,7 +17,15 @@ from sqlalchemy.exc import DBAPIError
 
 from app.auth import get_current_user
 from app.db import get_session
-from app.list_library import apply_import, diff_import
+from app.list_library import (
+    apply_import,
+    content_of,
+    diff_import,
+    history_of,
+    import_cause,
+    record_import,
+    version_causes,
+)
 from app.list_templates import DEVICE_MERGE, MergeRule, control_keys, plan_import
 from app.main import app
 from app.models import ListDefinition, ListVersion, Organization
@@ -582,3 +590,148 @@ def test_a_document_can_no_longer_be_called_a_list(db_session):
         json={"doc_id": "POL-1", "doc_type": "policy", "title": "A policy", "body": ""},
     )
     assert ok.status_code == 201, ok.text
+
+
+# Why a version exists (2026-10-14). Importer-caused versions recur: the
+# next importer change writes a version of every list it touches, and the
+# history has to say the product did that, not a person.
+
+
+def _risk(db_session, org_id) -> ListDefinition:
+    return db_session.scalar(
+        select(ListDefinition).where(
+            ListDefinition.org_id == org_id, ListDefinition.list_key == "3-11-1a-risk-register"
+        )
+    )
+
+
+def _derived(history):
+    """The same history with every stored cause removed: what
+    `version_causes` concludes for a version written before causes were."""
+    return version_causes([
+        ListVersion(
+            id=v.id, version_number=v.version_number,
+            provenance={k: x for k, x in (v.provenance or {}).items() if k != "cause"},
+            **content_of(v),
+        )
+        for v in history
+    ])
+
+
+def test_an_import_cause_compares_the_sheet_before_the_file():
+    last = ListVersion(
+        version_number=1, provenance={"source_sha256": "f1", "sheet_sha256": "s1"},
+        title="T", description="", responsible="", review_cadence="", columns=["A"], rows=[["1"]],
+    )
+    same = content_of(last)
+    other = same | {"title": "T2"}
+    assert import_cause("f1", "s1", other, None) == "first_import"
+    # A rebuilt workbook (new file hash) whose sheet is unchanged: the importer.
+    assert import_cause("f2", "s1", other, last) == "importer_changed"
+    assert import_cause("f1", "s2", other, last) == "source_changed"
+    assert import_cause("f1", "s1", same, last) == "source_reapplied"
+    # A version from before sheet hashes falls back to the file's.
+    legacy = ListVersion(version_number=1, provenance={"source_sha256": "f1"}, **same)
+    assert import_cause("f1", "s1", other, legacy) == "importer_changed"
+    assert import_cause("f2", "s1", other, legacy) == "source_changed"
+
+
+@pytest.mark.integration
+def test_an_importer_change_is_recorded_as_one_not_as_an_edit(
+    db_session, tmp_path, monkeypatch
+):
+    """L.2.1's rename on an org imported before it: v2 says the importer
+    changed and the source did not -- on the version, over HTTP, and in the
+    import's audit row -- and the same answer is derived without the stored
+    cause. The library is rebuilt in between, so every workbook's file hash
+    moves while its cells do not: the sheet hash is what keeps that from
+    reading as a changed source."""
+    from dataclasses import replace
+
+    from app import list_templates
+    from app.models import AuditLog
+
+    monkeypatch.setattr(
+        list_templates, "MERGES", (replace(DEVICE_MERGE, title="", added_after=""),)
+    )
+    org_id, _ = _imported(db_session, tmp_path / "a")
+    monkeypatch.setattr(list_templates, "MERGES", (DEVICE_MERGE,))
+    root = build_library(tmp_path / "b")
+    plan = _plan(root)
+    diff = apply_import(db_session, org_id, plan)
+    record_import(db_session, org_id, plan, diff)
+    db_session.flush()
+
+    devices = db_session.scalar(
+        select(ListDefinition).where(
+            ListDefinition.org_id == org_id,
+            ListDefinition.list_key == "3-1-1c-authorized-devices",
+        )
+    )
+    history = history_of(db_session, devices.id)
+    assert [v.provenance["cause"] for v in history] == ["first_import", "importer_changed"]
+    assert history[0].provenance["source_sha256"] != history[1].provenance["source_sha256"]
+    assert history[1].provenance["previous_import_version"] == 1
+    assert history[1].provenance["changed_fields"] == ["title", "columns", "rows"]
+    assert "saved_by" not in history[1].provenance
+    assert _derived(history) == version_causes(history)
+
+    client = _client(db_session, org_id)
+    versions = client.get(f"/orgs/{org_id}/list-definitions/{devices.id}/versions").json()
+    assert [v["cause"] for v in versions] == ["first_import", "importer_changed"]
+    assert [v["saved_by"] for v in versions] == [None, None]
+    summary = next(
+        s for s in client.get(f"/orgs/{org_id}/list-definitions").json()
+        if s["id"] == str(devices.id)
+    )
+    assert summary["cause"] == "importer_changed"
+
+    row = db_session.scalars(
+        select(AuditLog).where(AuditLog.org_id == org_id, AuditLog.action == "list.import")
+    ).one()
+    assert row.actor_type == "system"
+    assert row.context["versions"] == [{
+        "list_key": "3-1-1c-authorized-devices",
+        "version_id": str(history[1].id),
+        "version_number": 2,
+        "cause": "importer_changed",
+        "changed_fields": ["title", "columns", "rows"],
+    }]
+
+
+@pytest.mark.integration
+def test_a_changed_source_is_recorded_as_one(db_session, tmp_path):
+    org_id, _ = _imported(db_session, tmp_path / "a")
+    changed = build_library(tmp_path / "b", risk_status="Closed")
+    diff = apply_import(db_session, org_id, _plan(changed))
+    db_session.flush()
+    assert [a.sheet.list_key for a in diff.of("new_version")] == ["3-11-1a-risk-register"]
+    history = history_of(db_session, _risk(db_session, org_id).id)
+    assert [v.provenance["cause"] for v in history] == ["first_import", "source_changed"]
+    assert _derived(history) == version_causes(history)
+
+
+@pytest.mark.integration
+def test_an_import_over_an_edit_says_it_put_the_source_back(db_session, tmp_path):
+    """A person edits a template, then the same library is imported again:
+    the import restores the source's rows, and the version says so and
+    names the edit it replaced, rather than passing for a source change."""
+    org_id, root = _imported(db_session, tmp_path)
+    risk = _risk(db_session, org_id)
+    client = _client(db_session, org_id)
+    base = client.get(f"/orgs/{org_id}/list-definitions/{risk.id}").json()["current"]
+    r = client.post(
+        f"/orgs/{org_id}/list-definitions/{risk.id}/versions",
+        json={"base_version_id": base["id"], "rows": [["R-1", "Edited", "Open"]]},
+    )
+    assert r.status_code == 201 and r.json()["cause"] == "edit"
+
+    apply_import(db_session, org_id, _plan(root))
+    db_session.flush()
+    history = history_of(db_session, risk.id)
+    assert [v.provenance["cause"] for v in history] == ["first_import", "edit", "source_reapplied"]
+    assert history[2].provenance["replaces_edit_in_version"] == 2
+    assert history[2].provenance["previous_import_version"] == 1
+    assert _derived(history) == version_causes(history)
+    versions = client.get(f"/orgs/{org_id}/list-definitions/{risk.id}/versions").json()
+    assert [v["cause"] for v in versions] == ["first_import", "edit", "source_reapplied"]
