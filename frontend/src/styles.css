@@ -2122,6 +2122,11 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .list-practices { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; }
 .list-practice { font-size: 0.72rem; padding: 0.05rem 0.4rem; }
 .list-badges { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.2rem; }
+.list-section-head th { text-align: left; background: var(--bg); border-top: 2px solid var(--border); font-weight: normal; padding-top: 0.6rem; }
+.list-section-title { font-weight: 600; }
+.list-section--sourced .list-section-head th { border-top-color: var(--met-fg); }
+.list-section--kept .list-section-head th { border-top-color: var(--primary); }
+.list-section--template .list-section-head th { border-top-color: var(--muted); }
 .list-library-actions { display: flex; gap: 0.5rem; align-items: center; }
 .list-serves { margin: 0.5rem 0 0.75rem; }
 .list-serves p { margin: 0 0 0.35rem; }

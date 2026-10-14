@@ -63,12 +63,22 @@ class MergeRule:
     category), so it lands as `Device Type` -- the one rename that keeps two
     different facts from sharing a name. 3.4.1a's example rows are not
     carried: they are illustrative, and its combined columns would land
-    half-mapped."""
+    half-mapped, so the merged list's example rows are 3.1.1c's alone and
+    its two added columns are empty in every one of them. Filling them is
+    the template owner's content, never the importer's.
+
+    The merged list's name and column order are WinGRC's construction, so
+    they are recorded here too (2026-10-14, L.2.1): `title` names the
+    breadth an index reader decides on, and the added columns sit after
+    `added_after`, beside the identity columns, not past a horizontal
+    scroll. One fixed order for every reader, however they arrived."""
 
     target: tuple[str, str]
     absorbed: tuple[str, str]
     column_map: dict[str, str]
     added_columns: tuple[str, ...]
+    title: str = ""
+    added_after: str = ""
 
 
 DEVICE_MERGE = MergeRule(
@@ -85,6 +95,8 @@ DEVICE_MERGE = MergeRule(
         "Baseline Ref": "Baseline Ref",
     },
     added_columns=("Device Type", "Baseline Ref"),
+    title="Authorized Devices & Hardware Inventory",
+    added_after="Asset Type",
 )
 MERGES: tuple[MergeRule, ...] = (DEVICE_MERGE,)
 
@@ -331,10 +343,20 @@ def plan_import(
                 f"merge {absorbed.sheet} -> {target.sheet}: no recorded mapping for {unmapped}; "
                 "a merge is never guessed"
             )
-        target.columns = target.columns + tuple(
-            c for c in rule.added_columns if c not in target.columns
+        added = tuple(c for c in rule.added_columns if c not in target.columns)
+        if rule.added_after and rule.added_after not in target.columns:
+            raise ValueError(
+                f"merge {absorbed.sheet} -> {target.sheet}: no column {rule.added_after!r} "
+                "to place the added columns after; a merge is never guessed"
+            )
+        at = (
+            target.columns.index(rule.added_after) + 1 if rule.added_after
+            else len(target.columns)
         )
-        target.rows = tuple(r + ("",) * (len(target.columns) - len(r)) for r in target.rows)
+        target.columns = target.columns[:at] + added + target.columns[at:]
+        target.rows = tuple(r[:at] + ("",) * len(added) + r[at:] for r in target.rows)
+        if rule.title:
+            target.title = rule.title
         target.control_keys = tuple(dict.fromkeys(target.control_keys + absorbed.control_keys))
         target.absorbed = target.absorbed + (absorbed.source_ref,)
         absorbed.status = "merged"
