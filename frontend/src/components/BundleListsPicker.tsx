@@ -47,7 +47,8 @@ export function BundleListsPicker({
       <div className="bundle-lists-panel">
         <p className="field-hint">
           No list is included unless chosen here. Each goes in as its current version, named by its
-          version id, and the bundle records which were chosen.
+          version id, and the bundle records which were chosen. A template&apos;s rows are examples, not
+          this org&apos;s records.
         </p>
         {error && <div className="form-error">{error}</div>}
         {lists === null && !error && <div className="loading">Loading lists…</div>}
@@ -60,7 +61,7 @@ export function BundleListsPicker({
               <label>
                 <input type="checkbox" checked={chosen.has(l.id)} onChange={() => toggle(l.id)} />{" "}
                 {l.title} <span className="field-hint">v{l.version_number}</span>
-                {l.is_template && <span className="affiliation-badge">template: rows are examples</span>}
+                {l.is_template && <span className="affiliation-badge">template</span>}
               </label>
             </li>
           ))}

@@ -52,7 +52,8 @@ describe("BundleListsPicker", () => {
       expect.stringContaining("A Template"),
     ]);
     expect(boxes.every((b) => !(b as HTMLInputElement).checked)).toBe(true);
-    expect(screen.getByText(/template: rows are examples/)).toBeTruthy();
+    expect(screen.getByText("template")).toBeTruthy();
+    expect(screen.getByText(/rows are examples, not/)).toBeTruthy();
     fireEvent.click(boxes[0]);
     expect(onChange).toHaveBeenCalledWith(["k"]);
   });

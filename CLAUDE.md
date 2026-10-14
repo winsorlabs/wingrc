@@ -194,7 +194,7 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
 | `frontend/src/lib/tiptapMarkdown.ts` | Editor bridge: stored Markdown ↔ TipTap document, owned in-repo so the subset stays the subset |
 | `backend/app/routers/` | FastAPI routers: `assessments`, `bundle`, `contacts`, `evidence`, `frameworks`, `orgs` |
 | `backend/app/list_projection.py` | The one function that decides a CMMC list cell (shared by the `.xlsx` export and the scope-drawn lists in Library › Lists); `catalog.py`'s `ListView.sources` says where each column's value may come from |
-| `backend/app/list_templates.py` / `list_library.py` | The list library (roadmap L): the template importer, whose contract is the template header convention, and the append-only versioned list model. A list is a definition plus its own rows -- read `docs/PLAN-list-library.md` before touching either |
+| `backend/app/list_templates.py` / `list_library.py` | The list library (roadmap L): the template importer, whose contract is the template header convention, and the append-only versioned list model. A list is a definition plus its own rows -- read `docs/PLAN-list-library.md` before touching either. `ListVersionSnap` is what an export (L.3) renders: `render.render_list_version_bytes` makes a workbook that is a function of the version alone -- no wall-clock time, so the standalone export and a bundle's copy are the same bytes |
 | `frontend/src/components/ListLibraryPanel.tsx` / `lib/listLibrary.ts` | Library › Lists (L.2), the one Lists screen: library lists and the four scope-drawn ones together, in separate sections by kind (live from scope, the org's own, templates -- L.2.1; `kindOf`). `rebase()` is how a stale save is re-applied for the second editor -- rows are tracked by origin, never guessed |
 | `backend/app/storage.py` | `StorageClient` ABC + `MinIOClient` + `NullStorageClient` |
 | `backend/app/audit.py` | `log_event()` — writes `AuditLog` rows; also the actor-resolution helpers both audit views share |
@@ -390,6 +390,9 @@ fetched from MinIO and embedded, `generated_at` stamped last.
     05_customer_responsibility_matrix.html — RACI flattened to a matrix
     06_documents.html           — approved policies, rendered from Markdown (N.2)
     system_security_plan.pdf    — the consolidated SSP (WeasyPrint)
+  lists/
+    index.html                  — which lists the operator chose, by list_version id (L.3)
+    {list_key}_v{n}.xlsx        — one per chosen list; none by default
   evidence/
     manifest.html               — per-objective evidence index with zip paths
     files/                      — embedded evidence file bytes
