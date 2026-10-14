@@ -7,6 +7,7 @@ import {
   filterLists,
   isDirty,
   rebase,
+  sortLists,
   type DraftRow,
 } from "./listLibrary";
 
@@ -137,5 +138,18 @@ describe("changeCounts", () => {
       added: 2,
       removed: 1,
     });
+  });
+});
+
+describe("sortLists", () => {
+  it("orders by the standard family order, then practice number, then title", () => {
+    const sorted = sortLists([
+      { title: "Visitor Log", control_keys: ["PE.L2-3.10.4"] },
+      { title: "Remote Access", control_keys: ["AC.L2-3.1.12"] },
+      { title: "Devices", control_keys: ["CM.L2-3.4.1", "AC.L2-3.1.1"] },
+      { title: "Risk", control_keys: ["RA.L2-3.11.1"] },
+      { title: "Accounts", control_keys: ["AC.L2-3.1.1"] },
+    ]);
+    expect(sorted.map((l) => l.title)).toEqual(["Accounts", "Devices", "Remote Access", "Visitor Log", "Risk"]);
   });
 });

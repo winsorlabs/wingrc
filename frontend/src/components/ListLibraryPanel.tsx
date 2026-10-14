@@ -34,6 +34,7 @@ import {
   familyOf,
   filterLists,
   isDirty,
+  sortLists,
   rebase,
   type DraftRow,
   type RebaseResult,
@@ -361,11 +362,11 @@ function LibraryListView({
 
   return (
     <div className="contacts-panel list-library-detail">
-      <button type="button" className="btn-ghost btn-sm" onClick={onBack}>
+      <button type="button" className="btn-ghost btn-sm list-back" onClick={onBack}>
         ← All lists
       </button>
 
-      <div className="contacts-panel-header">
+      <div className="list-library-header">
         <div>
           <h2>
             {shown.title}{" "}
@@ -759,7 +760,7 @@ export function ListLibraryPanel({ orgId, canWrite }: { orgId: string; canWrite:
   if (selection?.kind === "scope") {
     return (
       <div>
-        <button type="button" className="btn-ghost btn-sm" onClick={() => setSelection(null)}>
+        <button type="button" className="btn-ghost btn-sm list-back" onClick={() => setSelection(null)}>
           ← All lists
         </button>
         <ListsPanel orgId={orgId} canWrite={canWrite} viewId={selection.id} />
@@ -770,11 +771,11 @@ export function ListLibraryPanel({ orgId, canWrite }: { orgId: string; canWrite:
   const counts = familyCounts(entries);
   const families = familiesOf({ control_keys: [...counts.keys()] });
   const practices = [...new Set(entries.flatMap((e) => e.control_keys))].sort();
-  const shown = filterLists(entries, { family, practice, search });
+  const shown = sortLists(filterLists(entries, { family, practice, search }));
 
   return (
     <div className="contacts-panel list-library">
-      <div className="contacts-panel-header">
+      <div className="list-library-header">
         <div>
           <h2>Lists</h2>
           <div className="contact-sub">
@@ -891,7 +892,9 @@ export function ListLibraryPanel({ orgId, canWrite }: { orgId: string; canWrite:
                   <td>
                     {e.library ? (
                       <>
-                        {formatWhen(e.library.updated_at)}
+                        <span title={formatWhen(e.library.updated_at)}>
+                          {new Date(e.library.updated_at).toLocaleDateString()}
+                        </span>
                         <div className="field-hint">{e.library.saved_by ?? "template import"}</div>
                       </>
                     ) : (

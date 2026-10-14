@@ -45,6 +45,32 @@ export function filterLists<T extends Tagged & { title: string }>(
   );
 }
 
+// "AC.L2-3.1.12" -> [family rank, 3, 1, 12], so 3.1.2 sorts before 3.1.12.
+function practiceRank(key: string): number[] {
+  const known: readonly string[] = FAMILY_ORDER;
+  const i = known.indexOf(familyOf(key));
+  const nums = (key.split("-")[1] ?? "").split(".").map((n) => Number.parseInt(n, 10) || 0);
+  return [i === -1 ? known.length : i, ...nums];
+}
+
+function compareRanks(a: number[], b: number[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (a[i] ?? -1) - (b[i] ?? -1);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/** In the standard family order, then by first practice, then title -- the
+ * order an engineer reads the practices in, not the order lists were keyed. */
+export function sortLists<T extends Tagged & { title: string }>(lists: T[]): T[] {
+  const first = (l: T) =>
+    l.control_keys.map(practiceRank).sort(compareRanks)[0] ?? [Number.MAX_SAFE_INTEGER];
+  return [...lists].sort(
+    (a, b) => compareRanks(first(a), first(b)) || a.title.localeCompare(b.title),
+  );
+}
+
 /** Lists per family; a list serving two families counts once in each. */
 export function familyCounts(lists: Tagged[]): Map<string, number> {
   const counts = new Map<string, number>();
