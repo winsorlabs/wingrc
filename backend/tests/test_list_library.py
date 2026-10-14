@@ -643,10 +643,12 @@ def test_an_importer_change_is_recorded_as_one_not_as_an_edit(
     """L.2.1's rename on an org imported before it: v2 says the importer
     changed and the source did not -- on the version, over HTTP, and in the
     import's audit row -- and the same answer is derived without the stored
-    cause. The library is rebuilt in between, so every workbook's file hash
-    moves while its cells do not: the sheet hash is what keeps that from
-    reading as a changed source."""
+    cause. In between, the device workbook is re-saved with a changed
+    document property, so its file hash moves while its cells do not: the
+    sheet hash is what keeps that from reading as a changed source."""
     from dataclasses import replace
+
+    import openpyxl
 
     from app import list_templates
     from app.models import AuditLog
@@ -657,6 +659,10 @@ def test_an_importer_change_is_recorded_as_one_not_as_an_edit(
     org_id, _ = _imported(db_session, tmp_path / "a")
     monkeypatch.setattr(list_templates, "MERGES", (DEVICE_MERGE,))
     root = build_library(tmp_path / "b")
+    book = root / "New Lists/AC/3.1.1/Authorized-Entities.xlsx"
+    wb = openpyxl.load_workbook(book)
+    wb.properties.title = "Re-saved, cells untouched"
+    wb.save(book)
     plan = _plan(root)
     diff = apply_import(db_session, org_id, plan)
     record_import(db_session, org_id, plan, diff)
