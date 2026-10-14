@@ -70,8 +70,10 @@ class MergeRule:
     The merged list's name and column order are WinGRC's construction, so
     they are recorded here too (2026-10-14, L.2.1): `title` names the
     breadth an index reader decides on, and the added columns sit after
-    `added_after`, beside the identity columns, not past a horizontal
-    scroll. One fixed order for every reader, however they arrived."""
+    `added_after` -- Model, beside Make and Model -- inside the first screen
+    of columns rather than past a horizontal scroll (beside Asset Type, the
+    10th column, was tried on the real sheet and still scrolled). One fixed
+    order for every reader, however they arrived."""
 
     target: tuple[str, str]
     absorbed: tuple[str, str]
@@ -96,7 +98,7 @@ DEVICE_MERGE = MergeRule(
     },
     added_columns=("Device Type", "Baseline Ref"),
     title="Authorized Devices & Hardware Inventory",
-    added_after="Asset Type",
+    added_after="Model",
 )
 MERGES: tuple[MergeRule, ...] = (DEVICE_MERGE,)
 

@@ -93,7 +93,7 @@ def test_the_device_lists_merge_by_the_recorded_mapping(tmp_path):
     devices = _sheet(plan, "3.1.1c Authorized Devices")
     hardware = _sheet(plan, "3.4.1a Hardware")
     assert hardware.status == "merged"
-    at = DEVICE_COLUMNS.index("Asset Type") + 1
+    at = DEVICE_COLUMNS.index("Model") + 1
     assert devices.columns == (
         *DEVICE_COLUMNS[:at], "Device Type", "Baseline Ref", *DEVICE_COLUMNS[at:]
     ), "the added columns sit beside the identity columns, in one fixed order"
@@ -245,7 +245,7 @@ def test_the_merged_list_rename_lands_as_one_new_version(db_session, tmp_path, m
     v2 = db_session.get(ListVersion, devices.current_version_id)
     assert v2.version_number == 2
     assert v2.title == "Authorized Devices & Hardware Inventory"
-    at = v2.columns.index("Asset Type") + 1
+    at = v2.columns.index("Model") + 1
     assert v2.columns[at:at + 2] == ["Device Type", "Baseline Ref"]
     db_session.refresh(v1)
     assert (v1.title, list(v1.columns), [list(r) for r in v1.rows]) == v1_content
