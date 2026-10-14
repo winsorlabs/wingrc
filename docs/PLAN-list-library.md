@@ -303,6 +303,11 @@ L.2 entry, including what the real library showed.
 lists in separate sections, and the merged device template is named for
 its breadth with its added columns in the first screen. See the roadmap's
 L.2.1 entry.
+Since 2026-10-14 every list version also says why it exists -- a person's
+edit, a changed source, or a change in WinGRC's importer with the source
+unchanged -- in its version history on screen; see the roadmap's "List
+versions say why they exist" entry, including the version-churn pattern
+importer changes cause.
 
 **L.3 — export and bundle inclusion.** Export a list for an assessor, and
 make lists first-class contributors to the point-in-time bundle per §5.
