@@ -673,7 +673,14 @@ function LibraryListView({
             value={note}
             onChange={(e) => setNote(e.target.value)}
           />
-          <button type="button" className="btn-primary btn-sm" disabled={!dirty || saving} onClick={save}>
+          {/* Not while a conflict is open: the base is stale until the editor
+              re-applies or discards, so a save could only 409 again. */}
+          <button
+            type="button"
+            className="btn-primary btn-sm"
+            disabled={!dirty || saving || conflict !== null}
+            onClick={save}
+          >
             {saving ? "Saving…" : dirty ? `Save as version ${base.version_number + 1}` : "No changes"}
           </button>
           <button

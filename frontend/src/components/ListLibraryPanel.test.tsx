@@ -213,6 +213,8 @@ describe("editing", () => {
     expect(alert.textContent).toMatch(/1 change of yours can be re-applied/);
     // Still the editor's own draft.
     expect((screen.getByRole("textbox", { name: "Status, row 1" }) as HTMLInputElement).value).toBe("Closed");
+    // Saving again from the stale base could only conflict again.
+    expect((screen.getByRole("button", { name: "Save as version 2" }) as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Re-apply my changes onto version 2" }));
     expect(screen.queryByRole("alert")).toBeNull();

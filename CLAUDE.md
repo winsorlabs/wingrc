@@ -193,8 +193,9 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
 | `frontend/src/lib/markdown.tsx` | Browser counterpart to `markdown_doc.py` — Markdown → React elements, never `dangerouslySetInnerHTML` |
 | `frontend/src/lib/tiptapMarkdown.ts` | Editor bridge: stored Markdown ↔ TipTap document, owned in-repo so the subset stays the subset |
 | `backend/app/routers/` | FastAPI routers: `assessments`, `bundle`, `contacts`, `evidence`, `frameworks`, `orgs` |
-| `backend/app/list_projection.py` | The one function that decides a CMMC list cell (shared by the `.xlsx` export and Scope › Lists); `catalog.py`'s `ListView.sources` says where each column's value may come from |
+| `backend/app/list_projection.py` | The one function that decides a CMMC list cell (shared by the `.xlsx` export and the scope-drawn lists in Library › Lists); `catalog.py`'s `ListView.sources` says where each column's value may come from |
 | `backend/app/list_templates.py` / `list_library.py` | The list library (roadmap L): the template importer, whose contract is the template header convention, and the append-only versioned list model. A list is a definition plus its own rows -- read `docs/PLAN-list-library.md` before touching either |
+| `frontend/src/components/ListLibraryPanel.tsx` / `lib/listLibrary.ts` | Library › Lists (L.2), the one Lists screen: library lists and the four scope-drawn ones together. `rebase()` is how a stale save is re-applied for the second editor -- rows are tracked by origin, never guessed |
 | `backend/app/storage.py` | `StorageClient` ABC + `MinIOClient` + `NullStorageClient` |
 | `backend/app/audit.py` | `log_event()` — writes `AuditLog` rows; also the actor-resolution helpers both audit views share |
 | `backend/app/rls.py` | The only place `app.current_org` is written, plus the `after_begin` hook that makes it survive a commit — read before touching anything org-scoped |
@@ -223,7 +224,7 @@ dry-run reconcile diff, apply. Catalog views (CUI Assets, CUI Users, etc.) as
 enumerated view definitions. Lists are views over the scope graph, not separate
 documents. Scope is the denominator for control evaluation.
 
-**Lists (2026-10-07):** Scope › Lists shows the four CMMC lists, and
+**Lists (2026-10-07; one screen since L.2, 2026-10-13):** Library › Lists shows the four CMMC lists drawn from scope beside the list library, and
 `GET …/exports/{view_id}` is the `.xlsx` export (a GET, rendered in memory —
 it once shared one temp path across orgs). **An import or sync may not clear
 or overwrite an operator-entered field it has no source for:**
