@@ -52,6 +52,28 @@ def test_list_export_route_is_get():
     assert set(ops) == {"get"}
 
 
+def test_the_workbook_carries_no_wall_clock_time():
+    """Byte comparison alone cannot prove this: two exports inside one
+    second match even if the save time leaks in. So check every time the
+    file holds is the version's own: each zip entry's date and
+    docProps/core.xml's created and modified."""
+    from datetime import UTC, datetime
+
+    from app.list_library import ListVersionSnap
+    from app.render import render_list_version_bytes
+
+    saved = datetime(2024, 3, 5, 6, 7, 8, tzinfo=UTC)
+    snap = ListVersionSnap(
+        "l", "k", False, ("AC.L2-3.1.1",), "vid", 1, "T", "", "", "", ("A",), (("x",),),
+        saved, None,
+    )
+    zf = zipfile.ZipFile(io.BytesIO(render_list_version_bytes(snap)))
+    assert {i.date_time for i in zf.infolist()} == {(2024, 3, 5, 6, 7, 8)}
+    core = zf.read("docProps/core.xml").decode()
+    stamps = re.findall(r"<dcterms:(?:created|modified)[^>]*>([^<]*)<", core)
+    assert stamps == ["2024-03-05T06:07:08Z", "2024-03-05T06:07:08Z"], core
+
+
 @pytest.fixture(autouse=True)
 def _clear_overrides():
     yield
