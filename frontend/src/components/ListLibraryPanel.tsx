@@ -32,6 +32,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ListConflictError } from "../api";
 import { FAMILY_NAMES } from "../lib/families";
 import {
+  causeLabel,
   changeCounts,
   draftFrom,
   draftRows,
@@ -46,6 +47,8 @@ import {
   type DraftRow,
   type ListKind,
   type RebaseResult,
+  versionAuthor,
+  whyVersion,
 } from "../lib/listLibrary";
 import type {
   LibraryListDetail,
@@ -407,8 +410,7 @@ function LibraryListView({
           <div className="contact-sub">
             Version {shown.version_number}
             {isOld ? ` of ${base.version_number}` : ""} ·{" "}
-            {shown.saved_by ? `saved by ${shown.saved_by}` : "from the template import"} on{" "}
-            {formatWhen(shown.created_at)}
+            {causeLabel(shown.cause)} by {versionAuthor(shown)} on {formatWhen(shown.created_at)}
           </div>
         </div>
         <div className="list-library-actions">
@@ -425,7 +427,7 @@ function LibraryListView({
               >
                 {[...versions].reverse().map((v) => (
                   <option key={v.id} value={v.version_number}>
-                    {v.version_number}
+                    {v.version_number} · {causeLabel(v.cause)}
                     {v.version_number === base.version_number ? " (current)" : ""}
                   </option>
                 ))}
@@ -565,6 +567,29 @@ function LibraryListView({
           </>
         )}
       </dl>
+
+      <section className="list-history" aria-label="Version history">
+        <h3>Version history</h3>
+        <ol>
+          {[...(versions.length ? versions : [base])].reverse().map((v) => (
+            <li key={v.id} className={v.version_number === shown.version_number ? "is-shown" : undefined}>
+              <button
+                type="button"
+                className="btn-ghost btn-sm"
+                disabled={editing || v.version_number === shown.version_number}
+                onClick={() => setViewing(v.version_number === base.version_number ? null : v.version_number)}
+              >
+                v{v.version_number}
+              </button>{" "}
+              <span className={`cause-badge cause-${v.cause}`}>{causeLabel(v.cause)}</span>{" "}
+              <span className="field-hint">
+                {versionAuthor(v)} · {formatWhen(v.created_at)}
+              </span>
+              <div className="list-history-why">{whyVersion(v)}</div>
+            </li>
+          ))}
+        </ol>
+      </section>
 
       {(shown.provenance.changelogs ?? []).map((c) => (
         <details key={c.path} className="list-changelog">
@@ -968,7 +993,11 @@ export function ListLibraryPanel({ orgId, canWrite }: { orgId: string; canWrite:
                             <span title={formatWhen(e.library.updated_at)}>
                               {new Date(e.library.updated_at).toLocaleDateString()}
                             </span>
-                            <div className="field-hint">{e.library.saved_by ?? "template import"}</div>
+                            <div className="field-hint">
+                              {e.library.cause === "edit"
+                                ? (e.library.saved_by ?? "edited")
+                                : causeLabel(e.library.cause)}
+                            </div>
                           </>
                         ) : (
                           <span className="field-hint">follows Scope</span>

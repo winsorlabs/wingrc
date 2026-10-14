@@ -59,6 +59,7 @@ class ListSummaryOut(BaseModel):
     row_count: int
     updated_at: datetime
     saved_by: str | None
+    cause: str  # the current version's
     merged_from: list[str]
     has_changelog: bool
 
@@ -75,6 +76,8 @@ class ListVersionOut(BaseModel):
     provenance: dict
     created_at: datetime
     saved_by: str | None
+    # Why this version exists: a list_library.CAUSES key, stored or derived.
+    cause: str
 
 
 class MergeColumnOut(BaseModel):
@@ -140,13 +143,17 @@ def _saved_by(v: ListVersion) -> str | None:
     return (v.provenance or {}).get("saved_by")
 
 
-def _version_out(v: ListVersion) -> ListVersionOut:
+def _version_out(v: ListVersion, cause: str) -> ListVersionOut:
     return ListVersionOut(
         id=v.id, version_number=v.version_number, title=v.title, description=v.description,
         responsible=v.responsible, review_cadence=v.review_cadence, columns=list(v.columns),
         rows=[list(r) for r in v.rows], provenance=v.provenance or {},
-        created_at=v.created_at, saved_by=_saved_by(v),
+        created_at=v.created_at, saved_by=_saved_by(v), cause=cause,
     )
+
+
+def _causes(session: Session, d: ListDefinition) -> dict[uuid.UUID, str]:
+    return list_library.version_causes(list_library.history_of(session, d.id))
 
 
 def _merge_out(d: ListDefinition, v: ListVersion) -> MergeOut | None:
@@ -179,13 +186,14 @@ def list_definitions(
     out = []
     for d in session.scalars(stmt.order_by(ListDefinition.list_key, ListDefinition.id)):
         v = session.get(ListVersion, d.current_version_id)
+        cause = _causes(session, d)[v.id]
         out.append(
             ListSummaryOut(
                 id=d.id, list_key=d.list_key, title=v.title, is_template=d.is_template,
                 source_ref=d.source_ref, projection_view_id=d.projection_view_id,
                 control_keys=list(list_library.tags_of(session, d.id)),
                 version_number=v.version_number, column_count=len(v.columns),
-                row_count=len(v.rows), updated_at=v.created_at, saved_by=_saved_by(v),
+                row_count=len(v.rows), updated_at=v.created_at, saved_by=_saved_by(v), cause=cause,
                 merged_from=list((v.provenance or {}).get("merged_from") or []),
                 has_changelog=bool((v.provenance or {}).get("changelogs")),
             )
@@ -204,7 +212,7 @@ def get_list_definition(
         projection_view_id=d.projection_view_id,
         control_keys=list(list_library.tags_of(session, d.id)),
         merge=_merge_out(d, v),
-        current=_version_out(v),
+        current=_version_out(v, _causes(session, d)[v.id]),
     )
 
 
@@ -213,14 +221,9 @@ def list_versions(
     org_id: uuid.UUID, list_id: uuid.UUID, session: Session = Depends(get_session)
 ) -> list[ListVersionOut]:
     d = _definition(session, org_id, list_id)
-    return [
-        _version_out(v)
-        for v in session.scalars(
-            select(ListVersion)
-            .where(ListVersion.list_id == d.id)
-            .order_by(ListVersion.version_number)
-        )
-    ]
+    history = list_library.history_of(session, d.id)
+    causes = list_library.version_causes(history)
+    return [_version_out(v, causes[v.id]) for v in history]
 
 
 @router.get(
@@ -241,7 +244,7 @@ def get_version(
     )
     if v is None:
         raise HTTPException(status_code=404, detail="Version not found")
-    return _version_out(v)
+    return _version_out(v, _causes(session, d)[v.id])
 
 
 @router.get("/{org_id}/list-definitions/{list_id}/export")
@@ -332,6 +335,7 @@ def create_list_version(
         session, d, content,
         {
             "via": "api",
+            "cause": "edit",
             "based_on_version": base.version_number,
             "note": body.note or "",
             "saved_by": current_user.display_name or current_user.email,
@@ -349,7 +353,7 @@ def create_list_version(
         context={"via": "api", "list_key": d.list_key, "note": body.note or ""},
     )
     session.commit()
-    return _version_out(v)
+    return _version_out(v, "edit")
 
 
 @router.get("/{org_id}/list-library/import-report", response_model=ImportReportOut)
