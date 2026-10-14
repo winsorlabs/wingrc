@@ -5553,11 +5553,71 @@ Jarrod's `CMMC Prep` folder into a bench org):
   AC). The index now sorts by the standard family order, then practice
   number.
 
-**Live.** Deployed with `deploy/deploy.sh`. Read-only verification runs
-against the real 45 lists in Winsorlabs. A no-op import rerun writes the
-first `list.import` record there, so the screen can state what was never
-imported. No template was edited on live: versions are permanent, and the
-edit and conflict paths were proven on the bench against the same lists.
+**Live (2026-10-14).**
+
+- **Deploy.** `3042b07` deployed with `deploy/deploy.sh`, after a host
+  reboot.
+  - The host came back clean: five services up, IP still .35, no bench
+    containers, `/health` ok at the prior build.
+  - Scans: backend 296 findings, nginx 179.
+- **Database checks, read-only.**
+  - `pg_trigger` shows `list_version_no_update` (BEFORE UPDATE, enabled).
+  - The backend's own session reports `current_user = wingrc_app`
+    (no superuser, no BYPASSRLS).
+  - RLS is on for all three list tables.
+- **Winsorlabs, read-only, against the real 45 lists.**
+  - The import rerun proposed 0 changes. Its no-op apply wrote the first
+    `list.import` record, which the screen reads.
+  - The merged device list is reached once from each of its three
+    practices.
+  - An assessor reads every endpoint and gets 403 on a write whose base
+    was current, so only the role could have refused it.
+  - Acme and Test Customer A engineers get 403/404.
+- **Edit checks: one small list, created by importing a one-sheet library
+  into Test Customer A.**
+  - Winsorlabs templates were not touched. Deleting an org on live was
+    ruled out: that path is unexercised, and inventing it for a test is
+    the bigger risk.
+  - Over HTTP as `wingrc_app`: two engineers. A saved v2. B's stale save
+    got the structured 409 naming A, and nothing was written. v1 is
+    byte-identical afterwards (678 bytes). A direct `UPDATE`, as the
+    owning role inside a rolled-back transaction, was refused by the
+    trigger.
+  - In a browser, with the deployed frontend's own files: B saved v3
+    while A was editing v2. A saw the conflict, with their draft intact
+    and Save disabled, re-applied, and saved v4 holding both edits.
+  - The test list is tagged `AC.L2-3.1.4 / AU.L2-3.3.9 / CM.L2-3.4.5`
+    (none of the real lists span three families). It appears once in each
+    of the AC, AU and CM views.
+  - **The test list ("Verification rows", 4 versions) is left in
+    Test Customer A on purpose.** It goes when live is rebuilt.
+- **Counts.**
+  - SPRS is unchanged: Acme −199, Winsorlabs −204.
+  - Control states are unchanged.
+  - Every other difference is the test list, two `list.import` events and
+    three `list.version_create` events.
+- **Cleanup.** Throwaway identities and the predeploy dump were deleted
+  after the checks.
+
+**What a person sees on the merged device list (live, observed).**
+
+- The list's own page reads as one list serving three practices. It
+  leads with "One list serving 3 practices in 2 families", then the three
+  practice chips, then a boxed explanation and the column-mapping table.
+- **The index weakens that claim.**
+  - Two device lists sit three rows apart: *3.1.1c Authorized Devices*
+    (live from scope, `AC.L2-3.1.1` only) and *Authorized Devices*
+    (template, three practices).
+  - Only the one serving a single practice carries the "3.1.1c" id.
+- **In the rows, the CM half is two empty columns at the far right.**
+  - `Device Type` and `Baseline Ref` sit seven columns after
+    `Asset Type`, behind a horizontal scroll.
+  - The example rows are all 3.1.1c's, so a reader arriving from
+    `CM.L2-3.4.1` sees an access-control device list with two blank
+    columns.
+- None of this is wrong in the data. Whether to change it (a combined
+  title, CM example rows, column order) is Jarrod's call, not a fix taken
+  here.
 
 ---
 
