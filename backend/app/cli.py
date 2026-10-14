@@ -733,7 +733,7 @@ def lists_import_cmd(
     """
     import uuid as _uuid
 
-    from .list_library import apply_import, diff_import
+    from .list_library import apply_import, diff_import, record_import
     from .list_templates import plan_import
     from .models import Organization
     from .rls import set_current_org
@@ -787,6 +787,7 @@ def lists_import_cmd(
         for a in diff.of("new_version"):
             typer.echo(f"    {a.sheet.list_key}: {', '.join(a.changed_fields)}")
         if apply:
+            record_import(session, target, plan, diff)
             session.commit()
             typer.echo("Applied.")
         else:

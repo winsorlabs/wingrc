@@ -13,13 +13,15 @@ unchanged. Re-importing the same folder proposes nothing.
 from __future__ import annotations
 
 import uuid
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from .list_templates import ImportPlan, SheetResult
+from .audit import log_event
+from .list_templates import MERGES, ImportPlan, MergeRule, SheetResult
 from .models import ListControlTag, ListDefinition, ListVersion
 
 CONTENT_FIELDS = ("title", "description", "responsible", "review_cadence", "columns", "rows")
@@ -128,6 +130,58 @@ def diff_import(session: Session, org_id: uuid.UUID, plan: ImportPlan) -> Import
             ImportAction(s, "new_version" if changed else "unchanged", d, changed)
         )
     return diff
+
+
+def merge_rule_for(merged_from: list[str]) -> MergeRule | None:
+    """The recorded merge that produced a list, found by the sheet its
+    provenance says it absorbed. The mapping is the code-recorded decision
+    (list_templates.MERGES) -- the import refuses any absorbed column it
+    does not name, so there is no second, guessed mapping to disagree with."""
+    for rule in MERGES:
+        if f"{rule.absorbed[0]}#{rule.absorbed[1]}" in merged_from:
+            return rule
+    return None
+
+
+def row_changes(before: list[list[str]], after: list[list[str]]) -> dict:
+    """Rows added and removed between two versions, by content. Rows have no
+    identity key (see ListVersion), so an edited row counts as one removed
+    and one added -- the audit says what changed, not which row "it" was."""
+    b = Counter(tuple(r) for r in before)
+    a = Counter(tuple(r) for r in after)
+    return {
+        "rows_added": sum((a - b).values()),
+        "rows_removed": sum((b - a).values()),
+    }
+
+
+def import_report(plan: ImportPlan, diff: ImportDiff) -> dict:
+    """What an apply did and, as importantly, what it did not import -- kept
+    so the library screen can say the set is incomplete instead of silently
+    claiming to be the whole library. File paths only, relative to the
+    library root: no cell content."""
+    return {
+        "not_imported": [
+            {"source_ref": s.source_ref, "status": s.status, "reason": s.reason}
+            for s in plan.sheets
+            if s.status != "importable"
+        ],
+        "not_ingested": list(plan.not_ingested),
+        "actions": {k: len(diff.of(k)) for k in ("create", "new_version", "unchanged")},
+    }
+
+
+def record_import(
+    session: Session, org_id: uuid.UUID, plan: ImportPlan, diff: ImportDiff
+) -> None:
+    """Audits an apply, a no-op one included. The library screen reads the
+    latest of these to say what was never imported and why
+    (routers/list_definitions.py's import-report)."""
+    log_event(
+        session, org_id=org_id, action="list.import", entity_type="organization",
+        entity_id=org_id, context={"via": "cli", **import_report(plan, diff)},
+        actor="cli:lists-import", actor_type="system",
+    )
 
 
 def _provenance(s: SheetResult, changelog_root: Path | None) -> dict:
