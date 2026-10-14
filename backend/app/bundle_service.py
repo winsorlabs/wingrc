@@ -2494,8 +2494,8 @@ def _render_lists(snapshot: BundleSnapshot, list_hashes: dict[str, str]) -> str:
         "<p>Lists are included in a bundle only when the operator chooses them at "
         "export; no list is included by default. Each is embedded as the list version "
         "that was current when this bundle was generated, named by that version's id. "
-        "A list version is never changed once saved, so the id identifies exactly the "
-        "rows below; the list itself may have moved on since, and this bundle does not.</p>"
+        "A list version is never changed once saved, so the id identifies exactly that "
+        "version's rows; the list itself may have moved on since, and this bundle does not.</p>"
     )
     if not snapshot.lists:
         body = head + "<p class='no-stmt'>No lists were chosen for this bundle.</p>"

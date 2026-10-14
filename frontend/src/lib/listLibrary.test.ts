@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  causeLabel,
   changeCounts,
   draftFrom,
   familiesOf,
@@ -9,6 +10,8 @@ import {
   kindOf,
   rebase,
   sortLists,
+  versionAuthor,
+  whyVersion,
   type DraftRow,
 } from "./listLibrary";
 
@@ -160,5 +163,36 @@ describe("sortLists", () => {
       { title: "Accounts", control_keys: ["AC.L2-3.1.1"] },
     ]);
     expect(sorted.map((l) => l.title)).toEqual(["Accounts", "Devices", "Remote Access", "Visitor Log", "Risk"]);
+  });
+});
+
+describe("why a version exists", () => {
+  const v = (cause: Parameters<typeof causeLabel>[0], provenance = {}, saved_by: string | null = null) => ({
+    cause, provenance, saved_by,
+  });
+
+  it("names the product, never a person, for anything the importer wrote", () => {
+    for (const c of ["first_import", "source_changed", "importer_changed", "source_reapplied"] as const) {
+      expect(versionAuthor(v(c))).toBe("WinGRC importer");
+    }
+    expect(versionAuthor(v("edit", {}, "Ada Admin"))).toBe("Ada Admin");
+  });
+
+  it("tells a changed source from an unchanged one", () => {
+    expect(whyVersion(v("source_changed", { previous_import_version: 2, changed_fields: ["rows"] }))).toBe(
+      "Re-imported because the source sheet changed since version 2. Changed: rows.",
+    );
+    expect(whyVersion(v("importer_changed", { changed_fields: ["columns"] }))).toMatch(
+      /^Written by WinGRC, not by a person: .* the source sheet is unchanged\. Changed: columns\.$/,
+    );
+  });
+
+  it("says plainly when an import replaced a person's edit", () => {
+    expect(whyVersion(v("source_reapplied", { previous_import_version: 1, replaces_edit_in_version: 2 }))).toBe(
+      "Re-imported with the source unchanged since version 1: its content replaced the edit in version 2.",
+    );
+    expect(whyVersion(v("importer_changed", { replaces_edit_in_version: 4 }))).toMatch(
+      /It replaced the edit in version 4\.$/,
+    );
   });
 });

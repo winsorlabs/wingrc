@@ -39,7 +39,7 @@ function summary(over: Partial<LibraryListSummary>): LibraryListSummary {
   return {
     id: "x", list_key: "x", title: "x", is_template: true, source_ref: null, projection_view_id: null,
     control_keys: [], version_number: 1, column_count: 2, row_count: 1, updated_at: WHEN, saved_by: null,
-    merged_from: [], has_changelog: false, ...over,
+    cause: "first_import", merged_from: [], has_changelog: false, ...over,
   };
 }
 
@@ -62,7 +62,7 @@ function version(n: number, rows: string[][], over: Partial<LibraryListVersion> 
   return {
     id: `v${n}`, version_number: n, title: "Risk Register", description: "Identified risks", responsible: null,
     review_cadence: "Annually", columns: ["Risk ID", "Status"], rows, provenance: {}, created_at: WHEN,
-    saved_by: null, ...over,
+    saved_by: null, cause: "first_import", ...over,
   };
 }
 
@@ -243,7 +243,7 @@ describe("editing", () => {
     fireEvent.click(await openRisk(true));
     fireEvent.change(screen.getByRole("textbox", { name: "Status, row 1" }), { target: { value: "Closed" } });
 
-    const v2 = version(2, [["R-1", "Open"], ["R-2", "Open"], ["R-3", "Open"]], { saved_by: "Ada Admin" });
+    const v2 = version(2, [["R-1", "Open"], ["R-2", "Open"], ["R-3", "Open"]], { saved_by: "Ada Admin", cause: "edit" });
     vi.mocked(api.createLibraryListVersion).mockRejectedValueOnce(
       new ListConflictError({
         message: "This list changed while you were editing.",
@@ -275,5 +275,45 @@ describe("editing", () => {
         "org", "risk", [["R-1", "Closed"], ["R-2", "Open"], ["R-3", "Open"]], "v2", "",
       ),
     );
+  });
+});
+
+describe("version history", () => {
+  // Importer-caused versions recur; the history must say the product wrote
+  // one, where a reader looks first -- not only in the audit log.
+  it("tells an importer change from a person's edit, without opening the audit log", async () => {
+    const v1 = version(1, [["R-1", "Open"]], {
+      provenance: { via: "template_import", source_file: "New Lists/RA/3.11.1/Risk Register.xlsx", source_sheet: "3.11.1a" },
+    });
+    const v2 = version(2, [["R-1", "Closed"]], {
+      cause: "edit", saved_by: "Ada Admin", provenance: { via: "api", based_on_version: 1, saved_by: "Ada Admin" },
+    });
+    const v3 = version(3, [["R-1", "Closed"]], {
+      title: "Risk Register & Treatment",
+      cause: "importer_changed",
+      provenance: {
+        via: "template_import", cause: "importer_changed", previous_import_version: 1,
+        changed_fields: ["title"],
+      },
+    });
+    mockIndex();
+    vi.mocked(api.listLibrary).mockResolvedValue([SOD, DEVICES, { ...RISK, cause: "importer_changed", version_number: 3 }]);
+    vi.mocked(api.getLibraryList).mockResolvedValue(detail(v3));
+    vi.mocked(api.getLibraryListVersions).mockResolvedValue([v1, v2, v3]);
+    render(<ListLibraryPanel orgId="org" canWrite={true} />);
+    await screen.findByText("Separation of Duties");
+    // The index already says the product wrote the current version.
+    expect(screen.getByRole("row", { name: /Risk Register/ }).textContent).toMatch(/importer changed/);
+    fireEvent.click(screen.getByRole("button", { name: "Risk Register" }));
+
+    const history = await screen.findByRole("region", { name: "Version history" });
+    await waitFor(() => expect(within(history).getAllByRole("listitem")).toHaveLength(3));
+    const [third, second, first] = within(history).getAllByRole("listitem").map((li) => li.textContent);
+    expect(third).toMatch(/importer changed.*WinGRC importer/);
+    expect(third).toMatch(/not by a person: the importer changed how it reads the source, and the source sheet is unchanged since version 1\. Changed: title\./);
+    expect(second).toMatch(/edited.*Ada Admin/);
+    expect(second).toMatch(/Saved by Ada Admin, from version 1\./);
+    expect(first).toMatch(/imported.*Imported from New Lists\/RA\/3\.11\.1\/Risk Register\.xlsx \(sheet 3\.11\.1a\)/);
+    expect(screen.getByText(/importer changed by WinGRC importer on/)).toBeTruthy();
   });
 });

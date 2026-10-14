@@ -5442,6 +5442,95 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### List versions say why they exist ✅ DONE (2026-10-14)
+
+No migration (`list_version.provenance` is JSONB). Prompted by L.2.1's
+rename reaching live: as built, the rerun would have written v2 of the
+Winsorlabs device template with `via: template_import`, the *same*
+source hash as v1, no reason, and a screen line reading "from the
+template import" -- a reader a year on could not tell the product did it
+rather than someone changing the template.
+
+**Every version now carries a cause** (`list_library.CAUSES`, stored as
+`provenance["cause"]` when written, derived the same way for versions
+written before -- the history is append-only, so the derivation cannot
+drift, and a test asserts stored and derived agree for every case):
+
+- `edit` -- a person saved it (the API; `saved_by` names them).
+- `first_import` -- the first import of its source.
+- `source_changed` -- an import read a changed source sheet.
+- `importer_changed` -- WinGRC's importer changed; the source did not.
+  Same source in, different content out.
+- `source_reapplied` -- an import of an unchanged source put its content
+  back over a later edit. Not new behaviour (an import has always
+  compared against the current version, edits included), but until now
+  it would have read as a source change; the version now names the edit
+  it replaced (`replaces_edit_in_version`), as does any import that
+  replaces one.
+
+**"Did the source change" is judged by the sheet, not the file.** The
+importer recorded only the workbook's file hash, which cannot say
+whether *this* sheet changed (a workbook holds several), misses a
+merged list's second workbook entirely, and moves on every re-save
+(openpyxl stamps the save time). `SheetResult.sheet_sha256` hashes the
+raw cells the list was read from -- the sheet's own, plus each absorbed
+sheet's for a merge -- and the cause compares that when both versions
+have it, else the file hash (every version before this). Each import
+version also records `importer_build` (the `WINGRC_BUILD_SHA` it ran
+under), `previous_import_version` and `changed_fields`, and the
+`list.import` audit row lists each version it wrote with its cause.
+
+**On screen first, not only in the audit log.** The list page has a
+*Version history* (`ListLibraryPanel.tsx`; wording in
+`lib/listLibrary.ts`'s `whyVersion`) with a cause badge, the author --
+a person's name, or "WinGRC importer" for anything an import wrote --
+and one sentence per version, e.g. "Written by WinGRC, not by a person:
+the importer changed how it reads the source, and the source sheet is
+unchanged since version 1. Changed: title, columns, rows." The header
+line, the version picker and the index's updated column carry the same
+label.
+
+**The pattern this exposed: importer changes create version churn on
+customer templates.** Any change to how the importer reads a sheet --
+a merge rule's title or placement, a column normalisation, a header
+parse -- writes a new version of every list it touches, in every org
+the library is imported into, on the next rerun. L.2.1 cost one version
+of one list of 45. A future column tweak that touches every sheet would
+write v3 across all 45 at once, each a real version an assessor may be
+handed. Before shipping one: run the dry-run against a copy of each
+org's library and read the `new_version` count; prefer changes that
+leave already-imported content alone; and expect the history to say
+`importer_changed` for each, which is now what it says. Kept lists
+(adopted copies, L.4) should not be re-imported at all -- that is the
+point of adopting.
+
+Bench (`wingrc_verify_20261014c`), rehearsing the live rerun exactly:
+the real 45-list library imported by the pre-L.2.1 importer (main at
+`036c170`, the shape live's v1s have), then the branch's importer. Dry
+run and apply each proposed 1 `new_version` (the device template:
+title, columns, rows) and 44 unchanged; v2 carries `cause:
+importer_changed`, `previous_import_version: 1` and its
+`changed_fields`; the `list.import` row names v2 by id with that cause;
+a second apply wrote nothing. In a browser the index's *Last changed*
+says "importer changed" for that one list and "imported" for the other
+44, and its page's *Version history* reads v2 "importer changed ·
+WinGRC importer -- Written by WinGRC, not by a person: the importer
+changed how it reads the source, and the source sheet is unchanged since
+version 1. Changed: title, columns, rows." Backend 1689 passed with the
+500 floor, ruff clean, `tsc -b`, vitest 378, build. Mutation-tested,
+each run against `test_list_library.py` and then restored: judging the
+source by the file hash alone fails the sheet-first test and the
+importer-change test; dropping `source_reapplied` fails it and the
+edit-then-reimport test; not storing the cause fails four. (A first
+version of the importer-change test leaned on two fixture builds landing
+in different seconds for its file-hash premise; it now re-saves the
+workbook with a changed document property instead.)
+
+On live the rerun is held until this merges and deploys, so v2 of the
+Winsorlabs device template is written by an importer that says why.
+
+---
+
 ### List library L.3: export, and lists in the assessor bundle ✅ DONE (2026-10-14)
 
 No migration. Spec: `docs/PLAN-list-library.md` §5 and §6. A list joins
