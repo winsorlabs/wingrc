@@ -5594,8 +5594,19 @@ are seeded, from after the checks it guards) and
 `test_baseline_version_move`, and `test_cli_reset_dev`'s non-zero
 check. Checks of the product's own output were left as they are.
 
-On live the rerun is held until this merges and deploys, so v2 of the
-Winsorlabs device template is written by an importer that says why.
+On live the rerun was held until this merged and deployed, so v2 of the
+Winsorlabs device template would be written by an importer that says
+why. Done 2026-10-15 at 6510da2 (this, the conflict rule and the
+formula sweep): the dry run with `--org-id` showed new_version 1
+(`3-1-1c-authorized-devices`: title, columns, rows), unchanged 44,
+conflict 0, and the apply wrote exactly that one version. v2's
+provenance reads `importer_changed`, previous import v1, no `saved_by`,
+`importer_build` 6510da2; v1 predates the sheet hash, so the cause came
+from the file-hash fallback, the file hash being unchanged. The
+`list.import` audit row is `system`, with that one version and an empty
+`conflicts`. Over HTTP the device list's summary and version history
+return `importer_changed` (v2) and `first_import` (v1); the other 44
+read `first_import`.
 
 ---
 
