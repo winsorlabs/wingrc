@@ -5575,7 +5575,24 @@ importer-change test; dropping `source_reapplied` fails it and the
 edit-then-reimport test; not storing the cause fails four. (A first
 version of the importer-change test leaned on two fixture builds landing
 in different seconds for its file-hash premise; it now re-saves the
-workbook with a changed document property instead.)
+workbook with a changed document property instead.) **Resolved, with
+its cause read from the log, not inferred:** the red `integration` run
+on 519d894 failed `source_sha256 != source_sha256` with the same hash on
+both sides -- both builds wrote byte-identical workbooks because
+openpyxl's `docProps/core.xml` timestamp landed in the same second. A
+fixed timestamp would fail every run, and it passed on the bench and on
+7f63555, so the clock is the only cause; the re-save fix is confirmed,
+not lucky. That line was a precondition dressed as an assertion: the
+behaviour under test is the sheet hash staying put, and distinct file
+bytes are only what makes that mean anything, so its failure read as
+"the product is wrong" when the fixture had not set up the condition.
+It now says so (`"fixture must produce distinct file bytes or this
+test proves nothing"`), and a sweep gave the same treatment to its five
+siblings -- the `# sanity:` asserts in `test_assessment_completion`,
+`test_audit_auth` (two), `test_audit_log` (moved up to where the rows
+are seeded, from after the checks it guards) and
+`test_baseline_version_move`, and `test_cli_reset_dev`'s non-zero
+check. Checks of the product's own output were left as they are.
 
 On live the rerun is held until this merges and deploys, so v2 of the
 Winsorlabs device template is written by an importer that says why.

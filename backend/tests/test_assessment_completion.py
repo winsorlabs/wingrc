@@ -237,7 +237,9 @@ def test_completion_creates_no_sprs_submission_row(client, db_session, fake_msp_
     before_rows = db_session.scalars(
         select(SprsSubmission).where(SprsSubmission.org_id == d["org"].id)
     ).all()
-    assert before_rows == []  # sanity: there was nothing before either
+    assert before_rows == [], (
+        "fixture must start with no submission rows or this test proves nothing"
+    )
 
     r = client.post(_complete_url(d))
     assert r.status_code == 200

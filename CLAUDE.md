@@ -126,6 +126,11 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   over-marked tests. Seven files have been corrected in both directions
   (three under-marked 2026-09-29, four over-marked 2026-09-30); see
   `docs/roadmap.md`'s CI-red and N.3 entries.
+- **A test's precondition carries a message saying it is one**, placed
+  where the fixture sets it up: `assert a != b, "fixture must … or this
+  test proves nothing"`. A bare assert on the setup fails as if the
+  product were wrong (519d894's red run; `docs/roadmap.md`'s list
+  version cause entry).
 - CI (`.github/workflows/ci.yml`) runs `backend` with **no database at
   all** and `integration` against `postgres:18`. Both run
   unconditionally — `integration` deliberately has no `needs: backend`,

@@ -195,7 +195,7 @@ def test_no_raw_api_token_leaks_into_audit_log(client, db_session, fake_msp_admi
         json={"name": "CI", "role": "customer_poc"},
     )
     raw_token = r.json()["token"]
-    assert raw_token  # sanity: we actually got a secret to search for
+    assert raw_token, "fixture must yield a token to search for or this test proves nothing"
 
     rows = db_session.scalars(
         select(AuditLog).where(AuditLog.org_id == fake_msp_admin.org_id)
@@ -221,7 +221,9 @@ def test_no_raw_invite_token_leaks_into_audit_log(client, db_session, fake_msp_a
     )
     assert r.status_code == 201
     raw_invite_token = r.json()["invite_token"]
-    assert raw_invite_token  # sanity: we actually got a secret to search for
+    assert raw_invite_token, (
+        "fixture must yield an invite token to search for or this test proves nothing"
+    )
 
     rows = db_session.scalars(
         select(AuditLog).where(

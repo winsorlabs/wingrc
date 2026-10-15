@@ -210,6 +210,9 @@ def test_filter_by_date_range(client, db_session, fake_msp_admin):
     recent_row = _seed_row(
         db_session, org_id=org.id, action="test.recent", created_at=now - timedelta(hours=1)
     )
+    assert old_row.id != recent_row.id, (
+        "fixture must seed two distinct rows or this test proves nothing"
+    )
 
     # params=, not an f-string: isoformat()'s "+00:00" offset contains a
     # literal "+", which a naive f-string in a query string decodes as a
@@ -234,8 +237,6 @@ def test_filter_by_date_range(client, db_session, fake_msp_admin):
     body2 = r2.json()
     assert body2["total"] == 1
     assert body2["items"][0]["action"] == "test.old"
-
-    assert old_row.id != recent_row.id  # sanity: two distinct rows really were seeded
 
 
 @pytest.mark.integration
