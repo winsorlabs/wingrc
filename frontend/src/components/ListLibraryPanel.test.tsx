@@ -429,7 +429,7 @@ describe("tags (L.2.2)", () => {
     vi.mocked(api.removeListTag).mockRejectedValue(
       new ApiError("CM.L2-3.4.1 cannot be removed from 3-11-1a-risk-register: evidence rests on it (Evidence 'Q3 export' in assessment 'FY26'). Unlink that evidence first.", 409),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Remove CM.L2-3.4.1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, remove CM.L2-3.4.1" }));
     expect(await screen.findByText(/Evidence 'Q3 export' in assessment 'FY26'/)).toBeTruthy();
   });
 

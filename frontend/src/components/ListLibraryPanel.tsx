@@ -602,7 +602,7 @@ function LibraryListView({
               disabled={tagBusy}
               onClick={() => changeTag("remove", confirmRemove)}
             >
-              Remove {confirmRemove}
+              Yes, remove {confirmRemove}
             </button>{" "}
             <button type="button" className="btn-ghost btn-sm" onClick={() => setConfirmRemove(null)}>
               Keep it
