@@ -3251,7 +3251,12 @@ class ListControlTag(Base):
     imported before, and independently of, any framework catalog."""
 
     __tablename__ = "list_control_tag"
-    __table_args__ = (UniqueConstraint("list_id", "control_key", name="uq_list_control_tag"),)
+    __table_args__ = (
+        UniqueConstraint("list_id", "control_key", name="uq_list_control_tag"),
+        CheckConstraint(
+            "added_via IN ('template_import', 'api')", name="ck_list_control_tag_added_via"
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -3263,3 +3268,52 @@ class ListControlTag(Base):
         UUID(as_uuid=True), ForeignKey("organization.id"), index=True
     )
     control_key: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    # Who put it here: "template_import" (row 2 of the source sheet) or "api"
+    # (a person). An import manages its own tags only -- it adds what row 2
+    # names and removes what row 2 stopped naming, and never touches a tag
+    # a person added (migration 0065).
+    added_via: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'template_import'")
+    )
+
+
+class ListTagEvent(Base):
+    """One tag added to or removed from a list: who, when, and how.
+
+    Tags are not version content -- `list_control_tag` sits beside
+    `list_version`, so a tag change writes no version. Without this, the
+    question an assessor will ask once L.4 links lists as evidence ("when
+    did this list start claiming CM.L2-3.4.2, and who said so?") has no
+    answer. Append-only like `list_version` (migration 0065's trigger), and
+    shown in the list's history beside its versions -- where a person looks
+    first -- not only in the audit log."""
+
+    __tablename__ = "list_tag_event"
+    __table_args__ = (
+        CheckConstraint("change IN ('added', 'removed')", name="ck_list_tag_event_change"),
+        CheckConstraint("via IN ('template_import', 'api')", name="ck_list_tag_event_via"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    list_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("list_definition.id", ondelete="CASCADE"), index=True
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    # Order of record. Several events share a transaction, and so a
+    # created_at, whenever one request changes more than one tag.
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True), nullable=False)
+    control_key: Mapped[str] = mapped_column(String(40), nullable=False)
+    change: Mapped[str] = mapped_column(String(10), nullable=False)
+    via: Mapped[str] = mapped_column(String(20), nullable=False)
+    saved_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The list's current version when the tag changed, so the history can
+    # place the change among the versions.
+    at_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

@@ -28,7 +28,7 @@ from sqlalchemy import select
 from app.auth import get_current_user
 from app.bundle_service import render_bundle, snapshot_bundle
 from app.db import get_session
-from app.list_library import create_version, set_tags
+from app.list_library import add_tag, create_version, remove_tag, tag_origins
 from app.main import app
 from app.models import (
     Assessment,
@@ -114,8 +114,16 @@ def _list(db_session, org_id, key, rows, tags=("AC.L2-3.1.1", "CM.L2-3.4.1"), te
          "columns": ["Name", "Serial"], "rows": rows},
         {"via": "test"},
     )
-    set_tags(db_session, d, tuple(tags))
+    _retag(db_session, d, tags)
     return d
+
+
+def _retag(db_session, d, tags):
+    """Replaces a list's tags, inserting them in the order given."""
+    for k in tag_origins(db_session, d.id):
+        remove_tag(db_session, d, k, "api", "test")
+    for k in tags:
+        add_tag(db_session, d, k, "api", "test")
 
 
 def _client(db_session, org_id, role="msp_engineer") -> TestClient:
@@ -252,9 +260,9 @@ def test_two_exports_of_unchanged_data_are_byte_identical(db_session):
     bundle_1 = bundle()
     # Perturb physical row order between exports: rewrite the tags in a
     # different insertion order, and write an unrelated list version.
-    set_tags(db_session, d, tuple(reversed(tags)))
-    set_tags(db_session, other, ("CM.L2-3.4.1", "AC.L2-3.1.1"))
-    set_tags(db_session, other, ("AC.L2-3.1.1", "CM.L2-3.4.1"))
+    _retag(db_session, d, tuple(reversed(tags)))
+    _retag(db_session, other, ("CM.L2-3.4.1", "AC.L2-3.1.1"))
+    _retag(db_session, other, ("AC.L2-3.1.1", "CM.L2-3.4.1"))
     _list(db_session, org_id, "unrelated", [["Z", "Z"]])
     db_session.flush()
     export_2 = client.get(EXPORT.format(org=org_id, list=d.id)).content

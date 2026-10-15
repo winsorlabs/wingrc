@@ -6,7 +6,7 @@
 // race keeps the second editor's work and tells them what happened.
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, ListConflictError } from "../api";
+import { api, ApiError, ListConflictError } from "../api";
 import type { LibraryListDetail, LibraryListSummary, LibraryListVersion, ListViewSummary } from "../types";
 import { ListLibraryPanel } from "./ListLibraryPanel";
 
@@ -14,6 +14,7 @@ vi.mock("../api", async () => {
   const actual = await vi.importActual<typeof import("../api")>("../api");
   return {
     ListConflictError: actual.ListConflictError,
+    ApiError: actual.ApiError,
     api: {
       listLibrary: vi.fn(),
       listViews: vi.fn(),
@@ -24,6 +25,10 @@ vi.mock("../api", async () => {
       createLibraryListVersion: vi.fn(),
       exportListView: vi.fn(),
       exportLibraryList: vi.fn(),
+      getListTagEvents: vi.fn().mockResolvedValue([]),
+      addListTag: vi.fn(),
+      removeListTag: vi.fn(),
+      createLibraryList: vi.fn(),
     },
   };
 });
@@ -31,6 +36,8 @@ vi.mock("../api", async () => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  // clearAllMocks keeps implementations; a test's tag history must not leak.
+  vi.mocked(api.getListTagEvents).mockResolvedValue([]);
 });
 
 const WHEN = "2026-10-10T09:10:00Z";
@@ -306,7 +313,7 @@ describe("version history", () => {
     expect(screen.getByRole("row", { name: /Risk Register/ }).textContent).toMatch(/importer changed/);
     fireEvent.click(screen.getByRole("button", { name: "Risk Register" }));
 
-    const history = await screen.findByRole("region", { name: "Version history" });
+    const history = await screen.findByRole("region", { name: "History" });
     await waitFor(() => expect(within(history).getAllByRole("listitem")).toHaveLength(3));
     const [third, second, first] = within(history).getAllByRole("listitem").map((li) => li.textContent);
     expect(third).toMatch(/importer changed.*WinGRC importer/);
@@ -315,5 +322,161 @@ describe("version history", () => {
     expect(second).toMatch(/Saved by Ada Admin, from version 1\./);
     expect(first).toMatch(/imported.*Imported from New Lists\/RA\/3\.11\.1\/Risk Register\.xlsx \(sheet 3\.11\.1a\)/);
     expect(screen.getByText(/importer changed by WinGRC importer on/)).toBeTruthy();
+  });
+});
+
+describe("the List Builder (L.2.2)", () => {
+  it("is offered only to a role that may build, and opens the new list once created", async () => {
+    mockIndex();
+    render(<ListLibraryPanel orgId="org" canWrite={true} />);
+    await screen.findByText("Separation of Duties");
+    expect(screen.queryByRole("button", { name: "+ Add list" })).toBeNull();
+    cleanup();
+
+    mockIndex();
+    const v1 = version(1, [], {
+      title: "Visitor Log", columns: ["Date", "Visitor"], cause: "created_by_hand", saved_by: "Pat Builder",
+      created_at: "2026-10-15T14:02:00Z",
+      provenance: { via: "api", cause: "created_by_hand", saved_by: "Pat Builder", origin_note: "Old SharePoint sheet" },
+    });
+    const built = detail(v1, { id: "vis", list_key: "visitor-log", is_template: false, source_ref: null, control_keys: ["PE.L2-3.10.3"] });
+    vi.mocked(api.createLibraryList).mockResolvedValue(built);
+    vi.mocked(api.getLibraryList).mockResolvedValue(built);
+    vi.mocked(api.getLibraryListVersions).mockResolvedValue([v1]);
+    render(<ListLibraryPanel orgId="org" canWrite={true} canBuild={true} />);
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add list" }));
+
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Visitor Log" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Practice to add" }), { target: { value: "3.10.3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add practice" }));
+    fireEvent.change(screen.getByLabelText("What goes here"), { target: { value: "Escorted visitors" } });
+    fireEvent.change(screen.getByLabelText("Responsible"), { target: { value: "Office Manager" } });
+    fireEvent.change(screen.getByLabelText("Review cadence"), { target: { value: "Monthly" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Column 1" }), { target: { value: "Date" } });
+    fireEvent.click(screen.getByRole("button", { name: "+ Add column" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Column 2" }), { target: { value: "Visitor" } });
+    fireEvent.change(screen.getByLabelText(/Where it came from/), { target: { value: "Old SharePoint sheet" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create list (version 1)" }));
+
+    await waitFor(() =>
+      expect(api.createLibraryList).toHaveBeenCalledWith("org", {
+        title: "Visitor Log", control_keys: ["3.10.3"], description: "Escorted visitors",
+        responsible: "Office Manager", review_cadence: "Monthly", columns: ["Date", "Visitor"],
+        origin_note: "Old SharePoint sheet",
+      }),
+    );
+    const history = await screen.findByRole("region", { name: "History" });
+    await waitFor(() =>
+      expect(within(history).getByText(/Written by Pat Builder, from nothing: built by hand in WinGRC on 2026-10-15/)).toBeTruthy(),
+    );
+    // A person's note, kept apart from any import source.
+    expect(screen.queryByText("Imported from")).toBeNull();
+    expect(screen.getByText("Where it came from")).toBeTruthy();
+    expect(screen.getByText(/a note by Pat Builder, not an import source/)).toBeTruthy();
+  });
+
+  it("shows the server's refusal, and keeps the form, when a practice is not a requirement", async () => {
+    mockIndex();
+    vi.mocked(api.createLibraryList).mockRejectedValue(new ApiError("'3.1.23' is not a NIST SP 800-171 Rev 2 requirement", 422));
+    render(<ListLibraryPanel orgId="org" canWrite={true} canBuild={true} />);
+    fireEvent.click(await screen.findByRole("button", { name: "+ Add list" }));
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "X" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Practice to add" }), { target: { value: "3.1.23" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add practice" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Column 1" }), { target: { value: "A" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create list (version 1)" }));
+    expect(await screen.findByText(/not a NIST SP 800-171 Rev 2 requirement/)).toBeTruthy();
+    expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("X");
+  });
+});
+
+describe("tags (L.2.2)", () => {
+  const v1 = version(1, [["R-1", "Open"]]);
+  const tagged = (keys: string[]) => detail(v1, { control_keys: keys });
+
+  async function openRisk(keys: string[], canWrite = true) {
+    mockIndex();
+    vi.mocked(api.getLibraryList).mockResolvedValue(tagged(keys));
+    vi.mocked(api.getLibraryListVersions).mockResolvedValue([v1]);
+    render(<ListLibraryPanel orgId="org" canWrite={canWrite} />);
+    await screen.findByText("Separation of Duties");
+    fireEvent.click(screen.getByRole("button", { name: "Risk Register" }));
+    return screen.findByRole("region", { name: "Practices this list serves" });
+  }
+
+  it("adds a practice, refreshes the list and the index, and shows who did it in the history", async () => {
+    const serves = await openRisk(["RA.L2-3.11.1"]);
+    vi.mocked(api.addListTag).mockResolvedValue({} as never);
+    vi.mocked(api.getLibraryList).mockResolvedValue(tagged(["CM.L2-3.4.2", "RA.L2-3.11.1"]));
+    vi.mocked(api.getListTagEvents).mockResolvedValue([
+      { id: "t1", control_key: "CM.L2-3.4.2", change: "added", via: "api", saved_by: "Tess Tagger", at_version: 1, note: null, created_at: "2026-10-15T15:00:00Z" },
+    ]);
+    fireEvent.change(within(serves).getByRole("textbox", { name: "Practice to tag" }), { target: { value: "3.4.2" } });
+    fireEvent.click(within(serves).getByRole("button", { name: "Add tag" }));
+    await waitFor(() => expect(api.addListTag).toHaveBeenCalledWith("org", "risk", "3.4.2"));
+    await waitFor(() => expect(api.listLibrary).toHaveBeenCalledTimes(2));
+    const history = await screen.findByRole("region", { name: "History" });
+    await waitFor(() =>
+      expect(within(history).getByText(/Tagged CM\.L2-3\.4\.2: this list became a candidate for it\. By Tess Tagger\./)).toBeTruthy(),
+    );
+  });
+
+  it("asks before removing a practice, and shows the evidence that blocks it", async () => {
+    await openRisk(["CM.L2-3.4.1", "RA.L2-3.11.1"]);
+    fireEvent.click(screen.getByRole("button", { name: "Remove CM.L2-3.4.1" }));
+    expect(api.removeListTag).not.toHaveBeenCalled();
+    expect(screen.getByText(/refused while evidence rests on this list/)).toBeTruthy();
+    vi.mocked(api.removeListTag).mockRejectedValue(
+      new ApiError("CM.L2-3.4.1 cannot be removed from 3-11-1a-risk-register: evidence rests on it (Evidence 'Q3 export' in assessment 'FY26'). Unlink that evidence first.", 409),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Remove CM.L2-3.4.1" }));
+    expect(await screen.findByText(/Evidence 'Q3 export' in assessment 'FY26'/)).toBeTruthy();
+  });
+
+  it("offers no removal of the last practice, and no tag controls to a read-only role", async () => {
+    await openRisk(["RA.L2-3.11.1"]);
+    expect(screen.queryByRole("button", { name: "Remove RA.L2-3.11.1" })).toBeNull();
+    cleanup();
+    await openRisk(["CM.L2-3.4.1", "RA.L2-3.11.1"], false);
+    expect(screen.queryByRole("button", { name: /^Remove / })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Practice to tag" })).toBeNull();
+  });
+});
+
+describe("column edits (L.2.2)", () => {
+  const v1 = version(1, [["R-1", "Open"], ["R-2", ""]]);
+
+  it("says what removing a column loses before saving, and saves the new columns", async () => {
+    mockIndex();
+    vi.mocked(api.getLibraryList).mockResolvedValue(detail(v1));
+    vi.mocked(api.getLibraryListVersions).mockResolvedValue([v1]);
+    render(<ListLibraryPanel orgId="org" canWrite={true} />);
+    await screen.findByText("Separation of Duties");
+    fireEvent.click(screen.getByRole("button", { name: "Risk Register" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit rows" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove column Status" }));
+    expect(screen.getByLabelText("Column changes").textContent).toMatch(
+      /Saving removes the column Status \(1 filled cell\) from version 2: 1 filled cell will not be in it\. Version 1 keeps it, with every value\./,
+    );
+    expect(api.createLibraryListVersion).not.toHaveBeenCalled();
+    vi.mocked(api.createLibraryListVersion).mockResolvedValue(version(2, [["R-1"], ["R-2"]]));
+    fireEvent.click(screen.getByRole("button", { name: "Save as version 2, removing 1 filled cell" }));
+    await waitFor(() =>
+      expect(api.createLibraryListVersion).toHaveBeenCalledWith("org", "risk", [["R-1"], ["R-2"]], "v1", "", ["Risk ID"]),
+    );
+  });
+
+  it("says a rename keeps its cells", async () => {
+    mockIndex();
+    vi.mocked(api.getLibraryList).mockResolvedValue(detail(v1));
+    vi.mocked(api.getLibraryListVersions).mockResolvedValue([v1]);
+    render(<ListLibraryPanel orgId="org" canWrite={true} />);
+    await screen.findByText("Separation of Duties");
+    fireEvent.click(screen.getByRole("button", { name: "Risk Register" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit rows" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Column 2 name" }), { target: { value: "State" } });
+    expect(screen.getByLabelText("Column changes").textContent).toMatch(/Renamed: Status → State\. A renamed column keeps its cells\./);
+    expect(screen.getByRole("button", { name: "Save as version 2" })).toBeTruthy();
   });
 });

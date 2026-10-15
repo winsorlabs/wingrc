@@ -41,6 +41,13 @@ _FAMILY = {
     1: "AC", 2: "AT", 3: "AU", 4: "CM", 5: "IA", 6: "IR", 7: "MA",
     8: "MP", 9: "PS", 10: "PE", 11: "RA", 12: "CA", 13: "SC", 14: "SI",
 }
+# Requirements per family in NIST SP 800-171 Rev 2 (3.1.1-3.1.22 ... 3.14.1-
+# 3.14.7): 110 in all, the same 110 the SPRS weights cover. Only a person
+# typing a practice is checked against it (`practice_key`); a template's
+# row 2 is read as written and reported, never corrected.
+_REQUIREMENTS = {
+    1: 22, 2: 3, 3: 9, 4: 9, 5: 11, 6: 3, 7: 6, 8: 9, 9: 2, 10: 6, 11: 3, 12: 4, 13: 16, 14: 7,
+}
 _PRACTICE_LINE = re.compile(r"CMMC Practice\s*/\s*NIST 800-171\s*:?(.*)", re.I | re.S)
 _REQUIREMENT = re.compile(r"(?:\b([A-Z]{2})\.L2-)?\b3\.(\d{1,2})\.(\d{1,2})\b")
 _RESPONSIBLE = re.compile(
@@ -186,6 +193,24 @@ def control_keys(practice_text: str) -> tuple[str, ...]:
         if key not in keys:
             keys.append(key)
     return tuple(keys)
+
+
+def practice_key(text: str) -> str:
+    """One practice a person typed -- 'CM.L2-3.4.1', 'cm.l2-3.4.1' or
+    '3.4.1' -- as the key row 2 would have produced, or ValueError. Written
+    the same way as a template's row 2 keys, so a list built by hand and an
+    imported one name a practice identically; then held to the 110
+    requirements, and to the family its number belongs to."""
+    raw = text.strip()
+    m = re.fullmatch(r"(?:([A-Za-z]{2})\.L2-)?3\.(\d{1,2})\.(\d{1,2})", raw, re.I)
+    if not m:
+        raise ValueError(f"{raw!r} is not a practice id like CM.L2-3.4.1")
+    fam, mid, last = (m.group(1) or "").upper(), int(m.group(2)), int(m.group(3))
+    if not 1 <= last <= _REQUIREMENTS.get(mid, 0):
+        raise ValueError(f"{raw!r} is not a NIST SP 800-171 Rev 2 requirement")
+    if fam and fam != _FAMILY[mid]:
+        raise ValueError(f"{raw!r}: requirement 3.{mid}.x is in {_FAMILY[mid]}, not {fam}")
+    return f"{_FAMILY[mid]}.L2-3.{mid}.{last}"
 
 
 def _cell_text(value: Any) -> str:

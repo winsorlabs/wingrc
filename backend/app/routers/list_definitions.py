@@ -6,14 +6,26 @@ scope-graph `ListView`s (routers/scope.py), which keep working unchanged.
 
 Endpoints:
   GET  /orgs/{org_id}/list-definitions                       ?control_key= filter
+  POST /orgs/{org_id}/list-definitions                       build a list by hand (L.2.2)
   GET  /orgs/{org_id}/list-definitions/{list_id}             current version
   GET  /orgs/{org_id}/list-definitions/{list_id}/versions    every version
   GET  /orgs/{org_id}/list-definitions/{list_id}/versions/{n}
   GET  /orgs/{org_id}/list-definitions/{list_id}/export        .xlsx, ?version=n
   POST /orgs/{org_id}/list-definitions/{list_id}/versions    edit = new version
+  POST   /orgs/{org_id}/list-definitions/{list_id}/tags        add a practice tag
+  DELETE /orgs/{org_id}/list-definitions/{list_id}/tags/{key}  remove one
+  GET  /orgs/{org_id}/list-definitions/{list_id}/tag-events  who tagged what, when
   GET  /orgs/{org_id}/list-library/import-report             what was never imported
 
-The only write is creating a version. It names the version it was based on
+Who may write (L.2.2): every role but c3pao_assessor edits rows and adds
+or removes tags; building a new list is the MSP's -- msp_admin,
+consultant_admin, msp_engineer -- because which registers an org keeps
+under which practices is the MSP's library to shape, while a tenant
+contact keeping its own lists current, and pointing one at a further
+practice, is ordinary upkeep. Tag removal is guarded by evidence, not by
+role (list_library.tag_removal_blockers).
+
+Content changes only by creating a version. It names the version it was based on
 and is refused if that is no longer current -- the same optimistic
 concurrency the document library uses, so two editors cannot silently
 overwrite each other. The 409 says who saved the newer version and when,
@@ -36,8 +48,11 @@ from .. import list_library
 from ..audit import log_event
 from ..auth import CurrentUser, get_current_user, require_org_access, require_write
 from ..db import get_session
+from ..list_templates import practice_key
 from ..models import AuditLog, ListControlTag, ListDefinition, ListVersion
 from ..render import render_list_version_bytes
+
+BUILD_ROLES = ("msp_admin", "consultant_admin", "msp_engineer")
 
 router = APIRouter(
     prefix="/orgs",
@@ -117,6 +132,57 @@ class ImportReportOut(BaseModel):
     recorded_at: datetime | None
     not_imported: list[NotImportedOut]
     not_ingested: list[str]
+
+
+class ListCreateIn(BaseModel):
+    """The template header block's fields, and only those (L.2.2): one
+    definition schema, two ways in. `origin_note` is a person's note on
+    where the content came from -- never import lineage."""
+
+    title: str = Field(min_length=1, max_length=400)
+    control_keys: list[str] = Field(min_length=1)  # row 2
+    description: str = ""  # row 4, What goes here
+    responsible: str = ""  # row 5
+    review_cadence: str = ""  # row 5
+    columns: list[str] = Field(min_length=1)  # row 10
+    rows: list[list[str]] = Field(default_factory=list)
+    origin_note: str = Field(default="", max_length=2000)
+
+    @model_validator(mode="after")
+    def _check(self) -> ListCreateIn:
+        if not self.title.strip():
+            raise ValueError("a list needs a title")
+        if any(not c.strip() for c in self.columns):
+            raise ValueError("column names must not be blank")
+        if len({c.strip().lower() for c in self.columns}) != len(self.columns):
+            raise ValueError("column names must be distinct")
+        self.control_keys = list(dict.fromkeys(practice_key(k) for k in self.control_keys))
+        bad = [i for i, r in enumerate(self.rows) if len(r) != len(self.columns)]
+        if bad:
+            raise ValueError(
+                f"rows {bad[:5]} do not have {len(self.columns)} cells, one per column"
+            )
+        return self
+
+
+class TagIn(BaseModel):
+    control_key: str
+
+    @model_validator(mode="after")
+    def _check(self) -> TagIn:
+        self.control_key = practice_key(self.control_key)
+        return self
+
+
+class TagEventOut(BaseModel):
+    id: uuid.UUID
+    control_key: str
+    change: str  # added | removed
+    via: str  # template_import | api
+    saved_by: str | None
+    at_version: int | None
+    note: str | None
+    created_at: datetime
 
 
 class NewVersionIn(BaseModel):
@@ -199,6 +265,47 @@ def list_definitions(
             )
         )
     return out
+
+
+@router.post("/{org_id}/list-definitions", response_model=ListDetailOut, status_code=201)
+def create_list_definition(
+    org_id: uuid.UUID,
+    body: ListCreateIn,
+    session: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(require_org_access(*BUILD_ROLES)),
+) -> ListDetailOut:
+    """Build a list by hand. v1 records `created_by_hand`, never
+    `first_import`: there was no source."""
+    who = current_user.display_name or current_user.email
+    content = {
+        "title": body.title.strip(), "description": body.description.strip(),
+        "responsible": body.responsible.strip(), "review_cadence": body.review_cadence.strip(),
+        "columns": [c.strip() for c in body.columns], "rows": body.rows,
+    }
+    try:
+        d = list_library.create_by_hand(
+            session, org_id, content, tuple(body.control_keys), who, body.origin_note
+        )
+    except list_library.ListKeyTaken as e:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": f"This org already has a list named like that ({e.existing.list_key}). "
+                "Give the new one a different title.",
+                "list_id": str(e.existing.id),
+            },
+        ) from None
+    log_event(
+        session, org_id=org_id, action="list.create", entity_type="list_definition",
+        entity_id=d.id,
+        after_value={
+            "version_number": 1, "columns": content["columns"], "row_count": len(body.rows),
+            "control_keys": list(body.control_keys),
+        },
+        context={"via": "api", "list_key": d.list_key, "cause": "created_by_hand"},
+    )
+    session.commit()
+    return get_list_definition(org_id, d.id, session)
 
 
 @router.get("/{org_id}/list-definitions/{list_id}", response_model=ListDetailOut)
@@ -349,11 +456,99 @@ def create_list_version(
             "version_number": v.version_number,
             "row_count": len(v.rows),
             **list_library.row_changes(base.rows, v.rows),
+            # By name: rows are positional, so a renamed column keeps its
+            # cells and reads here as one removed and one added.
+            "columns_added": [c for c in columns if c not in base.columns],
+            "columns_removed": [c for c in base.columns if c not in columns],
         },
         context={"via": "api", "list_key": d.list_key, "note": body.note or ""},
     )
     session.commit()
     return _version_out(v, "edit")
+
+
+def _event_out(e) -> TagEventOut:
+    return TagEventOut(
+        id=e.id, control_key=e.control_key, change=e.change, via=e.via, saved_by=e.saved_by,
+        at_version=e.at_version, note=e.note, created_at=e.created_at,
+    )
+
+
+@router.get(
+    "/{org_id}/list-definitions/{list_id}/tag-events", response_model=list[TagEventOut]
+)
+def list_tag_events(
+    org_id: uuid.UUID, list_id: uuid.UUID, session: Session = Depends(get_session)
+) -> list[TagEventOut]:
+    d = _definition(session, org_id, list_id)
+    return [_event_out(e) for e in list_library.tag_events(session, d.id)]
+
+
+@router.post(
+    "/{org_id}/list-definitions/{list_id}/tags", response_model=TagEventOut, status_code=201
+)
+def add_list_tag(
+    org_id: uuid.UUID,
+    list_id: uuid.UUID,
+    body: TagIn,
+    session: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(require_org_access()),
+) -> TagEventOut:
+    """Tag a list to a further practice. Adding is safe -- it makes the list
+    a candidate there, nothing more -- so it needs only the record."""
+    d = _definition(session, org_id, list_id)
+    event = list_library.add_tag(
+        session, d, body.control_key, "api", current_user.display_name or current_user.email
+    )
+    if event is None:
+        raise HTTPException(status_code=409, detail=f"This list already serves {body.control_key}.")
+    log_event(
+        session, org_id=org_id, action="list.tag_add", entity_type="list_definition",
+        entity_id=d.id, after_value={"control_key": body.control_key},
+        context={"via": "api", "list_key": d.list_key, "tag_event_id": str(event.id)},
+    )
+    session.commit()
+    return _event_out(event)
+
+
+@router.delete(
+    "/{org_id}/list-definitions/{list_id}/tags/{control_key}", response_model=TagEventOut
+)
+def remove_list_tag(
+    org_id: uuid.UUID,
+    list_id: uuid.UUID,
+    control_key: str,
+    session: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(require_org_access()),
+) -> TagEventOut:
+    """The dangerous direction: it narrows what the list claims to serve.
+    Refused while evidence rests on the tag, naming the link; refused for
+    the last tag, since a list serves at least one practice (row 2)."""
+    d = _definition(session, org_id, list_id)
+    origins = list_library.tag_origins(session, d.id)
+    if control_key not in origins:
+        raise HTTPException(status_code=404, detail=f"This list does not serve {control_key}.")
+    if len(origins) == 1:
+        raise HTTPException(
+            status_code=409,
+            detail="A list serves at least one practice; add another before removing this one.",
+        )
+    try:
+        event = list_library.remove_tag(
+            session, d, control_key, "api", current_user.display_name or current_user.email
+        )
+    except list_library.TagRemovalRefused as e:
+        raise HTTPException(
+            status_code=409, detail={"message": str(e), "blocked_by": e.blockers}
+        ) from None
+    log_event(
+        session, org_id=org_id, action="list.tag_remove", entity_type="list_definition",
+        entity_id=d.id,
+        before_value={"control_key": control_key, "added_via": origins[control_key]},
+        context={"via": "api", "list_key": d.list_key, "tag_event_id": str(event.id)},
+    )
+    session.commit()
+    return _event_out(event)
 
 
 @router.get("/{org_id}/list-library/import-report", response_model=ImportReportOut)
