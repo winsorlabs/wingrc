@@ -716,8 +716,17 @@ def lists_import_cmd(
         ..., help="Target org id. Required: there is deliberately no default."
     ),
     apply: bool = typer.Option(False, help="Write the import (default: dry-run only)"),
+    overwrite_edit: list[str] = typer.Option(
+        [],
+        help="Replace this person's edit with the import: LIST_KEY@vN exactly as the dry run "
+        "prints it under CONFLICTS. Repeat per edit; there is no 'all'.",
+    ),
 ) -> None:
     """Import the list template library (roadmap L.1). Dry-run by default.
+
+    A list a person edited since it was imported is a CONFLICT: the dry run
+    lists it first, and --apply leaves it as it is unless that exact edit
+    is named with --overwrite-edit.
 
     Reports every sheet -- importable, non-conforming, needs normalization,
     merged, superseded -- and what an apply would create. Re-running on the
@@ -733,11 +742,14 @@ def lists_import_cmd(
     """
     import uuid as _uuid
 
-    from .list_library import apply_import, diff_import, record_import
+    from .list_library import ImportRefused, apply_import, diff_import, record_import
     from .list_templates import plan_import
     from .models import Organization
     from .rls import set_current_org
 
+    if overwrite_edit and not apply:
+        typer.echo("--overwrite-edit only means something with --apply", err=True)
+        raise typer.Exit(2)
     lists_root = library / "New Lists"
     if not lists_root.is_dir():
         typer.echo(f"No 'New Lists' folder under {library}", err=True)
@@ -779,10 +791,32 @@ def lists_import_cmd(
         with_logs = [d for d in defs if d.changelogs]
         typer.echo(f"Changelog provenance attached to {len(with_logs)} list(s)")
 
-        diff = (apply_import if apply else diff_import)(
-            session, target, plan, **({"changelog_root": changelog_root} if apply else {})
-        )
-        for action in ("create", "new_version", "unchanged"):
+        try:
+            diff = (
+                apply_import(session, target, plan, changelog_root, frozenset(overwrite_edit))
+                if apply
+                else diff_import(session, target, plan)
+            )
+        except ImportRefused as e:
+            session.rollback()
+            typer.echo(f"Refused: {e}", err=True)
+            raise typer.Exit(2) from None
+        conflicts = diff.of("conflict")
+        if conflicts:
+            typer.echo(
+                f"CONFLICTS: {len(conflicts)} list(s) a person edited since import"
+                f"{' -- left as they are' if apply else ''}:"
+            )
+            for a in conflicts:
+                who = (a.edit.provenance or {}).get("saved_by") or "a person"
+                typer.echo(
+                    f"  {a.edit_ref}  saved by {who} {a.edit.created_at:%Y-%m-%d %H:%M} UTC; "
+                    f"the import would change {', '.join(a.changed_fields)}"
+                )
+            typer.echo(
+                "  To replace one, re-run with --apply --overwrite-edit <ref>, once per edit."
+            )
+        for action in ("create", "new_version", "unchanged", "conflict"):
             typer.echo(f"  {action}: {len(diff.of(action))}")
         for a in diff.of("new_version"):
             typer.echo(f"    {a.sheet.list_key}: {', '.join(a.changed_fields)}")

@@ -5442,6 +5442,57 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### An import never replaces a person's edit unless that edit is named ✅ DONE (2026-10-14)
+
+No migration. The follow-up the cause work exposed: `source_reapplied`
+recorded that an import had put the source back over a person's edit,
+but only after the fact. Answered from the code at the time: the dry
+run compared the planned content with the current version and nothing
+else, so a list about to lose a colleague's edit printed exactly like a
+list whose workbook changed; and `apply_import` wrote every
+`new_version`, whatever the current version was -- a changed source and
+an importer change replaced edits too, not only a re-apply.
+
+**The rule is the sync's:** an import has a source for the template,
+not for a person's edit, so it does not overwrite one. A list whose
+current version is an edit (`via: api`) and whose content the import
+would change is a `conflict` (`list_library.diff_import`), whatever the
+cause. A tags-only difference is not one -- it writes no version and
+touches no edit.
+
+**The dry run says so first,** before the counts:
+`CONFLICTS: n list(s) a person edited since import`, one line per list
+naming the edit as `list_key@vN`, who saved it, when, and the fields
+the import would change. **The apply leaves every conflict as it is**
+and the `list.import` audit row lists them (`conflicts`).
+
+**The override names the edits, never "edits in general".** A blanket
+flag is a foot-gun -- passed to get past one known list, it silently
+clobbers the ones nobody looked at. `--overwrite-edit list_key@vN`,
+repeated once per edit, authorizes exactly that edit, as asset approval
+is per item. The ref carries the version, so an edit someone saves
+after the dry run is a different edit the same authorization does not
+cover. Any ref that is not a current conflict -- a typo, a list with no
+edit, an edit since saved over -- refuses the whole apply with the list
+of current conflicts, before anything is written (`ImportRefused`).
+`--overwrite-edit` without `--apply` is refused outright. A replaced
+edit is recorded on the version (`replaces_edit_in_version`) and in the
+audit row (`overwrote_edits`).
+
+Bench (`wingrc_verify_20261014k`, the real 45-list library, two lists
+edited over HTTP by a throwaway engineer): the dry run printed both as
+`…@v2` conflicts with the editor and time, 43 unchanged; an apply with
+nothing named left both edits current; naming `@v1` was refused with
+nothing written (no audit row either); naming one edit replaced that
+list only (v3, `source_reapplied`) and left the other as a conflict;
+the audit rows say which. Backend 1693 passed with the 500 floor, ruff
+clean. Mutation-tested, each run against `test_list_library.py` and
+restored: dropping conflict detection fails four tests; accepting an
+unknown ref fails the refusal test; letting one ref authorize every
+conflict fails the named-edit test.
+
+---
+
 ### List versions say why they exist ✅ DONE (2026-10-14)
 
 No migration (`list_version.provenance` is JSONB). Prompted by L.2.1's
@@ -5584,7 +5635,8 @@ exports of one version are the same bytes, standalone or in any bundle,
 and an assessor can check a file against another export's hash.
 A cell is always text: openpyxl writes a string starting with `=` as a
 live formula, so those are forced to string type (found writing this,
-not reported).
+not reported). Since widened to every workbook and the
+full prefix set: see "No workbook evaluates what someone typed".
 
 **Hashed like everything else.** `lists/index.html` and each workbook
 get an `artifact_log.txt` line, so the cover's second-order *Hash Value*
@@ -5625,6 +5677,60 @@ byte-identical twice and equal to the bundle's copy. After an edit (v2),
 the first bundle's copy still equalled an export of v1, and a new bundle
 named v2 and not v1. No `list_id`, no list files. Assessor: export 200,
 edit 403. SPRS −204 throughout.
+
+---
+
+### No workbook evaluates what someone typed ✅ DONE (2026-10-14)
+
+No migration. L.3 found that a list cell starting with `=` became a live
+formula in the assessor's Excel, and fixed it in the one renderer it was
+writing. That made it a property of one renderer, not of the product,
+and only of `=`.
+
+**Every workbook leaves `render.py` through `_save()`**, which writes
+any string cell starting with a formula prefix -- the OWASP set: `=`,
+`+`, `-`, `@`, leading tab, leading carriage return -- as text with
+Excel's *quote prefix*. openpyxl writes `=...` as a formula outright;
+the others it stores as text, but Excel re-reads them as formulas when
+the cell is edited, or when the sheet is saved as CSV and opened again.
+With the quote prefix the cell is shown as typed and stays text on edit.
+The value is not altered: the CSV advice (prepend an apostrophe) would
+change the record an assessor is handed, and a list version's bytes are
+a function of its rows.
+
+**Which workbooks:** all of them. `render_view_bytes` (the four
+scope-drawn lists, `GET …/exports/{view_id}`, and the CLI's `render`)
+and `render_list_version_bytes` (the list export and the bundle's
+`lists/`). Nothing else in the app builds a workbook, and nothing else
+in the bundle is a spreadsheet the product wrote: evidence files are
+embedded as uploaded -- they are the customer's artifacts, hashed as
+received, and rewriting one would break that.
+`tests/test_workbook_formulas.py` pins both: a payload in every
+attribute of every scope view (a Notes field, a name) and in a list
+version's title, headers and rows; no `<f>` element in any sheet; and
+a static check that `render.py` calls `.save(` once, inside `_save`,
+and that no other module builds a workbook. Over HTTP,
+`test_a_cell_is_text_never_a_formula` checks the list export, the
+bundle's copy of it, and a scope export.
+
+**Mutation-tested** with a `+cmd|' /C calc'!A0` family of payloads, each
+mutant against `test_workbook_formulas.py`, `test_lists.py` and
+`test_list_bundle.py` and then restored: no pass at all (openpyxl's
+default), `=` only (the L.3 fix), the type without the quote prefix,
+and the set without carriage return each fail every renderer's test
+(the four scope views and the list version); `render_view_bytes`
+saving around `_save` fails the scope tests and the single-save check.
+
+**On live** (read-only count, 2026-10-14): no list-library cell, title
+or header starts with a prefix, so live list exports and bundles keep
+their bytes. One scope attribute does -- a person's *Phone*, `+1…` --
+which is exactly what this is for: Excel would have taken it for a
+number or a formula on edit.
+
+Bench (`wingrc_verify_20261014f`): backend 1692 passed in one process
+with the 500 floor, ruff clean (no frontend change). The HTTP test was
+mutated there too: with the prefix set cut to `=` it fails on the
+`+cmd|' /C calc'!A0` cell (`quotePrefix` false); restored, it passes.
 
 ---
 

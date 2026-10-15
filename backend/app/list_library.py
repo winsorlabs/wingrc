@@ -215,10 +215,23 @@ def snap_version(
 @dataclass
 class ImportAction:
     sheet: SheetResult
-    action: str  # create | new_version | unchanged
+    action: str  # create | new_version | unchanged | conflict
     definition: ListDefinition | None = None
     changed_fields: tuple[str, ...] = ()
     version: ListVersion | None = None  # what an apply wrote
+    # conflict: the person's edit the import would replace
+    edit: ListVersion | None = None
+
+    @property
+    def edit_ref(self) -> str:
+        """How an operator names this edit to authorize replacing it:
+        the list and the exact version. A later save is a different edit,
+        which the same authorization does not cover."""
+        return f"{self.sheet.list_key}@v{self.edit.version_number}"
+
+
+class ImportRefused(ValueError):
+    """An apply named an edit to overwrite that is not a current conflict."""
 
 
 @dataclass
@@ -246,6 +259,13 @@ def diff_import(session: Session, org_id: uuid.UUID, plan: ImportPlan) -> Import
         changed = tuple(k for k in CONTENT_FIELDS if have.get(k) != planned[k])
         if tuple(sorted(s.control_keys)) != tuple(sorted(tags_of(session, d.id))):
             changed += ("control_tags",)
+        if set(changed) - {"control_tags"} and (current.provenance or {}).get("via") == "api":
+            # A person edited this list since it was imported. The import has
+            # a source for the template, not for their edit -- the same rule
+            # as a sync never overwriting a field it has no source for -- so
+            # it is a conflict, skipped unless that exact edit is named.
+            diff.actions.append(ImportAction(s, "conflict", d, changed, edit=current))
+            continue
         diff.actions.append(
             ImportAction(s, "new_version" if changed else "unchanged", d, changed)
         )
@@ -287,7 +307,25 @@ def import_report(plan: ImportPlan, diff: ImportDiff) -> dict:
             if s.status != "importable"
         ],
         "not_ingested": list(plan.not_ingested),
-        "actions": {k: len(diff.of(k)) for k in ("create", "new_version", "unchanged")},
+        "actions": {
+            k: len(diff.of(k)) for k in ("create", "new_version", "unchanged", "conflict")
+        },
+        # Lists left as they were because a person edited them since import.
+        "conflicts": [
+            {
+                "list_key": a.sheet.list_key,
+                "edit": a.edit_ref,
+                "edit_version_id": str(a.edit.id),
+                "saved_by": (a.edit.provenance or {}).get("saved_by"),
+                "saved_at": a.edit.created_at.isoformat(),
+                "changed_fields": list(a.changed_fields),
+            }
+            for a in diff.of("conflict")
+        ],
+        # Edits an apply replaced, each named by the operator.
+        "overwrote_edits": [
+            a.edit_ref for a in diff.actions if a.edit is not None and a.action == "new_version"
+        ],
     }
 
 
@@ -351,13 +389,31 @@ def apply_import(
     org_id: uuid.UUID,
     plan: ImportPlan,
     changelog_root: Path | None = None,
+    overwrite_edits: frozenset[str] = frozenset(),
 ) -> ImportDiff:
     """Writes what `diff_import` proposes. Templates: every definition the
     import creates is `is_template` -- the rows are illustrative examples
-    (decision 2026-10-10)."""
+    (decision 2026-10-10).
+
+    A conflict -- a list a person edited since import -- is skipped, and
+    written only when its exact edit is named in `overwrite_edits`
+    (`ImportAction.edit_ref`, "list_key@vN", as the dry run prints it).
+    There is no "all": each replaced edit is authorized by name, as an
+    asset is approved one at a time. A name that is not a current conflict
+    -- a typo, or an edit someone has since saved over -- refuses the whole
+    apply before anything is written; it is never guessed at."""
     diff = diff_import(session, org_id, plan)
+    conflicts = {a.edit_ref: a for a in diff.of("conflict")}
+    unknown = sorted(set(overwrite_edits) - set(conflicts))
+    if unknown:
+        raise ImportRefused(
+            f"not a current conflict: {', '.join(unknown)}; current conflicts: "
+            f"{', '.join(sorted(conflicts)) or 'none'}. Nothing was written."
+        )
+    for ref in overwrite_edits:
+        conflicts[ref].action = "new_version"
     for a in diff.actions:
-        if a.action == "unchanged":
+        if a.action in ("unchanged", "conflict"):
             continue
         s = a.sheet
         if a.action == "create":

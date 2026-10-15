@@ -12,6 +12,12 @@ Two kinds of list, two functions, one header shape:
   invent a projection. It carries the same header, plus the version id,
   and no wall-clock time at all -- so two exports of one version are the
   same bytes, and an assessor can check one against another's hash.
+
+Every workbook leaves through `_save()`, which makes any cell that a
+spreadsheet would read as a formula plain text (`_FORMULA_PREFIXES`). The
+cells are other people's words -- a Notes field, a name, a template row --
+and these files go to assessors, so that is a property of the output, not
+of one renderer.
 """
 
 from __future__ import annotations
@@ -37,6 +43,29 @@ _META_FONT = Font(italic=True, size=9, color="555555")
 _COLHEAD_FONT = Font(bold=True, color="FFFFFF")
 _PLACEHOLDER_FONT = Font(italic=True, color="7A5C00")
 _PLACEHOLDER_FILL = PatternFill("solid", fgColor="FFF4CC")
+
+# What a spreadsheet takes for the start of a formula: OWASP's CSV-injection
+# set, not "=" alone. openpyxl writes "=..." as a live formula outright; the
+# rest are stored as text but become formulas when the cell is edited, or
+# when the sheet is saved as CSV and opened again.
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _save(wb: openpyxl.Workbook) -> bytes:
+    """The one way a workbook leaves this module. A cell starting with a
+    formula prefix is written as text with Excel's quote prefix -- shown
+    and kept as typed, never evaluated, even on edit. The value itself is
+    not altered: prepending an apostrophe, the CSV advice, would change
+    the record an assessor is handed."""
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for cell in row:
+                if isinstance(cell.value, str) and cell.value.startswith(_FORMULA_PREFIXES):
+                    cell.data_type = "s"
+                    cell.quotePrefix = True
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 def render_view(
@@ -111,9 +140,7 @@ def render_view_bytes(
         width = max(len(display) + 2, 14)
         ws.column_dimensions[get_column_letter(col_idx)].width = min(width, 40)
 
-    buf = BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
+    return _save(wb)
 
 
 _PLACEHOLDER = re.compile(r"^\[PLACEHOLDER(?: - .+)?\]$")
@@ -186,10 +213,6 @@ def render_list_version_bytes(snap: ListVersionSnap, generated_by: str = "WinGRC
     for r_offset, row in enumerate(snap.rows, start=header_row_num + 1):
         for col_idx, value in enumerate(row, start=1):
             cell = ws.cell(row=r_offset, column=col_idx, value=value or None)
-            # A cell is what someone typed, never a formula: openpyxl would
-            # otherwise write "=..." as one, live in the assessor's Excel.
-            if value and value.startswith("="):
-                cell.data_type = "s"
             if value and _PLACEHOLDER.match(value):
                 cell.font = _PLACEHOLDER_FONT
                 cell.fill = _PLACEHOLDER_FILL
@@ -197,6 +220,4 @@ def render_list_version_bytes(snap: ListVersionSnap, generated_by: str = "WinGRC
         width = min(max(len(display) + 2, 14), 40)
         ws.column_dimensions[get_column_letter(col_idx)].width = width
 
-    buf = BytesIO()
-    wb.save(buf)
-    return _pinned(buf.getvalue(), saved_at)
+    return _pinned(_save(wb), saved_at)
