@@ -248,7 +248,16 @@ def test_two_exports_of_unchanged_data_are_byte_identical(db_session):
             BUNDLE.format(org=org_id, a=a_id), params={"list_id": [str(other.id), str(d.id)]}
         ).content)
         log = _member(zf, "artifact_log.txt").decode().splitlines()
-        log = [ln for ln in log if "/lists/" in ln]
+        # index.html carries the export's minute stamp by design, so its
+        # logged hash differs whenever two exports straddle a minute -- it
+        # did on the bench once retagging made the gap wider. Its content is
+        # compared unstamped below; here only its path. The workbooks have
+        # no wall-clock in them and keep their full line.
+        log = [
+            ln.rsplit(" | ", 1)[1] if ln.endswith("/lists/index.html") else ln
+            for ln in log
+            if "/lists/" in ln
+        ]
         return (
             _member(zf, "lists/devices_v1.xlsx"),
             _member(zf, "lists/other_v1.xlsx"),
