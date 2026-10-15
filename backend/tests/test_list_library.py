@@ -18,6 +18,7 @@ from sqlalchemy.exc import DBAPIError
 from app.auth import get_current_user
 from app.db import get_session
 from app.list_library import (
+    ImportRefused,
     apply_import,
     content_of,
     diff_import,
@@ -719,20 +720,19 @@ def test_a_changed_source_is_recorded_as_one(db_session, tmp_path):
 
 @pytest.mark.integration
 def test_an_import_over_an_edit_says_it_put_the_source_back(db_session, tmp_path):
-    """A person edits a template, then the same library is imported again:
-    the import restores the source's rows, and the version says so and
-    names the edit it replaced, rather than passing for a source change."""
+    """A person edits a template, then the same library is imported again
+    with that edit named: the import restores the source's rows, and the
+    version says so and names the edit it replaced, rather than passing for
+    a source change."""
     org_id, root = _imported(db_session, tmp_path)
     risk = _risk(db_session, org_id)
     client = _client(db_session, org_id)
-    base = client.get(f"/orgs/{org_id}/list-definitions/{risk.id}").json()["current"]
-    r = client.post(
-        f"/orgs/{org_id}/list-definitions/{risk.id}/versions",
-        json={"base_version_id": base["id"], "rows": [["R-1", "Edited", "Open"]]},
-    )
-    assert r.status_code == 201 and r.json()["cause"] == "edit"
+    _edit(client, org_id, risk.id, [["R-1", "Edited", "Open"]])
 
-    apply_import(db_session, org_id, _plan(root))
+    apply_import(
+        db_session, org_id, _plan(root),
+        overwrite_edits=frozenset({"3-11-1a-risk-register@v2"}),
+    )
     db_session.flush()
     history = history_of(db_session, risk.id)
     assert [v.provenance["cause"] for v in history] == ["first_import", "edit", "source_reapplied"]
@@ -741,3 +741,139 @@ def test_an_import_over_an_edit_says_it_put_the_source_back(db_session, tmp_path
     assert _derived(history) == version_causes(history)
     versions = client.get(f"/orgs/{org_id}/list-definitions/{risk.id}/versions").json()
     assert [v["cause"] for v in versions] == ["first_import", "edit", "source_reapplied"]
+
+
+# An import never replaces a person's edit unless that edit is named
+# (2026-10-14). Same rule as a sync never overwriting a field it has no
+# source for; the override is per edit, never "all", like asset approval.
+
+
+def _edit(client, org_id, list_id, rows) -> dict:
+    base = client.get(f"/orgs/{org_id}/list-definitions/{list_id}").json()["current"]
+    r = client.post(
+        f"/orgs/{org_id}/list-definitions/{list_id}/versions",
+        json={"base_version_id": base["id"], "rows": rows},
+    )
+    assert r.status_code == 201 and r.json()["cause"] == "edit", r.text
+    return r.json()
+
+
+def _poam(db_session, org_id) -> ListDefinition:
+    return db_session.scalar(
+        select(ListDefinition).where(
+            ListDefinition.org_id == org_id, ListDefinition.list_key == "3-12-2a-poam"
+        )
+    )
+
+
+@pytest.mark.integration
+def test_an_edited_list_is_a_conflict_the_import_leaves_alone(db_session, tmp_path):
+    """The dry run reports it before anything is written, naming the edit;
+    the apply skips it -- content, version and tags untouched -- and the
+    audit row says which edits it left in place."""
+    from app.models import AuditLog
+
+    org_id, _ = _imported(db_session, tmp_path / "a")
+    client = _client(db_session, org_id)
+    risk = _risk(db_session, org_id)
+    _edit(client, org_id, risk.id, [["R-1", "Kept by a person", "Open"]])
+    changed = _plan(build_library(tmp_path / "b", risk_status="Closed"))
+
+    dry = diff_import(db_session, org_id, changed)
+    [c] = dry.of("conflict")
+    assert c.edit_ref == "3-11-1a-risk-register@v2"
+    assert c.changed_fields == ("rows",)
+    assert dry.of("new_version") == []
+
+    diff = apply_import(db_session, org_id, changed)
+    record_import(db_session, org_id, changed, diff)
+    db_session.flush()
+    history = history_of(db_session, risk.id)
+    assert [v.provenance["cause"] for v in history] == ["first_import", "edit"]
+    assert db_session.get(ListDefinition, risk.id).current_version_id == history[-1].id
+    assert history[-1].rows == [["R-1", "Kept by a person", "Open"]]
+
+    row = db_session.scalars(
+        select(AuditLog).where(AuditLog.org_id == org_id, AuditLog.action == "list.import")
+    ).all()[-1]
+    assert row.context["actions"]["conflict"] == 1
+    assert [(c["list_key"], c["edit"]) for c in row.context["conflicts"]] == [
+        ("3-11-1a-risk-register", "3-11-1a-risk-register@v2")
+    ]
+    assert row.context["overwrote_edits"] == []
+    assert row.context["versions"] == []
+
+
+@pytest.mark.integration
+def test_only_the_named_edit_is_replaced(db_session, tmp_path):
+    """Two lists carry edits; naming one replaces that one and leaves the
+    other as a conflict. Naming one cannot authorize the rest."""
+    from app.models import AuditLog
+
+    org_id, root = _imported(db_session, tmp_path)
+    client = _client(db_session, org_id)
+    risk, poam = _risk(db_session, org_id), _poam(db_session, org_id)
+    _edit(client, org_id, risk.id, [["R-1", "Edited", "Open"]])
+    _edit(client, org_id, poam.id, [["W9", "M9"]])
+
+    plan = _plan(root)
+    diff = apply_import(
+        db_session, org_id, plan, overwrite_edits=frozenset({"3-12-2a-poam@v2"})
+    )
+    record_import(db_session, org_id, plan, diff)
+    db_session.flush()
+    assert [a.edit_ref for a in diff.of("conflict")] == ["3-11-1a-risk-register@v2"]
+    assert [v.provenance["cause"] for v in history_of(db_session, risk.id)] == [
+        "first_import", "edit"
+    ]
+    poam_history = history_of(db_session, poam.id)
+    assert [v.provenance["cause"] for v in poam_history] == [
+        "first_import", "edit", "source_reapplied"
+    ]
+    assert poam_history[-1].provenance["replaces_edit_in_version"] == 2
+    row = db_session.scalars(
+        select(AuditLog).where(AuditLog.org_id == org_id, AuditLog.action == "list.import")
+    ).all()[-1]
+    assert row.context["overwrote_edits"] == ["3-12-2a-poam@v2"]
+    assert [c["edit"] for c in row.context["conflicts"]] == ["3-11-1a-risk-register@v2"]
+
+
+@pytest.mark.integration
+def test_naming_an_edit_that_is_not_a_current_conflict_writes_nothing(db_session, tmp_path):
+    """A typo, a list with no edit, or an edit someone has since saved over
+    (v2 named, v3 current) refuses the whole apply before any write."""
+    org_id, root = _imported(db_session, tmp_path / "a")
+    client = _client(db_session, org_id)
+    risk = _risk(db_session, org_id)
+    _edit(client, org_id, risk.id, [["R-1", "First edit", "Open"]])
+    _edit(client, org_id, risk.id, [["R-1", "Second edit", "Open"]])
+    changed = _plan(build_library(tmp_path / "b", risk_status="Closed"))
+    before = {d.id: d.current_version_id for d in db_session.scalars(
+        select(ListDefinition).where(ListDefinition.org_id == org_id)
+    )}
+
+    for named in ("3-11-1a-risk-register@v2", "3-12-2a-poam@v1", "no-such-list@v2"):
+        with pytest.raises(ImportRefused, match="Nothing was written"):
+            apply_import(db_session, org_id, changed, overwrite_edits=frozenset({named}))
+        db_session.flush()
+        after = {d.id: d.current_version_id for d in db_session.scalars(
+            select(ListDefinition).where(ListDefinition.org_id == org_id)
+        )}
+        assert after == before, named
+    # The current edit, named exactly, is accepted.
+    diff = apply_import(
+        db_session, org_id, changed, overwrite_edits=frozenset({"3-11-1a-risk-register@v3"})
+    )
+    assert [a.sheet.list_key for a in diff.of("new_version")] == ["3-11-1a-risk-register"]
+
+
+def test_overwrite_edit_without_apply_is_refused(tmp_path):
+    from typer.testing import CliRunner
+
+    from app.cli import app as cli_app
+
+    result = CliRunner().invoke(cli_app, [
+        "lists-import", str(build_library(tmp_path)), "--org-id", str(uuid.uuid4()),
+        "--overwrite-edit", "3-11-1a-risk-register@v2",
+    ])
+    assert result.exit_code == 2, (result.exit_code, result.output)

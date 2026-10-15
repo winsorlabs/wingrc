@@ -308,6 +308,8 @@ edit, a changed source, or a change in WinGRC's importer with the source
 unchanged -- in its version history on screen; see the roadmap's "List
 versions say why they exist" entry, including the version-churn pattern
 importer changes cause.
+An import also never replaces a person's edit unless that exact edit
+is named (`--overwrite-edit list_key@vN`); see the roadmap entry.
 
 **L.3 — export and bundle inclusion.** Export a list for an assessor, and
 make lists first-class contributors to the point-in-time bundle per §5.
