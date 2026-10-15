@@ -5442,6 +5442,149 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### List library L.2.2: the List Builder, and control tags with a history ✅ DONE (2026-10-15)
+
+Migration 0065. Jarrod asked, from L.2.1 on live, for **Add List** -- a
+builder -- and **Add Tags** on an existing list.
+
+**One definition schema, two ways in.** The builder fills exactly the
+fields the template header block does: title, row 2's practices, What
+goes here (row 4), Responsible and Review cadence (row 5), and row 10's
+columns. Practices are typed as row 2 writes them and keyed by the same
+rule (`list_templates.practice_key`), then held to the 110 requirements
+-- `_REQUIREMENTS`, checked by a test against the seeded catalog, not
+taken on trust. A hand-built list is keyed as an import keys a sheet
+(the slugged name), so one key space serves both; a duplicate title is a
+409 naming the existing list, never a merge. No model field was missing:
+every builder field already existed on `list_version`. **"Imported
+from" has no convention equivalent, and was not given a content field.**
+It is a person's note (`provenance.origin_note` on v1), shown under
+*Where it came from* as "a note by <name>, not an import source" -- never
+under *Imported from*, which stays the import's `source_ref`, and never
+near `source_sha256`. Lineage the product computed and a person's
+recollection cannot be confused on screen or in the record.
+
+**A sixth cause: `created_by_hand`.** A list built here is none of the
+five (`edit`, `first_import`, `source_changed`, `importer_changed`,
+`source_reapplied` -- the brief's "person_edit" is `edit` in the code).
+Calling its v1 `first_import` would claim a source there was not. The
+history says: "Written by <name>, from nothing: built by hand in WinGRC
+on <date>, not imported from a template." Label: *built by hand*.
+
+**A hand-built list whose key a later import produces is a conflict --
+confirmed from the code, with a correction to the reasoning.**
+`diff_import`'s conflict rule keys on the current version's `via ==
+"api"`, not on `saved_by`. v1 is written `via: api`, so the rule covers
+it; a test pins it, and a mutant that writes v1 with any other `via` is
+caught. Overriding with `--overwrite-edit <key>@v1` writes the import as
+`first_import` with `replaces_edit_in_version: 1`, and the history now
+says so ("It replaced the edit in version 1"); the definition stays the
+org's own (`is_template` unchanged) -- an edge left as it is, since it
+needs an explicit override to reach.
+
+**The slice's real work was in tags, and it predates the builder.** An
+import replaced a list's whole tag set with its source's row 2
+(`set_tags`: delete all, insert the source's). So the next import after
+a person added a tag would have **silently removed it** -- the dry run
+would even have counted the list as `new_version` for the tag
+difference. Now each tag records who put it there
+(`list_control_tag.added_via`: `template_import` | `api`), and an import
+manages only its own: it adds what row 2 names and the list lacks, and
+removes only import-added tags row 2 stopped naming
+(`list_library.import_tag_changes`). A person's tag is never the
+import's to remove, and does not register as a change in the dry run.
+
+**Tag history: recorded beside the versions, shown in the same place.**
+Tags are not version content, so a tag change writes no version. Every
+add and remove is a `list_tag_event` (who, when, how, the version
+current at the time), append-only like `list_version` (a trigger refuses
+UPDATE), RLS-scoped, and also an audit row (`list.tag_add`,
+`list.tag_remove`; `list.create` for a built list). The list's history
+section is now *History: versions and practices* -- versions and tag
+changes interleaved, newest first, each tag line saying who: "Tagged
+CM.L2-3.4.2: this list became a candidate for it. By <name>." or "... By
+WinGRC importer, from the source sheet's practice row." One history, in
+the place a person looks first; the audit log stays for when someone
+already suspects something. Tags that existed before this migration are
+backfilled as one *added* event each, dated with their list and noted
+"Recorded when tag history began (migration 0065)" rather than
+presented as observed at the time.
+
+**The tag-removal rule, written before L.4 so L.4 inherits it.** A list
+linked as evidence covers the controls it is tagged with (PLAN §5), so
+removing a tag while such a link exists would silently narrow what an
+assessment rests on. **Removal is refused while evidence rests on the
+tag, by a person and by an import alike, and the refusal names the
+link** (409 `blocked_by`; `ImportRefused` with nothing written).
+Adding needs no ceremony beyond the record. The rule lives in one place,
+`list_library.tag_removal_blockers`, which returns nothing today because
+nothing links a list as evidence yet. **L.4 must make it return every
+non-archived `EvidenceStateLink` from the list's evidence to a
+`control_state` of that control.** Checked against the evidence model
+first: links are per `control_state`, which belongs to one control, so a
+link blocks exactly one tag -- no conflict. Two tests hold L.4 to it: one
+stands a link in and asserts both writers stop on it; the other fails as
+soon as any table references `list_definition`/`list_version` beyond the
+four settled ones, until the rule is wired to it. Removing a list's last
+tag is also refused: a list serves at least one practice, as row 2
+requires.
+
+**Columns.** Editing now adds, renames and removes columns. Rows are
+positional, so a rename keeps its cells (not remove-and-add); a removal
+drops them from the new version only. Before saving, the edit bar says
+plainly what goes -- "Saving removes the column Escort (1 filled cell)
+from version 3: 1 filled cell will not be in it. Version 2 keeps it,
+with every value." -- and the save button reads "Save as version 3,
+removing 1 filled cell". The edit's audit row names `columns_added` and
+`columns_removed`.
+
+**Who.** msp_admin, consultant_admin and msp_engineer build and tag.
+`c3pao_assessor` sees neither control and gets 403 from every write
+route. **`customer_poc` tags but does not build**, as the brief
+concluded -- though its stated reason ("adding a list to their own org is
+reasonable") argues the other way, so flagged for Jarrod. Kept because
+which registers an org keeps, under which practices, is the MSP's library
+to shape; a tenant contact keeping lists current (it already edits rows)
+and pointing one at a further practice -- safe, a candidate only -- is
+ordinary upkeep. msp_engineer was not in the brief's list; included
+because it already rewrites any list's rows and columns, so a build gate
+above it would guard nothing. One constant each side (`BUILD_ROLES`,
+`LIST_BUILD_ROLES`).
+
+**Found, not changed:** the list export's header block does not carry
+What goes here, Responsible or Review cadence -- the convention's rows
+4-5 -- for any list, imported or built. The builder's export matches an
+imported list's (tested), so the round trip holds; adding them would
+change every export's bytes and belongs with whoever next touches the
+renderer. And a bundle test compared the raw hash of `lists/index.html`,
+which carries a minute stamp by design; it failed on the bench when the
+two exports straddled a minute. It now compares that line by path (the
+page itself was already compared unstamped).
+
+Bench (`wingrc_verify_20261015b`): the real 45-list library imported on
+main (81 tags), then the branch's migration over it -- 81 tags read
+`template_import`, 81 backfilled events, none unmatched -- and the
+import rerun read 45 unchanged. In the browser, as a throwaway engineer:
+built *Bench Visitor Log* (v1 *built by hand*, its two tags and the
+version in the history by name, the origin note apart from any import
+source); added a row (v2); removed a column, with the warning shown
+before the save (v3; v2 still holds the column and its value in the
+database); tagged the *Authorized Wireless Networks* template to
+CM.L2-3.4.2 -- in the CM.L2-3.4.2 view at once -- and an import rerun
+then wrote nothing and kept the person's tag (`api`). Backend 1734
+passed with the 500 floor, ruff clean, `tsc -b`, vitest 391, build.
+Mutation-tested, each against `test_list_builder.py` and restored: an
+import removing a person's tag; a person's removal ignoring evidence; an
+import's removal ignoring evidence; v1 not `via: api`; v1 called
+`first_import`; customer_poc allowed to build -- each caught.
+
+Out of scope, as briefed: evidence linking (L.4), cadence notification
+(L.5), the scope-graph join (L.6), exporting a hand-built list as a
+template (N.4), and any change to `control_state` or SPRS (a test holds
+SPRS and every control state unchanged across building and tagging).
+
+---
+
 ### An import never replaces a person's edit unless that edit is named ✅ DONE (2026-10-14)
 
 No migration. The follow-up the cause work exposed: `source_reapplied`

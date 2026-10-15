@@ -78,7 +78,7 @@ export function ListBuilder({
         hand by you. Rows are added afterwards with Edit rows.
       </p>
 
-      <div className="form-grid list-builder-form">
+      <div className="list-builder-form">
         <label>
           Title
           <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Visitor Log" />

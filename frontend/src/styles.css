@@ -2184,6 +2184,7 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .list-column-changes p { margin: .2rem 0; }
 .list-rows th input { min-width: 8rem; }
 .list-builder-form { display: grid; gap: .75rem; max-width: 42rem; }
-.list-builder-form label { display: grid; gap: .25rem; }
+.list-builder-form label { display: grid; gap: .25rem; font-weight: 500; }
+.list-builder-form input, .list-builder-form textarea { max-width: 36rem; }
 .list-builder-form fieldset { border: 1px solid var(--border, #d1d5db); border-radius: 6px; padding: .5rem .75rem; }
 .list-builder-column { display: flex; gap: .5rem; margin-bottom: .35rem; }
