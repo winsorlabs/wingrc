@@ -3158,13 +3158,28 @@ class ListDefinition(Base):
 
     Imported definitions are MSP-level *templates* (Jarrod, 2026-10-10): the
     rows are illustrative examples, and they live in the MSP's own org with
-    `is_template` set. A client copy, when it exists, will record the
-    template version it came from in `template_list_version_id` -- reserved
-    now so adoption does not need a migration that rewrites identity later.
+    `is_template` set. A copy an org adopts (L.7) names its template in
+    `template_list_id` and the template version it is based on in
+    `template_list_version_id`; the copy does not move when the template
+    does, until someone takes the newer version. One copy per template per
+    org. Templates stay in the MSP's org -- adoption copies across the
+    boundary, it never moves a template to deployment scope.
     """
 
     __tablename__ = "list_definition"
-    __table_args__ = (UniqueConstraint("org_id", "list_key", name="uq_list_definition_key"),)
+    __table_args__ = (
+        UniqueConstraint("org_id", "list_key", name="uq_list_definition_key"),
+        Index(
+            "uq_list_definition_adopted_once", "org_id", "template_list_id",
+            unique=True, postgresql_where=text("template_list_id IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "(template_list_id IS NULL AND template_list_version_id IS NULL) OR "
+            "(template_list_id IS NOT NULL AND template_list_version_id IS NOT NULL "
+            "AND NOT is_template)",
+            name="ck_list_definition_copy_shape",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -3180,6 +3195,11 @@ class ListDefinition(Base):
     # Where an imported definition came from: "<path under New Lists>#<sheet>".
     source_ref: Mapped[str | None] = mapped_column(String(400), nullable=True)
     projection_view_id: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    template_list_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("list_definition.id", name="fk_list_definition_template_list"),
+        nullable=True,
+    )
     template_list_version_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("list_version.id", name="fk_list_definition_template_version"),
@@ -3254,7 +3274,8 @@ class ListControlTag(Base):
     __table_args__ = (
         UniqueConstraint("list_id", "control_key", name="uq_list_control_tag"),
         CheckConstraint(
-            "added_via IN ('template_import', 'api')", name="ck_list_control_tag_added_via"
+            "added_via IN ('template_import', 'api', 'template_adoption')",
+            name="ck_list_control_tag_added_via"
         ),
     )
 
@@ -3291,7 +3312,9 @@ class ListTagEvent(Base):
     __tablename__ = "list_tag_event"
     __table_args__ = (
         CheckConstraint("change IN ('added', 'removed')", name="ck_list_tag_event_change"),
-        CheckConstraint("via IN ('template_import', 'api')", name="ck_list_tag_event_via"),
+        CheckConstraint(
+            "via IN ('template_import', 'api', 'template_adoption')", name="ck_list_tag_event_via"
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

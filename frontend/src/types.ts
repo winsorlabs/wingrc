@@ -1439,6 +1439,65 @@ export interface LibraryListSummary {
   cause: VersionCause; // the current version's
   merged_from: string[];
   has_changelog: boolean;
+  // Rows still a template's bare [PLACEHOLDER] example (backend list_library.is_populated).
+  example_rows: number;
+  adopted_from: AdoptedFrom | null;
+  adopted_copies: number; // a template's copies, in every org
+}
+
+// A copy of a template (L.7): which template, which version it is based on,
+// and where the template stands now. Title and key as the copy took them.
+export interface AdoptedFrom {
+  template_list_id: string;
+  template_org_id: string;
+  same_org: boolean;
+  template_title: string;
+  template_key: string;
+  based_on_version_number: number;
+  head_version_number: number;
+  update_available: boolean;
+}
+
+// How many orgs' copies of a template sit at which version -- never whose.
+export interface TemplateDistribution {
+  version_number: number;
+  copies: number;
+  this_org: boolean;
+}
+
+export interface AdoptItem {
+  template_id: string;
+  template_title: string;
+  template_version_number: number;
+  control_keys: string[];
+  row_count: number;
+  example_rows: number;
+  action: "create" | "already_adopted";
+  list_id: string | null;
+  list_key: string;
+}
+
+export interface AdoptResult {
+  source_org_id: string;
+  same_org: boolean;
+  applied: boolean;
+  items: AdoptItem[];
+}
+
+export interface TakeTemplateResult {
+  from_template_version: number;
+  to_template_version: number;
+  rows_from: "template" | "copy";
+  changed_fields: string[];
+  columns_added: string[];
+  columns_removed: string[];
+  dropped_cells: number;
+  person_changed: string[];
+  edit_ref: string | null;
+  tag_add: string[];
+  tag_remove: string[];
+  applied: boolean;
+  version_number: number | null;
 }
 
 // Why a list version exists (backend list_library.CAUSES): a person's edit,
@@ -1451,7 +1510,8 @@ export type VersionCause =
   | "source_changed"
   | "importer_changed"
   | "source_reapplied"
-  | "created_by_hand";
+  | "created_by_hand"
+  | "adopted_from_template";
 
 export interface LibraryListChangelog {
   path: string;
@@ -1484,10 +1544,17 @@ export interface LibraryListVersion {
     // A person's note on where a hand-built list's content came from. Not
     // lineage: an import's lineage is source_file/source_sha256.
     origin_note?: string;
+    // An adopted copy (L.7): the template and the version taken.
+    template_title?: string;
+    template_version_number?: number;
+    previous_template_version_number?: number;
+    rows_from?: "template" | "copy";
+    dropped_cells?: number;
   };
   created_at: string;
   saved_by: string | null;
   cause: VersionCause;
+  example_rows: number;
 }
 
 export interface LibraryListMerge {
@@ -1505,6 +1572,9 @@ export interface LibraryListDetail {
   control_keys: string[];
   merge: LibraryListMerge | null;
   current: LibraryListVersion;
+  adopted_from: AdoptedFrom | null;
+  distribution: TemplateDistribution[];
+  own_copy_id: string | null; // this org's copy of this template
 }
 
 export interface LibraryListSaveConflict {
@@ -1522,7 +1592,7 @@ export interface ListTagEvent {
   id: string;
   control_key: string;
   change: "added" | "removed";
-  via: "template_import" | "api";
+  via: "template_import" | "api" | "template_adoption";
   saved_by: string | null;
   at_version: number | null;
   note: string | null;

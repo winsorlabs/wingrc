@@ -40,10 +40,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { api, ListConflictError } from "../api";
+import { AdoptTemplates } from "./AdoptTemplates";
 import { FAMILY_NAMES } from "../lib/families";
 import {
+  adoptedFromText,
   causeLabel,
   changeCounts,
+  distributionText,
+  exampleRowsText,
+  tagAuthor,
+  updateAvailableText,
   columnLossWarning,
   columnsChanged,
   columnsFrom,
@@ -71,6 +77,7 @@ import {
 import type {
   LibraryListDetail,
   LibraryListSaveConflict,
+  TakeTemplateResult,
   LibraryListSummary,
   LibraryListVersion,
   ListImportReport,
@@ -270,6 +277,7 @@ function LibraryListView({
   canDefine,
   liveView,
   onOpenLive,
+  onOpenList,
   onBack,
   onSaved,
 }: {
@@ -280,6 +288,7 @@ function LibraryListView({
   canDefine: boolean;
   liveView: ListViewSummary | null;
   onOpenLive: () => void;
+  onOpenList: (listId: string) => void;
   onBack: () => void;
   onSaved: () => void;
 }) {
@@ -299,6 +308,9 @@ function LibraryListView({
   const [tagBusy, setTagBusy] = useState(false);
   const [tagError, setTagError] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const [take, setTake] = useState<TakeTemplateResult | null>(null);
+  const [takeBusy, setTakeBusy] = useState(false);
+  const [takeError, setTakeError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -327,8 +339,44 @@ function LibraryListView({
     setNotice(null);
     setConfirmRemove(null);
     setTagError(null);
+    setTake(null);
+    setTakeError(null);
     load();
   }, [load]);
+
+  async function takeTemplate(apply: boolean, overwriteEdit?: string | null) {
+    setTakeBusy(true);
+    setTakeError(null);
+    try {
+      const r = await api.takeTemplateVersion(orgId, listId, apply, overwriteEdit);
+      if (apply) {
+        setTake(null);
+        await load();
+        onSaved();
+      } else {
+        setTake(r);
+      }
+    } catch (e) {
+      setTakeError(e instanceof Error ? e.message : "Could not take the template version");
+    } finally {
+      setTakeBusy(false);
+    }
+  }
+
+  async function copyIntoThisOrg() {
+    setTakeBusy(true);
+    setTakeError(null);
+    try {
+      const r = await api.adoptTemplates(orgId, orgId, [listId], true);
+      onSaved();
+      const id = r.items[0]?.list_id;
+      if (id) onOpenList(id);
+    } catch (e) {
+      setTakeError(e instanceof Error ? e.message : "Could not copy this template");
+    } finally {
+      setTakeBusy(false);
+    }
+  }
 
   const base = detail?.current ?? null;
   const colsChanged = draftCols !== null && base !== null && columnsChanged(base.columns, draftCols);
@@ -678,6 +726,99 @@ function LibraryListView({
         </section>
       )}
 
+      {detail.adopted_from && (
+        <section className="list-adoption" aria-label="Where this copy came from">
+          <p>
+            {adoptedFromText(detail.adopted_from)}{" "}
+            <span className="field-hint">
+              This list is this org&apos;s own; the template is unchanged by anything done here.
+            </span>
+          </p>
+          {detail.adopted_from.update_available && (
+            <div className="doc-notice doc-notice-warn">
+              <p>{updateAvailableText(detail.adopted_from)}</p>
+              {canDefine && !take && (
+                <button
+                  type="button"
+                  className="btn-ghost btn-sm"
+                  disabled={takeBusy || editing}
+                  onClick={() => takeTemplate(false)}
+                >
+                  Review template version {detail.adopted_from.head_version_number}
+                </button>
+              )}
+              {!canDefine && (
+                <p className="field-hint">Someone who defines lists here and in the template&apos;s org takes it.</p>
+              )}
+              {take && (
+                <div aria-label="What taking it changes">
+                  <p>
+                    Taking template version {take.to_template_version} writes a new version of this list.{" "}
+                    {take.rows_from === "copy"
+                      ? "This org's rows are kept, matched to the template's columns by name."
+                      : "Its rows are still the template's examples, so the new examples replace them."}
+                    {take.columns_added.length > 0 && ` Columns added: ${take.columns_added.join(", ")}.`}
+                    {take.columns_removed.length > 0 && ` Columns removed: ${take.columns_removed.join(", ")}.`}
+                    {take.tag_add.length > 0 && ` Practices added: ${take.tag_add.join(", ")}.`}
+                    {take.tag_remove.length > 0 && ` Practices removed: ${take.tag_remove.join(", ")}.`}
+                  </p>
+                  {take.edit_ref && (
+                    <p>
+                      <strong>It replaces an edit made here</strong>
+                      {take.person_changed.length > 0 && ` (${take.person_changed.join(", ")} changed since the copy took the template)`}
+                      {take.dropped_cells > 0 &&
+                        `${take.person_changed.length > 0 ? "; and" : ""} ${take.dropped_cells} filled cell${take.dropped_cells === 1 ? "" : "s"} in columns the template dropped will not be in the new version`}
+                      . The current version keeps every value.
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    className="btn-primary btn-sm"
+                    disabled={takeBusy}
+                    onClick={() => takeTemplate(true, take.edit_ref)}
+                  >
+                    {take.edit_ref
+                      ? `Take version ${take.to_template_version}, replacing the edit in version ${take.edit_ref.split("@v")[1]}`
+                      : `Take version ${take.to_template_version}`}
+                  </button>{" "}
+                  <button type="button" className="btn-ghost btn-sm" onClick={() => setTake(null)}>
+                    Not now
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          {takeError && <div className="form-error">{takeError}</div>}
+        </section>
+      )}
+
+      {detail.is_template && (
+        <section className="list-adoption" aria-label="Copies of this template">
+          <p>
+            {distributionText(detail.distribution) ?? "No org has adopted this template yet."}{" "}
+            <span className="field-hint">
+              A copy moves to a newer version of this template only when someone takes it.
+            </span>
+          </p>
+          {detail.own_copy_id ? (
+            <button type="button" className="btn-ghost btn-sm" onClick={() => onOpenList(detail.own_copy_id!)}>
+              Open this org&apos;s copy
+            </button>
+          ) : (
+            canDefine && (
+              <button type="button" className="btn-ghost btn-sm" disabled={takeBusy} onClick={copyIntoThisOrg}>
+                Copy into this org&apos;s lists
+              </button>
+            )
+          )}
+          {takeError && <div className="form-error">{takeError}</div>}
+        </section>
+      )}
+
+      {!detail.is_template && !isOld && exampleRowsText(base.example_rows, base.rows.length) && (
+        <p className="doc-notice">{exampleRowsText(base.example_rows, base.rows.length)}</p>
+      )}
+
       {liveView && (
         <p className="doc-notice">
           This org also has a live <strong>{liveView.sheet_title}</strong> drawn from Scope › Assets. That
@@ -744,7 +885,7 @@ function LibraryListView({
                 <li key={e.id} className="list-history-tag">
                   <span className={`cause-badge tag-${e.change}`}>{e.change === "added" ? "tagged" : "untagged"}</span>{" "}
                   <span className="field-hint">
-                    {e.via === "api" ? (e.saved_by ?? "a person") : "WinGRC importer"} · {formatWhen(e.created_at)}
+                    {tagAuthor(e)} · {formatWhen(e.created_at)}
                   </span>
                   <div className="list-history-why">
                     {tagSentence(e)}
@@ -1034,6 +1175,7 @@ export function ListLibraryPanel({
   const [search, setSearch] = useState("");
   const [selection, setSelection] = useState<Selection>(null);
   const [building, setBuilding] = useState(false);
+  const [adopting, setAdopting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -1051,6 +1193,7 @@ export function ListLibraryPanel({
   useEffect(() => {
     setSelection(null);
     setBuilding(false);
+    setAdopting(false);
     load();
   }, [load]);
 
@@ -1082,6 +1225,23 @@ export function ListLibraryPanel({
       />
     );
   }
+  if (adopting) {
+    return (
+      <AdoptTemplates
+        orgId={orgId}
+        onCancel={() => setAdopting(false)}
+        onOpen={async (id) => {
+          setAdopting(false);
+          await load();
+          setSelection({ kind: "library", id });
+        }}
+        onDone={async () => {
+          setAdopting(false);
+          await load();
+        }}
+      />
+    );
+  }
   if (selection?.kind === "library") {
     const summary = lists.find((l) => l.id === selection.id);
     const live = views.find((v) => v.id === summary?.projection_view_id) ?? null;
@@ -1093,6 +1253,10 @@ export function ListLibraryPanel({
         canDefine={canDefine}
         liveView={live}
         onOpenLive={() => live && setSelection({ kind: "scope", id: live.id })}
+        onOpenList={(id) => {
+          load();
+          setSelection({ kind: "library", id });
+        }}
         onBack={() => setSelection(null)}
         onSaved={load}
       />
@@ -1126,6 +1290,9 @@ export function ListLibraryPanel({
         </div>
         {canDefine && (
           <div className="list-library-actions">
+            <button type="button" className="btn-ghost btn-sm" onClick={() => setAdopting(true)}>
+              Adopt templates
+            </button>{" "}
             <button type="button" className="btn-primary btn-sm" onClick={() => setBuilding(true)}>
               + Add list
             </button>
@@ -1242,6 +1409,26 @@ export function ListLibraryPanel({
                             </span>
                           )}
                           {e.library?.has_changelog && <span className="affiliation-badge">changelog</span>}
+                          {e.library?.adopted_from && (
+                            <span className="affiliation-badge" title={adoptedFromText(e.library.adopted_from)}>
+                              from template v{e.library.adopted_from.based_on_version_number}
+                            </span>
+                          )}
+                          {e.library?.adopted_from?.update_available && (
+                            <span className="affiliation-badge list-update-badge">
+                              template v{e.library.adopted_from.head_version_number} available
+                            </span>
+                          )}
+                          {e.library && !e.library.is_template && e.library.example_rows > 0 && (
+                            <span className="affiliation-badge">
+                              {e.library.example_rows} example row{e.library.example_rows === 1 ? "" : "s"} to fill in
+                            </span>
+                          )}
+                          {e.library && e.library.adopted_copies > 0 && (
+                            <span className="affiliation-badge">
+                              adopted by {e.library.adopted_copies} org{e.library.adopted_copies === 1 ? "" : "s"}
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td>

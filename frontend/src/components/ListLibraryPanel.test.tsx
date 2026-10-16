@@ -29,6 +29,9 @@ vi.mock("../api", async () => {
       addListTag: vi.fn(),
       removeListTag: vi.fn(),
       createLibraryList: vi.fn(),
+      adoptTemplates: vi.fn(),
+      takeTemplateVersion: vi.fn(),
+      getOrgs: vi.fn(),
     },
   };
 });
@@ -46,7 +49,8 @@ function summary(over: Partial<LibraryListSummary>): LibraryListSummary {
   return {
     id: "x", list_key: "x", title: "x", is_template: true, source_ref: null, projection_view_id: null,
     control_keys: [], version_number: 1, column_count: 2, row_count: 1, updated_at: WHEN, saved_by: null,
-    cause: "first_import", merged_from: [], has_changelog: false, ...over,
+    cause: "first_import", merged_from: [], has_changelog: false, example_rows: 0, adopted_from: null,
+    adopted_copies: 0, ...over,
   };
 }
 
@@ -69,14 +73,15 @@ function version(n: number, rows: string[][], over: Partial<LibraryListVersion> 
   return {
     id: `v${n}`, version_number: n, title: "Risk Register", description: "Identified risks", responsible: null,
     review_cadence: "Annually", columns: ["Risk ID", "Status"], rows, provenance: {}, created_at: WHEN,
-    saved_by: null, cause: "first_import", ...over,
+    saved_by: null, cause: "first_import", example_rows: 0, ...over,
   };
 }
 
 function detail(current: LibraryListVersion, over: Partial<LibraryListDetail> = {}): LibraryListDetail {
   return {
     id: "risk", list_key: "3-11-1a-risk-register", is_template: true, source_ref: "RA/3.11.1/Risk Register.xlsx#3.11.1a",
-    projection_view_id: null, control_keys: ["RA.L2-3.11.1"], merge: null, current, ...over,
+    projection_view_id: null, control_keys: ["RA.L2-3.11.1"], merge: null, current, adopted_from: null,
+    distribution: [], own_copy_id: null, ...over,
   };
 }
 
@@ -500,5 +505,129 @@ describe("column edits (L.2.2)", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Column 2 name" }), { target: { value: "State" } });
     expect(screen.getByLabelText("Column changes").textContent).toMatch(/Renamed: Status → State\. A renamed column keeps its cells\./);
     expect(screen.getByRole("button", { name: "Save as version 2" })).toBeTruthy();
+  });
+});
+
+describe("adopting templates (L.7)", () => {
+  const ADOPTED = {
+    template_list_id: "risk", template_org_id: "msp", same_org: false, template_title: "Risk Register",
+    template_key: "3-11-1a-risk-register", based_on_version_number: 1, head_version_number: 2, update_available: true,
+  };
+  const ex = [["[PLACEHOLDER]", "Open"], ["R-2", "[PLACEHOLDER]"]];
+
+  async function openCopy(canDefine: boolean) {
+    const v1 = version(1, ex, { cause: "adopted_from_template", example_rows: 2, saved_by: "Ada Adopter",
+      provenance: { via: "api", cause: "adopted_from_template", saved_by: "Ada Adopter", template_title: "Risk Register",
+        template_version_number: 1 } });
+    vi.mocked(api.listLibrary).mockResolvedValue([
+      summary({ id: "copy", title: "Risk Register", is_template: false, control_keys: ["RA.L2-3.11.1"],
+        adopted_from: ADOPTED, example_rows: 2, cause: "adopted_from_template" }),
+    ]);
+    vi.mocked(api.listViews).mockResolvedValue([]);
+    vi.mocked(api.getListImportReport).mockResolvedValue({ recorded_at: null, not_imported: [], not_ingested: [] });
+    vi.mocked(api.getLibraryList).mockResolvedValue(
+      detail(v1, { id: "copy", is_template: false, source_ref: null, adopted_from: ADOPTED }),
+    );
+    vi.mocked(api.getLibraryListVersions).mockResolvedValue([v1]);
+    render(<ListLibraryPanel orgId="org" canWrite={true} canDefine={canDefine} />);
+    expect(await screen.findByText("from template v1")).toBeTruthy();
+    expect(screen.getByText("template v2 available")).toBeTruthy();
+    expect(screen.getByText("2 example rows to fill in")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Risk Register" }));
+    return screen.findByRole("region", { name: "Where this copy came from" });
+  }
+
+  it("says where a copy came from, that it is unfinished, and that a newer template version waits", async () => {
+    const where = await openCopy(true);
+    expect(where.textContent).toMatch(/Copied from the template Risk Register, version 1\./);
+    expect(where.textContent).toMatch(/Template version 2 is available\. This list stays on version 1 until someone takes it\./);
+    expect(screen.getByText(/All 2 rows are still the template's \[PLACEHOLDER\] examples\./)).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "History" })).getByText(
+      /Copied by Ada Adopter from the template Risk Register at version 1 on 2026-10-10\./,
+    )).toBeTruthy();
+  });
+
+  it("shows what taking the newer version changes, and names the edit it replaces before it does", async () => {
+    await openCopy(true);
+    vi.mocked(api.takeTemplateVersion).mockResolvedValueOnce({
+      from_template_version: 1, to_template_version: 2, rows_from: "copy", changed_fields: ["columns", "rows"],
+      columns_added: ["Owner"], columns_removed: [], dropped_cells: 0, person_changed: ["columns"],
+      edit_ref: "3-11-1a-risk-register-own@v3", tag_add: [], tag_remove: [], applied: false, version_number: null,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Review template version 2" }));
+    expect(await screen.findByText(/This org's rows are kept, matched to the template's columns by name\. Columns added: Owner\./)).toBeTruthy();
+    expect(screen.getByText(/It replaces an edit made here/)).toBeTruthy();
+    expect(api.takeTemplateVersion).toHaveBeenLastCalledWith("org", "copy", false, undefined);
+    vi.mocked(api.takeTemplateVersion).mockResolvedValueOnce({} as never);
+    fireEvent.click(screen.getByRole("button", { name: "Take version 2, replacing the edit in version 3" }));
+    await waitFor(() =>
+      expect(api.takeTemplateVersion).toHaveBeenLastCalledWith("org", "copy", true, "3-11-1a-risk-register-own@v3"),
+    );
+  });
+
+  it("tells a customer contact the update exists without offering to take it", async () => {
+    const where = await openCopy(false);
+    expect(within(where).queryByRole("button", { name: /Review template version/ })).toBeNull();
+    expect(where.textContent).toMatch(/Someone who defines lists here and in the template's org takes it\./);
+  });
+
+  it("shows a template's copies by version, and copies it into this org when it is its own tenant", async () => {
+    mockIndex();
+    const v1 = version(1, ex);
+    vi.mocked(api.getLibraryList).mockResolvedValue(
+      detail(v1, { distribution: [{ version_number: 1, copies: 2, this_org: false }, { version_number: 2, copies: 1, this_org: false }] }),
+    );
+    vi.mocked(api.getLibraryListVersions).mockResolvedValue([v1]);
+    render(<ListLibraryPanel orgId="org" canWrite={true} canDefine={true} />);
+    await screen.findByText("Separation of Duties");
+    fireEvent.click(screen.getByRole("button", { name: "Risk Register" }));
+    const copies = await screen.findByRole("region", { name: "Copies of this template" });
+    expect(copies.textContent).toMatch(/Adopted by 3 orgs: 2 at version 1, 1 at version 2\./);
+    vi.mocked(api.adoptTemplates).mockResolvedValue({
+      source_org_id: "org", same_org: true, applied: true,
+      items: [{ template_id: "risk", template_title: "Risk Register", template_version_number: 1, control_keys: [],
+        row_count: 2, example_rows: 2, action: "create", list_id: "copy", list_key: "risk-own" }],
+    });
+    fireEvent.click(within(copies).getByRole("button", { name: "Copy into this org's lists" }));
+    await waitFor(() => expect(api.adoptTemplates).toHaveBeenCalledWith("org", "org", ["risk"], true));
+  });
+
+  it("shows the set before writing it, each template its own copy", async () => {
+    mockIndex();
+    vi.mocked(api.getOrgs).mockResolvedValue([
+      { id: "org", name: "Winsorlabs", created_at: WHEN },
+      { id: "acme", name: "Acme", created_at: WHEN },
+    ]);
+    render(<ListLibraryPanel orgId="org" canWrite={true} canDefine={true} />);
+    await screen.findByText("Separation of Duties");
+    fireEvent.click(screen.getByRole("button", { name: "Adopt templates" }));
+    expect(await screen.findByText(/These are this org's own templates\./)).toBeTruthy();
+    const choices = screen.getByRole("list", { name: "Templates" });
+    fireEvent.click(within(choices).getByRole("checkbox", { name: /Risk Register/ }));
+    fireEvent.click(within(choices).getByRole("checkbox", { name: /Separation of Duties/ }));
+    vi.mocked(api.adoptTemplates).mockResolvedValueOnce({
+      source_org_id: "org", same_org: true, applied: false,
+      items: [
+        { template_id: "risk", template_title: "Risk Register", template_version_number: 1, control_keys: ["RA.L2-3.11.1"],
+          row_count: 2, example_rows: 2, action: "create", list_id: null, list_key: "risk-own" },
+        { template_id: "sod", template_title: "Separation of Duties", template_version_number: 1, control_keys: [],
+          row_count: 1, example_rows: 1, action: "already_adopted", list_id: "sod-own", list_key: "sod-own" },
+      ],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Review 2 templates" }));
+    const set = await screen.findByRole("region", { name: "What adopting will write" });
+    expect(api.adoptTemplates).toHaveBeenLastCalledWith("org", "org", ["risk", "sod"], false);
+    expect(set.textContent).toMatch(/Will copy 1 into this org's lists/);
+    expect(set.textContent).toMatch(/Already in this org's lists — not copied again/);
+    vi.mocked(api.adoptTemplates).mockResolvedValueOnce({} as never);
+    fireEvent.click(within(set).getByRole("button", { name: "Copy 1 into this org's lists" }));
+    await waitFor(() => expect(api.adoptTemplates).toHaveBeenLastCalledWith("org", "org", ["risk", "sod"], true));
+  });
+
+  it("offers no adoption to a customer contact", async () => {
+    mockIndex();
+    render(<ListLibraryPanel orgId="org" canWrite={true} />);
+    await screen.findByText("Separation of Duties");
+    expect(screen.queryByRole("button", { name: "Adopt templates" })).toBeNull();
   });
 });

@@ -329,11 +329,23 @@ L.2.2:** removing a tag is refused while evidence rests on it, naming the
 link. Make `list_library.tag_removal_blockers` return every non-archived
 EvidenceStateLink from the list's evidence to a control_state of that
 control; `tests/test_list_builder.py` fails until a new list-referencing
-table is settled that way.
+table is settled that way. **And it must offer only populated lists,
+using `list_library.is_populated`** (defined in L.7 from section 5's
+recommendation: rows, none still a bare `[PLACEHOLDER]` example) -- not a
+second rule.
 
 **L.5 — review cadence.** Read from the template's row 5, reusing N.3's
 notifier rather than building a second one. Deliberately after L.3/L.4:
 cadence on a list nobody can export yet is premature.
+
+**L.7 — adopting a template ✅ Done 2026-10-16** (ran before L.4, by
+agreement: linking an adopted, filled-in list is the real L.4 workflow).
+An org copies a template from the org that holds it -- templates stay
+org-scoped -- into its own lists; the copy records the template and
+version (`template_list_id`, `template_list_version_id`), its v1 is
+`adopted_from_template`, and a newer template version is shown as
+available and taken only deliberately, never over a person's edit unless
+that edit is named. See the roadmap's L.7 entry.
 
 **L.6 — the scope-graph join.** The ~10 projected lists draw rows from
 `scope_entity` — asset approval appearing in `3.1.1c`, and the rest. Last
