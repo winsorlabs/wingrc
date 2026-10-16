@@ -131,6 +131,12 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   test proves nothing"`. A bare assert on the setup fails as if the
   product were wrong (519d894's red run; `docs/roadmap.md`'s list
   version cause entry).
+- **A test's time margin is taken from the clock the code under test
+  reads.** A check made in SQL reads `now()`, fixed when the test's outer
+  transaction began; a margin off `datetime.now()` is against the wrong
+  clock. Artifacts compared across two moments must not carry a stamp
+  finer than the gap. Two red runs and one latent failure had this shape
+  (`docs/roadmap.md`'s clock-granularity sweep entry).
 - CI (`.github/workflows/ci.yml`) runs `backend` with **no database at
   all** and `integration` against `postgres:18`. Both run
   unconditionally — `integration` deliberately has no `needs: backend`,

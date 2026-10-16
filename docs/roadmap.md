@@ -5442,6 +5442,52 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### Tests that depended on the clock's granularity: a sweep ✅ DONE (2026-10-16)
+
+Two red runs had the same shape: a test passed or failed on when it ran
+rather than on what it tested -- 519d894's two workbooks saved in the
+same second (openpyxl's `core.xml` is second-resolution, so the bytes
+matched), and the list bundle test whose two exports straddled the minute
+stamped into `lists/index.html`. That is a pattern, so the suite was swept
+for it, as it was for bare preconditions: artifacts compared across two
+moments when they embed a stamp; a test computing "now" itself against a
+value the code computed separately; ordering asserted across rows that
+tie on a timestamp; "recent" checks and sleeps; frontend tests reading the
+real date.
+
+**One real instance, fixed:**
+`test_session_idle.py::test_continuous_activity_still_terminates_at_absolute_expiry`
+set `expires_at` one second before Python's `datetime.now()`, but the
+check it tests runs in SQL against `now()` -- which, inside the test's one
+outer transaction (`conftest.db_session`), is fixed at the moment that
+transaction began, before setup. Setup taking a second, or the database
+host's clock lagging Python's by one, left the session looking valid and
+the test red. It now takes its times from the database's clock
+(`_db_now`), the one the code under test reads; so does the heartbeat test
+beside it, which had the same mix-up behind a one-minute margin. Proved on
+the bench by injecting a two-second delay into setup: the old test fails,
+the new one passes.
+
+**Checked and safe** -- with the reason, so the next sweep need not
+repeat it: the bundle and list-bundle comparisons strip or derive their
+stamps (workbooks take the version's `saved_at`, not wall time); the
+scheduler, review-cycle, document-approval and token tests sit days or
+minutes from their thresholds; ordering tests either set distinct times,
+order by `seq`, or test queries with an id tiebreaker; no backend test
+sleeps; no frontend test reads the real date.
+
+**Latent, recorded rather than changed:** several app queries order by a
+timestamp with no tiebreaker (`routers/raci.py`, `users.py`,
+`assessments.py`, `evidence.py`, `review_cycles.py`, `liongard_sync.py`,
+`routers/auth.py`). No test asserts their order across more than one row
+today; the first that does will tie on rows created in one transaction.
+Add the id tiebreaker to the query then, not a sleep to the test.
+
+The convention is in CLAUDE.md beside the precondition one: a test's time
+margin is taken from the clock the code under test reads.
+
+---
+
 ### List library L.2.2: the List Builder, and control tags with a history ✅ DONE (2026-10-15)
 
 Migration 0065. Jarrod asked, from L.2.1 on live, for **Add List** -- a
