@@ -343,7 +343,7 @@ describe("the List Builder (L.2.2)", () => {
     vi.mocked(api.createLibraryList).mockResolvedValue(built);
     vi.mocked(api.getLibraryList).mockResolvedValue(built);
     vi.mocked(api.getLibraryListVersions).mockResolvedValue([v1]);
-    render(<ListLibraryPanel orgId="org" canWrite={true} canBuild={true} />);
+    render(<ListLibraryPanel orgId="org" canWrite={true} canDefine={true} />);
     fireEvent.click(await screen.findByRole("button", { name: "+ Add list" }));
 
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Visitor Log" } });
@@ -378,7 +378,7 @@ describe("the List Builder (L.2.2)", () => {
   it("shows the server's refusal, and keeps the form, when a practice is not a requirement", async () => {
     mockIndex();
     vi.mocked(api.createLibraryList).mockRejectedValue(new ApiError("'3.1.23' is not a NIST SP 800-171 Rev 2 requirement", 422));
-    render(<ListLibraryPanel orgId="org" canWrite={true} canBuild={true} />);
+    render(<ListLibraryPanel orgId="org" canWrite={true} canDefine={true} />);
     fireEvent.click(await screen.findByRole("button", { name: "+ Add list" }));
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "X" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Practice to add" }), { target: { value: "3.1.23" } });
@@ -394,11 +394,11 @@ describe("tags (L.2.2)", () => {
   const v1 = version(1, [["R-1", "Open"]]);
   const tagged = (keys: string[]) => detail(v1, { control_keys: keys });
 
-  async function openRisk(keys: string[], canWrite = true) {
+  async function openRisk(keys: string[], canWrite = true, canDefine = canWrite) {
     mockIndex();
     vi.mocked(api.getLibraryList).mockResolvedValue(tagged(keys));
     vi.mocked(api.getLibraryListVersions).mockResolvedValue([v1]);
-    render(<ListLibraryPanel orgId="org" canWrite={canWrite} />);
+    render(<ListLibraryPanel orgId="org" canWrite={canWrite} canDefine={canDefine} />);
     await screen.findByText("Separation of Duties");
     fireEvent.click(screen.getByRole("button", { name: "Risk Register" }));
     return screen.findByRole("region", { name: "Practices this list serves" });
@@ -441,6 +441,12 @@ describe("tags (L.2.2)", () => {
     expect(screen.queryByRole("button", { name: /^Remove / })).toBeNull();
     expect(screen.queryByRole("textbox", { name: "Practice to tag" })).toBeNull();
   });
+
+  it("offers no tag controls to a customer contact, who fills lists in", async () => {
+    await openRisk(["CM.L2-3.4.1", "RA.L2-3.11.1"], true, false);
+    expect(screen.queryByRole("button", { name: /^Remove / })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Practice to tag" })).toBeNull();
+  });
 });
 
 describe("column edits (L.2.2)", () => {
@@ -450,7 +456,7 @@ describe("column edits (L.2.2)", () => {
     mockIndex();
     vi.mocked(api.getLibraryList).mockResolvedValue(detail(v1));
     vi.mocked(api.getLibraryListVersions).mockResolvedValue([v1]);
-    render(<ListLibraryPanel orgId="org" canWrite={true} />);
+    render(<ListLibraryPanel orgId="org" canWrite={true} canDefine={true} />);
     await screen.findByText("Separation of Duties");
     fireEvent.click(screen.getByRole("button", { name: "Risk Register" }));
     fireEvent.click(await screen.findByRole("button", { name: "Edit rows" }));
@@ -467,11 +473,27 @@ describe("column edits (L.2.2)", () => {
     );
   });
 
-  it("says a rename keeps its cells", async () => {
+  it("lets a customer contact edit rows but not columns", async () => {
     mockIndex();
     vi.mocked(api.getLibraryList).mockResolvedValue(detail(v1));
     vi.mocked(api.getLibraryListVersions).mockResolvedValue([v1]);
     render(<ListLibraryPanel orgId="org" canWrite={true} />);
+    await screen.findByText("Separation of Duties");
+    expect(screen.queryByRole("button", { name: "+ Add list" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Risk Register" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit rows" }));
+    expect(screen.getByRole("button", { name: "+ Add row" })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Status, row 1" })).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: "Column 1 name" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Remove column/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "+ Add column" })).toBeNull();
+  });
+
+  it("says a rename keeps its cells", async () => {
+    mockIndex();
+    vi.mocked(api.getLibraryList).mockResolvedValue(detail(v1));
+    vi.mocked(api.getLibraryListVersions).mockResolvedValue([v1]);
+    render(<ListLibraryPanel orgId="org" canWrite={true} canDefine={true} />);
     await screen.findByText("Separation of Duties");
     fireEvent.click(screen.getByRole("button", { name: "Risk Register" }));
     fireEvent.click(await screen.findByRole("button", { name: "Edit rows" }));

@@ -17,13 +17,15 @@ Endpoints:
   GET  /orgs/{org_id}/list-definitions/{list_id}/tag-events  who tagged what, when
   GET  /orgs/{org_id}/list-library/import-report             what was never imported
 
-Who may write (L.2.2): every role but c3pao_assessor edits rows and adds
-or removes tags; building a new list is the MSP's -- msp_admin,
-consultant_admin, msp_engineer -- because which registers an org keeps
-under which practices is the MSP's library to shape, while a tenant
-contact keeping its own lists current, and pointing one at a further
-practice, is ordinary upkeep. Tag removal is guarded by evidence, not by
-role (list_library.tag_removal_blockers).
+Who may write (L.2.2): a customer contact fills lists in; it does not
+define them. Defining a list -- building one, its columns, and its tags,
+which say what it claims to serve -- is the practitioner's (DEFINE_ROLES:
+msp_admin, consultant_admin, msp_engineer). customer_poc edits rows only:
+a version it saves must keep the columns it was based on. Tagging is the
+more consequential half, since once L.4 links a list as evidence a tag
+widens or narrows what an assessment rests on. c3pao_assessor writes
+nothing. Tag removal is further guarded by evidence, whatever the role
+(list_library.tag_removal_blockers).
 
 Content changes only by creating a version. It names the version it was based on
 and is refused if that is no longer current -- the same optimistic
@@ -46,13 +48,13 @@ from sqlalchemy.orm import Session
 
 from .. import list_library
 from ..audit import log_event
-from ..auth import CurrentUser, get_current_user, require_org_access, require_write
+from ..auth import CurrentUser, require_org_access, require_write
 from ..db import get_session
 from ..list_templates import practice_key
 from ..models import AuditLog, ListControlTag, ListDefinition, ListVersion
 from ..render import render_list_version_bytes
 
-BUILD_ROLES = ("msp_admin", "consultant_admin", "msp_engineer")
+DEFINE_ROLES = ("msp_admin", "consultant_admin", "msp_engineer")
 
 router = APIRouter(
     prefix="/orgs",
@@ -272,7 +274,7 @@ def create_list_definition(
     org_id: uuid.UUID,
     body: ListCreateIn,
     session: Session = Depends(get_session),
-    current_user: CurrentUser = Depends(require_org_access(*BUILD_ROLES)),
+    current_user: CurrentUser = Depends(require_org_access(*DEFINE_ROLES)),
 ) -> ListDetailOut:
     """Build a list by hand. v1 records `created_by_hand`, never
     `first_import`: there was no source."""
@@ -410,7 +412,7 @@ def create_list_version(
     list_id: uuid.UUID,
     body: NewVersionIn,
     session: Session = Depends(get_session),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_org_access()),
 ) -> ListVersionOut:
     d = _definition(session, org_id, list_id)
     if body.base_version_id != d.current_version_id:
@@ -431,6 +433,11 @@ def create_list_version(
         )
     base = session.get(ListVersion, d.current_version_id)
     columns = body.columns if body.columns is not None else list(base.columns)
+    if columns != list(base.columns) and current_user.role not in DEFINE_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="You can edit this list's rows; its columns are set by your MSP.",
+        )
     bad = [i for i, r in enumerate(body.rows) if len(r) != len(columns)]
     if bad:
         raise HTTPException(
@@ -492,7 +499,7 @@ def add_list_tag(
     list_id: uuid.UUID,
     body: TagIn,
     session: Session = Depends(get_session),
-    current_user: CurrentUser = Depends(require_org_access()),
+    current_user: CurrentUser = Depends(require_org_access(*DEFINE_ROLES)),
 ) -> TagEventOut:
     """Tag a list to a further practice. Adding is safe -- it makes the list
     a candidate there, nothing more -- so it needs only the record."""
@@ -519,7 +526,7 @@ def remove_list_tag(
     list_id: uuid.UUID,
     control_key: str,
     session: Session = Depends(get_session),
-    current_user: CurrentUser = Depends(require_org_access()),
+    current_user: CurrentUser = Depends(require_org_access(*DEFINE_ROLES)),
 ) -> TagEventOut:
     """The dangerous direction: it narrows what the list claims to serve.
     Refused while evidence rests on the tag, naming the link; refused for
