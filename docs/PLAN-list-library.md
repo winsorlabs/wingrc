@@ -331,7 +331,8 @@ EvidenceStateLink from the list's evidence to a control_state of that
 control; `tests/test_list_builder.py` fails until a new list-referencing
 table is settled that way. **And it must offer only populated lists,
 using `list_library.is_populated`** (defined in L.7 from section 5's
-recommendation: rows, none still a bare `[PLACEHOLDER]` example) -- not a
+recommendation: rows, none still carrying an uppercase fill-in token such
+as `[PLACEHOLDER]` or `[CUSTOMER_NAME]`) -- not a
 second rule.
 
 **L.5 — review cadence.** Read from the template's row 5, reusing N.3's

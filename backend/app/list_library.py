@@ -31,6 +31,7 @@ tag is refused while evidence rests on it (`tag_removal_blockers`).
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from collections import Counter
 from collections.abc import Sequence
@@ -76,14 +77,19 @@ CAUSES = {
     "adopted_from_template": "a person copied it from a template",
 }
 
-# A template's example rows carry the bare token. `[PLACEHOLDER - reason]`
-# is a filled document's "knowably absent, and here is why" -- a value, not
-# an example (docs/PLAN-list-library.md section 3's two conventions).
-EXAMPLE_TOKEN = "[PLACEHOLDER]"
+# A template's example rows carry a fill-in token: `[PLACEHOLDER]`, or one
+# of the family the real library also uses -- `[CUSTOMER_NAME]`,
+# `[CUSTOMER]`, `[SERVER]`, `[DATE]`, `[CUI_ACCESS_GROUP]` -- often inside
+# a value ("[CUSTOMER]-Admin-Role", "jdoe@[CUSTOMER]"). Any such token
+# anywhere in a cell leaves the row an example. Not a token:
+# `[PLACEHOLDER - reason]`, a filled document's "knowably absent, and here
+# is why" (docs/PLAN-list-library.md section 3), and lowercase brackets such
+# as an objective's `[a]`, which are real values.
+EXAMPLE_TOKEN = re.compile(r"\[[A-Z][A-Z0-9_]*\]")
 
 
 def is_example_row(row: Sequence[str]) -> bool:
-    return any(cell.strip() == EXAMPLE_TOKEN for cell in row)
+    return any(EXAMPLE_TOKEN.search(cell) for cell in row)
 
 
 def example_rows(rows: Sequence[Sequence[str]]) -> int:

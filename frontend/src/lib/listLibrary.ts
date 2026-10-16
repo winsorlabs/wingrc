@@ -416,7 +416,7 @@ export function exampleRowsText(exampleRows: number, rowCount: number): string |
   if (exampleRows === 0) return null;
   const which = exampleRows === rowCount ? (rowCount === 1 ? "Its row is" : `All ${rowCount} rows are`) : `${exampleRows} of ${rowCount} rows are`;
   return (
-    `${which} still the template's [PLACEHOLDER] examples. A list counts as filled in, and can ` +
-    `be offered as evidence, only when none remain.`
+    `${which} still the template's examples, with a fill-in such as [PLACEHOLDER] or [CUSTOMER_NAME] ` +
+    `left in them. A list counts as filled in, and can be offered as evidence, only when none remain.`
   );
 }

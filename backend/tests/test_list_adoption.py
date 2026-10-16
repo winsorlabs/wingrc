@@ -38,12 +38,24 @@ EXAMPLES = [
 # ---------------------------------------------------------------------------
 
 
-def test_a_row_is_an_example_while_it_carries_the_bare_placeholder():
+def test_a_row_is_an_example_while_any_cell_carries_a_fill_in_token():
     assert list_library.is_example_row(["[PLACEHOLDER]", "x"])
     assert list_library.is_example_row([" [PLACEHOLDER] "])
+    # Inside a value, as the real library writes them (Authorized-Entities
+    # row 24 was "[PLACEHOLDER] (customer CSP/app)", and the first version of
+    # this rule, matching only a bare cell, counted that row as filled in).
+    assert list_library.is_example_row(["[PLACEHOLDER] (customer CSP/app)", "x"])
+    # The rest of the family: a copy still saying [CUSTOMER_NAME] is not evidence.
+    for cell in ("[CUSTOMER_NAME]", "All [CUSTOMER_NAME] Authorized Users", "[CUSTOMER]-Admin-Role",
+                 "jdoe@[CUSTOMER]", "Secure Share on [SERVER]", "DIBNet / [DATE]",
+                 "Authorized User - Member of [CUI_ACCESS_GROUP]"):
+        assert list_library.is_example_row([cell, "x"]), cell
     # A filled document's knowably-absent value is a value, not an example.
     assert not list_library.is_example_row(["[PLACEHOLDER - no badge system]", "x"])
-    assert not list_library.is_example_row(["see [PLACEHOLDER] note", "x"])
+    assert not list_library.is_example_row(["[PLACEHOLDER - NOT COLLECTED]", "x"])
+    # Lowercase brackets are values: an objective reference, a footnote mark.
+    assert not list_library.is_example_row(["3.7.2[a]", "see [1]", "[b] and [c]"])
+    assert not list_library.is_example_row(["Jane Doe", "", "2026-10-01"])
 
 
 def test_populated_means_rows_and_none_of_them_an_example():
@@ -51,6 +63,9 @@ def test_populated_means_rows_and_none_of_them_an_example():
     assert not list_library.is_populated(EXAMPLES)
     assert not list_library.is_populated([["2026-10-01", "A", "B"], EXAMPLES[0]])
     assert list_library.is_populated([["2026-10-01", "A", "B"]])
+    assert not list_library.is_populated(
+        [["2026-10-01", "A", "B"], ["Acme", "[CUSTOMER_NAME] SOC", ""]]
+    )
 
 
 def test_a_copy_never_shares_its_templates_key():
