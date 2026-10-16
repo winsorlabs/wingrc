@@ -15,6 +15,15 @@ itself changing while the source did not. The last recurs -- every
 importer change that alters what it reads writes a version of every list
 it touches -- and without the distinction it reads as someone having
 changed the template.
+
+A list can also be built by hand (L.2.2, `create_by_hand`): the same
+definition schema the template header block fills, with its own cause.
+
+Tags are not version content. Each records who put it there
+(`ListControlTag.added_via`) and every change is a `ListTagEvent`, so a
+list's history answers "since when, and who said so" for its tags as it
+does for its rows. An import manages only the tags it added. Removing a
+tag is refused while evidence rests on it (`tag_removal_blockers`).
 """
 
 from __future__ import annotations
@@ -31,8 +40,8 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .audit import log_event
-from .list_templates import MERGES, ImportPlan, MergeRule, SheetResult
-from .models import ListControlTag, ListDefinition, ListVersion
+from .list_templates import MERGES, ImportPlan, MergeRule, SheetResult, slug
+from .models import ListControlTag, ListDefinition, ListTagEvent, ListVersion
 
 CONTENT_FIELDS = ("title", "description", "responsible", "review_cadence", "columns", "rows")
 
@@ -58,6 +67,8 @@ CAUSES = {
     "source_changed": "the import read a changed source",
     "importer_changed": "WinGRC's importer changed; the source did not",
     "source_reapplied": "the import put the unchanged source back over a later edit",
+    # Not first_import: there was no source. Saying so is the point of a cause.
+    "created_by_hand": "a person built it in WinGRC, from nothing",
 }
 
 
@@ -142,13 +153,168 @@ def create_version(
     return version
 
 
-def set_tags(session: Session, definition: ListDefinition, control_keys: tuple[str, ...]) -> None:
-    session.execute(delete(ListControlTag).where(ListControlTag.list_id == definition.id))
-    for key in control_keys:
-        session.add(
-            ListControlTag(list_id=definition.id, org_id=definition.org_id, control_key=key)
+class TagRemovalRefused(ValueError):
+    """Removing this tag would narrow what an assessment rests on."""
+
+    def __init__(self, list_key: str, control_key: str, blockers: list[str]):
+        self.list_key, self.control_key, self.blockers = list_key, control_key, blockers
+        super().__init__(
+            f"{control_key} cannot be removed from {list_key}: evidence rests on it "
+            f"({'; '.join(blockers)}). Unlink that evidence first."
         )
+
+
+def tag_removal_blockers(session: Session, list_id: uuid.UUID, control_key: str) -> list[str]:
+    """The evidence links that rest on this list serving `control_key`, each
+    named so the refusal can say which -- an empty list means the tag may go.
+
+    The rule (L.2.2, decided before any link exists): a list linked as
+    evidence covers the controls it is tagged with (docs/PLAN-list-library
+    .md section 5), so removing a tag while a link to that control's state
+    exists would silently narrow what an assessment rests on. Adding is
+    always safe; removing is refused while such a link exists, by a person
+    and by an import alike. Nothing links a list as evidence until L.4, so
+    today nothing blocks. **L.4 must answer here**: every non-archived
+    EvidenceStateLink from this list's evidence to a control_state of
+    `control_key`'s control. tests/test_list_builder.py fails when a table
+    that references lists appears without that being settled."""
+    return []
+
+
+def tag_origins(session: Session, list_id: uuid.UUID) -> dict[str, str]:
+    return dict(
+        session.execute(
+            select(ListControlTag.control_key, ListControlTag.added_via)
+            .where(ListControlTag.list_id == list_id)
+            .order_by(ListControlTag.control_key)
+        ).all()
+    )
+
+
+def _tag_event(
+    session: Session, definition: ListDefinition, key: str, change: str, via: str,
+    saved_by: str | None,
+) -> ListTagEvent:
+    current = (
+        session.get(ListVersion, definition.current_version_id)
+        if definition.current_version_id
+        else None
+    )
+    event = ListTagEvent(
+        list_id=definition.id, org_id=definition.org_id, control_key=key, change=change,
+        via=via, saved_by=saved_by, at_version=current.version_number if current else None,
+    )
+    session.add(event)
+    return event
+
+
+def add_tag(
+    session: Session, definition: ListDefinition, key: str, via: str, saved_by: str | None
+) -> ListTagEvent | None:
+    """Adds one tag, recorded. None when the list already carries it."""
+    if key in tag_origins(session, definition.id):
+        return None
+    session.add(
+        ListControlTag(
+            list_id=definition.id, org_id=definition.org_id, control_key=key, added_via=via
+        )
+    )
+    event = _tag_event(session, definition, key, "added", via, saved_by)
     session.flush()
+    return event
+
+
+def remove_tag(
+    session: Session, definition: ListDefinition, key: str, via: str, saved_by: str | None
+) -> ListTagEvent | None:
+    """Removes one tag, recorded -- refused while evidence rests on it.
+    None when the list does not carry it."""
+    if key not in tag_origins(session, definition.id):
+        return None
+    blockers = tag_removal_blockers(session, definition.id, key)
+    if blockers:
+        raise TagRemovalRefused(definition.list_key, key, blockers)
+    session.execute(
+        delete(ListControlTag).where(
+            ListControlTag.list_id == definition.id, ListControlTag.control_key == key
+        )
+    )
+    event = _tag_event(session, definition, key, "removed", via, saved_by)
+    session.flush()
+    return event
+
+
+def import_tag_changes(
+    session: Session, definition: ListDefinition, control_keys: tuple[str, ...]
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """What an import changes in a list's tags: (add, remove). It adds what
+    the source's row 2 names and the list lacks, and removes only tags an
+    import added that row 2 no longer names. A person's tag is never the
+    import's to remove -- before 2026-10-15 every import replaced the whole
+    set, so the next one would have silently dropped it."""
+    have = tag_origins(session, definition.id)
+    add = tuple(k for k in control_keys if k not in have)
+    remove = tuple(
+        k for k, via in have.items() if via == "template_import" and k not in control_keys
+    )
+    return add, remove
+
+
+def tag_events(session: Session, list_id: uuid.UUID) -> list[ListTagEvent]:
+    return list(
+        session.scalars(
+            select(ListTagEvent)
+            .where(ListTagEvent.list_id == list_id)
+            .order_by(ListTagEvent.seq)
+        )
+    )
+
+
+class ListKeyTaken(ValueError):
+    def __init__(self, existing: ListDefinition):
+        self.existing = existing
+        super().__init__(f"this org already has a list keyed {existing.list_key!r}")
+
+
+def create_by_hand(
+    session: Session,
+    org_id: uuid.UUID,
+    content: dict,
+    control_keys: tuple[str, ...],
+    saved_by: str,
+    origin_note: str = "",
+) -> ListDefinition:
+    """A list a person builds in WinGRC: the fields the template header
+    block holds (title, row 2's practices, What goes here, Responsible,
+    Review cadence, row 10's columns), and nothing an import would not.
+
+    Keyed as an import keys a sheet -- the slugged name -- so one key space
+    serves both. v1 is `created_by_hand` and `via: api`: it is a person's
+    content, so an import that later produces the same key finds an edit
+    and reports a conflict instead of writing over it.
+
+    `origin_note` is a person's free text about where the content came from
+    ("lifted from our old SharePoint sheet"). It is not lineage: an
+    imported list's lineage is `source_file` and `source_sha256`, which the
+    product computed, and the two are kept apart on purpose."""
+    key = slug(content["title"])
+    existing = session.scalar(
+        select(ListDefinition).where(
+            ListDefinition.org_id == org_id, ListDefinition.list_key == key
+        )
+    )
+    if existing is not None:
+        raise ListKeyTaken(existing)
+    definition = ListDefinition(org_id=org_id, list_key=key, is_template=False)
+    session.add(definition)
+    session.flush()
+    provenance = {"via": "api", "cause": "created_by_hand", "saved_by": saved_by}
+    if origin_note.strip():
+        provenance["origin_note"] = origin_note.strip()
+    create_version(session, definition, content, provenance)
+    for k in control_keys:
+        add_tag(session, definition, k, "api", saved_by)
+    return definition
 
 
 def tags_of(session: Session, list_id: uuid.UUID) -> tuple[str, ...]:
@@ -257,7 +423,7 @@ def diff_import(session: Session, org_id: uuid.UUID, plan: ImportPlan) -> Import
         planned = _planned_content(s)
         have = content_of(current) if current else {}
         changed = tuple(k for k in CONTENT_FIELDS if have.get(k) != planned[k])
-        if tuple(sorted(s.control_keys)) != tuple(sorted(tags_of(session, d.id))):
+        if any(import_tag_changes(session, d, s.control_keys)):
             changed += ("control_tags",)
         if set(changed) - {"control_tags"} and (current.provenance or {}).get("via") == "api":
             # A person edited this list since it was imported. The import has
@@ -412,6 +578,17 @@ def apply_import(
         )
     for ref in overwrite_edits:
         conflicts[ref].action = "new_version"
+    blocked = [
+        f"{a.definition.list_key}: {k} ({'; '.join(b)})"
+        for a in diff.of("new_version")
+        for k in import_tag_changes(session, a.definition, a.sheet.control_keys)[1]
+        if (b := tag_removal_blockers(session, a.definition.id, k))
+    ]
+    if blocked:
+        raise ImportRefused(
+            "the source no longer names a practice that evidence rests on: "
+            f"{', '.join(blocked)}. Unlink that evidence first. Nothing was written."
+        )
     for a in diff.actions:
         if a.action in ("unchanged", "conflict"):
             continue
@@ -441,5 +618,9 @@ def apply_import(
                 # Says so plainly: an import is about to replace a person's edit.
                 provenance["replaces_edit_in_version"] = history[-1].version_number
             a.version = create_version(session, a.definition, content, provenance)
-        set_tags(session, a.definition, s.control_keys)
+        add, remove = import_tag_changes(session, a.definition, s.control_keys)
+        for k in add:
+            add_tag(session, a.definition, k, "template_import", None)
+        for k in remove:
+            remove_tag(session, a.definition, k, "template_import", None)
     return diff

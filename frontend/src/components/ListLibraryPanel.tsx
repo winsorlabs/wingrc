@@ -21,6 +21,16 @@
  * in each of their family views, and once overall. Its tags say it serves
  * all three, which is the model's central claim.
  *
+ * Lists can be built here by hand (L.2.2, ListBuilder) and tagged to
+ * further practices. Tags are not version content, so their changes have
+ * their own record -- shown in the same History as the versions, because
+ * that is where a person looks first. Removing a tag is refused while
+ * evidence rests on it; the refusal names the link.
+ *
+ * Columns can be added, renamed and removed while editing. Rows are
+ * positional, so a rename keeps its cells; a removal drops them from the
+ * new version, and the save bar says exactly what before it saves.
+ *
  * A save that lost a race is not an error path. The 409 says who saved the
  * newer version; the editor's draft stays, and their changes are re-applied
  * onto that version for them to review (lib/listLibrary.ts's rebase) --
@@ -34,7 +44,15 @@ import { FAMILY_NAMES } from "../lib/families";
 import {
   causeLabel,
   changeCounts,
+  columnLossWarning,
+  columnsChanged,
+  columnsFrom,
   draftFrom,
+  droppedColumns,
+  historyEntries,
+  renamedColumns,
+  tagSentence,
+  type DraftColumn,
   draftRows,
   familiesOf,
   familyCounts,
@@ -56,8 +74,10 @@ import type {
   LibraryListSummary,
   LibraryListVersion,
   ListImportReport,
+  ListTagEvent,
   ListViewSummary,
 } from "../types";
+import { ListBuilder } from "./ListBuilder";
 import { ListsPanel } from "./ListsPanel";
 
 type Selection = { kind: "library"; id: string } | { kind: "scope"; id: string } | null;
@@ -270,6 +290,12 @@ function LibraryListView({
   const [conflict, setConflict] = useState<ConflictState | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [draftCols, setDraftCols] = useState<DraftColumn[] | null>(null);
+  const [tagEvents, setTagEvents] = useState<ListTagEvent[]>([]);
+  const [tagInput, setTagInput] = useState("");
+  const [tagBusy, setTagBusy] = useState(false);
+  const [tagError, setTagError] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -282,19 +308,28 @@ function LibraryListView({
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load list");
     }
+    // The tag record adds to the history; the list reads without it.
+    Promise.resolve(api.getListTagEvents(orgId, listId)).then(
+      (es) => setTagEvents(es ?? []),
+      () => setTagEvents([]),
+    );
   }, [orgId, listId]);
 
   useEffect(() => {
     setDetail(null);
     setViewing(null);
     setDraft(null);
+    setDraftCols(null);
     setConflict(null);
     setNotice(null);
+    setConfirmRemove(null);
+    setTagError(null);
     load();
   }, [load]);
 
   const base = detail?.current ?? null;
-  const dirty = draft !== null && base !== null && isDirty(base.rows, draft);
+  const colsChanged = draftCols !== null && base !== null && columnsChanged(base.columns, draftCols);
+  const dirty = draft !== null && base !== null && (isDirty(base.rows, draft) || colsChanged);
 
   // There is no autosave: say so before a tab close loses an edit.
   useEffect(() => {
@@ -319,6 +354,7 @@ function LibraryListView({
 
   function startEdit() {
     setDraft(draftFrom(base!.rows));
+    setDraftCols(columnsFrom(base!.columns));
     setNote("");
     setNotice(null);
     setError(null);
@@ -328,13 +364,51 @@ function LibraryListView({
     setDraft((d) => d && d.map((r, k) => (k === i ? { ...r, cells: r.cells.map((x, m) => (m === c ? value : x)) } : r)));
   }
 
+  function removeColumn(i: number) {
+    setDraftCols((cols) => cols && cols.filter((_, k) => k !== i));
+    setDraft((d) => d && d.map((r) => ({ ...r, cells: r.cells.filter((_, k) => k !== i) })));
+  }
+
+  function addColumn() {
+    setDraftCols((cols) => cols && [...cols, { name: "", from: null }]);
+    setDraft((d) => d && d.map((r) => ({ ...r, cells: [...r.cells, ""] })));
+  }
+
+  async function changeTag(action: "add" | "remove", key: string) {
+    if (tagBusy) return;
+    setTagBusy(true);
+    setTagError(null);
+    try {
+      if (action === "add") {
+        await api.addListTag(orgId, listId, key);
+        setTagInput("");
+      } else {
+        await api.removeListTag(orgId, listId, key);
+      }
+      setConfirmRemove(null);
+      await load();
+      onSaved();
+    } catch (e) {
+      setTagError(e instanceof Error ? e.message : "Could not change this list's practices");
+    } finally {
+      setTagBusy(false);
+    }
+  }
+
   async function save() {
     if (!draft || !base || saving) return;
     setSaving(true);
     setError(null);
     try {
-      await api.createLibraryListVersion(orgId, listId, draftRows(draft), base.id, note);
+      if (colsChanged && draftCols) {
+        await api.createLibraryListVersion(
+          orgId, listId, draftRows(draft), base.id, note, draftCols.map((c) => c.name.trim()),
+        );
+      } else {
+        await api.createLibraryListVersion(orgId, listId, draftRows(draft), base.id, note);
+      }
       setDraft(null);
+      setDraftCols(null);
       setConflict(null);
       setNotice(null);
       await load();
@@ -343,8 +417,10 @@ function LibraryListView({
       if (e instanceof ListConflictError) {
         try {
           const theirs = await api.getLibraryList(orgId, listId);
+          // Either side changing the columns leaves rows that cannot be
+          // matched up cell by cell, so nothing is re-applied automatically.
           const columnsChanged =
-            JSON.stringify(theirs.current.columns) !== JSON.stringify(base.columns);
+            JSON.stringify(theirs.current.columns) !== JSON.stringify(base.columns) || colsChanged;
           setConflict({
             info: e.conflict,
             theirs,
@@ -383,13 +459,24 @@ function LibraryListView({
 
   function discardAndLoad() {
     setDraft(null);
+    setDraftCols(null);
     setConflict(null);
     setNotice(null);
     load();
   }
 
   const rows: DraftRow[] | null = editing ? draft : null;
-  const columns = shown.columns;
+  const columns = editing && draftCols ? draftCols.map((c) => c.name) : shown.columns;
+  const dropped = editing && draftCols ? droppedColumns(base.columns, base.rows, draftCols) : [];
+  const renamed = editing && draftCols ? renamedColumns(base.columns, draftCols) : [];
+  const lossWarning = columnLossWarning(dropped, base.version_number + 1);
+  const droppedCells = dropped.reduce((a, d) => a + d.filled, 0);
+  const badColumns =
+    editing &&
+    draftCols !== null &&
+    (draftCols.some((c) => !c.name.trim()) ||
+      new Set(draftCols.map((c) => c.name.trim().toLowerCase())).size !== draftCols.length);
+  const history = historyEntries(versions.length ? versions : [base], tagEvents);
 
   return (
     <div className="contacts-panel list-library-detail">
@@ -481,7 +568,72 @@ function LibraryListView({
         ) : (
           <p>Serves one practice.</p>
         )}
-        <PracticeChips keys={detail.control_keys} />
+        <span className="list-practices">
+          {detail.control_keys.map((k) => (
+            <span key={k} className="filter-chip list-practice" title={FAMILY_NAMES[familyOf(k)] ?? ""}>
+              {k}
+              {canWrite && detail.control_keys.length > 1 && (
+                <button
+                  type="button"
+                  className="btn-ghost btn-sm list-tag-remove"
+                  aria-label={`Remove ${k}`}
+                  disabled={tagBusy}
+                  onClick={() => {
+                    setTagError(null);
+                    setConfirmRemove(k);
+                  }}
+                >
+                  ×
+                </button>
+              )}
+            </span>
+          ))}
+        </span>
+        {confirmRemove && (
+          <div className="doc-notice doc-notice-warn list-tag-confirm">
+            <p>
+              Remove <strong>{confirmRemove}</strong>? This list will no longer claim to serve it, and the change is
+              recorded in its history with your name. It is refused while evidence rests on this list for{" "}
+              {confirmRemove}.
+            </p>
+            <button
+              type="button"
+              className="btn-primary btn-sm"
+              disabled={tagBusy}
+              onClick={() => changeTag("remove", confirmRemove)}
+            >
+              Yes, remove {confirmRemove}
+            </button>{" "}
+            <button type="button" className="btn-ghost btn-sm" onClick={() => setConfirmRemove(null)}>
+              Keep it
+            </button>
+          </div>
+        )}
+        {canWrite && (
+          <div className="list-tag-add">
+            <input
+              aria-label="Practice to tag"
+              placeholder="CM.L2-3.4.2 or 3.4.2"
+              value={tagInput}
+              onChange={(e) => setTagInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && tagInput.trim()) {
+                  e.preventDefault();
+                  changeTag("add", tagInput.trim());
+                }
+              }}
+            />{" "}
+            <button
+              type="button"
+              className="btn-ghost btn-sm"
+              disabled={tagBusy || !tagInput.trim()}
+              onClick={() => changeTag("add", tagInput.trim())}
+            >
+              Add tag
+            </button>
+          </div>
+        )}
+        {tagError && <div className="form-error">{tagError}</div>}
       </section>
 
       {detail.merge && (
@@ -560,6 +712,17 @@ function LibraryListView({
             </dd>
           </>
         )}
+        {versions[0]?.provenance.origin_note && (
+          <>
+            <dt>Where it came from</dt>
+            <dd>
+              {versions[0].provenance.origin_note}{" "}
+              <span className="field-hint">
+                — a note by {versions[0].saved_by ?? "the person who built it"}, not an import source
+              </span>
+            </dd>
+          </>
+        )}
         {shown.provenance.via === "api" && shown.provenance.note && (
           <>
             <dt>Change note</dt>
@@ -568,10 +731,27 @@ function LibraryListView({
         )}
       </dl>
 
-      <section className="list-history" aria-label="Version history">
-        <h3>Version history</h3>
+      <section className="list-history" aria-label="History">
+        <h3>History: versions and practices</h3>
         <ol>
-          {[...(versions.length ? versions : [base])].reverse().map((v) => (
+          {history.map((h) => {
+            if (h.kind === "tag") {
+              const e = h.event;
+              return (
+                <li key={e.id} className="list-history-tag">
+                  <span className={`cause-badge tag-${e.change}`}>{e.change === "added" ? "tagged" : "untagged"}</span>{" "}
+                  <span className="field-hint">
+                    {e.via === "api" ? (e.saved_by ?? "a person") : "WinGRC importer"} · {formatWhen(e.created_at)}
+                  </span>
+                  <div className="list-history-why">
+                    {tagSentence(e)}
+                    {e.note ? ` ${e.note}` : ""}
+                  </div>
+                </li>
+              );
+            }
+            const v = h.version;
+            return (
             <li key={v.id} className={v.version_number === shown.version_number ? "is-shown" : undefined}>
               <button
                 type="button"
@@ -587,7 +767,8 @@ function LibraryListView({
               </span>
               <div className="list-history-why">{whyVersion(v)}</div>
             </li>
-          ))}
+            );
+          })}
         </ol>
       </section>
 
@@ -681,7 +862,28 @@ function LibraryListView({
         <table className="contacts-table list-rows">
           <thead>
             <tr>
-              {columns.map((c) => (
+              {editing && draftCols
+                ? draftCols.map((c, i) => (
+                    <th key={i}>
+                      <input
+                        aria-label={`Column ${i + 1} name`}
+                        value={c.name}
+                        onChange={(e) =>
+                          setDraftCols((cols) => cols && cols.map((x, k) => (k === i ? { ...x, name: e.target.value } : x)))
+                        }
+                      />
+                      <button
+                        type="button"
+                        className="btn-ghost btn-sm"
+                        aria-label={`Remove column ${c.name || i + 1}`}
+                        disabled={draftCols.length === 1}
+                        onClick={() => removeColumn(i)}
+                      >
+                        Remove column
+                      </button>
+                    </th>
+                  ))
+                : columns.map((c) => (
                 <th key={c}>
                   {c}
                   {addedByMerge.has(c) && (
@@ -746,6 +948,9 @@ function LibraryListView({
           >
             + Add row
           </button>
+          <button type="button" className="btn-ghost btn-sm" onClick={addColumn}>
+            + Add column
+          </button>
           <input
             className="list-note"
             aria-label="Change note"
@@ -758,10 +963,16 @@ function LibraryListView({
           <button
             type="button"
             className="btn-primary btn-sm"
-            disabled={!dirty || saving || conflict !== null}
+            disabled={!dirty || saving || conflict !== null || badColumns}
             onClick={save}
           >
-            {saving ? "Saving…" : dirty ? `Save as version ${base.version_number + 1}` : "No changes"}
+            {saving
+              ? "Saving…"
+              : !dirty
+                ? "No changes"
+                : droppedCells > 0
+                  ? `Save as version ${base.version_number + 1}, removing ${droppedCells} filled cell${droppedCells === 1 ? "" : "s"}`
+                  : `Save as version ${base.version_number + 1}`}
           </button>
           <button
             type="button"
@@ -769,12 +980,24 @@ function LibraryListView({
             disabled={saving}
             onClick={() => {
               setDraft(null);
+              setDraftCols(null);
               setConflict(null);
               setNotice(null);
             }}
           >
             Cancel
           </button>
+        </div>
+      )}
+      {editing && (lossWarning || renamed.length > 0 || badColumns) && (
+        <div className="doc-notice doc-notice-warn list-column-changes" aria-label="Column changes">
+          {lossWarning && <p>{lossWarning}</p>}
+          {renamed.length > 0 && (
+            <p>
+              Renamed: {renamed.map((r) => `${r.from} → ${r.to}`).join(", ")}. A renamed column keeps its cells.
+            </p>
+          )}
+          {badColumns && <p>Every column needs a name, and no two can share one.</p>}
         </div>
       )}
 
@@ -787,7 +1010,16 @@ function LibraryListView({
   );
 }
 
-export function ListLibraryPanel({ orgId, canWrite }: { orgId: string; canWrite: boolean }) {
+export function ListLibraryPanel({
+  orgId,
+  canWrite,
+  canBuild = false,
+}: {
+  orgId: string;
+  canWrite: boolean;
+  // Building a list is the MSP's (lib/roles.ts canBuildLists); every writer tags.
+  canBuild?: boolean;
+}) {
   const [lists, setLists] = useState<LibraryListSummary[] | null>(null);
   const [views, setViews] = useState<ListViewSummary[]>([]);
   const [report, setReport] = useState<ListImportReport | null>(null);
@@ -795,6 +1027,7 @@ export function ListLibraryPanel({ orgId, canWrite }: { orgId: string; canWrite:
   const [practice, setPractice] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [selection, setSelection] = useState<Selection>(null);
+  const [building, setBuilding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -811,6 +1044,7 @@ export function ListLibraryPanel({ orgId, canWrite }: { orgId: string; canWrite:
 
   useEffect(() => {
     setSelection(null);
+    setBuilding(false);
     load();
   }, [load]);
 
@@ -829,6 +1063,19 @@ export function ListLibraryPanel({ orgId, canWrite }: { orgId: string; canWrite:
   if (error && !lists) return <div className="form-error">{error}</div>;
   if (!lists) return <div className="loading">Loading lists…</div>;
 
+  if (building) {
+    return (
+      <ListBuilder
+        orgId={orgId}
+        onCancel={() => setBuilding(false)}
+        onCreated={async (created) => {
+          setBuilding(false);
+          await load();
+          setSelection({ kind: "library", id: created.id });
+        }}
+      />
+    );
+  }
   if (selection?.kind === "library") {
     const summary = lists.find((l) => l.id === selection.id);
     const live = views.find((v) => v.id === summary?.projection_view_id) ?? null;
@@ -870,6 +1117,13 @@ export function ListLibraryPanel({ orgId, canWrite }: { orgId: string; canWrite:
             org, and templates whose rows are examples.
           </div>
         </div>
+        {canBuild && (
+          <div className="list-library-actions">
+            <button type="button" className="btn-primary btn-sm" onClick={() => setBuilding(true)}>
+              + Add list
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="list-filters">

@@ -310,6 +310,10 @@ versions say why they exist" entry, including the version-churn pattern
 importer changes cause.
 An import also never replaces a person's edit unless that exact edit
 is named (`--overwrite-edit list_key@vN`); see the roadmap entry.
+**L.2.2 ✅ Done 2026-10-15** -- the List Builder (the header block's
+fields, v1 `created_by_hand`) and tags edited by hand, each recorded in
+`list_tag_event` and shown in the list's History beside its versions; an
+import manages only the tags it added. See the roadmap's L.2.2 entry.
 
 **L.3 — export and bundle inclusion.** Export a list for an assessor, and
 make lists first-class contributors to the point-in-time bundle per §5.
@@ -320,7 +324,12 @@ evidence); each is embedded as its current version, named by id. See
 `docs/roadmap.md`'s L.3 entry.
 
 **L.4 — evidence linking.** §5's first half. Small, and it closes the loop
-from list to control.
+from list to control. **It must honour the tag-removal rule decided in
+L.2.2:** removing a tag is refused while evidence rests on it, naming the
+link. Make `list_library.tag_removal_blockers` return every non-archived
+EvidenceStateLink from the list's evidence to a control_state of that
+control; `tests/test_list_builder.py` fails until a new list-referencing
+table is settled that way.
 
 **L.5 — review cadence.** Read from the template's row 5, reusing N.3's
 notifier rather than building a second one. Deliberately after L.3/L.4:

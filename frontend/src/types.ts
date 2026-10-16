@@ -1442,13 +1442,16 @@ export interface LibraryListSummary {
 }
 
 // Why a list version exists (backend list_library.CAUSES): a person's edit,
-// the importer reading a changed source, or the importer itself changing.
+// the importer reading a changed source, the importer itself changing, or a
+// person building the list by hand (L.2.2) -- never "first_import", which
+// would claim a source there was not.
 export type VersionCause =
   | "edit"
   | "first_import"
   | "source_changed"
   | "importer_changed"
-  | "source_reapplied";
+  | "source_reapplied"
+  | "created_by_hand";
 
 export interface LibraryListChangelog {
   path: string;
@@ -1478,6 +1481,9 @@ export interface LibraryListVersion {
     previous_import_version?: number;
     replaces_edit_in_version?: number;
     importer_build?: string;
+    // A person's note on where a hand-built list's content came from. Not
+    // lineage: an import's lineage is source_file/source_sha256.
+    origin_note?: string;
   };
   created_at: string;
   saved_by: string | null;
@@ -1508,6 +1514,31 @@ export interface LibraryListSaveConflict {
   current_version_number: number;
   saved_by: string | null;
   saved_at: string;
+}
+
+// One tag added to or removed from a list (L.2.2). Tags are not version
+// content, so these are the record of them, shown beside the versions.
+export interface ListTagEvent {
+  id: string;
+  control_key: string;
+  change: "added" | "removed";
+  via: "template_import" | "api";
+  saved_by: string | null;
+  at_version: number | null;
+  note: string | null;
+  created_at: string;
+}
+
+// The List Builder's fields are the template header block's: title, row 2's
+// practices, What goes here, Responsible, Review cadence, row 10's columns.
+export interface LibraryListCreate {
+  title: string;
+  control_keys: string[];
+  description: string;
+  responsible: string;
+  review_cadence: string;
+  columns: string[];
+  origin_note: string;
 }
 
 export interface ListImportReport {

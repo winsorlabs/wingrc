@@ -534,9 +534,11 @@ def test_every_edit_is_audited_with_what_changed(db_session, tmp_path):
     ).all()
     assert event.entity_id == uuid.UUID(risk["id"])
     assert event.before_value["version_number"] == 1
-    # The two template rows are identical; one was kept, one replaced.
+    # The two template rows are identical; one was kept, one replaced. Since
+    # L.2.2 the row also names columns added and removed -- none here.
     assert event.after_value == {
         "version_number": 2, "row_count": 2, "rows_added": 1, "rows_removed": 1,
+        "columns_added": [], "columns_removed": [],
     }
     assert event.context["note"] == "first real risk"
 

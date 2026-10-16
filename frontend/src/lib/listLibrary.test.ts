@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
+import type { LibraryListVersion, ListTagEvent } from "../types";
 import {
   causeLabel,
   changeCounts,
+  columnLossWarning,
+  columnsChanged,
+  columnsFrom,
   draftFrom,
+  droppedColumns,
+  historyEntries,
+  renamedColumns,
+  tagSentence,
   familiesOf,
   familyCounts,
   filterLists,
@@ -176,6 +184,22 @@ describe("why a version exists", () => {
       expect(versionAuthor(v(c))).toBe("WinGRC importer");
     }
     expect(versionAuthor(v("edit", {}, "Ada Admin"))).toBe("Ada Admin");
+    expect(versionAuthor(v("created_by_hand", {}, "Pat Builder"))).toBe("Pat Builder");
+  });
+
+  it("says a hand-built list was written by a person, from nothing, on its date -- never imported", () => {
+    const built = { ...v("created_by_hand", { origin_note: "old SharePoint sheet" }, "Pat Builder"), created_at: "2026-10-15T14:02:00Z" };
+    expect(causeLabel("created_by_hand")).toBe("built by hand");
+    expect(whyVersion(built)).toBe(
+      "Written by Pat Builder, from nothing: built by hand in WinGRC on 2026-10-15, not imported from a template.",
+    );
+    expect(whyVersion(built)).not.toMatch(/SharePoint/);
+  });
+
+  it("says when a first import replaced a list a person had built", () => {
+    expect(whyVersion(v("first_import", { source_file: "New Lists/x.xlsx", replaces_edit_in_version: 1 }))).toBe(
+      "Imported from New Lists/x.xlsx. It replaced the edit in version 1.",
+    );
   });
 
   it("tells a changed source from an unchanged one", () => {
@@ -194,5 +218,56 @@ describe("why a version exists", () => {
     expect(whyVersion(v("importer_changed", { replaces_edit_in_version: 4 }))).toMatch(
       /It replaced the edit in version 4\.$/,
     );
+  });
+});
+
+describe("tag history beside the versions", () => {
+  const ver = (n: number, at: string) => ({ id: `v${n}`, version_number: n, created_at: at }) as LibraryListVersion;
+  const tag = (id: string, key: string, change: "added" | "removed", at: string, over: Partial<ListTagEvent> = {}): ListTagEvent => ({
+    id, control_key: key, change, via: "api", saved_by: "Tess Tagger", at_version: 1, note: null, created_at: at, ...over,
+  });
+
+  it("interleaves them newest first, a tag made with a version sorting after it", () => {
+    const t0 = "2026-10-15T10:00:00Z";
+    const entries = historyEntries(
+      [ver(1, t0), ver(2, "2026-10-15T12:00:00Z")],
+      [tag("a", "PE.L2-3.10.3", "added", t0), tag("b", "PE.L2-3.10.4", "added", t0), tag("c", "CM.L2-3.4.2", "added", "2026-10-15T11:00:00Z")],
+    );
+    expect(entries.map((e) => (e.kind === "version" ? `v${e.version.version_number}` : e.event.id))).toEqual([
+      "v2", "c", "b", "a", "v1",
+    ]);
+  });
+
+  it("says who claimed or dropped a practice, a person or the importer", () => {
+    expect(tagSentence(tag("a", "CM.L2-3.4.2", "added", ""))).toBe(
+      "Tagged CM.L2-3.4.2: this list became a candidate for it. By Tess Tagger.",
+    );
+    expect(tagSentence(tag("b", "RA.L2-3.11.2", "removed", "", { via: "template_import", saved_by: null }))).toBe(
+      "Untagged RA.L2-3.11.2: this list no longer claims to serve it. By WinGRC importer, from the source sheet's practice row.",
+    );
+  });
+});
+
+describe("column edits", () => {
+  const base = ["Date", "Visitor", "Escort"];
+  const rows = [["2026-10-01", "A", "J"], ["2026-10-02", "B", ""]];
+
+  it("tells a rename, which keeps its cells, from a removal, which drops them", () => {
+    const cols = columnsFrom(base);
+    expect(columnsChanged(base, cols)).toBe(false);
+    const edited = [{ name: "Date", from: 0 }, { name: "Guest", from: 1 }];
+    expect(columnsChanged(base, edited)).toBe(true);
+    expect(renamedColumns(base, edited)).toEqual([{ from: "Visitor", to: "Guest" }]);
+    expect(droppedColumns(base, rows, edited)).toEqual([{ name: "Escort", filled: 1 }]);
+  });
+
+  it("says plainly what a save will lose, and that the prior version keeps it", () => {
+    expect(columnLossWarning([{ name: "Escort", filled: 1 }], 3)).toBe(
+      "Saving removes the column Escort (1 filled cell) from version 3: 1 filled cell will not be in it. Version 2 keeps it, with every value.",
+    );
+    expect(columnLossWarning([{ name: "Notes", filled: 0 }], 2)).toBe(
+      "Saving removes the column Notes (0 filled cells) from version 2. Version 1 keeps it.",
+    );
+    expect(columnLossWarning([], 2)).toBe("");
   });
 });

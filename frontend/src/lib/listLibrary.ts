@@ -8,7 +8,7 @@
 // makes the re-apply exact for every row the other editor did not touch, and
 // honest about the ones they did.
 
-import type { LibraryListVersion, VersionCause } from "../types";
+import type { LibraryListVersion, ListTagEvent, VersionCause } from "../types";
 import { FAMILY_ORDER } from "./families";
 
 export function familyOf(controlKey: string): string {
@@ -225,18 +225,27 @@ export const CAUSE_LABELS: Record<VersionCause, string> = {
   source_changed: "source changed",
   importer_changed: "importer changed",
   source_reapplied: "source put back",
+  created_by_hand: "built by hand",
 };
 
 export function causeLabel(cause: VersionCause): string {
   return CAUSE_LABELS[cause] ?? cause;
 }
 
+const PERSON_CAUSES: ReadonlySet<VersionCause> = new Set(["edit", "created_by_hand"]);
+
 /** Who made the version: a person's name, or the product. */
 export function versionAuthor(v: Pick<LibraryListVersion, "cause" | "saved_by">): string {
-  return v.cause === "edit" ? (v.saved_by ?? "a person") : "WinGRC importer";
+  return PERSON_CAUSES.has(v.cause) ? (v.saved_by ?? "a person") : "WinGRC importer";
 }
 
-export function whyVersion(v: Pick<LibraryListVersion, "cause" | "saved_by" | "provenance">): string {
+// The calendar date a record was written, as stored (UTC): the same on
+// every reader's screen, unlike a locale rendering of the instant.
+const dayOf = (iso: string) => iso.slice(0, 10);
+
+export function whyVersion(
+  v: Pick<LibraryListVersion, "cause" | "saved_by" | "provenance"> & { created_at?: string },
+): string {
   const p = v.provenance;
   const since = p.previous_import_version ? ` since version ${p.previous_import_version}` : "";
   const replaced = p.replaces_edit_in_version
@@ -248,7 +257,12 @@ export function whyVersion(v: Pick<LibraryListVersion, "cause" | "saved_by" | "p
     case "edit":
       return `Saved by ${versionAuthor(v)}${p.based_on_version ? `, from version ${p.based_on_version}` : ""}.`;
     case "first_import":
-      return `Imported from ${p.source_file ?? "the template library"}${p.source_sheet ? ` (sheet ${p.source_sheet})` : ""}.`;
+      return `Imported from ${p.source_file ?? "the template library"}${p.source_sheet ? ` (sheet ${p.source_sheet})` : ""}.${replaced}`;
+    case "created_by_hand":
+      return (
+        `Written by ${versionAuthor(v)}, from nothing: built by hand in WinGRC` +
+        `${v.created_at ? ` on ${dayOf(v.created_at)}` : ""}, not imported from a template.`
+      );
     case "source_changed":
       return `Re-imported because the source sheet changed${since}.${fields}`;
     case "importer_changed":
@@ -263,4 +277,81 @@ export function whyVersion(v: Pick<LibraryListVersion, "cause" | "saved_by" | "p
       );
   }
   return "";
+}
+
+/** One line of a list's tag history: what changed, and who said so. */
+export function tagSentence(e: Pick<ListTagEvent, "control_key" | "change" | "via" | "saved_by">): string {
+  const who = e.via === "api" ? (e.saved_by ?? "a person") : "WinGRC importer, from the source sheet's practice row";
+  return e.change === "added"
+    ? `Tagged ${e.control_key}: this list became a candidate for it. By ${who}.`
+    : `Untagged ${e.control_key}: this list no longer claims to serve it. By ${who}.`;
+}
+
+export type HistoryEntry =
+  | { kind: "version"; at: string; version: LibraryListVersion }
+  | { kind: "tag"; at: string; event: ListTagEvent };
+
+/**
+ * Versions and tag changes in one history, newest first (L.2.2). Tags are
+ * not version content, so they have their own record; showing it here, not
+ * in a second place, is what lets "when did this list start claiming that
+ * practice, and who said so?" be answered where a person looks first. A tag
+ * change made in the same moment as a version (a list built with its tags)
+ * sorts after that version; tag events keep their recorded order.
+ */
+export function historyEntries(versions: LibraryListVersion[], events: ListTagEvent[]): HistoryEntry[] {
+  const all = [
+    ...versions.map((v, i) => ({ e: { kind: "version", at: v.created_at, version: v } as HistoryEntry, rank: 0, i })),
+    ...events.map((ev, i) => ({ e: { kind: "tag", at: ev.created_at, event: ev } as HistoryEntry, rank: 1, i })),
+  ];
+  const time = (iso: string) => new Date(iso).getTime();
+  all.sort((a, b) => time(a.e.at) - time(b.e.at) || a.rank - b.rank || a.i - b.i);
+  return all.map((x) => x.e).reverse();
+}
+
+// Columns while editing. Rows are positional -- a cell belongs to a column
+// by index, not by header -- so `from` (the column's index in the version
+// the edit started from) is what tells a rename, which keeps its cells, from
+// a removal, which drops them.
+export interface DraftColumn {
+  name: string;
+  from: number | null;
+}
+
+export function columnsFrom(columns: string[]): DraftColumn[] {
+  return columns.map((name, i) => ({ name, from: i }));
+}
+
+export function columnsChanged(base: string[], cols: DraftColumn[]): boolean {
+  return cols.length !== base.length || cols.some((c, i) => c.from !== i || c.name !== base[i]);
+}
+
+/** The base version's columns this edit drops, with how many filled cells
+ * each holds there -- what will not be in the new version. */
+export function droppedColumns(base: string[], baseRows: string[][], cols: DraftColumn[]): { name: string; filled: number }[] {
+  const kept = new Set(cols.map((c) => c.from).filter((f): f is number => f !== null));
+  return base
+    .map((name, i) => ({ name, filled: baseRows.filter((r) => (r[i] ?? "").trim() !== "").length, i }))
+    .filter((c) => !kept.has(c.i))
+    .map(({ name, filled }) => ({ name, filled }));
+}
+
+/** Renamed columns: same cells, new header. */
+export function renamedColumns(base: string[], cols: DraftColumn[]): { from: string; to: string }[] {
+  return cols
+    .filter((c) => c.from !== null && c.name !== base[c.from])
+    .map((c) => ({ from: base[c.from as number], to: c.name }));
+}
+
+/** Plainly, before a save: what the new version will not have. Empty when
+ * the edit drops nothing. */
+export function columnLossWarning(dropped: { name: string; filled: number }[], nextVersion: number): string {
+  if (dropped.length === 0) return "";
+  const cells = dropped.reduce((a, d) => a + d.filled, 0);
+  const names = dropped.map((d) => `${d.name} (${d.filled} filled cell${d.filled === 1 ? "" : "s"})`).join(", ");
+  return (
+    `Saving removes ${dropped.length === 1 ? "the column" : "the columns"} ${names} from version ${nextVersion}` +
+    (cells > 0 ? `: ${cells} filled cell${cells === 1 ? "" : "s"} will not be in it.` : ".") +
+    ` Version ${nextVersion - 1} keeps ${dropped.length === 1 ? "it" : "them"}${cells > 0 ? ", with every value" : ""}.`
+  );
 }

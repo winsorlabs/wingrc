@@ -1,4 +1,4 @@
-import type { ApiTokenRow, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport } from "./types";
+import type { ApiTokenRow, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent } from "./types";
 
 const BASE = "/api";
 
@@ -67,6 +67,29 @@ async function req<T>(path: string, opts?: RequestInit): Promise<T> {
   });
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   return r.json() as Promise<T>;
+}
+
+// The server's own words for a refusal: a plain detail, a {message} detail
+// (a 409 that names what blocks it), or FastAPI's 422 list of field errors.
+function detailText(detail: unknown, fallback: string): string {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((d) => (d as { msg?: string }).msg?.replace(/^Value error, /, "") ?? "").join("; ") || fallback;
+  }
+  if (detail && typeof detail === "object" && "message" in detail) return String((detail as { message: unknown }).message);
+  return fallback;
+}
+
+async function send<T>(path: string, method: string, body?: unknown): Promise<T> {
+  const r = await fetch(`${BASE}${path}`, {
+    method,
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const payload = await r.json().catch(() => ({}));
+  if (!r.ok) throw new ApiError(detailText(payload.detail, `${r.status} ${r.statusText}`), r.status);
+  return payload as T;
 }
 
 export const api = {
@@ -718,18 +741,38 @@ export const api = {
   getListImportReport: (orgId: string) =>
     req<ListImportReport>(`/orgs/${orgId}/list-library/import-report`),
 
+  // L.2.2: the List Builder and tags. Errors carry the server's own words --
+  // a refused tag removal names the evidence that blocks it.
+  createLibraryList: (orgId: string, body: LibraryListCreate) =>
+    send<LibraryListDetail>(`/orgs/${orgId}/list-definitions`, "POST", body),
+
+  getListTagEvents: (orgId: string, listId: string) =>
+    req<ListTagEvent[]>(`/orgs/${orgId}/list-definitions/${listId}/tag-events`),
+
+  addListTag: (orgId: string, listId: string, controlKey: string) =>
+    send<ListTagEvent>(`/orgs/${orgId}/list-definitions/${listId}/tags`, "POST", {
+      control_key: controlKey,
+    }),
+
+  removeListTag: (orgId: string, listId: string, controlKey: string) =>
+    send<ListTagEvent>(
+      `/orgs/${orgId}/list-definitions/${listId}/tags/${encodeURIComponent(controlKey)}`,
+      "DELETE",
+    ),
+
   createLibraryListVersion: async (
     orgId: string,
     listId: string,
     rows: string[][],
     baseVersionId: string,
     note: string,
+    columns?: string[],
   ): Promise<LibraryListVersion> => {
     const r = await fetch(`${BASE}/orgs/${orgId}/list-definitions/${listId}/versions`, {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ base_version_id: baseVersionId, rows, note: note || null }),
+      body: JSON.stringify({ base_version_id: baseVersionId, rows, note: note || null, ...(columns ? { columns } : {}) }),
     });
     const payload = await r.json().catch(() => ({}));
     if (r.status === 409 && payload.detail && typeof payload.detail === "object") {

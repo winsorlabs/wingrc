@@ -2173,3 +2173,18 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .cause-first_import, .cause-source_changed { color: #4b5563; }
 .cause-importer_changed { color: #b45309; }
 .cause-source_reapplied { color: #b91c1c; }
+.cause-created_by_hand { color: #1d4ed8; }
+/* L.2.2: tag changes sit in the same history, marked apart from versions. */
+.list-history li.list-history-tag { border-left-style: dashed; }
+.tag-added { color: #047857; }
+.tag-removed { color: #b91c1c; }
+.list-tag-remove { padding: 0 .3rem; margin-left: .2rem; line-height: 1; }
+.list-tag-add { margin-top: .4rem; }
+.list-tag-confirm { margin-top: .5rem; }
+.list-column-changes p { margin: .2rem 0; }
+.list-rows th input { min-width: 8rem; }
+.list-builder-form { display: grid; gap: .75rem; max-width: 42rem; }
+.list-builder-form label { display: grid; gap: .25rem; font-weight: 500; }
+.list-builder-form input, .list-builder-form textarea { max-width: 36rem; }
+.list-builder-form fieldset { border: 1px solid var(--border, #d1d5db); border-radius: 6px; padding: .5rem .75rem; }
+.list-builder-column { display: flex; gap: .5rem; margin-bottom: .35rem; }
