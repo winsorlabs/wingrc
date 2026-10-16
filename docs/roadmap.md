@@ -5442,6 +5442,52 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### Tests that depended on the clock's granularity: a sweep ✅ DONE (2026-10-16)
+
+Two red runs had the same shape: a test passed or failed on when it ran
+rather than on what it tested -- 519d894's two workbooks saved in the
+same second (openpyxl's `core.xml` is second-resolution, so the bytes
+matched), and the list bundle test whose two exports straddled the minute
+stamped into `lists/index.html`. That is a pattern, so the suite was swept
+for it, as it was for bare preconditions: artifacts compared across two
+moments when they embed a stamp; a test computing "now" itself against a
+value the code computed separately; ordering asserted across rows that
+tie on a timestamp; "recent" checks and sleeps; frontend tests reading the
+real date.
+
+**One real instance, fixed:**
+`test_session_idle.py::test_continuous_activity_still_terminates_at_absolute_expiry`
+set `expires_at` one second before Python's `datetime.now()`, but the
+check it tests runs in SQL against `now()` -- which, inside the test's one
+outer transaction (`conftest.db_session`), is fixed at the moment that
+transaction began, before setup. Setup taking a second, or the database
+host's clock lagging Python's by one, left the session looking valid and
+the test red. It now takes its times from the database's clock
+(`_db_now`), the one the code under test reads; so does the heartbeat test
+beside it, which had the same mix-up behind a one-minute margin. Proved on
+the bench by injecting a two-second delay into setup: the old test fails,
+the new one passes.
+
+**Checked and safe** -- with the reason, so the next sweep need not
+repeat it: the bundle and list-bundle comparisons strip or derive their
+stamps (workbooks take the version's `saved_at`, not wall time); the
+scheduler, review-cycle, document-approval and token tests sit days or
+minutes from their thresholds; ordering tests either set distinct times,
+order by `seq`, or test queries with an id tiebreaker; no backend test
+sleeps; no frontend test reads the real date.
+
+**Latent, recorded rather than changed:** several app queries order by a
+timestamp with no tiebreaker (`routers/raci.py`, `users.py`,
+`assessments.py`, `evidence.py`, `review_cycles.py`, `liongard_sync.py`,
+`routers/auth.py`). No test asserts their order across more than one row
+today; the first that does will tie on rows created in one transaction.
+Add the id tiebreaker to the query then, not a sleep to the test.
+
+The convention is in CLAUDE.md beside the precondition one: a test's time
+margin is taken from the clock the code under test reads.
+
+---
+
 ### List library L.2.2: the List Builder, and control tags with a history ✅ DONE (2026-10-15)
 
 Migration 0065. Jarrod asked, from L.2.1 on live, for **Add List** -- a
@@ -5538,25 +5584,30 @@ with every value." -- and the save button reads "Save as version 3,
 removing 1 filled cell". The edit's audit row names `columns_added` and
 `columns_removed`.
 
-**Who.** msp_admin, consultant_admin and msp_engineer build and tag.
-`c3pao_assessor` sees neither control and gets 403 from every write
-route. **`customer_poc` tags but does not build**, as the brief
-concluded -- though its stated reason ("adding a list to their own org is
-reasonable") argues the other way, so flagged for Jarrod. Kept because
-which registers an org keeps, under which practices, is the MSP's library
-to shape; a tenant contact keeping lists current (it already edits rows)
-and pointing one at a further practice -- safe, a candidate only -- is
-ordinary upkeep. msp_engineer was not in the brief's list; included
-because it already rewrites any list's rows and columns, so a build gate
-above it would guard nothing. One constant each side (`BUILD_ROLES`,
-`LIST_BUILD_ROLES`).
+**Who: a customer contact fills lists in; it does not define them.**
+Defining a list -- building one, its columns, and its tags -- is the
+practitioner's: msp_admin, consultant_admin and msp_engineer
+(`DEFINE_ROLES`, `LIST_DEFINE_ROLES`). **`customer_poc` edits rows
+only**: a version it saves must keep the columns it was based on (403
+otherwise), and it gets 403 adding or removing a tag. Tagging is the more
+consequential half of defining, since once L.4 links a list as evidence a
+tag changes what the list claims to cover. `c3pao_assessor` writes
+nothing. The branch first shipped `customer_poc` tagging but not
+building, following the brief's conclusion while its stated reason
+("adding a list to their own org is reasonable") argued the other way;
+the advisory session resolved it as above, rows-only unless Jarrod says
+otherwise. msp_engineer was not in the brief's list; included because it
+already rewrote any list's rows and columns. The role test walks every
+role through build, tag add, tag remove, a rows-only save and a column
+change, and checks a refusal leaves the list as it was.
 
 **Found, not changed:** the list export's header block does not carry
 What goes here, Responsible or Review cadence -- the convention's rows
 4-5 -- for any list, imported or built. The builder's export matches an
-imported list's (tested), so the round trip holds; adding them would
-change every export's bytes and belongs with whoever next touches the
-renderer. And a bundle test compared the raw hash of `lists/index.html`,
+imported list's (tested), so the round trip holds; adding them changes
+every export's bytes, so it is its own slice (Planned, item T). And the
+login form shows a 422 as "[object Object]" (Planned, item U). And a
+bundle test compared the raw hash of `lists/index.html`,
 which carries a minute stamp by design; it failed on the bench when the
 two exports straddled a minute. It now compares that line by path (the
 page itself was already compared unstamped).
@@ -8697,6 +8748,49 @@ state for ad-hoc deploy dumps and the wrong state for a production system;
 this item is what fixes it.
 
 **The restore has never been exercised. Not once, by anyone.**
+
+### T. The list export carries what the list is for, and who owns it
+
+**Found in L.2.2 (2026-10-15).** A list exported from the library --
+standalone or in the assessor bundle -- carries its title, its practices,
+its columns and its rows, but not **What goes here**, **Responsible** or
+**Review cadence**: the template convention's rows 4-5, and the whole
+point of its header block. Every list is affected, imported or built by
+hand; the data is on every `list_version`, the renderer
+(`render.render_list_version_bytes`) just never writes it. So an assessor
+receives a register with no statement of what belongs in it or who keeps
+it.
+
+**The slice:** write rows 4-5 into the export's header block as the
+convention lays them out, so an exported list reads back through the
+importer to the same version (extend `test_list_builder.py`'s round trip
+to compare those fields, not only the labels).
+
+**It changes every export's bytes, deliberately.** That is a reason to
+re-verify the determinism guards, not a reason to be blocked by them:
+the export must still be a function of the version alone (same version,
+same bytes, standalone and in a bundle), and the formula guard
+(`tests/test_workbook_formulas.py`) must cover the three new cells, since
+each is text a person typed. Expect the bundle's `lists/index.html` and
+any pinned export hash to change once; say so in the slice's entry
+rather than letting it read as drift.
+
+### U. The login form shows a validation error as "[object Object]"
+
+**Found on the L.2.2 bench (2026-10-15).** Signing in with an address
+the validator rejects (a reserved domain such as `.test`) returns
+FastAPI's 422, whose `detail` is a list of objects, and the login form
+shows **"[object Object]"**. Pre-existing and out of L.2.2's scope -- but
+it is on the first screen anyone sees, an assessor given access
+included.
+
+The cause is general: `api.localLogin` does `new Error(body.detail ??
+...)`, and 28 calls in `frontend/src/api.ts` share that line. Any of them
+renders an object `detail` (a 422 list, or a `{message, ...}` 409) the
+same way. `api.ts`'s `detailText` (added in L.2.2 for the list routes)
+already turns both shapes into a sentence. The fix is to route the 28
+through it, with a test that a 422 on login shows the validator's
+message.
 
 ## Sequencing
 

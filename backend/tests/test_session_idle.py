@@ -30,6 +30,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 
 from app.auth import create_session
 from app.config import get_settings
@@ -37,6 +38,15 @@ from app.db import get_session
 from app.main import app
 from app.models import Organization, User
 from tests.conftest import _app_session
+
+
+def _db_now(db_session) -> datetime:
+    """The clock the session check reads. resolve_session compares in SQL
+    against now(), which is fixed when the test's one outer transaction
+    began -- not Python's clock, which has moved on by however long setup
+    took (and may not agree with the database host's at all). A margin
+    taken from datetime.now() is a margin against the wrong clock."""
+    return db_session.scalar(select(func.now()))
 
 
 @pytest.fixture
@@ -123,7 +133,7 @@ def test_past_idle_window_401s_even_with_future_expiry(client, db_session):
 @pytest.mark.integration
 def test_activity_within_window_extends_session(client, db_session):
     user = _seed_user(db_session)
-    now = datetime.now(UTC)
+    now = _db_now(db_session)
     row, raw = _seeded_session(
         db_session,
         user,
@@ -163,7 +173,7 @@ def test_activity_within_window_extends_session(client, db_session):
 @pytest.mark.integration
 def test_continuous_activity_still_terminates_at_absolute_expiry(client, db_session):
     user = _seed_user(db_session)
-    now = datetime.now(UTC)
+    now = _db_now(db_session)
     _row, raw = _seeded_session(
         db_session,
         user,

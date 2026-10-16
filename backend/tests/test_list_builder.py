@@ -424,26 +424,55 @@ def test_removing_a_column_keeps_it_and_its_data_in_the_prior_version(db_session
 
 @pytest.mark.integration
 @pytest.mark.parametrize(
-    ("role", "build", "tag"),
+    ("role", "define", "fill"),
     [
-        ("msp_admin", 201, 201),
-        ("consultant_admin", 201, 201),
-        ("msp_engineer", 201, 201),
-        ("customer_poc", 403, 201),
-        ("c3pao_assessor", 403, 403),
+        ("msp_admin", True, True),
+        ("consultant_admin", True, True),
+        ("msp_engineer", True, True),
+        ("customer_poc", False, True),
+        ("c3pao_assessor", False, False),
     ],
 )
-def test_who_may_build_and_tag(db_session, role, build, tag):
+def test_who_may_define_a_list_and_who_may_fill_it_in(db_session, role, define, fill):
+    """Defining -- building, columns, tags -- is the practitioner's; a
+    customer contact fills rows in. A refusal leaves the list as it was."""
     org_id = _org(db_session)
     built = _build(_client(db_session, org_id, role="msp_admin"), org_id)
     app.dependency_overrides.clear()
     client = _client(db_session, org_id, role=role)
     r = client.post(LISTS.format(org=org_id), json=BUILT | {"title": f"Built by {role}"})
-    assert r.status_code == build, r.text
+    assert r.status_code == (201 if define else 403), r.text
     base = ONE.format(org=org_id, list=built["id"])
-    assert client.post(f"{base}/tags", json={"control_key": "3.10.5"}).status_code == tag
-    removal = client.delete(f"{base}/tags/PE.L2-3.10.4").status_code
-    assert removal == (200 if tag == 201 else 403)
+    added = client.post(f"{base}/tags", json={"control_key": "3.10.5"})
+    assert added.status_code == (201 if define else 403), added.text
+    assert client.delete(f"{base}/tags/PE.L2-3.10.4").status_code == (200 if define else 403)
+    current = client.get(base).json()["current"]
+    filled = client.post(
+        f"{base}/versions",
+        json={
+            "base_version_id": current["id"],
+            "rows": [["2026-10-01", "A. Visitor", "J. Escort"]],
+        },
+    )
+    assert filled.status_code == (201 if fill else 403), filled.text
+    current = client.get(base).json()["current"]
+    widened = client.post(
+        f"{base}/versions",
+        json={
+            "base_version_id": current["id"],
+            "columns": ["Date", "Visitor", "Escort", "Badge"],
+            "rows": [["2026-10-01", "A. Visitor", "J. Escort", "7"]] if fill else [],
+        },
+    )
+    assert widened.status_code == (201 if define else 403), widened.text
+    final = client.get(base).json()
+    assert final["current"]["columns"] == (
+        ["Date", "Visitor", "Escort", "Badge"] if define else BUILT["columns"]
+    )
+    assert final["current"]["version_number"] == 1 + fill + define
+    assert final["control_keys"] == (
+        ["PE.L2-3.10.3", "PE.L2-3.10.5"] if define else ["PE.L2-3.10.3", "PE.L2-3.10.4"]
+    )
     assert client.get(f"{base}/tag-events").status_code == 200
 
 

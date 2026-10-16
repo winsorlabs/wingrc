@@ -267,6 +267,7 @@ function LibraryListView({
   orgId,
   listId,
   canWrite,
+  canDefine,
   liveView,
   onOpenLive,
   onBack,
@@ -275,6 +276,8 @@ function LibraryListView({
   orgId: string;
   listId: string;
   canWrite: boolean;
+  // Columns and tags define a list; a customer contact fills rows in.
+  canDefine: boolean;
   liveView: ListViewSummary | null;
   onOpenLive: () => void;
   onBack: () => void;
@@ -572,7 +575,7 @@ function LibraryListView({
           {detail.control_keys.map((k) => (
             <span key={k} className="filter-chip list-practice" title={FAMILY_NAMES[familyOf(k)] ?? ""}>
               {k}
-              {canWrite && detail.control_keys.length > 1 && (
+              {canDefine && detail.control_keys.length > 1 && (
                 <button
                   type="button"
                   className="btn-ghost btn-sm list-tag-remove"
@@ -609,7 +612,7 @@ function LibraryListView({
             </button>
           </div>
         )}
-        {canWrite && (
+        {canDefine && (
           <div className="list-tag-add">
             <input
               aria-label="Practice to tag"
@@ -862,7 +865,7 @@ function LibraryListView({
         <table className="contacts-table list-rows">
           <thead>
             <tr>
-              {editing && draftCols
+              {editing && draftCols && canDefine
                 ? draftCols.map((c, i) => (
                     <th key={i}>
                       <input
@@ -948,9 +951,11 @@ function LibraryListView({
           >
             + Add row
           </button>
-          <button type="button" className="btn-ghost btn-sm" onClick={addColumn}>
-            + Add column
-          </button>
+          {canDefine && (
+            <button type="button" className="btn-ghost btn-sm" onClick={addColumn}>
+              + Add column
+            </button>
+          )}
           <input
             className="list-note"
             aria-label="Change note"
@@ -1013,12 +1018,13 @@ function LibraryListView({
 export function ListLibraryPanel({
   orgId,
   canWrite,
-  canBuild = false,
+  canDefine = false,
 }: {
   orgId: string;
   canWrite: boolean;
-  // Building a list is the MSP's (lib/roles.ts canBuildLists); every writer tags.
-  canBuild?: boolean;
+  // Building a list, its columns and its tags are the MSP's (lib/roles.ts
+  // canDefineLists); a customer contact fills rows in.
+  canDefine?: boolean;
 }) {
   const [lists, setLists] = useState<LibraryListSummary[] | null>(null);
   const [views, setViews] = useState<ListViewSummary[]>([]);
@@ -1084,6 +1090,7 @@ export function ListLibraryPanel({
         orgId={orgId}
         listId={selection.id}
         canWrite={canWrite}
+        canDefine={canDefine}
         liveView={live}
         onOpenLive={() => live && setSelection({ kind: "scope", id: live.id })}
         onBack={() => setSelection(null)}
@@ -1117,7 +1124,7 @@ export function ListLibraryPanel({
             org, and templates whose rows are examples.
           </div>
         </div>
-        {canBuild && (
+        {canDefine && (
           <div className="list-library-actions">
             <button type="button" className="btn-primary btn-sm" onClick={() => setBuilding(true)}>
               + Add list

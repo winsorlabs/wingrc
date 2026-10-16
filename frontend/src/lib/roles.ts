@@ -66,14 +66,13 @@ export function deriveCanWrite(role: string | null | undefined): boolean {
 // per-user fact (GET /orgs response length), not a role one.
 export const ORG_CREATOR_ROLES = new Set(["msp_admin", "msp_engineer"]);
 
-// Who may build a new list in Library › Lists (routers/list_definitions.py
-// BUILD_ROLES, L.2.2): the MSP shapes which registers an org keeps. Every
-// writing role -- customer_poc included -- edits rows and tags; that axis
-// is plain canWrite.
-export const LIST_BUILD_ROLES = new Set(["msp_admin", "consultant_admin", "msp_engineer"]);
+// Who may define a list in Library › Lists (routers/list_definitions.py
+// DEFINE_ROLES, L.2.2): build one, change its columns, add or remove its
+// tags. A customer_poc fills lists in -- rows only, which is plain canWrite.
+export const LIST_DEFINE_ROLES = new Set(["msp_admin", "consultant_admin", "msp_engineer"]);
 
-export function canBuildLists(role: string | null | undefined): boolean {
-  return !!role && LIST_BUILD_ROLES.has(role);
+export function canDefineLists(role: string | null | undefined): boolean {
+  return !!role && LIST_DEFINE_ROLES.has(role);
 }
 
 export function canCreateOrg(role: string | null | undefined): boolean {

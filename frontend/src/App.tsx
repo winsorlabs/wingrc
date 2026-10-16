@@ -25,7 +25,7 @@ import { SprsSubmissionsPanel } from "./components/SprsSubmissionsPanel";
 import { SystemDescriptionForm } from "./components/SystemDescriptionForm";
 import { UsersPanel } from "./components/UsersPanel";
 import { useAuth } from "./hooks/useAuth";
-import { canBuildLists, canSeeApiTokens, canSeeAuditLog, canSeeEmail, canSeeIntegrations, canSeeScheduledJobs, canSeeToolsLibrary, canSeeUserDirectory, canSeeUsers } from "./lib/roles";
+import { canDefineLists, canSeeApiTokens, canSeeAuditLog, canSeeEmail, canSeeIntegrations, canSeeScheduledJobs, canSeeToolsLibrary, canSeeUserDirectory, canSeeUsers } from "./lib/roles";
 import type { Assessment, OnboardingStatus, Org } from "./types";
 
 // "admin" is the deployment-tier area (Integrations today; G.9/G.11 land
@@ -373,7 +373,7 @@ export function App() {
                   over this screen. Lists is the list library (L.2), its own
                   screen -- see SideNav's LibraryTab comment. */}
               {libraryTab === "lists" ? (
-                <ListLibraryPanel orgId={org.id} canWrite={canWrite} canBuild={canWrite && canBuildLists(user.role)} />
+                <ListLibraryPanel orgId={org.id} canWrite={canWrite} canDefine={canWrite && canDefineLists(user.role)} />
               ) : (
                 <DocumentsPanel
                   orgId={org.id}
