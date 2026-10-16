@@ -5608,6 +5608,80 @@ adopting and taking an update).
 
 ---
 
+### List library L.8: the list page puts the rows first ✅ DONE (2026-10-16)
+
+Frontend only: no API change, no migration, nothing under `backend/`.
+Jarrod used the live page and asked for three things -- History below the
+table and collapsed, column headers near-black and semibold, and "easier
+on the eyes". The reason under all three: **the rows are what the page is
+for**, and the page put four blocks of context above them (where the copy
+came from, What goes here / Responsible / Review cadence, the full
+History) and drew the column headers in the lightest type on the screen.
+
+**Order now** (`ListLibraryPanel.tsx`'s `LibraryListView`): title, version,
+Export, Edit rows; the practice tags; what to act on -- a newer template
+version (its own region, "Newer template version"), the still-examples
+notice, an old-version or conflict notice; **the table**, its edit bar
+and its legend; then reference -- where the copy came from, the
+template's copies, a merge's column map, What goes here, Responsible,
+Review cadence; then History in a `<details>`, collapsed, its summary
+naming the entry count ("History: versions and practices (4)"); opened,
+it shows what it showed before. The legend sits directly under the table
+rather than last, because it explains the table. At 1366×768 the first
+data row now starts at y=434 (Risk Register) and y=474 (Authorized
+Devices); before, it was at 879 and 997, below the fold on both.
+
+**The table.** Headers `#212529` semibold, sentence case (the caps went:
+"Treatment (Mitigate/Accept/Transfer)" reads better as written), on
+white with a 2px rule under them, lighter `#e9ecef` rules between rows --
+rules, not zebra. The table scrolls inside its own box (up to 70vh), so
+the header row is sticky; the rule is an inset shadow because a border on
+a sticky cell scrolls away under `border-collapse`. A wide table says so:
+a shadow on whichever edge has more beyond it, and a line above it --
+"19 columns, wider than the screen. Scroll sideways for the rest →" --
+measured live (`useSideScroll`, a ResizeObserver), so a list that fits
+says nothing. Example cells (any uppercase fill-in, the same rule as
+`is_populated`, not only a bare `[PLACEHOLDER]`) are italic grey on a
+grey tint; `[PLACEHOLDER - reason]` keeps its amber; real values are
+near-black.
+
+**Contrast, measured (WCAG 2.x):** headers and values `#212529` on white
+15.4:1; this page's muted text `#5c636a` on the page's `#f8f9fa` 5.8:1;
+an example cell `#6c757d` on `#f1f3f5` 4.2:1 (faint on purpose, above
+the 3:1 the brief set); a reason cell `#7a5c00` on `#fff4cc` 5.7:1; the
+scroll hint `#495057` 7.8:1; the header rule `#868e96` 3.3:1. **Found:
+the shared `--muted` (`#6c757d`) is 4.45:1 on the app's `--bg`
+(`#f8f9fa`), just under AA** -- it is what every `field-hint`,
+`contact-sub` and the old list headers were drawn in. This page overrides
+`--muted` to `#5c636a` for itself; the token is left alone app-wide,
+which is a decision for its own small slice (it touches every screen).
+
+**Found: no shared table component, and three table styles.** 17
+components draw `<table className="contacts-table">` with their own
+markup (assets, users, contacts, audit log, tools, scope diffs ...), the
+document history uses `doc-table`, the diff view `diff-table`. The header
+style lived in `.contacts-table th` -- small grey caps, the same 4.45:1 --
+so it was shared CSS, not a shared component. L.8 changed only
+`.list-rows` (this table), per the brief: restyling 17 screens is not this
+slice. Also on the same Lists screen, the four lists drawn from scope
+(`ListsPanel`) still render the old way; they are the next candidate. A
+table component (header, rules, sticky, side-scroll hint) would end the
+drift; it wants its own slice.
+
+Bench (`wingrc_verify_20261016l8`): main's build and this branch's,
+served side by side over the same backend, with the real 45-list library
+imported and two same-org copies -- the Risk Register (one example row
+and one real one) and Authorized Devices (19 columns; 2 example rows plus
+40 bench rows, one with a `[PLACEHOLDER - reason]`). Screenshots by
+headless Chromium at a 1366×768 viewport. Inside the device table
+scrolled down and right, the header stays at the top of the box.
+`tsc -b`, vitest 404 (the History tests now open the `<details>` and
+assert it starts closed with its count; one asserts the order: newer
+template version, then the rows, then where the copy came from), build.
+The real device template has 19 columns, not the brief's 18.
+
+---
+
 ### Tests that depended on the clock's granularity: a sweep ✅ DONE (2026-10-16)
 
 Two red runs had the same shape: a test passed or failed on when it ran
