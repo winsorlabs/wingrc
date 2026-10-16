@@ -5596,7 +5596,10 @@ restored: an update ignoring a person's edit; never carrying the org's
 rows; no membership check in the template's org; the template org's role
 unchecked; v1 recorded as an edit; an update removing a person's tag; the
 reason-form placeholder counted as an example; a copy keyed as its
-template; customer_poc allowed to adopt; a non-template adoptable.
+template; customer_poc allowed to adopt; a non-template adoptable. The
+fill-in token rule's four, each caught: back to a bare-cell match;
+`[PLACEHOLDER]` only; case-insensitive (reads `[a]` as a token); spaces
+allowed in a token (reads `[PLACEHOLDER - NOT COLLECTED]` as one).
 
 Out of scope, as briefed: substitution and branding (N.4), documents (N.4
 -- lists only here, to converge later), any licence or entitlement

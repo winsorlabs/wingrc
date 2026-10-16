@@ -52,6 +52,7 @@ def test_a_row_is_an_example_while_any_cell_carries_a_fill_in_token():
         assert list_library.is_example_row([cell, "x"]), cell
     # A filled document's knowably-absent value is a value, not an example.
     assert not list_library.is_example_row(["[PLACEHOLDER - no badge system]", "x"])
+    assert not list_library.is_example_row(["[PLACEHOLDER - NOT COLLECTED]", "x"])
     # Lowercase brackets are values: an objective reference, a footnote mark.
     assert not list_library.is_example_row(["3.7.2[a]", "see [1]", "[b] and [c]"])
     assert not list_library.is_example_row(["Jane Doe", "", "2026-10-01"])
