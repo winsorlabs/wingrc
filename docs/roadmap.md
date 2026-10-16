@@ -5442,6 +5442,156 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### List library L.7: an org adopts a template, and later takes a newer one ✅ DONE (2026-10-16)
+
+Migration 0066. Jarrod found the hole on the live Lists screen: Winsorlabs
+held 45 templates and "This org's lists (0)", under an empty state that
+already said *"A list this org keeps for itself, including one copied from
+a template, goes here"* -- describing a mechanism that did not exist.
+
+**Delivery was already decided, not decided here.** The monetization
+boundary (item N, and `docs/PLAN-document-library.md`) says the engine is
+open and template *content* is distributed separately, with no code-level
+paywall. `lists-import --org-id` is how a content bundle enters a
+deployment -- Jarrod ran it on his own 45, and another operator runs the
+same command. No licence check, flag or entitlement table was built. What
+was missing was only getting a template from the org that holds it into an
+org that keeps a copy. (The list library has no `is_template_derived` /
+`template_ref` columns; those are the document library's. A list copy's
+`template_list_id` is its equivalent marker.)
+
+**Templates stay org-scoped.** They are rows in the MSP's org, confined by
+RLS, and stay there. Moving them to deployment scope like the product
+catalog would be simpler for one MSP and wrong the first time two MSPs
+share a deployment, since every template would be visible to both. So
+adoption is a **copy across orgs, made by a person who defines lists in
+both** (`DEFINE_ROLES` membership in each, checked per request). The router
+reads the template under its org and writes the copy under this one
+(`routers/list_definitions._in_template_org`, through
+`rls.set_current_org` both ways, flushing before each switch). Two
+`SECURITY DEFINER` reads cover what a tenant cannot otherwise see, each
+scoped to `app.current_org` and returning version numbers, never content:
+`auth.list_template_heads()` (where each copy's template stands now) and
+`auth.list_template_adoptions()` (a template's copies by version, never
+whose).
+
+**The adoption record.** A copy is a `list_definition` with
+`template_list_id` (the template) and `template_list_version_id` (the
+template version it is based on -- reserved since 0064 for exactly this),
+`is_template` false; a CHECK keeps that shape, and a unique index allows
+one copy per template per org (adopting again reports the existing copy).
+It copies title, What goes here, Responsible, Review cadence, columns,
+rows and tags as the template has them now. Its key is
+`<template key>-own` everywhere, one rule: in the template's own org the
+two must coexist, and anywhere else an import of the same library would
+otherwise read the copy as its sheet (a test holds a same-org reimport at
+"unchanged" with the copy untouched). Tags it got from the template are
+`added_via = template_adoption`. Adopting is audited on both sides
+(`list.adopt` in the copy's org, `list.template_adopted` in the
+template's, naming the copy).
+
+**A seventh cause: `adopted_from_template`.** v1 reads "Copied by <name>
+from the template <title> at version <n> on <date>." Its provenance names
+the template, its org, key, version id and number.
+
+**Adopted rows are the template's examples, so the copy starts
+unfinished -- and "populated" is now defined once, in code.** The brief
+read this as falling out of "L.4's populated rule", but that rule existed
+only as a recommendation in the plan (section 5) and L.4 is not built. It
+is now `list_library.is_populated`: rows, none of which still carries the
+bare `[PLACEHOLDER]` token (`[PLACEHOLDER - reason]` is a value). L.4 must
+use it rather than a second rule; the plan's L.4 section says so. The
+screen states it on any kept list with examples left ("All 3 rows are
+still the template's [PLACEHOLDER] examples. A list counts as filled in,
+and can be offered as evidence, only when none remain") and badges the
+index row. Nothing offers a list as evidence yet, so "an unfilled copy is
+not offered as evidence" is a rule waiting for L.4, tested here as the
+predicate.
+
+**Staying in sync: the update is available, and nothing happens until
+someone takes it.** A copy based on template v2 when the template is at v3
+says "Template version 3 is available. This list stays on version 2 until
+someone takes it" -- the same shape as N.3's overdue review, which flags
+and never acts. Taking it (`list_adoption.take_update`) writes a new
+version of the copy, cause `adopted_from_template`, naming the version it
+moved from. **The template's rows are examples; once a tenant has replaced
+them they are the tenant's.** So an update takes the template's definition
+(title, What goes here, Responsible, cadence, columns) and, if the copy's
+rows are still the examples it copied, the template's new examples; if the
+org has edited its rows, those are kept and matched to the new columns by
+name. That carry is not an overwrite and needs no authorization. What
+does: a definition field a person changed since the copy last took the
+template, or filled cells in a column the template dropped. Then the
+update is refused unless that exact edit is named, `<copy key>@vN` -- the
+form an import's overwrite takes -- and the replaced version keeps every
+value. The template's tags follow by the import's own rule (only
+`template_adoption` tags are the update's to remove; a person's never), and
+a removal is refused while evidence rests on it. Taking an update needs
+membership in both orgs too; a tenant-only user sees that a newer version
+exists and cannot take it.
+
+**Roles.** msp_admin, consultant_admin and msp_engineer adopt and take
+updates; the role must define lists in the template's org as well as this
+one. **customer_poc adopts nothing**, on the rows-only line (an adopted
+list is a list defined), and agrees with the brief's reading.
+c3pao_assessor writes nothing.
+
+**The screen.** *Adopt templates* beside *+ Add list*: choose the org that
+holds the templates (this org first, labelled so), tick one or several,
+*Review* shows the set -- what will be copied, with example rows to fill
+in, and what this org already keeps -- and only then *Copy N into this
+org's lists*. A copy sits under This org's lists, badged "from template
+v1", "template v2 available" and "N example rows to fill in", and its page
+says which template and version it came from. A template says "Adopted by
+3 orgs: 2 at version 1, 1 at version 2", and in an org that is its own
+tenant offers *Copy into this org's lists* or *Open this org's copy*, the
+copy reading "Copied from this org's template ...".
+
+**Found, recorded rather than built (N.4's):** the templates carry
+MSP-specific and substitution text a copy takes verbatim. On live, four
+templates' text names "Winsors Labs" (one title, three row sets -- e.g.
+"Winsors Labs SOC" in the IR contacts), Responsible across many names the
+MSP's own stack ("MSP Engineer (Datto RMM / Liongard / IT Glue)",
+"Fortinet FortiGate 60F"), and on the bench's copy of the real library
+four templates use tokens beyond `[PLACEHOLDER]`: `[CUSTOMER_NAME]` (two),
+`[CUSTOMER]`, `[DATE]`, `[SERVER]`. Substitution is N.4's design and was
+not half-built; until it lands an adopted copy shows these as written, and
+a row whose only marker is `[CUSTOMER_NAME]` counts as filled. Also: the
+real `3-1-3b` template's two example rows carry no `[PLACEHOLDER]` at all,
+so a copy of it reads as filled at once -- a content fix in the library,
+not a code one.
+
+**Ordering: L.7 before L.4, agreed.** Evidence linking on an org whose only
+lists are scope projections tests a corner; linking an adopted, filled-in
+list is the real workflow. The dependency is one-way.
+
+Bench (`wingrc_verify_20261016l7`): the real 45-list library imported into
+an MSP org beside an empty tenant, a throwaway engineer in both. In the
+browser: adopted *Visitor Access Log* and *Incident Response & Notification
+Contacts* into the tenant (set shown first; both under This org's lists,
+badged; the MSP's index then read "adopted by 1 org"); saved template
+version 2 of the visitor log with a *Badge #* column; copied it into the
+MSP org's own lists (same-org case, reading "Copied from this org's
+template ..., version 2"); filled the tenant copy's row (the example notice
+went); reviewed and took template version 2 -- rows kept, *Badge #* empty,
+v3 "took version 2 ... (this list was based on version 1)". The audit held
+`list.adopt`/`list.template_adopted` and
+`list.template_version_take`/`_taken` on the right orgs, with the person as
+actor. Backend 1757 passed with the 500 floor, ruff clean, `tsc -b`,
+vitest 404, build. Ten mutants each caught by `test_list_adoption.py` and
+restored: an update ignoring a person's edit; never carrying the org's
+rows; no membership check in the template's org; the template org's role
+unchecked; v1 recorded as an edit; an update removing a person's tag; the
+reason-form placeholder counted as an example; a copy keyed as its
+template; customer_poc allowed to adopt; a non-template adoptable.
+
+Out of scope, as briefed: substitution and branding (N.4), documents (N.4
+-- lists only here, to converge later), any licence or entitlement
+mechanism, and `control_state`/SPRS (a test holds both unchanged across
+adopting and taking an update).
+
+---
+
 ### Tests that depended on the clock's granularity: a sweep ✅ DONE (2026-10-16)
 
 Two red runs had the same shape: a test passed or failed on when it ran

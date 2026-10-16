@@ -1,4 +1,4 @@
-import type { ApiTokenRow, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent } from "./types";
+import type { ApiTokenRow, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent, AdoptResult, TakeTemplateResult } from "./types";
 
 const BASE = "/api";
 
@@ -745,6 +745,21 @@ export const api = {
   // a refused tag removal names the evidence that blocks it.
   createLibraryList: (orgId: string, body: LibraryListCreate) =>
     send<LibraryListDetail>(`/orgs/${orgId}/list-definitions`, "POST", body),
+
+  // L.7: copy templates held by `sourceOrgId` (this org, or the MSP's) into
+  // this org's lists. apply=false returns the set without writing it.
+  adoptTemplates: (orgId: string, sourceOrgId: string, templateIds: string[], apply: boolean) =>
+    send<AdoptResult>(`/orgs/${orgId}/list-definitions/adopt`, "POST", {
+      source_org_id: sourceOrgId,
+      template_ids: templateIds,
+      apply,
+    }),
+
+  takeTemplateVersion: (orgId: string, listId: string, apply: boolean, overwriteEdit?: string | null) =>
+    send<TakeTemplateResult>(`/orgs/${orgId}/list-definitions/${listId}/take-template-version`, "POST", {
+      apply,
+      overwrite_edit: overwriteEdit ?? null,
+    }),
 
   getListTagEvents: (orgId: string, listId: string) =>
     req<ListTagEvent[]>(`/orgs/${orgId}/list-definitions/${listId}/tag-events`),

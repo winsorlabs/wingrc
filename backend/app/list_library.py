@@ -17,7 +17,9 @@ it touches -- and without the distinction it reads as someone having
 changed the template.
 
 A list can also be built by hand (L.2.2, `create_by_hand`): the same
-definition schema the template header block fills, with its own cause.
+definition schema the template header block fills, with its own cause --
+or adopted from a template (L.7, `list_adoption`), a copy that records the
+template version it came from.
 
 Tags are not version content. Each records who put it there
 (`ListControlTag.added_via`) and every change is a `ListTagEvent`, so a
@@ -69,7 +71,32 @@ CAUSES = {
     "source_reapplied": "the import put the unchanged source back over a later edit",
     # Not first_import: there was no source. Saying so is the point of a cause.
     "created_by_hand": "a person built it in WinGRC, from nothing",
+    # A copy of a template, or a later move onto a newer template version
+    # (list_adoption). Its provenance names the template and the version.
+    "adopted_from_template": "a person copied it from a template",
 }
+
+# A template's example rows carry the bare token. `[PLACEHOLDER - reason]`
+# is a filled document's "knowably absent, and here is why" -- a value, not
+# an example (docs/PLAN-list-library.md section 3's two conventions).
+EXAMPLE_TOKEN = "[PLACEHOLDER]"
+
+
+def is_example_row(row: Sequence[str]) -> bool:
+    return any(cell.strip() == EXAMPLE_TOKEN for cell in row)
+
+
+def example_rows(rows: Sequence[Sequence[str]]) -> int:
+    return sum(1 for r in rows if is_example_row(r))
+
+
+def is_populated(rows: Sequence[Sequence[str]]) -> bool:
+    """PLAN section 5's definition, stated once: a list with rows, none of
+    which is still a template's example. Only a populated list may be
+    offered as evidence -- **L.4 must use this**, not a second rule. An
+    adopted copy starts unpopulated because its rows are the template's
+    examples, and becomes a candidate when the org has filled them in."""
+    return bool(rows) and example_rows(rows) == 0
 
 
 def import_cause(
@@ -245,18 +272,21 @@ def remove_tag(
 
 
 def import_tag_changes(
-    session: Session, definition: ListDefinition, control_keys: tuple[str, ...]
+    session: Session,
+    definition: ListDefinition,
+    control_keys: tuple[str, ...],
+    via: str = "template_import",
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """What an import changes in a list's tags: (add, remove). It adds what
     the source's row 2 names and the list lacks, and removes only tags an
     import added that row 2 no longer names. A person's tag is never the
     import's to remove -- before 2026-10-15 every import replaced the whole
-    set, so the next one would have silently dropped it."""
+    set, so the next one would have silently dropped it. `via` is whose
+    tags these are: an adopted copy taking a newer template version manages
+    the template's (`template_adoption`) by the same rule."""
     have = tag_origins(session, definition.id)
     add = tuple(k for k in control_keys if k not in have)
-    remove = tuple(
-        k for k, via in have.items() if via == "template_import" and k not in control_keys
-    )
+    remove = tuple(k for k, origin in have.items() if origin == via and k not in control_keys)
     return add, remove
 
 

@@ -8,7 +8,7 @@
 // makes the re-apply exact for every row the other editor did not touch, and
 // honest about the ones they did.
 
-import type { LibraryListVersion, ListTagEvent, VersionCause } from "../types";
+import type { AdoptedFrom, LibraryListVersion, ListTagEvent, TemplateDistribution, VersionCause } from "../types";
 import { FAMILY_ORDER } from "./families";
 
 export function familyOf(controlKey: string): string {
@@ -226,13 +226,14 @@ export const CAUSE_LABELS: Record<VersionCause, string> = {
   importer_changed: "importer changed",
   source_reapplied: "source put back",
   created_by_hand: "built by hand",
+  adopted_from_template: "adopted",
 };
 
 export function causeLabel(cause: VersionCause): string {
   return CAUSE_LABELS[cause] ?? cause;
 }
 
-const PERSON_CAUSES: ReadonlySet<VersionCause> = new Set(["edit", "created_by_hand"]);
+const PERSON_CAUSES: ReadonlySet<VersionCause> = new Set(["edit", "created_by_hand", "adopted_from_template"]);
 
 /** Who made the version: a person's name, or the product. */
 export function versionAuthor(v: Pick<LibraryListVersion, "cause" | "saved_by">): string {
@@ -270,6 +271,21 @@ export function whyVersion(
         `Written by WinGRC, not by a person: the importer changed how it reads the source, ` +
         `and the source sheet is unchanged${since}.${fields}`
       );
+    case "adopted_from_template": {
+      const on = v.created_at ? ` on ${dayOf(v.created_at)}` : "";
+      if (!p.previous_template_version_number) {
+        return `Copied by ${versionAuthor(v)} from the template ${p.template_title ?? ""} at version ${p.template_version_number}${on}.`;
+      }
+      const rows =
+        p.rows_from === "copy"
+          ? "this org's own rows were kept, matched to the template's columns by name"
+          : "the template's example rows replaced the earlier ones";
+      const dropped = p.dropped_cells ? ` ${p.dropped_cells} filled cell(s) in dropped columns are in the earlier version only.` : "";
+      return (
+        `${versionAuthor(v)} took version ${p.template_version_number} of the template ${p.template_title ?? ""} ` +
+        `(this list was based on version ${p.previous_template_version_number})${on}: ${rows}.${dropped}${replaced}`
+      );
+    }
     case "source_reapplied":
       return (
         `Re-imported with the source unchanged${since}: its content replaced ` +
@@ -281,7 +297,12 @@ export function whyVersion(
 
 /** One line of a list's tag history: what changed, and who said so. */
 export function tagSentence(e: Pick<ListTagEvent, "control_key" | "change" | "via" | "saved_by">): string {
-  const who = e.via === "api" ? (e.saved_by ?? "a person") : "WinGRC importer, from the source sheet's practice row";
+  const who =
+    e.via === "api"
+      ? (e.saved_by ?? "a person")
+      : e.via === "template_adoption"
+        ? `${e.saved_by ?? "a person"}, from the template`
+        : "WinGRC importer, from the source sheet's practice row";
   return e.change === "added"
     ? `Tagged ${e.control_key}: this list became a candidate for it. By ${who}.`
     : `Untagged ${e.control_key}: this list no longer claims to serve it. By ${who}.`;
@@ -353,5 +374,49 @@ export function columnLossWarning(dropped: { name: string; filled: number }[], n
     `Saving removes ${dropped.length === 1 ? "the column" : "the columns"} ${names} from version ${nextVersion}` +
     (cells > 0 ? `: ${cells} filled cell${cells === 1 ? "" : "s"} will not be in it.` : ".") +
     ` Version ${nextVersion - 1} keeps ${dropped.length === 1 ? "it" : "them"}${cells > 0 ? ", with every value" : ""}.`
+  );
+}
+
+/** Who wrote a tag change, in a few words for the history's byline. */
+export function tagAuthor(e: Pick<ListTagEvent, "via" | "saved_by">): string {
+  return e.via === "template_import" ? "WinGRC importer" : (e.saved_by ?? "a person");
+}
+
+/** Where an adopted copy came from (L.7). */
+export function adoptedFromText(a: AdoptedFrom): string {
+  const which = a.same_org ? "this org's template" : "the template";
+  return `Copied from ${which} ${a.template_title}, version ${a.based_on_version_number}.`;
+}
+
+/**
+ * The newer template version, said the way a document's overdue review is:
+ * it is there, and nothing happens until someone acts on it.
+ */
+export function updateAvailableText(a: AdoptedFrom): string | null {
+  if (!a.update_available) return null;
+  return (
+    `Template version ${a.head_version_number} is available. This list stays on version ` +
+    `${a.based_on_version_number} until someone takes it.`
+  );
+}
+
+/** A template's copies, by version -- the MSP's view of what it distributed. */
+export function distributionText(dist: TemplateDistribution[]): string | null {
+  const total = dist.reduce((n, d) => n + d.copies, 0);
+  if (total === 0) return null;
+  const byVersion = new Map<number, number>();
+  for (const d of dist) byVersion.set(d.version_number, (byVersion.get(d.version_number) ?? 0) + d.copies);
+  const parts = [...byVersion].sort(([a], [b]) => a - b).map(([v, n]) => `${n} at version ${v}`);
+  const own = dist.some((d) => d.this_org) ? " This org's own copy is one of them." : "";
+  return `Adopted by ${total} org${total === 1 ? "" : "s"}: ${parts.join(", ")}.${own}`;
+}
+
+/** Why a list is not yet filled in (backend list_library.is_populated). */
+export function exampleRowsText(exampleRows: number, rowCount: number): string | null {
+  if (exampleRows === 0) return null;
+  const which = exampleRows === rowCount ? (rowCount === 1 ? "Its row is" : `All ${rowCount} rows are`) : `${exampleRows} of ${rowCount} rows are`;
+  return (
+    `${which} still the template's [PLACEHOLDER] examples. A list counts as filled in, and can ` +
+    `be offered as evidence, only when none remain.`
   );
 }

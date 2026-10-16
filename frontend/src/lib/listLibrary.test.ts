@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { LibraryListVersion, ListTagEvent } from "../types";
 import {
+  adoptedFromText,
+  distributionText,
+  exampleRowsText,
+  updateAvailableText,
   causeLabel,
   changeCounts,
   columnLossWarning,
@@ -269,5 +273,63 @@ describe("column edits", () => {
       "Saving removes the column Notes (0 filled cells) from version 2. Version 1 keeps it.",
     );
     expect(columnLossWarning([], 2)).toBe("");
+  });
+});
+
+describe("adopted copies (L.7)", () => {
+  const a = {
+    template_list_id: "t", template_org_id: "msp", same_org: false, template_title: "Visitor Log",
+    template_key: "3-10-3a-visitor-log", based_on_version_number: 2, head_version_number: 3, update_available: true,
+  };
+
+  it("says a copy was copied by a person, from which template, at which version", () => {
+    const v1 = {
+      cause: "adopted_from_template" as const, saved_by: "Ada Adopter", created_at: "2026-10-16T09:00:00Z",
+      provenance: { template_title: "Visitor Log", template_version_number: 2 },
+    };
+    expect(causeLabel("adopted_from_template")).toBe("adopted");
+    expect(versionAuthor(v1)).toBe("Ada Adopter");
+    expect(whyVersion(v1)).toBe("Copied by Ada Adopter from the template Visitor Log at version 2 on 2026-10-16.");
+  });
+
+  it("says what taking a newer template version did to the rows and to a replaced edit", () => {
+    const taken = {
+      cause: "adopted_from_template" as const, saved_by: "Ada Adopter",
+      provenance: {
+        template_title: "Visitor Log", template_version_number: 3, previous_template_version_number: 2,
+        rows_from: "copy" as const, dropped_cells: 1, replaces_edit_in_version: 4,
+      },
+    };
+    expect(whyVersion(taken)).toBe(
+      "Ada Adopter took version 3 of the template Visitor Log (this list was based on version 2): this org's own " +
+        "rows were kept, matched to the template's columns by name. 1 filled cell(s) in dropped columns are in the " +
+        "earlier version only. It replaced the edit in version 4.",
+    );
+  });
+
+  it("says where a copy came from, in this org or another, and when a newer version waits", () => {
+    expect(adoptedFromText(a)).toBe("Copied from the template Visitor Log, version 2.");
+    expect(adoptedFromText({ ...a, same_org: true })).toBe("Copied from this org's template Visitor Log, version 2.");
+    expect(updateAvailableText(a)).toBe(
+      "Template version 3 is available. This list stays on version 2 until someone takes it.",
+    );
+    expect(updateAvailableText({ ...a, update_available: false })).toBeNull();
+  });
+
+  it("counts a template's copies by version, never by whose", () => {
+    expect(distributionText([])).toBeNull();
+    expect(
+      distributionText([
+        { version_number: 2, copies: 1, this_org: true },
+        { version_number: 1, copies: 2, this_org: false },
+      ]),
+    ).toBe("Adopted by 3 orgs: 2 at version 1, 1 at version 2. This org's own copy is one of them.");
+    expect(distributionText([{ version_number: 1, copies: 1, this_org: false }])).toBe("Adopted by 1 org: 1 at version 1.");
+  });
+
+  it("says why a list is not yet filled in", () => {
+    expect(exampleRowsText(0, 3)).toBeNull();
+    expect(exampleRowsText(2, 2)).toMatch(/^All 2 rows are still the template's \[PLACEHOLDER\] examples\./);
+    expect(exampleRowsText(1, 3)).toMatch(/^1 of 3 rows are still/);
   });
 });

@@ -15,6 +15,8 @@ Endpoints:
   POST   /orgs/{org_id}/list-definitions/{list_id}/tags        add a practice tag
   DELETE /orgs/{org_id}/list-definitions/{list_id}/tags/{key}  remove one
   GET  /orgs/{org_id}/list-definitions/{list_id}/tag-events  who tagged what, when
+  POST /orgs/{org_id}/list-definitions/adopt                 copy templates in (L.7)
+  POST /orgs/{org_id}/list-definitions/{list_id}/take-template-version
   GET  /orgs/{org_id}/list-library/import-report             what was never imported
 
 Who may write (L.2.2): a customer contact fills lists in; it does not
@@ -26,6 +28,13 @@ more consequential half, since once L.4 links a list as evidence a tag
 widens or narrows what an assessment rests on. c3pao_assessor writes
 nothing. Tag removal is further guarded by evidence, whatever the role
 (list_library.tag_removal_blockers).
+
+Adopting a template (L.7) copies it from the org that holds it -- the
+MSP's, or this org itself when the MSP is also its own tenant -- into this
+org's lists. Templates stay in their org; the person adopting must define
+lists in both, and the router reads the template under its org and writes
+the copy under this one (`_in_template_org`). customer_poc adopts nothing,
+on the rows-only line: an adopted list is a list defined.
 
 Content changes only by creating a version. It names the version it was based on
 and is refused if that is no longer current -- the same optimistic
@@ -46,13 +55,14 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import list_library
+from .. import list_adoption, list_library
 from ..audit import log_event
 from ..auth import CurrentUser, require_org_access, require_write
 from ..db import get_session
 from ..list_templates import practice_key
-from ..models import AuditLog, ListControlTag, ListDefinition, ListVersion
+from ..models import AuditLog, ListControlTag, ListDefinition, ListVersion, OrgMembership
 from ..render import render_list_version_bytes
+from ..rls import set_current_org
 
 DEFINE_ROLES = ("msp_admin", "consultant_admin", "msp_engineer")
 
@@ -61,6 +71,26 @@ router = APIRouter(
     tags=["list-library"],
     dependencies=[Depends(require_org_access()), Depends(require_write())],
 )
+
+
+class AdoptedFromOut(BaseModel):
+    """Where a copy came from and whether its template has moved on. The
+    template's title and key are as they were when the copy took it."""
+
+    template_list_id: uuid.UUID
+    template_org_id: uuid.UUID
+    same_org: bool
+    template_title: str
+    template_key: str
+    based_on_version_number: int
+    head_version_number: int
+    update_available: bool
+
+
+class DistributionOut(BaseModel):
+    version_number: int
+    copies: int
+    this_org: bool
 
 
 class ListSummaryOut(BaseModel):
@@ -79,6 +109,9 @@ class ListSummaryOut(BaseModel):
     cause: str  # the current version's
     merged_from: list[str]
     has_changelog: bool
+    example_rows: int
+    adopted_from: AdoptedFromOut | None = None
+    adopted_copies: int = 0  # a template's copies, in every org
 
 
 class ListVersionOut(BaseModel):
@@ -95,6 +128,8 @@ class ListVersionOut(BaseModel):
     saved_by: str | None
     # Why this version exists: a list_library.CAUSES key, stored or derived.
     cause: str
+    # Rows still a template's [PLACEHOLDER] example (list_library.is_populated).
+    example_rows: int
 
 
 class MergeColumnOut(BaseModel):
@@ -122,6 +157,9 @@ class ListDetailOut(BaseModel):
     control_keys: list[str]
     merge: MergeOut | None
     current: ListVersionOut
+    adopted_from: AdoptedFromOut | None = None
+    distribution: list[DistributionOut] = Field(default_factory=list)
+    own_copy_id: uuid.UUID | None = None  # this org's copy of this template
 
 
 class NotImportedOut(BaseModel):
@@ -217,6 +255,26 @@ def _version_out(v: ListVersion, cause: str) -> ListVersionOut:
         responsible=v.responsible, review_cadence=v.review_cadence, columns=list(v.columns),
         rows=[list(r) for r in v.rows], provenance=v.provenance or {},
         created_at=v.created_at, saved_by=_saved_by(v), cause=cause,
+        example_rows=list_library.example_rows(v.rows),
+    )
+
+
+def _adopted_from(
+    d: ListDefinition,
+    history: list[ListVersion],
+    heads: dict[uuid.UUID, list_adoption.TemplateHead],
+) -> AdoptedFromOut | None:
+    head = heads.get(d.id)
+    if head is None:
+        return None
+    p = list_adoption.last_adoption(history).provenance or {}
+    return AdoptedFromOut(
+        template_list_id=head.template_list_id, template_org_id=head.template_org_id,
+        same_org=head.template_org_id == d.org_id,
+        template_title=p.get("template_title", ""), template_key=p.get("template_key", ""),
+        based_on_version_number=head.based_on_version_number,
+        head_version_number=head.head_version_number,
+        update_available=head.update_available,
     )
 
 
@@ -252,9 +310,12 @@ def list_definitions(
             )
         )
     out = []
+    heads = list_adoption.template_heads(session)
+    spread = list_adoption.template_distribution(session)
     for d in session.scalars(stmt.order_by(ListDefinition.list_key, ListDefinition.id)):
         v = session.get(ListVersion, d.current_version_id)
-        cause = _causes(session, d)[v.id]
+        history = list_library.history_of(session, d.id)
+        cause = list_library.version_causes(history)[v.id]
         out.append(
             ListSummaryOut(
                 id=d.id, list_key=d.list_key, title=v.title, is_template=d.is_template,
@@ -264,6 +325,9 @@ def list_definitions(
                 row_count=len(v.rows), updated_at=v.created_at, saved_by=_saved_by(v), cause=cause,
                 merged_from=list((v.provenance or {}).get("merged_from") or []),
                 has_changelog=bool((v.provenance or {}).get("changelogs")),
+                example_rows=list_library.example_rows(v.rows),
+                adopted_from=_adopted_from(d, history, heads),
+                adopted_copies=sum(x.copies for x in spread.get(d.id, [])),
             )
         )
     return out
@@ -316,12 +380,20 @@ def get_list_definition(
 ) -> ListDetailOut:
     d = _definition(session, org_id, list_id)
     v = session.get(ListVersion, d.current_version_id)
+    history = list_library.history_of(session, d.id)
+    own = list_adoption.existing_copy(session, org_id, d.id) if d.is_template else None
     return ListDetailOut(
         id=d.id, list_key=d.list_key, is_template=d.is_template, source_ref=d.source_ref,
         projection_view_id=d.projection_view_id,
         control_keys=list(list_library.tags_of(session, d.id)),
         merge=_merge_out(d, v),
-        current=_version_out(v, _causes(session, d)[v.id]),
+        current=_version_out(v, list_library.version_causes(history)[v.id]),
+        adopted_from=_adopted_from(d, history, list_adoption.template_heads(session)),
+        distribution=[
+            DistributionOut(version_number=x.version_number, copies=x.copies, this_org=x.this_org)
+            for x in list_adoption.template_distribution(session).get(d.id, [])
+        ],
+        own_copy_id=own.id if own else None,
     )
 
 
@@ -556,6 +628,237 @@ def remove_list_tag(
     )
     session.commit()
     return _event_out(event)
+
+
+class AdoptIn(BaseModel):
+    source_org_id: uuid.UUID  # the org holding the templates; may be this one
+    template_ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
+    apply: bool = False  # false: show the set that would be written
+
+
+class AdoptItemOut(BaseModel):
+    template_id: uuid.UUID
+    template_title: str
+    template_version_number: int
+    control_keys: list[str]
+    row_count: int
+    example_rows: int
+    action: str  # create | already_adopted
+    list_id: uuid.UUID | None  # the copy: new, or the one this org already keeps
+    list_key: str
+
+
+class AdoptOut(BaseModel):
+    source_org_id: uuid.UUID
+    same_org: bool
+    applied: bool
+    items: list[AdoptItemOut]
+
+
+class TakeIn(BaseModel):
+    apply: bool = False
+    # "list_key@vN": the edit this update would replace, named exactly.
+    overwrite_edit: str | None = None
+
+
+class TakeOut(BaseModel):
+    from_template_version: int
+    to_template_version: int
+    rows_from: str  # template: still its examples; copy: this org's own rows, carried
+    changed_fields: list[str]
+    columns_added: list[str]
+    columns_removed: list[str]
+    dropped_cells: int
+    person_changed: list[str]
+    edit_ref: str | None  # set when taking it needs that edit named
+    tag_add: list[str]
+    tag_remove: list[str]
+    applied: bool
+    version_number: int | None
+
+
+def _in_template_org(session, current_user, template_org_id, home_org_id, read):
+    """Runs `read` scoped to the template's org, then returns to this one.
+    The person must define lists there too: membership in both orgs is
+    what makes the reach across the boundary legitimate, and nothing else
+    does. Flush before calling -- a pending write would land under the
+    wrong org."""
+    set_current_org(session, template_org_id)
+    try:
+        role = session.scalar(
+            select(OrgMembership.role).where(
+                OrgMembership.user_id == current_user.id,
+                OrgMembership.org_id == template_org_id,
+            )
+        )
+        if role is None:
+            raise HTTPException(
+                status_code=403, detail="You are not a member of the org that holds the template."
+            )
+        if role not in DEFINE_ROLES:
+            raise HTTPException(
+                status_code=403,
+                detail="Adopting a template needs a role that defines lists in the org that "
+                "holds it, as well as in this one.",
+            )
+        try:
+            return read()
+        except list_adoption.NotATemplate:
+            raise HTTPException(
+                status_code=404, detail="Template not found in that org. Nothing was written."
+            ) from None
+    finally:
+        set_current_org(session, home_org_id)
+
+
+@router.post("/{org_id}/list-definitions/adopt", response_model=AdoptOut)
+def adopt_templates(
+    org_id: uuid.UUID,
+    body: AdoptIn,
+    session: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(require_org_access(*DEFINE_ROLES)),
+) -> AdoptOut:
+    """Copy templates into this org's lists. Without `apply`, says what
+    would be written -- each copy its own record, the set shown first. A
+    template this org already keeps a copy of is reported, never copied
+    twice. Audited on both sides when the orgs differ."""
+    who = current_user.display_name or current_user.email
+    ids = list(dict.fromkeys(body.template_ids))
+    snaps = _in_template_org(
+        session, current_user, body.source_org_id, org_id,
+        lambda: [list_adoption.read_template(session, body.source_org_id, t) for t in ids],
+    )
+    same = body.source_org_id == org_id
+    items, created = [], []
+    for s in snaps:
+        item = {
+            "template_id": s.list_id, "template_title": s.content["title"],
+            "template_version_number": s.version_number, "control_keys": list(s.control_keys),
+            "row_count": len(s.content["rows"]),
+            "example_rows": list_library.example_rows(s.content["rows"]),
+        }
+        existing = list_adoption.existing_copy(session, org_id, s.list_id)
+        if existing is not None:
+            items.append(AdoptItemOut(
+                **item, action="already_adopted", list_id=existing.id, list_key=existing.list_key
+            ))
+            continue
+        d = None
+        if body.apply:
+            try:
+                d = list_adoption.adopt(session, org_id, s, who)
+            except list_library.ListKeyTaken as e:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"This org already has a list keyed {e.existing.list_key}, which is "
+                    "not a copy of this template. Nothing was written.",
+                ) from None
+            created.append((s, d))
+            log_event(
+                session, org_id=org_id, action="list.adopt", entity_type="list_definition",
+                entity_id=d.id,
+                after_value={
+                    "version_number": 1, "row_count": len(s.content["rows"]),
+                    "control_keys": list(s.control_keys),
+                },
+                context={"via": "api", "list_key": d.list_key, "same_org": same}
+                | s.provenance(),
+            )
+        items.append(AdoptItemOut(
+            **item, action="create", list_id=d.id if d else None,
+            list_key=d.list_key if d else list_adoption.copy_key(s.list_key),
+        ))
+    if created:
+        session.flush()
+        if not same:
+            set_current_org(session, body.source_org_id)
+            for s, d in created:
+                log_event(
+                    session, org_id=body.source_org_id, action="list.template_adopted",
+                    entity_type="list_definition", entity_id=s.list_id,
+                    after_value={
+                        "into_org_id": str(org_id), "copy_list_id": str(d.id),
+                        "template_version_number": s.version_number,
+                    },
+                    context={"via": "api", "list_key": s.list_key},
+                )
+            session.flush()
+            set_current_org(session, org_id)
+        session.commit()
+    return AdoptOut(
+        source_org_id=body.source_org_id, same_org=same, applied=body.apply, items=items
+    )
+
+
+@router.post(
+    "/{org_id}/list-definitions/{list_id}/take-template-version", response_model=TakeOut
+)
+def take_template_version(
+    org_id: uuid.UUID,
+    list_id: uuid.UUID,
+    body: TakeIn,
+    session: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(require_org_access(*DEFINE_ROLES)),
+) -> TakeOut:
+    """Move a copy onto its template's current version, as a new version of
+    the copy. Without `apply`, says what would change and whether it needs
+    an edit named. Nothing happens to a copy until someone does this."""
+    d = _definition(session, org_id, list_id)
+    head = list_adoption.template_heads(session).get(d.id)
+    if head is None:
+        raise HTTPException(status_code=404, detail="This list is not a copy of a template.")
+    snap = _in_template_org(
+        session, current_user, head.template_org_id, org_id,
+        lambda: list_adoption.read_template(session, head.template_org_id, head.template_list_id),
+    )
+    if snap.version_id == d.template_list_version_id:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This list is already based on template version {snap.version_number}.",
+        )
+    version = None
+    if body.apply:
+        try:
+            plan, version = list_adoption.take_update(
+                session, d, snap, current_user.display_name or current_user.email,
+                body.overwrite_edit,
+            )
+        except list_adoption.UpdateRefused as e:
+            raise HTTPException(status_code=409, detail=str(e)) from None
+        except list_library.TagRemovalRefused as e:
+            raise HTTPException(status_code=409, detail=str(e)) from None
+        change = {
+            "from_template_version": plan.based_on, "to_template_version": snap.version_number,
+            "version_number": version.version_number, "rows_from": plan.rows_from,
+            "replaces_edit_in_version": plan.edit.version_number if plan.edit else None,
+        }
+        log_event(
+            session, org_id=org_id, action="list.template_version_take",
+            entity_type="list_definition", entity_id=d.id, after_value=change,
+            context={"via": "api", "list_key": d.list_key} | snap.provenance(),
+        )
+        session.flush()
+        if snap.org_id != org_id:
+            set_current_org(session, snap.org_id)
+            log_event(
+                session, org_id=snap.org_id, action="list.template_version_taken",
+                entity_type="list_definition", entity_id=snap.list_id,
+                after_value=change | {"into_org_id": str(org_id), "copy_list_id": str(d.id)},
+                context={"via": "api", "list_key": snap.list_key},
+            )
+            session.flush()
+            set_current_org(session, org_id)
+        session.commit()
+    else:
+        plan = list_adoption.plan_update(session, d, snap)
+    return TakeOut(
+        from_template_version=plan.based_on, to_template_version=snap.version_number,
+        rows_from=plan.rows_from, changed_fields=plan.changed_fields,
+        columns_added=plan.columns_added, columns_removed=plan.columns_removed,
+        dropped_cells=plan.dropped_cells, person_changed=plan.person_changed,
+        edit_ref=plan.edit_ref, tag_add=list(plan.tag_add), tag_remove=list(plan.tag_remove),
+        applied=body.apply, version_number=version.version_number if version else None,
+    )
 
 
 @router.get("/{org_id}/list-library/import-report", response_model=ImportReportOut)
