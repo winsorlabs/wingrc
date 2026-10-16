@@ -155,6 +155,31 @@ function CellText({ value }: { value: string }) {
   return value ? <>{value}</> : <span className="list-cell-empty">—</span>;
 }
 
+/** Whether a wide table has columns off either side, so the page can say
+ * so: a scrollbar alone hid the device list's last columns from everyone. */
+function useSideScroll() {
+  const [el, setEl] = useState<HTMLDivElement | null>(null);
+  const [edge, setEdge] = useState({ left: false, right: false });
+  useEffect(() => {
+    if (!el) return;
+    const update = () => {
+      const left = el.scrollLeft > 0;
+      const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+      setEdge((e) => (e.left === left && e.right === right ? e : { left, right }));
+    };
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+    ro?.observe(el);
+    if (el.firstElementChild) ro?.observe(el.firstElementChild);
+    return () => {
+      el.removeEventListener("scroll", update);
+      ro?.disconnect();
+    };
+  }, [el]);
+  return [setEl, edge] as const;
+}
+
 function PracticeChips({
   keys,
   onPick,
@@ -313,6 +338,7 @@ function LibraryListView({
   const [take, setTake] = useState<TakeTemplateResult | null>(null);
   const [takeBusy, setTakeBusy] = useState(false);
   const [takeError, setTakeError] = useState<string | null>(null);
+  const [setRowsScroller, sideways] = useSideScroll();
 
   const load = useCallback(async () => {
     try {
@@ -689,53 +715,9 @@ function LibraryListView({
         {tagError && <div className="form-error">{tagError}</div>}
       </section>
 
-      {detail.merge && (
-        <section className="list-merge" aria-label="How this list was merged">
-          <p>
-            <strong>Merged from two template sheets.</strong> {sheetOf(detail.merge.target_ref)}{" "}
-            (<code>{fileOf(detail.merge.target_ref)}</code>) and {sheetOf(detail.merge.absorbed_ref)}{" "}
-            (<code>{fileOf(detail.merge.absorbed_ref)}</code>) held the same facts under different
-            practices, so they are kept as this one list. {sheetOf(detail.merge.absorbed_ref)}'s columns map
-            onto it as recorded below, and its example rows were not carried.
-          </p>
-          {addedByMerge.size > 0 && (
-            <p className="field-hint">
-              The example rows come from the {sheetOf(detail.merge.target_ref)} sheet of the source workbook,
-              so {[...addedByMerge].join(" and ")} {addedByMerge.size === 1 ? "is" : "are"} empty in every one
-              of them. WinGRC does not write content into a template; whoever keeps it can fill them
-              with Edit rows.
-            </p>
-          )}
-          <table className="contacts-table list-merge-map">
-            <thead>
-              <tr>
-                <th>{sheetOf(detail.merge.absorbed_ref)} column</th>
-                <th>Column in this list</th>
-              </tr>
-            </thead>
-            <tbody>
-              {detail.merge.columns.map((c) => (
-                <tr key={c.source_column}>
-                  <td>{c.source_column}</td>
-                  <td>
-                    {c.target_column}
-                    {c.added && <span className="field-hint"> (added by the merge)</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      )}
-
-      {detail.adopted_from && (
-        <section className="list-adoption" aria-label="Where this copy came from">
-          <p>
-            {adoptedFromText(detail.adopted_from)}{" "}
-            <span className="field-hint">
-              This list is this org&apos;s own; the template is unchanged by anything done here.
-            </span>
-          </p>
+      {/* Actionable first, then the rows: the rows are what this page is for (L.8). */}
+      {detail.adopted_from && (detail.adopted_from.update_available || takeError) && (
+        <section aria-label="Newer template version">
           {detail.adopted_from.update_available && (
             <div className="doc-notice doc-notice-warn">
               <p>{updateAvailableText(detail.adopted_from)}</p>
@@ -794,136 +776,9 @@ function LibraryListView({
         </section>
       )}
 
-      {detail.is_template && (
-        <section className="list-adoption" aria-label="Copies of this template">
-          <p>
-            {distributionText(detail.distribution) ?? "No org has adopted this template yet."}{" "}
-            <span className="field-hint">
-              A copy moves to a newer version of this template only when someone takes it.
-            </span>
-          </p>
-          {detail.own_copy_id ? (
-            <button type="button" className="btn-ghost btn-sm" onClick={() => onOpenList(detail.own_copy_id!)}>
-              Open this org&apos;s copy
-            </button>
-          ) : (
-            canDefine && (
-              <button type="button" className="btn-ghost btn-sm" disabled={takeBusy} onClick={copyIntoThisOrg}>
-                Copy into this org&apos;s lists
-              </button>
-            )
-          )}
-          {takeError && <div className="form-error">{takeError}</div>}
-        </section>
-      )}
-
       {!detail.is_template && !isOld && exampleRowsText(base.example_rows, base.rows.length) && (
         <p className="doc-notice">{exampleRowsText(base.example_rows, base.rows.length)}</p>
       )}
-
-      {liveView && (
-        <p className="doc-notice">
-          This org also has a live <strong>{liveView.sheet_title}</strong> drawn from Scope › Assets. That
-          one follows the scope graph; this one is kept by hand. Joining them is a later slice.{" "}
-          <button type="button" className="btn-ghost btn-sm" onClick={onOpenLive}>
-            Open the live list
-          </button>
-        </p>
-      )}
-
-      <dl className="list-meta">
-        {shown.description && (
-          <>
-            <dt>What goes here</dt>
-            <dd>{shown.description}</dd>
-          </>
-        )}
-        {shown.responsible && (
-          <>
-            <dt>Responsible</dt>
-            <dd>{shown.responsible}</dd>
-          </>
-        )}
-        {shown.review_cadence && (
-          <>
-            <dt>Review cadence</dt>
-            <dd>{shown.review_cadence}</dd>
-          </>
-        )}
-        {detail.source_ref && (
-          <>
-            <dt>Imported from</dt>
-            <dd>
-              <code>{detail.source_ref}</code>
-            </dd>
-          </>
-        )}
-        {versions[0]?.provenance.origin_note && (
-          <>
-            <dt>Where it came from</dt>
-            <dd>
-              {versions[0].provenance.origin_note}{" "}
-              <span className="field-hint">
-                — a note by {versions[0].saved_by ?? "the person who built it"}, not an import source
-              </span>
-            </dd>
-          </>
-        )}
-        {shown.provenance.via === "api" && shown.provenance.note && (
-          <>
-            <dt>Change note</dt>
-            <dd>{shown.provenance.note}</dd>
-          </>
-        )}
-      </dl>
-
-      <section className="list-history" aria-label="History">
-        <h3>History: versions and practices</h3>
-        <ol>
-          {history.map((h) => {
-            if (h.kind === "tag") {
-              const e = h.event;
-              return (
-                <li key={e.id} className="list-history-tag">
-                  <span className={`cause-badge tag-${e.change}`}>{e.change === "added" ? "tagged" : "untagged"}</span>{" "}
-                  <span className="field-hint">
-                    {tagAuthor(e)} · {formatWhen(e.created_at)}
-                  </span>
-                  <div className="list-history-why">
-                    {tagSentence(e)}
-                    {e.note ? ` ${e.note}` : ""}
-                  </div>
-                </li>
-              );
-            }
-            const v = h.version;
-            return (
-            <li key={v.id} className={v.version_number === shown.version_number ? "is-shown" : undefined}>
-              <button
-                type="button"
-                className="btn-ghost btn-sm"
-                disabled={editing || v.version_number === shown.version_number}
-                onClick={() => setViewing(v.version_number === base.version_number ? null : v.version_number)}
-              >
-                v{v.version_number}
-              </button>{" "}
-              <span className={`cause-badge cause-${v.cause}`}>{causeLabel(v.cause)}</span>{" "}
-              <span className="field-hint">
-                {versionAuthor(v)} · {formatWhen(v.created_at)}
-              </span>
-              <div className="list-history-why">{whyVersion(v)}</div>
-            </li>
-            );
-          })}
-        </ol>
-      </section>
-
-      {(shown.provenance.changelogs ?? []).map((c) => (
-        <details key={c.path} className="list-changelog">
-          <summary>Changelog: {c.path}</summary>
-          <pre>{c.text || "(the changelog file was not readable at import)"}</pre>
-        </details>
-      ))}
 
       {isOld && (
         <p className="doc-notice">
@@ -1004,7 +859,19 @@ function LibraryListView({
       {notice && <p className="doc-notice doc-notice-warn">{notice}</p>}
       {error && <div className="form-error">{error}</div>}
 
-      <div className="table-scroll">
+      {(sideways.left || sideways.right) && (
+        <p className="list-scroll-hint" role="note">
+          {columns.length} columns, wider than the screen.{" "}
+          {sideways.right ? "Scroll sideways for the rest →" : "← Scroll back for the first columns"}
+        </p>
+      )}
+      <div
+        ref={setRowsScroller}
+        className={`list-rows-scroll${sideways.left ? " is-cut-left" : ""}${sideways.right ? " is-cut-right" : ""}`}
+        tabIndex={0}
+        role="region"
+        aria-label={`${shown.title}: ${shown.rows.length} rows, ${columns.length} columns`}
+      >
         <table className="contacts-table list-rows">
           <thead>
             <tr>
@@ -1155,6 +1022,185 @@ function LibraryListView({
         as <span className="list-cell-example">[CUSTOMER_NAME]</span>, marks a template example to replace; —
         is empty.
       </div>
+
+      {/* Reference about the rows: read once, so under them. */}
+      {detail.adopted_from && (
+        <section className="list-adoption" aria-label="Where this copy came from">
+          <p>
+            {adoptedFromText(detail.adopted_from)}{" "}
+            <span className="field-hint">
+              This list is this org&apos;s own; the template is unchanged by anything done here.
+            </span>
+          </p>
+        </section>
+      )}
+
+      {detail.is_template && (
+        <section className="list-adoption" aria-label="Copies of this template">
+          <p>
+            {distributionText(detail.distribution) ?? "No org has adopted this template yet."}{" "}
+            <span className="field-hint">
+              A copy moves to a newer version of this template only when someone takes it.
+            </span>
+          </p>
+          {detail.own_copy_id ? (
+            <button type="button" className="btn-ghost btn-sm" onClick={() => onOpenList(detail.own_copy_id!)}>
+              Open this org&apos;s copy
+            </button>
+          ) : (
+            canDefine && (
+              <button type="button" className="btn-ghost btn-sm" disabled={takeBusy} onClick={copyIntoThisOrg}>
+                Copy into this org&apos;s lists
+              </button>
+            )
+          )}
+          {takeError && <div className="form-error">{takeError}</div>}
+        </section>
+      )}
+
+      {detail.merge && (
+        <section className="list-merge" aria-label="How this list was merged">
+          <p>
+            <strong>Merged from two template sheets.</strong> {sheetOf(detail.merge.target_ref)}{" "}
+            (<code>{fileOf(detail.merge.target_ref)}</code>) and {sheetOf(detail.merge.absorbed_ref)}{" "}
+            (<code>{fileOf(detail.merge.absorbed_ref)}</code>) held the same facts under different
+            practices, so they are kept as this one list. {sheetOf(detail.merge.absorbed_ref)}'s columns map
+            onto it as recorded below, and its example rows were not carried.
+          </p>
+          {addedByMerge.size > 0 && (
+            <p className="field-hint">
+              The example rows come from the {sheetOf(detail.merge.target_ref)} sheet of the source workbook,
+              so {[...addedByMerge].join(" and ")} {addedByMerge.size === 1 ? "is" : "are"} empty in every one
+              of them. WinGRC does not write content into a template; whoever keeps it can fill them
+              with Edit rows.
+            </p>
+          )}
+          <table className="contacts-table list-merge-map">
+            <thead>
+              <tr>
+                <th>{sheetOf(detail.merge.absorbed_ref)} column</th>
+                <th>Column in this list</th>
+              </tr>
+            </thead>
+            <tbody>
+              {detail.merge.columns.map((c) => (
+                <tr key={c.source_column}>
+                  <td>{c.source_column}</td>
+                  <td>
+                    {c.target_column}
+                    {c.added && <span className="field-hint"> (added by the merge)</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {liveView && (
+        <p className="doc-notice">
+          This org also has a live <strong>{liveView.sheet_title}</strong> drawn from Scope › Assets. That
+          one follows the scope graph; this one is kept by hand. Joining them is a later slice.{" "}
+          <button type="button" className="btn-ghost btn-sm" onClick={onOpenLive}>
+            Open the live list
+          </button>
+        </p>
+      )}
+
+      <dl className="list-meta">
+        {shown.description && (
+          <>
+            <dt>What goes here</dt>
+            <dd>{shown.description}</dd>
+          </>
+        )}
+        {shown.responsible && (
+          <>
+            <dt>Responsible</dt>
+            <dd>{shown.responsible}</dd>
+          </>
+        )}
+        {shown.review_cadence && (
+          <>
+            <dt>Review cadence</dt>
+            <dd>{shown.review_cadence}</dd>
+          </>
+        )}
+        {detail.source_ref && (
+          <>
+            <dt>Imported from</dt>
+            <dd>
+              <code>{detail.source_ref}</code>
+            </dd>
+          </>
+        )}
+        {versions[0]?.provenance.origin_note && (
+          <>
+            <dt>Where it came from</dt>
+            <dd>
+              {versions[0].provenance.origin_note}{" "}
+              <span className="field-hint">
+                — a note by {versions[0].saved_by ?? "the person who built it"}, not an import source
+              </span>
+            </dd>
+          </>
+        )}
+        {shown.provenance.via === "api" && shown.provenance.note && (
+          <>
+            <dt>Change note</dt>
+            <dd>{shown.provenance.note}</dd>
+          </>
+        )}
+      </dl>
+
+      <details className="list-history" aria-label="History">
+        <summary>
+          History: versions and practices ({history.length})
+        </summary>
+          <ol>
+            {history.map((h) => {
+              if (h.kind === "tag") {
+                const e = h.event;
+                return (
+                  <li key={e.id} className="list-history-tag">
+                    <span className={`cause-badge tag-${e.change}`}>{e.change === "added" ? "tagged" : "untagged"}</span>{" "}
+                    <span className="field-hint">
+                      {tagAuthor(e)} · {formatWhen(e.created_at)}
+                    </span>
+                    <div className="list-history-why">
+                      {tagSentence(e)}
+                      {e.note ? ` ${e.note}` : ""}
+                    </div>
+                  </li>
+                );
+              }
+              const v = h.version;
+              return (
+              <li key={v.id} className={v.version_number === shown.version_number ? "is-shown" : undefined}>
+                <button
+                  type="button"
+                  className="btn-ghost btn-sm"
+                  disabled={editing || v.version_number === shown.version_number}
+                  onClick={() => setViewing(v.version_number === base.version_number ? null : v.version_number)}
+                >
+                  v{v.version_number}
+                </button>{" "}
+                <span className={`cause-badge cause-${v.cause}`}>{causeLabel(v.cause)}</span>{" "}
+                <span className="field-hint">
+                  {versionAuthor(v)} · {formatWhen(v.created_at)}
+                </span>
+                <div className="list-history-why">{whyVersion(v)}</div>
+              </li>
+              );
+            })}
+          </ol>
+        {(shown.provenance.changelogs ?? []).map((c) => (
+          <details key={c.path} className="list-changelog">
+            <summary>Changelog: {c.path}</summary>
+            <pre>{c.text || "(the changelog file was not readable at import)"}</pre>
+          </details>
+        ))}
+      </details>
     </div>
   );
 }

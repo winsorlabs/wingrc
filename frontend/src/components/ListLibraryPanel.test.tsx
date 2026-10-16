@@ -36,6 +36,25 @@ vi.mock("../api", async () => {
   };
 });
 
+// L.8: History sits under the rows, collapsed, its size on the control.
+function historyDetails(summary: HTMLElement): HTMLDetailsElement {
+  const details = summary.closest("details");
+  if (!details) throw new Error("History is not a <details>");
+  expect(summary.textContent).toMatch(/^History: versions and practices \(\d+\)$/);
+  expect(details.open).toBe(false);
+  fireEvent.click(summary);
+  details.open = true;
+  return details;
+}
+
+async function openHistory(): Promise<HTMLDetailsElement> {
+  return historyDetails(await screen.findByText(/^History: versions and practices/));
+}
+
+function openHistorySync(): HTMLDetailsElement {
+  return historyDetails(screen.getByText(/^History: versions and practices/));
+}
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -318,7 +337,7 @@ describe("version history", () => {
     expect(screen.getByRole("row", { name: /Risk Register/ }).textContent).toMatch(/importer changed/);
     fireEvent.click(screen.getByRole("button", { name: "Risk Register" }));
 
-    const history = await screen.findByRole("region", { name: "History" });
+    const history = await openHistory();
     await waitFor(() => expect(within(history).getAllByRole("listitem")).toHaveLength(3));
     const [third, second, first] = within(history).getAllByRole("listitem").map((li) => li.textContent);
     expect(third).toMatch(/importer changed.*WinGRC importer/);
@@ -370,7 +389,7 @@ describe("the List Builder (L.2.2)", () => {
         origin_note: "Old SharePoint sheet",
       }),
     );
-    const history = await screen.findByRole("region", { name: "History" });
+    const history = await openHistory();
     await waitFor(() =>
       expect(within(history).getByText(/Written by Pat Builder, from nothing: built by hand in WinGRC on 2026-10-15/)).toBeTruthy(),
     );
@@ -420,7 +439,7 @@ describe("tags (L.2.2)", () => {
     fireEvent.click(within(serves).getByRole("button", { name: "Add tag" }));
     await waitFor(() => expect(api.addListTag).toHaveBeenCalledWith("org", "risk", "3.4.2"));
     await waitFor(() => expect(api.listLibrary).toHaveBeenCalledTimes(2));
-    const history = await screen.findByRole("region", { name: "History" });
+    const history = await openHistory();
     await waitFor(() =>
       expect(within(history).getByText(/Tagged CM\.L2-3\.4\.2: this list became a candidate for it\. By Tess Tagger\./)).toBeTruthy(),
     );
@@ -540,9 +559,14 @@ describe("adopting templates (L.7)", () => {
   it("says where a copy came from, that it is unfinished, and that a newer template version waits", async () => {
     const where = await openCopy(true);
     expect(where.textContent).toMatch(/Copied from the template Risk Register, version 1\./);
-    expect(where.textContent).toMatch(/Template version 2 is available\. This list stays on version 1 until someone takes it\./);
+    // L.8: the update is actionable, so it sits above the rows; where the copy came from is reference, below them.
+    const update = screen.getByRole("region", { name: "Newer template version" });
+    expect(update.textContent).toMatch(/Template version 2 is available\. This list stays on version 1 until someone takes it\./);
+    const rows = screen.getByRole("region", { name: /: 2 rows, \d+ columns$/ });
+    expect(update.compareDocumentPosition(rows) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(rows.compareDocumentPosition(where) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByText(/All 2 rows are still the template's examples, with a fill-in/)).toBeTruthy();
-    expect(within(screen.getByRole("region", { name: "History" })).getByText(
+    expect(within(openHistorySync()).getByText(
       /Copied by Ada Adopter from the template Risk Register at version 1 on 2026-10-10\./,
     )).toBeTruthy();
   });
@@ -566,9 +590,10 @@ describe("adopting templates (L.7)", () => {
   });
 
   it("tells a customer contact the update exists without offering to take it", async () => {
-    const where = await openCopy(false);
-    expect(within(where).queryByRole("button", { name: /Review template version/ })).toBeNull();
-    expect(where.textContent).toMatch(/Someone who defines lists here and in the template's org takes it\./);
+    await openCopy(false);
+    const update = screen.getByRole("region", { name: "Newer template version" });
+    expect(within(update).queryByRole("button", { name: /Review template version/ })).toBeNull();
+    expect(update.textContent).toMatch(/Someone who defines lists here and in the template's org takes it\./);
   });
 
   it("shows a template's copies by version, and copies it into this org when it is its own tenant", async () => {

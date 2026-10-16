@@ -2163,7 +2163,6 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 
 /* List version history (2026-10-14): why each version exists, at a glance */
 .list-history { margin: 1rem 0; }
-.list-history h3 { font-size: .95rem; margin: 0 0 .4rem; }
 .list-history ol { list-style: none; margin: 0; padding: 0; }
 .list-history li { padding: .35rem .5rem; border-left: 3px solid var(--border, #d1d5db); margin-bottom: .25rem; }
 .list-history li.is-shown { background: var(--surface-2, rgba(0,0,0,.03)); }
@@ -2188,3 +2187,54 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .list-builder-form input, .list-builder-form textarea { max-width: 36rem; }
 .list-builder-form fieldset { border: 1px solid var(--border, #d1d5db); border-radius: 6px; padding: .5rem .75rem; }
 .list-builder-column { display: flex; gap: .5rem; margin-bottom: .35rem; }
+
+/* ── List page readability (L.8): the rows are what this page is for ──
+   Contrast, WCAG 2.x, measured: header and values #212529 on #fff 15.4:1;
+   muted text here #5c636a on the page's #f8f9fa 5.8:1 (the shared #6c757d
+   is 4.45:1 on that background, under AA); an example cell #6c757d on
+   #f1f3f5 4.2:1 (faint on purpose, above 3:1); a reason cell #7a5c00 on
+   #fff4cc 5.7:1; the header rule #868e96 3.3:1. */
+.list-library-detail { --muted: #5c636a; }
+.list-rows-scroll {
+  overflow: auto;
+  max-height: min(70vh, 44rem);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.list-rows-scroll:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+/* A cut-off side says so: a shadow on the edge that has more beyond it. */
+.list-rows-scroll.is-cut-right { box-shadow: inset -14px 0 12px -12px rgba(0, 0, 0, 0.35); }
+.list-rows-scroll.is-cut-left { box-shadow: inset 14px 0 12px -12px rgba(0, 0, 0, 0.35); }
+.list-rows-scroll.is-cut-left.is-cut-right {
+  box-shadow: inset 14px 0 12px -12px rgba(0, 0, 0, 0.35), inset -14px 0 12px -12px rgba(0, 0, 0, 0.35);
+}
+.list-scroll-hint { margin: 0 0 0.3rem; font-size: 0.8rem; color: #495057; text-align: right; }
+.list-rows { font-size: 0.875rem; color: var(--text); }
+.list-rows th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+  border-bottom: none;
+  /* A border on a sticky cell scrolls away under border-collapse; a shadow stays. */
+  box-shadow: inset 0 -2px 0 #868e96;
+}
+.list-rows th, .list-rows td { min-width: 6rem; max-width: 28rem; }
+.list-rows td { border-bottom-color: #e9ecef; }
+.list-rows tbody tr:hover td { background: #f8f9fa; }
+.list-library-detail .list-cell-example {
+  color: #6c757d;
+  background: #f1f3f5;
+  font-style: italic;
+  border-radius: 3px;
+  padding: 0 0.2rem;
+}
+.list-library-detail .list-cell-empty { color: #6c757d; }
+.list-history > summary { cursor: pointer; font-weight: 600; font-size: 0.95rem; padding: 0.25rem 0; }
+.list-history[open] > summary { margin-bottom: 0.4rem; }
