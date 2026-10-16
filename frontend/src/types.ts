@@ -1439,7 +1439,7 @@ export interface LibraryListSummary {
   cause: VersionCause; // the current version's
   merged_from: string[];
   has_changelog: boolean;
-  // Rows still a template's bare [PLACEHOLDER] example (backend list_library.is_populated).
+  // Rows still carrying a fill-in token, [PLACEHOLDER] or [CUSTOMER_NAME] (backend list_library.is_populated).
   example_rows: number;
   adopted_from: AdoptedFrom | null;
   adopted_copies: number; // a template's copies, in every org

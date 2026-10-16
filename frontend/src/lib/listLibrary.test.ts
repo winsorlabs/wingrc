@@ -329,7 +329,9 @@ describe("adopted copies (L.7)", () => {
 
   it("says why a list is not yet filled in", () => {
     expect(exampleRowsText(0, 3)).toBeNull();
-    expect(exampleRowsText(2, 2)).toMatch(/^All 2 rows are still the template's \[PLACEHOLDER\] examples\./);
+    expect(exampleRowsText(2, 2)).toMatch(
+      /^All 2 rows are still the template's examples, with a fill-in such as \[PLACEHOLDER\] or \[CUSTOMER_NAME\]/,
+    );
     expect(exampleRowsText(1, 3)).toMatch(/^1 of 3 rows are still/);
   });
 });

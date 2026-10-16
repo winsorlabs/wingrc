@@ -5498,13 +5498,23 @@ the template, its org, key, version id and number.
 unfinished -- and "populated" is now defined once, in code.** The brief
 read this as falling out of "L.4's populated rule", but that rule existed
 only as a recommendation in the plan (section 5) and L.4 is not built. It
-is now `list_library.is_populated`: rows, none of which still carries the
-bare `[PLACEHOLDER]` token (`[PLACEHOLDER - reason]` is a value). L.4 must
-use it rather than a second rule; the plan's L.4 section says so. The
-screen states it on any kept list with examples left ("All 3 rows are
-still the template's [PLACEHOLDER] examples. A list counts as filled in,
-and can be offered as evidence, only when none remain") and badges the
-index row. Nothing offers a list as evidence yet, so "an unfilled copy is
+is now `list_library.is_populated`: rows, none of which still carries a
+fill-in token -- an uppercase `[TOKEN]` anywhere in a cell, so
+`[PLACEHOLDER]` and the family the library also uses (`[CUSTOMER_NAME]`,
+`[CUSTOMER]`, `[SERVER]`, `[DATE]`, `[CUI_ACCESS_GROUP]`,
+`[SECURITY_GROUP]`), whether alone or inside a value such as
+"[CUSTOMER]-Admin-Role". `[PLACEHOLDER - reason]` is a value, and so are
+lowercase brackets (an objective's `[a]`). The first version matched only
+a cell that *was* `[PLACEHOLDER]`; review caught that a copy still saying
+`[CUSTOMER_NAME]` would then be offered to an assessor as evidence once
+L.4 gates on this, and a survey of the real library found it missed
+`[PLACEHOLDER] (customer CSP/app)` too. Both were fixed before merge. L.4
+must use it rather than a second rule; the plan's L.4 section says so.
+The screen states it on any kept list with examples left ("All 3 rows are
+still the template's examples, with a fill-in such as [PLACEHOLDER] or
+[CUSTOMER_NAME] left in them. A list counts as filled in, and can be
+offered as evidence, only when none remain"), highlights every cell with
+a fill-in, and badges the index row. Nothing offers a list as evidence yet, so "an unfilled copy is
 not offered as evidence" is a rule waiting for L.4, tested here as the
 predicate.
 
@@ -5552,14 +5562,17 @@ MSP-specific and substitution text a copy takes verbatim. On live, four
 templates' text names "Winsors Labs" (one title, three row sets -- e.g.
 "Winsors Labs SOC" in the IR contacts), Responsible across many names the
 MSP's own stack ("MSP Engineer (Datto RMM / Liongard / IT Glue)",
-"Fortinet FortiGate 60F"), and on the bench's copy of the real library
-four templates use tokens beyond `[PLACEHOLDER]`: `[CUSTOMER_NAME]` (two),
-`[CUSTOMER]`, `[DATE]`, `[SERVER]`. Substitution is N.4's design and was
-not half-built; until it lands an adopted copy shows these as written, and
-a row whose only marker is `[CUSTOMER_NAME]` counts as filled. Also: the
-real `3-1-3b` template's two example rows carry no `[PLACEHOLDER]` at all,
-so a copy of it reads as filled at once -- a content fix in the library,
-not a code one.
+"Fortinet FortiGate 60F"), and seven templates in the real library use
+tokens beyond `[PLACEHOLDER]`: `[CUSTOMER_NAME]` (two), `[CUSTOMER]` (two,
+e.g. "jdoe@[CUSTOMER]"), `[SERVER]`, `[DATE]`, `[CUI_ACCESS_GROUP]` and
+`[SECURITY_GROUP]` (3.1.2a). Substitution is N.4's design and was not
+half-built; until it lands an adopted copy shows these as written, and its
+rows stay examples until someone replaces them. Content fixes in the
+library rather than code: the real `3-1-3b` template's two example rows
+carry no token at all, so a copy of it reads as filled at once; and
+3.13.10a writes a lowercase `[confirm]`, which the rule deliberately does
+not read as a token (lowercase brackets are real values), so it wants
+normalising to `[PLACEHOLDER]`.
 
 **Ordering: L.7 before L.4, agreed.** Evidence linking on an org whose only
 lists are scope projections tests a corner; linking an adopted, filled-in

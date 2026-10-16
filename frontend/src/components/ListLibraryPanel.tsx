@@ -133,6 +133,8 @@ function formatWhen(iso: string): string {
 }
 
 const PLACEHOLDER_REASON = /^\[PLACEHOLDER - (.+)\]$/;
+// backend list_library.EXAMPLE_TOKEN: a fill-in anywhere in the cell.
+const FILL_IN = /\[[A-Z][A-Z0-9_]*\]/;
 
 function CellText({ value }: { value: string }) {
   const reason = PLACEHOLDER_REASON.exec(value);
@@ -143,7 +145,7 @@ function CellText({ value }: { value: string }) {
       </span>
     );
   }
-  if (value === "[PLACEHOLDER]") {
+  if (FILL_IN.test(value)) {
     return (
       <span className="list-cell-example" title="Template example: replace with real data">
         {value}
@@ -1149,7 +1151,8 @@ function LibraryListView({
 
       <div className="contact-sub list-legend">
         <span className="list-cell-placeholder">[PLACEHOLDER - reason]</span> is known absent for the stated
-        reason; <span className="list-cell-example">[PLACEHOLDER]</span> is a template example to replace; —
+        reason; <span className="list-cell-example">[PLACEHOLDER]</span>, or another fill-in such
+        as <span className="list-cell-example">[CUSTOMER_NAME]</span>, marks a template example to replace; —
         is empty.
       </div>
     </div>

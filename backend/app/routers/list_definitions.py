@@ -128,7 +128,8 @@ class ListVersionOut(BaseModel):
     saved_by: str | None
     # Why this version exists: a list_library.CAUSES key, stored or derived.
     cause: str
-    # Rows still a template's [PLACEHOLDER] example (list_library.is_populated).
+    # Rows still carrying a fill-in token such as [PLACEHOLDER] or
+    # [CUSTOMER_NAME] (list_library.is_populated).
     example_rows: int
 
 

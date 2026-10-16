@@ -541,7 +541,7 @@ describe("adopting templates (L.7)", () => {
     const where = await openCopy(true);
     expect(where.textContent).toMatch(/Copied from the template Risk Register, version 1\./);
     expect(where.textContent).toMatch(/Template version 2 is available\. This list stays on version 1 until someone takes it\./);
-    expect(screen.getByText(/All 2 rows are still the template's \[PLACEHOLDER\] examples\./)).toBeTruthy();
+    expect(screen.getByText(/All 2 rows are still the template's examples, with a fill-in/)).toBeTruthy();
     expect(within(screen.getByRole("region", { name: "History" })).getByText(
       /Copied by Ada Adopter from the template Risk Register at version 1 on 2026-10-10\./,
     )).toBeTruthy();
