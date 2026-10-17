@@ -115,3 +115,84 @@ def test_failed_run_surfaces_its_error(admin_client, db_session):
     entry = next(j for j in r.json() if j["job_name"] == _JOB_NAME)
     assert entry["last_run"]["status"] == "failed"
     assert entry["last_run"]["error"] == "Something went wrong"
+
+
+# ── GET /admin/scheduled-jobs/tls-expiry: the banner's data ───────────────
+
+_TLS_URL = "/admin/scheduled-jobs/tls-expiry"
+
+
+@pytest.fixture
+def tls_configured(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.routers import scheduled_jobs
+
+    monkeypatch.setattr(scheduled_jobs, "get_settings", lambda: SimpleNamespace(
+        public_url="https://dev.example.test", storage_public_endpoint=None,
+    ))
+
+
+def _tls_run(db_session, *, status, finished_at, not_after=None):
+    db_session.add(JobRun(
+        id=uuid.uuid4(), job_name="tls_expiry_check", scheduled_for=finished_at,
+        started_at=finished_at - timedelta(seconds=1), finished_at=finished_at,
+        status=status, worker_id="worker-1:123",
+        result=None if status != "succeeded" else {"certs": [{
+            "name": "dev.example.test",
+            "not_after": not_after.isoformat() if not_after else None,
+            "error": None if not_after else "TimeoutError: timed out",
+        }]},
+    ))
+    db_session.commit()
+
+
+def test_tls_expiry_is_a_registered_job():
+    assert JOB_REGISTRY["tls_expiry_check"].interval <= timedelta(hours=24)
+
+
+@pytest.mark.parametrize("role", ["msp_engineer", "consultant_admin", "customer_poc"])
+def test_tls_expiry_is_msp_admin_only(db_session, role):
+    assert _client_as(db_session, role).get(_TLS_URL).status_code == 403
+
+
+def test_tls_expiry_never_run_needs_attention(admin_client, tls_configured):
+    body = admin_client.get(_TLS_URL).json()
+    assert body["configured"] is True
+    assert body["stale"] is True and body["attention"] is True
+
+
+def test_tls_expiry_reports_the_last_successful_reading(admin_client, db_session, tls_configured):
+    now = datetime.now(UTC)
+    _tls_run(db_session, status="succeeded", finished_at=now - timedelta(hours=7),
+             not_after=now + timedelta(days=12))
+    # A later failed run has no reading; it must not hide the one above.
+    _tls_run(db_session, status="failed", finished_at=now - timedelta(hours=1))
+    body = admin_client.get(_TLS_URL).json()
+    assert body["attention"] is True and body["stale"] is False
+    assert body["window_days"] == 30
+    [cert] = body["certs"]
+    assert cert["name"] == "dev.example.test"
+    assert cert["verdict"] == "expiring"
+    assert cert["days_left"] in (11, 12)
+
+
+def test_tls_expiry_fresh_and_fine_is_quiet(admin_client, db_session, tls_configured):
+    now = datetime.now(UTC)
+    _tls_run(db_session, status="succeeded", finished_at=now - timedelta(hours=1),
+             not_after=now + timedelta(days=80))
+    body = admin_client.get(_TLS_URL).json()
+    assert body["attention"] is False
+    assert body["certs"][0]["verdict"] == "ok"
+
+
+def test_tls_expiry_without_an_https_public_url_is_quiet(admin_client, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.routers import scheduled_jobs
+
+    monkeypatch.setattr(scheduled_jobs, "get_settings", lambda: SimpleNamespace(
+        public_url="http://localhost:5173", storage_public_endpoint=None,
+    ))
+    body = admin_client.get(_TLS_URL).json()
+    assert body["configured"] is False and body["attention"] is False

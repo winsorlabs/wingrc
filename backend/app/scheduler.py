@@ -140,7 +140,7 @@ from sqlalchemy import create_engine, select, text, update
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
-from . import document_reviews, email_service, liongard_sync, review_cycles
+from . import document_reviews, email_service, liongard_sync, review_cycles, tls_expiry
 from .audit import log_event
 from .config import get_settings
 from .connectors import liongard as liongard_connector
@@ -742,6 +742,16 @@ def _document_review_digest(session: Session) -> dict:
     }
 
 
+def _tls_expiry_check(session: Session) -> dict:
+    """Read the certificate nginx serves for each public hostname and
+    record when it expires (tls_expiry.py). Records only: the verdict --
+    inside 30 days, expired, unreadable, or no recent reading -- is derived
+    when someone looks (GET /admin/scheduled-jobs/tls-expiry), and shown to
+    msp_admin as a banner. No email: this deployment has no mail relay,
+    and the renewal it prompts is a person's job on the host anyway."""
+    return tls_expiry.check_now(get_settings())
+
+
 JOB_REGISTRY: dict[str, JobSpec] = {
     spec.name: spec
     for spec in (
@@ -797,6 +807,13 @@ JOB_REGISTRY: dict[str, JobSpec] = {
             # for a business cadence in months.
             interval=timedelta(hours=24),
             run=_document_review_digest,
+        ),
+        JobSpec(
+            name="tls_expiry_check",
+            # Every 6 hours, not daily, so a renewal clears the banner the
+            # same morning; tls_expiry.STALE_AFTER is measured against it.
+            interval=timedelta(hours=6),
+            run=_tls_expiry_check,
         ),
     )
 }

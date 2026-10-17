@@ -1125,6 +1125,25 @@ export interface ScheduledJob {
   next_due_at: string | null;
 }
 
+// Mirrors backend/app/routers/scheduled_jobs.py's TlsExpiryOut: what the
+// last tls_expiry_check read from nginx, judged when asked (tls_expiry.py).
+export interface TlsCert {
+  name: string;
+  not_after: string | null;
+  days_left: number | null;
+  verdict: "ok" | "expiring" | "expired" | "unreadable";
+  error: string | null;
+}
+
+export interface TlsExpiry {
+  configured: boolean;
+  attention: boolean;
+  checked_at: string | null;
+  stale: boolean;
+  window_days: number;
+  certs: TlsCert[];
+}
+
 export interface MembershipGrantResult {
   user_id: string;
   org_id: string;

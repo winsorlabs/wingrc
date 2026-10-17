@@ -86,6 +86,12 @@ class Settings(BaseSettings):
     # via storage_endpoint (internal Docker DNS); browsers need the LAN/public address.
     # If unset, presigned URLs use storage_endpoint (fine for same-host dev).
     storage_public_endpoint: str | None = None
+    # Where the TLS expiry check (tls_expiry.py) reaches the proxy that
+    # serves public_url and storage_public_endpoint: the compose service,
+    # with each public hostname sent as SNI. Not the public address -- that
+    # resolves only through LAN hosts files, which containers do not read.
+    tls_check_connect_host: str = "nginx"
+    tls_check_connect_port: int = 443
     storage_access_key: str = "wingrc"
     storage_secret_key: str = "wingrc-dev-secret"
     storage_bucket: str = "evidence"
