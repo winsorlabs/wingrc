@@ -266,15 +266,17 @@ def test_bundle_export_works_identically_before_and_after_completion(
     before = client.get(_bundle_url(d))
     assert before.status_code == 200
     with zipfile.ZipFile(io.BytesIO(before.content)) as zf:
-        before_names = set(zf.namelist())
+        before_names = {n.split("/", 1)[1] for n in zf.namelist()}
 
     client.post(_complete_url(d))
 
     after = client.get(_bundle_url(d))
     assert after.status_code == 200
     with zipfile.ZipFile(io.BytesIO(after.content)) as zf:
-        after_names = set(zf.namelist())
+        after_names = {n.split("/", 1)[1] for n in zf.namelist()}
 
+    # Compared under the bundle folder: its name carries the export date, so
+    # two exports either side of midnight UTC differ there and nowhere else.
     assert before_names == after_names
 
 
