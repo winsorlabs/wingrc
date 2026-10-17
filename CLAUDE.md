@@ -135,8 +135,11 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   reads.** A check made in SQL reads `now()`, fixed when the test's outer
   transaction began; a margin off `datetime.now()` is against the wrong
   clock. Artifacts compared across two moments must not carry a stamp
-  finer than the gap. Two red runs and one latent failure had this shape
-  (`docs/roadmap.md`'s clock-granularity sweep entry).
+  where they are compared -- not one finer than the gap, and not a
+  coarse one either, because a minute or a day can roll over between
+  them (a bundle's folder is dated; look its pages up per zip). Three
+  red runs and three latent failures had this shape (`docs/roadmap.md`'s
+  clock-granularity sweep entry).
 - CI (`.github/workflows/ci.yml`) runs `backend` with **no database at
   all** and `integration` against `postgres:18`. Both run
   unconditionally — `integration` deliberately has no `needs: backend`,

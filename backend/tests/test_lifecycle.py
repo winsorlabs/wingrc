@@ -170,6 +170,16 @@ def _strip_stamp(html: bytes) -> str:
     return _STAMP_RE.sub("", html.decode())
 
 
+def _page(zf: zipfile.ZipFile, rel: str) -> str:
+    """One page of a bundle by its path under the bundle's folder. The
+    folder is `{slug}_{YYYYMMDD}` off generated_at, so two exports either
+    side of midnight UTC have different member names -- look each one up
+    in its own zip, never by a name taken from another (a red run at
+    23:57 UTC, 2026-10-16)."""
+    [name] = [n for n in zf.namelist() if n.split("/", 1)[1] == rel]
+    return _strip_stamp(zf.read(name))
+
+
 class InMemoryStorageClient(StorageClient):
     def __init__(self) -> None:
         self.files: dict[str, bytes] = {}
@@ -675,17 +685,15 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     r = client.get(f"/orgs/{org.id}/assessments/{assessment_id}/bundle")
     assert r.status_code == 200, r.text
     zf_v1 = zipfile.ZipFile(io.BytesIO(r.content))
-    impl_name = next(n for n in zf_v1.namelist() if n.endswith("ssp/02_implementation.html"))
-    scoring_name = next(n for n in zf_v1.namelist() if n.endswith("summary/scoring.html"))
-    inventory_name = next(
-        n for n in zf_v1.namelist() if n.endswith("ssp/04_component_inventory.html")
-    )
-    documents_name = next(n for n in zf_v1.namelist() if n.endswith("ssp/06_documents.html"))
-    manifest_name = next(n for n in zf_v1.namelist() if n.endswith("evidence/manifest.html"))
-    impl_html_v1 = _strip_stamp(zf_v1.read(impl_name))
-    scoring_html_v1 = _strip_stamp(zf_v1.read(scoring_name))
-    inventory_html_v1 = _strip_stamp(zf_v1.read(inventory_name))
-    documents_html_v1 = _strip_stamp(zf_v1.read(documents_name))
+    impl_name = "ssp/02_implementation.html"
+    scoring_name = "summary/scoring.html"
+    inventory_name = "ssp/04_component_inventory.html"
+    documents_name = "ssp/06_documents.html"
+    manifest_name = "evidence/manifest.html"
+    impl_html_v1 = _page(zf_v1, impl_name)
+    scoring_html_v1 = _page(zf_v1, scoring_name)
+    inventory_html_v1 = _page(zf_v1, inventory_name)
+    documents_html_v1 = _page(zf_v1, documents_name)
 
     assert "SN-LT-STILL-PENDING" in inventory_html_v1
     assert "Pending Approval" in inventory_html_v1
@@ -758,10 +766,10 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     r = client.get(f"/orgs/{org.id}/assessments/{assessment_id}/bundle")
     assert r.status_code == 200, r.text
     zf_v2 = zipfile.ZipFile(io.BytesIO(r.content))
-    impl_html_v2 = _strip_stamp(zf_v2.read(impl_name))
-    scoring_html_v2 = _strip_stamp(zf_v2.read(scoring_name))
-    inventory_html_v2 = _strip_stamp(zf_v2.read(inventory_name))
-    documents_html_v2 = _strip_stamp(zf_v2.read(documents_name))
+    impl_html_v2 = _page(zf_v2, impl_name)
+    scoring_html_v2 = _page(zf_v2, scoring_name)
+    inventory_html_v2 = _page(zf_v2, inventory_name)
+    documents_html_v2 = _page(zf_v2, documents_name)
 
     assert impl_html_v2 == impl_html_v1, (
         "a baseline reimport must never change what an already-generated bundle "
@@ -955,15 +963,15 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     r = client.get(f"/orgs/{org.id}/assessments/{assessment_id}/bundle")
     assert r.status_code == 200, r.text
     zf_v3 = zipfile.ZipFile(io.BytesIO(r.content))
-    cover_name = next(n for n in zf_v3.namelist() if n.endswith("cover.html"))
-    cover_html_v3 = _strip_stamp(zf_v3.read(cover_name))
-    inventory_html_v3 = _strip_stamp(zf_v3.read(inventory_name))
+    cover_name = "cover.html"
+    cover_html_v3 = _page(zf_v3, cover_name)
+    inventory_html_v3 = _page(zf_v3, inventory_name)
     assert (
         "submitted" in cover_html_v3.lower()
         or "closed" in cover_html_v3.lower()
         or str(score_after_met) in cover_html_v3
     )
-    assert _strip_stamp(zf_v3.read(documents_name)) == documents_html_v1, (
+    assert _page(zf_v3, documents_name) == documents_html_v1, (
         "moving the tenant to a new baseline version touches neither the document "
         "nor its approved body, so the rendered policy section must be unchanged"
     )
@@ -987,19 +995,19 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
     r = client.get(f"/orgs/{org.id}/assessments/{assessment_id}/bundle")
     assert r.status_code == 200, r.text
     zf_app = zipfile.ZipFile(io.BytesIO(r.content))
-    app_impl = _strip_stamp(zf_app.read(impl_name))
-    app_manifest = _strip_stamp(zf_app.read(manifest_name))
+    app_impl = _page(zf_app, impl_name)
+    app_manifest = _page(zf_app, manifest_name)
 
     owner_snapshot = snapshot_bundle(
         db_session, storage=storage, org_id=org.id, assessment_id=uuid.UUID(assessment_id)
     )
     owner_zip_bytes, _, _, _ = render_bundle(owner_snapshot)
     zf_owner = zipfile.ZipFile(io.BytesIO(owner_zip_bytes))
-    assert _strip_stamp(zf_owner.read(impl_name)) == app_impl, (
+    assert _page(zf_owner, impl_name) == app_impl, (
         "the implementation section differs between an RLS-enforced export and an "
         "owner-role export -- a policy is filtering rows out of the bundle"
     )
-    assert _strip_stamp(zf_owner.read(manifest_name)) == app_manifest, (
+    assert _page(zf_owner, manifest_name) == app_manifest, (
         "the evidence manifest differs between an RLS-enforced export and an "
         "owner-role export -- evidence_state_link's policy is hiding links"
     )
