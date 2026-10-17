@@ -5737,12 +5737,17 @@ was `…_20261017/` -- a KeyError, nothing wrong with the product. A day is
 coarser than any gap in a test, which is why the sweep's "a stamp finer
 than the gap" reading passed it over: **a boundary of any stamp can fall
 between two moments**, however coarse. Fixed: `_page(zf, rel)` looks each
-page up in its own zip by its path under the folder, and
-`test_assessment_completion.py`'s before/after name sets -- the same
-latent fault, not yet red -- compare paths under the folder. The pages
-link to each other relatively, so the folder name is the only place the
-date reaches. Proved on the bench by forcing the second export's date
-forward a day: both old tests fail, both new ones pass.
+page up in its own zip by its path under the folder. Two more tests had
+the same latent fault, not yet red, and now compare paths under the
+folder: `test_assessment_completion.py`'s before/after name sets, and
+`test_list_bundle.py`'s byte-identical check, whose artifact-log lines
+carry the full path. The pages link to each other relatively, so the
+folder name (and the log's paths) is the only place the date reaches.
+Found and proved on the bench with a mutant that moves every export's
+folder date a day on: under it, main's versions of the first two fail
+(the lifecycle test with CI's exact KeyError), and the whole suite run
+once turned up the third; with the fix, all 1757 pass under the mutant
+and without it.
 
 ---
 

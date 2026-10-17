@@ -138,7 +138,7 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   where they are compared -- not one finer than the gap, and not a
   coarse one either, because a minute or a day can roll over between
   them (a bundle's folder is dated; look its pages up per zip). Three
-  red runs and two latent failures had this shape (`docs/roadmap.md`'s
+  red runs and three latent failures had this shape (`docs/roadmap.md`'s
   clock-granularity sweep entry).
 - CI (`.github/workflows/ci.yml`) runs `backend` with **no database at
   all** and `integration` against `postgres:18`. Both run

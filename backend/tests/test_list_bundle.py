@@ -252,11 +252,14 @@ def test_two_exports_of_unchanged_data_are_byte_identical(db_session):
         # logged hash differs whenever two exports straddle a minute -- it
         # did on the bench once retagging made the gap wider. Its content is
         # compared unstamped below; here only its path. The workbooks have
-        # no wall-clock in them and keep their full line.
+        # no wall-clock in them and keep their hash. Every path is taken
+        # under the bundle's folder, which is dated: two exports either side
+        # of midnight UTC differ there and nowhere else.
+        log = [ln.rsplit(" | ", 1) for ln in log if "/lists/" in ln]
         log = [
-            ln.rsplit(" | ", 1)[1] if ln.endswith("/lists/index.html") else ln
-            for ln in log
-            if "/lists/" in ln
+            path.split("/", 1)[1] if path.endswith("/lists/index.html")
+            else f"{head} | {path.split('/', 1)[1]}"
+            for head, path in log
         ]
         return (
             _member(zf, "lists/devices_v1.xlsx"),
