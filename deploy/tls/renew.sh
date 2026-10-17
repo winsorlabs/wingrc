@@ -38,6 +38,7 @@ docker run --rm \
   -v "$here/auth-hook.sh":/hooks/auth-hook.sh:ro \
   -e TLS_WAIT_SECONDS="${TLS_WAIT_SECONDS:-3600}" \
   "$CERTBOT_IMAGE" renew --cert-name dev.wingrc.us --non-interactive \
+  --no-random-sleep-on-renew \
   --manual-auth-hook /hooks/auth-hook.sh ${TLS_FORCE:+--force-renewal} \
   > "$work/certbot.log" 2>&1 &
 certbot_pid=$!

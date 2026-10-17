@@ -9116,7 +9116,7 @@ monitoring build-out.
 
 | Thing | Expires / rotates | What says so | State |
 |---|---|---|---|
-| TLS certificate, `dev.wingrc.us` + `storage.dev.wingrc.us` | 90 days (Let's Encrypt), renewed by hand | `tls_expiry_check` banner for msp_admin inside 30 days; `deploy/tls/check-expiry.sh` on the host | ✅ 2026-10-17 |
+| TLS certificate, `dev.wingrc.us` + `storage.dev.wingrc.us` | 90 days (Let's Encrypt), renewed by hand | `tls_expiry_check` banner for msp_admin inside 30 days; `deploy/tls/check-expiry.sh` on the host | ✅ 2026-10-17 -- alarm deployed (`c524b2d`) and shown red against the real expired certificate first; renewed the same day (expires 2027-01-15, fingerprint `09:50:5D:26…` on both names), after which the check read 89 days and the banner cleared. Both directions exercised on live, not a fixture. Next due: banner from 2026-12-16 |
 | `wingrc.us` domain registration (DNSimple) | yearly | nothing in WinGRC; DNSimple's own renewal mail | unchecked -- confirm auto-renew is on |
 | Integrations credentials: `ai`, `liongard`, `smtp` | whatever the issuer sets (an API key's expiry is set at the provider, not here) | a failing test-connection, or a failed job -- after the fact | unchecked; record each issuer's expiry date beside the connection |
 | Fernet key (`WINGRC_CREDENTIAL_ENCRYPTION_KEYS`, label `prod-wl-util-1-2026-09-11`) | never expires; rotation is a deliberate act (key versions exist) | n/a | no expiry; rotation procedure undocumented |

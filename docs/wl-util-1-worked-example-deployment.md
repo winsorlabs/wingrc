@@ -196,6 +196,19 @@ script reloads nginx and fails unless both names are served with a new
 fingerprint. Delete the TXT records afterwards. Renew when the banner
 appears; 30 days is the margin, not the deadline.
 
+**In DNSimple's name field, type `_acme-challenge.dev`, not the full
+name.** DNSimple appends the zone, so `_acme-challenge.dev.wingrc.us`
+lands at `…wingrc.us.wingrc.us` and Let's Encrypt reports NXDOMAIN --
+that was the first attempt on 2026-10-17. **Every run issues new values**:
+a cancelled or timed-out run's records are void, so edit them to the new
+values rather than adding beside them. Don't Ctrl-C to copy from the
+terminal (Ctrl-Shift-C); it stops the run.
+
+**First renewal, 2026-10-17:** issued 19:17:17 UTC, expires 2027-01-15
+19:17:16 UTC, both names, fingerprint `09:50:5D:26…`, served by nginx
+for both names after the script's reload; the in-app check then read 89
+days for both and the banner cleared.
+
 **If wingrc.us ever goes public**, HTTP-01 becomes possible and renewal
 could be automatic; until then, public-CA issuance for this name is
 DNS-01 or nothing. Don't re-propose certbot's HTTP-01 for a LAN-only
