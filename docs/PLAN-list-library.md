@@ -348,6 +348,15 @@ version (`template_list_id`, `template_list_version_id`), its v1 is
 available and taken only deliberately, never over a person's edit unless
 that edit is named. See the roadmap's L.7 entry.
 
+**L.8 — the list page puts the rows first ✅ Done 2026-10-16.** Frontend
+only. See the roadmap's L.8 entry.
+
+**L.9 — the scope-drawn lists look like the rest.** The four lists drawn
+from scope, on the same Lists index, still render in the old table style
+L.8 replaced on the library list page. Those four only, reusing L.8's
+styling and side-scroll hook rather than copying them. See the roadmap's
+L.9 entry under Planned.
+
 **L.6 — the scope-graph join.** The ~10 projected lists draw rows from
 `scope_entity` — asset approval appearing in `3.1.1c`, and the rest. Last
 deliberately: it is the hardest part, it is 12% of the library, and §0 says

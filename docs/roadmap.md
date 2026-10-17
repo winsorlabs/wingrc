@@ -5663,10 +5663,14 @@ document history uses `doc-table`, the diff view `diff-table`. The header
 style lived in `.contacts-table th` -- small grey caps, the same 4.45:1 --
 so it was shared CSS, not a shared component. L.8 changed only
 `.list-rows` (this table), per the brief: restyling 17 screens is not this
-slice. Also on the same Lists screen, the four lists drawn from scope
-(`ListsPanel`) still render the old way; they are the next candidate. A
-table component (header, rules, sticky, side-scroll hint) would end the
-drift; it wants its own slice.
+slice. The sharper half of this finding: the four lists drawn from scope
+(`ListsPanel`) sit **on the same Lists index** as the ones L.8 restyled,
+so two clicks from one screen now open two different-looking pages.
+Cross-screen inconsistency is tolerable; same-index inconsistency reads
+as a bug. That is the next slice, narrowly -- **L.9**, under Planned --
+not all 17. A table component (header, rules, sticky, side-scroll hint)
+would end the wider drift; it wants its own slice, after L.9. The
+`--muted` gap is item **V**, under Planned.
 
 Bench (`wingrc_verify_20261016l8`): main's build and this branch's,
 served side by side over the same backend, with the real 45-list library
@@ -9031,6 +9035,50 @@ same way. `api.ts`'s `detailText` (added in L.2.2 for the list routes)
 already turns both shapes into a sentence. The fix is to route the 28
 through it, with a test that a 422 on login shows the validator's
 message.
+
+### V. The app's secondary text passes AA contrast
+
+**Found in L.8 (2026-10-16).** The shared `--muted` token (`#6c757d`,
+`styles.css`) is **4.45:1** on the app's `--bg` (`#f8f9fa`) -- under
+WCAG 2.x AA's 4.5:1 for body text. It is the colour of every
+`field-hint`, every `contact-sub` line and every `.contacts-table`
+header: 81 `var(--muted)` uses in the CSS, plus a few literal `#6c757d`.
+In a compliance product, an accessibility defect on every screen is not
+cosmetic; and "just under AA" is the kind of finding that stays just
+under AA for a year if it is a note rather than an item.
+
+**The slice:** change the token, not its uses -- `#5c636a` is 5.8:1 on
+`--bg` and 6.1:1 on white, and is what L.8 already uses on the list page
+(`.list-library-detail` overrides `--muted`; that override goes when the
+token changes). Then measure every place `--muted` sits on something
+other than `--bg` or white (tinted badges, notices, table hovers) and
+report each ratio, since a token that passes on one background can fail
+on another. Check the literal `#6c757d` uses too: L.8's example cell is
+`#6c757d` on `#f1f3f5` at 4.2:1, deliberately faint and held to the 3:1
+a placeholder needs, so it stays -- say so rather than sweeping it up.
+Frontend only; screenshots of three or four screens before and after.
+
+### L.9. The scope-drawn lists look like the rest of the Lists index
+
+**Found in L.8 (2026-10-16).** Library › Lists shows the four lists drawn
+from scope (`ListsPanel.tsx`) beside the library lists. L.8 restyled the
+library list page (`.list-rows`: near-black semibold headers, sticky,
+row rules, a side-scroll cue); the four scope-drawn pages still use
+`.contacts-table`'s small grey caps. Two entries on one index now open
+two different-looking pages, which reads as a bug rather than as two
+screens.
+
+**The slice, narrowly:** those four pages only -- not the other 16
+`.contacts-table` users, and no shared component yet. Give
+`ListsPanel`'s table the same treatment as `.list-rows` (the header, the
+rules, the sticky header inside its own scroll box, the side-scroll cue
+from `useSideScroll`), reusing L.8's CSS and hook rather than copying
+them: move both somewhere both panels import, so there is one
+definition. Keep what is particular to these lists: the "projected from
+the live scope graph" line, the excluded-entities note, the empty
+explanation, and the `[PLACEHOLDER - reason]` legend. The first row
+visible at 1366×768, and contrast measured as in L.8. Frontend only; if
+it needs an API change, stop.
 
 ## Sequencing
 
