@@ -9103,6 +9103,80 @@ explanation, and the `[PLACEHOLDER - reason]` legend. The first row
 visible at 1366×768, and contrast measured as in L.8. Frontend only; if
 it needs an API change, stop.
 
+### W. What on this deployment expires or rotates, and what says so first
+
+**Found 2026-10-17**, when dev.wingrc.us's certificate had been expired
+three days and the first anyone knew was a browser warning. It is the
+seventh case of a signal reporting fine while checking nothing (static
+`/health`, export comparison passing on row order, the silently-skipping
+`integration` job, six red runs on `main`, a log assertion that could not
+fail, `is_populated`'s exact match) and the first a person found by
+hitting it. The deliverable is a list and one loud check per row, not a
+monitoring build-out.
+
+| Thing | Expires / rotates | What says so | State |
+|---|---|---|---|
+| TLS certificate, `dev.wingrc.us` + `storage.dev.wingrc.us` | 90 days (Let's Encrypt), renewed by hand | `tls_expiry_check` banner for msp_admin inside 30 days; `deploy/tls/check-expiry.sh` on the host | ✅ 2026-10-17 |
+| `wingrc.us` domain registration (DNSimple) | yearly | nothing in WinGRC; DNSimple's own renewal mail | unchecked -- confirm auto-renew is on |
+| Integrations credentials: `ai`, `liongard`, `smtp` | whatever the issuer sets (an API key's expiry is set at the provider, not here) | a failing test-connection, or a failed job -- after the fact | unchecked; record each issuer's expiry date beside the connection |
+| Fernet key (`WINGRC_CREDENTIAL_ENCRYPTION_KEYS`, label `prod-wl-util-1-2026-09-11`) | never expires; rotation is a deliberate act (key versions exist) | n/a | no expiry; rotation procedure undocumented |
+| `wingrc_app` / owner database passwords | never expire | n/a | no expiry |
+| Entra SSO client secret | up to 24 months, set in Entra | nothing | not configured on live; becomes a row the day it is |
+| API tokens (`wingrc_…`) | per token, `expires_at` | the token itself stops working | none live |
+
+**Public-CA issuance for this name is DNS-01 or nothing while the
+deployment is LAN-only.** HTTP-01 needs Let's Encrypt to reach port 80 on
+a public address; there is none and that is deliberate. Do not re-propose
+certbot's HTTP-01 or an automated DNS-01 with DNSimple's personal-plan
+token (it reaches every zone, the registrar and billing). Renewal is
+`deploy/tls/renew.sh`, by hand, prompted by the banner. A brief of
+2026-10-17 proposed exactly that token from the certificate facts alone,
+without reading this item; it was stopped and withdrawn. The one thing
+that would change the trade is a **scoped, single-zone token** -- DNSimple
+offers those on Teams/Enterprise plans, not personal ones -- and whether
+this account has them is Jarrod's to read (Account › Access tokens).
+
+**Unattended renewal without that token: `_acme-challenge` CNAME
+delegation, evaluated and not built.** Each `_acme-challenge` name becomes
+a permanent CNAME (added once, by hand, replacing any TXT there) into a
+separate zone whose credential is disposable; Let's Encrypt follows it, so
+a break-in on wl-util-1 can issue certificates for two LAN-only names and
+nothing more. What it would take here: `acme-dns` must be an authoritative
+DNS server Let's Encrypt can query on port 53 from the internet, which
+this LAN box cannot be, so it means a public host to run and keep alive.
+The other shape is a cheap second domain at a provider with per-zone
+tokens -- but certbot's DNS plugins write to the name they are given and
+do not follow a CNAME, so the client changes too (lego or acme.sh, which
+do; to be confirmed before building). Either way: one more provider or
+service, a second credential for this list, and CNAMEs that fail every
+renewal closed if wrong. Not worth it while live is a LAN dev box; revisit
+with "goes public" below.
+
+**What the outage cost:** browser-facing evidence downloads and logos
+(signed URLs on `storage.dev`) hit the same warning for three days. The
+app itself was unaffected -- backend and worker reach MinIO at
+`http://minio:9000` inside the compose network and never touch the
+certificate, and their logs since 2026-10-14 hold no TLS errors. That
+plaintext hop is item 3's FIPS-profile gap, not a skipped verification.
+
+**The eighth case, in this item's own tooling:** the watcher on the first
+manual renewal used `pgrep -f renew.sh`, which matched its own command
+line, so it reported "still running" by construction after the script had
+exited. Use `ps -eo pid,args | grep "[r]enew.sh"`. The rule: a check that
+cannot tell itself apart from the thing it checks is not a check.
+
+**What changes when wingrc.us goes public:** HTTP-01 becomes possible and
+renewal can be automatic -- and the host becomes reachable, which is the
+decision, not a side effect. The same moment is when the FortiGuard
+categorisation of the name matters (this machine's FortiGuard filter
+already catches `dev.wingrc.us`); the two meet there. No FortiGuard item
+exists in this file yet; one was said to be open elsewhere.
+
+**Next, in this item:** the domain and Integrations rows -- a recorded
+expiry date per credential, checked the same way the certificate is, by
+the same banner -- and a rotation procedure for the Fernet key. A DNS
+credential, if one is ever taken, is a row here the day it is.
+
 ## Sequencing
 
 ```

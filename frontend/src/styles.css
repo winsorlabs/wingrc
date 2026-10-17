@@ -50,6 +50,12 @@ body {
   background: #fff3cd; border-bottom: 1px solid #ffe69c; color: #664d03;
   font-size: 0.82rem; font-weight: 500; text-align: center; padding: 0.4rem 1rem;
 }
+/* #58151c on #f8d7da is 10.2:1. Red, not the read-only banner's amber:
+   this one needs someone to act. */
+.tls-expiry-banner {
+  background: #f8d7da; border-bottom: 1px solid #f1aeb5; color: #58151c;
+  font-size: 0.85rem; font-weight: 600; text-align: center; padding: 0.5rem 1rem;
+}
 
 /* ── Org picker layout ── */
 .picker-grid {

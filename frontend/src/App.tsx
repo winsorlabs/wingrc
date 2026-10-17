@@ -23,6 +23,7 @@ import { ListLibraryPanel } from "./components/ListLibraryPanel";
 import { SideNav } from "./components/SideNav";
 import { SprsSubmissionsPanel } from "./components/SprsSubmissionsPanel";
 import { SystemDescriptionForm } from "./components/SystemDescriptionForm";
+import { TlsExpiryBanner } from "./components/TlsExpiryBanner";
 import { UsersPanel } from "./components/UsersPanel";
 import { useAuth } from "./hooks/useAuth";
 import { canDefineLists, canSeeApiTokens, canSeeAuditLog, canSeeEmail, canSeeIntegrations, canSeeScheduledJobs, canSeeToolsLibrary, canSeeUserDirectory, canSeeUsers } from "./lib/roles";
@@ -228,6 +229,7 @@ export function App() {
       {!canWrite && (
         <div className="read-only-banner">Read-only access — assessor role.</div>
       )}
+      {canSeeScheduledJobs(user.role) && <TlsExpiryBanner />}
 
       {screen === "orgs" && (
         <OrgPicker
