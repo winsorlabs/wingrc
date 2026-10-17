@@ -163,6 +163,44 @@ the issued certificate before proceeding.
 domains, don't assume it's fine — check the actual certificate's SAN list
 directly.
 
+## Renewing the certificate
+
+**Nothing renewed the first one.** It was issued 2026-07-16 and expired
+2026-10-14; there was no certbot install on the host, no timer and no
+reminder, and the first anyone knew was a browser warning. Manual DNS-01
+was the right call (it still is: the deployment is LAN-only, so HTTP-01
+can never validate, and a DNSimple personal-plan token would reach every
+zone, the registrar and billing). What was missing was the reminder and
+a procedure.
+
+**The reminder** is the `tls_expiry_check` scheduler job: every 6 hours
+it reads the certificate nginx *serves* (not the files) for each https
+public hostname, and msp_admin sees a red banner on every screen when one
+is inside its last 30 days, expired, unreadable, or when the check has
+not run in 48 hours. `deploy/tls/check-expiry.sh` is the same check from
+the host's shell (exit 1 inside the window, 2 if it cannot read one).
+
+**The procedure**, on the host, from the live checkout:
+
+```
+deploy/tls/renew.sh            # renews if due (inside 30 days)
+TLS_FORCE=1 deploy/tls/renew.sh  # renews regardless
+```
+
+It prints two TXT records -- `_acme-challenge.dev` and
+`_acme-challenge.storage.dev` in the `wingrc.us` zone; their values are
+public by design, not credentials -- and waits up to an hour until every
+authoritative nameserver serves both. Then Let's Encrypt validates,
+certbot writes the new certificate into the `wingrc_certs` volume, the
+script reloads nginx and fails unless both names are served with a new
+fingerprint. Delete the TXT records afterwards. Renew when the banner
+appears; 30 days is the margin, not the deadline.
+
+**If wingrc.us ever goes public**, HTTP-01 becomes possible and renewal
+could be automatic; until then, public-CA issuance for this name is
+DNS-01 or nothing. Don't re-propose certbot's HTTP-01 for a LAN-only
+deployment.
+
 ## Step 7: bringing the stack up — the orphan container trap
 
 ```
