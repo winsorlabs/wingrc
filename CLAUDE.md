@@ -131,6 +131,16 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   test proves nothing"`. A bare assert on the setup fails as if the
   product were wrong (519d894's red run; `docs/roadmap.md`'s list
   version cause entry).
+- **A status check must not identify its subject by a pattern its own
+  invocation can match.** A process-list grep for a script name
+  (`pgrep -f renew.sh`, `ps … | grep "[r]enew.sh"` inside an
+  `ssh '…renew.sh…'`) matches the shell running the grep, so it reports
+  "running" by construction and can never report "stopped" -- written
+  twice in one session (2026-10-17). Check something structurally
+  distinct from the checker: a container count, a pidfile the subject
+  wrote, an exit status. A check that cannot tell itself apart from what
+  it is checking is not a check (`docs/roadmap.md`'s item W keeps the
+  TLS-specific record).
 - **A test's time margin is taken from the clock the code under test
   reads.** A check made in SQL reads `now()`, fixed when the test's outer
   transaction began; a margin off `datetime.now()` is against the wrong
