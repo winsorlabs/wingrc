@@ -323,8 +323,13 @@ chooses the lists at export (none by default, until L.4 links them as
 evidence); each is embedded as its current version, named by id. See
 `docs/roadmap.md`'s L.3 entry.
 
-**L.4 — evidence linking.** §5's first half. Small, and it closes the loop
-from list to control. **It must honour the tag-removal rule decided in
+**L.4 — evidence linking. ✅ Done 2026-10-17** (bench-verified; live
+pending) -- a list version, offered when populated, attached by a person,
+confined to its tags; drift said, moved forward deliberately; and the
+export now carries What goes here, Responsible and Review cadence (item
+T). See `docs/roadmap.md`'s L.4 entry, including why an export is not
+made re-importable as a template. §5's first half. Small, and it closes
+the loop from list to control. **It must honour the tag-removal rule decided in
 L.2.2:** removing a tag is refused while evidence rests on it, naming the
 link. Make `list_library.tag_removal_blockers` return every non-archived
 EvidenceStateLink from the list's evidence to a control_state of that
