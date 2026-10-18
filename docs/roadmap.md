@@ -5507,8 +5507,12 @@ the server: the offer rule, the refusal, the blockers, the links. The
 frontend tests asserted the API calls made and the strings present. None
 asserted what a screen communicates: that an unattached list does not
 look attached, that a dialog's claim was computed, that History can
-answer the question it exists for. So each L.10 fix carries a test written
-to fail on its own defect, asserting on rendered output, not API state:
+answer the question it exists for. **This is not an L.4 gap. L.4 is where
+it bit, not where it lives.** Nothing in the product tests what a screen
+communicates. The frontend suite throughout asserts calls and strings,
+and that is now a product-wide expectation, item Z. So each L.10 fix
+carries a test written to fail on its own defect, asserting on rendered
+output, not API state:
 - the not-attached list has no chip and is not inside an `.ev-item`, and
   "Lists attached as evidence" holds only the attached one, including the
   live case alone;
@@ -5518,11 +5522,25 @@ to fail on its own defect, asserting on rendered output, not API state:
 - History renders an attach and a detach, and the API returns them,
   including to `consultant_admin`.
 
-**Verified, not assumed:** the new frontend tests were run against
-`main`'s `ObjectiveLists.tsx` and `ListLibraryPanel.tsx`, and every one
-failed. One caveat: the old dialog fails at the first lookup (it has no
-labelled group), so that run shows the tests cannot pass on the old code,
-not which assertion would have tripped first.
+**What the run against the old components proved, and what it did not.**
+The new frontend tests were run against `main`'s `ObjectiveLists.tsx` and
+`ListLibraryPanel.tsx`, and every one failed. **Every one failed because an
+element it looks for is absent:**
+- "Lists attached as evidence" and "Lists not attached" did not exist;
+- the dialog had no labelled group;
+- the old not-offered sentence had different words;
+- the old History never fetched link events.
+
+A test that fails because the element is absent has proved the components
+differ. It has not proved the test would catch a wrong value in an element
+that exists: say, a not-attached list given the chip inside the new
+"Not attached" group, a "No evidence rests…" shown despite blockers, or a
+detach worded as an attach. **None of the runs exercised that.** The
+stronger claim, that these tests catch their defects, is untested; do not
+read it into "every one failed". The test that would show it is a mutation
+run against the new components: put the defect back in an element that
+exists (the chip on an unattached row; the removable sentence ignoring
+`removable`) and watch the test fail on that assertion.
 
 **Found on the bench:** SQLAlchemy writes Python `None` into a JSONB column
 as JSON `null`, which `IS NOT NULL`. `ck_list_link_event_from` rejected
@@ -9500,6 +9518,41 @@ unnamed one gets a different generated name each side, so the test should
 require names). Unique constraints, indexes and FK `ondelete` drift the
 same way and could use the same comparison. They are a follow-on, not
 this item.
+
+### Z. A screen's tests assert what it tells a person -- a product-wide expectation
+
+**Found in L.10 (2026-10-18).** Three L.4 screens misled the person who
+designed the rule within ten minutes of first use, under 418 green
+frontend tests. Those tests assert which API calls a screen makes and
+which strings appear. Nothing in the product tests what a screen
+*communicates*: whether two different states look different, whether a
+claim on screen was computed, whether a record can answer the question
+it is there for. L.4 is where that bit, not where it lives. Every screen
+built so far was tested the same way.
+
+**The expectation, for every frontend slice from now on:** each screen
+that shows a state a person acts on gets a test on rendered output for
+what that state communicates. Specifically:
+- **states that mean different things are not drawn alike:** assert on
+  structure (which group, which element, which chip), not only on text;
+- **any sentence that states a result is driven by the computation it
+  reports:** test it with that result both ways, and with the computation
+  failing;
+- **a record's screen answers its question after the fact:** an attach
+  and a detach both still visible.
+
+Each such test is shown to catch its defect by putting the defect back
+into an element that exists and watching that assertion fail. Not by a
+run against old code where the element is absent, which proves only that
+the components differ (L.10's entry says what its own run did and did
+not prove).
+
+**Not in this item:** auditing the existing screens. That is a separate
+pass, and should be sized by listing which screens show an actionable
+state. The candidates are the evidence section, the bundle picker, the
+document approval and review states, and the onboarding approval queue.
+This item is the rule going forward, so the next slice inherits it rather
+than rediscovering it.
 
 ## Sequencing
 
