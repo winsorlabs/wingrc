@@ -465,8 +465,11 @@ def list_evidence(
             EvidenceStateLink.control_state_id == cs.id,
             # Lists linked as evidence have their own section, with the
             # version linked and whether the list has moved on since
-            # (routers/list_evidence.py).
+            # (routers/list_evidence.py). So do documents (item X), with
+            # whether the version attached is superseded
+            # (routers/document_evidence.py).
             Evidence.source_list_version_id.is_(None),
+            Evidence.source_document_version_id.is_(None),
         )
         .order_by(Evidence.collected_at)
     ).all()
@@ -601,7 +604,10 @@ def delete_evidence(
     remaining = session.scalars(
         select(EvidenceStateLink).where(EvidenceStateLink.evidence_id == evidence_id)
     ).first()
-    if remaining is None:
+    # A published document's Evidence row is the record that the version
+    # was published, and delete_document's refusal rests on it (item X):
+    # removing the last link leaves it.
+    if remaining is None and ev.source_document_version_id is None:
         if ev.kind == "file" and ev.storage_key:
             storage.delete_file(ev.storage_key)
         session.delete(ev)

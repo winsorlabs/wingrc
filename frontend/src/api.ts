@@ -1,4 +1,4 @@
-import type { ApiTokenRow, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, TlsExpiry, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent, AdoptResult, TakeTemplateResult, ListEvidenceCandidate, ListEvidenceLink, ListEvidenceStatus, ListLinkEvent, TagRemovalCheck } from "./types";
+import type { ApiTokenRow, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, TlsExpiry, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent, AdoptResult, TakeTemplateResult, ListEvidenceCandidate, ListEvidenceLink, ListEvidenceStatus, ListLinkEvent, TagRemovalCheck, DocumentEvidenceCandidate } from "./types";
 
 const BASE = "/api";
 
@@ -400,6 +400,31 @@ export const api = {
   unlinkList: (orgId: string, assessmentId: string, controlStateId: string, listId: string) =>
     send<ListEvidenceCandidate[]>(
       `/orgs/${orgId}/assessments/${assessmentId}/control-states/${controlStateId}/lists/${listId}`,
+      "DELETE"
+    ),
+
+  // ── Item X: documents as evidence, the same way. Publishing attaches nothing.
+  stateDocuments: (orgId: string, assessmentId: string, controlStateId: string) =>
+    send<DocumentEvidenceCandidate[]>(
+      `/orgs/${orgId}/assessments/${assessmentId}/control-states/${controlStateId}/documents`,
+      "GET"
+    ),
+
+  linkDocument: (orgId: string, assessmentId: string, controlStateId: string, documentId: string) =>
+    send<DocumentEvidenceCandidate[]>(
+      `/orgs/${orgId}/assessments/${assessmentId}/control-states/${controlStateId}/documents/${documentId}`,
+      "POST"
+    ),
+
+  moveDocumentForward: (orgId: string, assessmentId: string, controlStateId: string, documentId: string) =>
+    send<DocumentEvidenceCandidate[]>(
+      `/orgs/${orgId}/assessments/${assessmentId}/control-states/${controlStateId}/documents/${documentId}/move-forward`,
+      "POST"
+    ),
+
+  unlinkDocument: (orgId: string, assessmentId: string, controlStateId: string, documentId: string) =>
+    send<DocumentEvidenceCandidate[]>(
+      `/orgs/${orgId}/assessments/${assessmentId}/control-states/${controlStateId}/documents/${documentId}`,
       "DELETE"
     ),
 

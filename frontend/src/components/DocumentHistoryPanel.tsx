@@ -26,7 +26,22 @@ const ACTION_LABEL: Record<string, string> = {
   "document.objective_tag.add": "Objective tagged",
   "document.objective_tag.remove": "Objective untagged",
   "document.publish": "Published and approved",
+  "evidence.document_link": "Attached as evidence",
+  "evidence.document_move_forward": "Evidence moved forward",
+  "evidence.document_unlink": "Removed from evidence",
 };
+
+// Where an attachment was made (item X): which version, which objective,
+// which assessment -- from the audit row's own after_value.
+function linkDetail(event: DocumentAuditEvent): string | null {
+  if (!event.action.startsWith("evidence.document_")) return null;
+  const v = event.after_value ?? {};
+  const where = `${String(v.control_key)}[${String(v.objective_key)}] in "${String(v.assessment_name)}"`;
+  const from = Array.isArray(v.from_version_numbers) ? v.from_version_numbers.join(", ") : null;
+  return from
+    ? `version ${from} → ${String(v.version_number)}, ${where}`
+    : `version ${String(v.version_number)}, ${where}`;
+}
 
 function actorName(event: DocumentAuditEvent): string {
   if (event.actor_user) {
@@ -134,6 +149,7 @@ export function DocumentHistoryPanel({
         <ul className="doc-timeline">
           {history.events.map((event) => {
             const transition = statusChange(event);
+            const link = linkDetail(event);
             return (
               <li key={event.id}>
                 <span className="doc-timeline-when">
@@ -142,6 +158,7 @@ export function DocumentHistoryPanel({
                 <span className="doc-timeline-what">
                   {ACTION_LABEL[event.action] ?? event.action}
                   {transition && <span className="field-hint"> ({transition})</span>}
+                  {link && <span className="field-hint"> ({link})</span>}
                   {event.action === "document.version.create" &&
                     typeof event.after_value?.version_number === "number" && (
                       <span className="field-hint"> (v{String(event.after_value.version_number)})</span>

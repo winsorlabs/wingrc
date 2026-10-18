@@ -279,6 +279,11 @@ class EvidenceSnap:
     # A list version linked as evidence (L.4): kind 'reference', and
     # zip_path is lists/<file> when the bundle embeds that version.
     list_version_id: uuid.UUID | None = None
+    # A document version attached as evidence (item X): which version, and
+    # if it is superseded, the version approved now (None when none is).
+    document_version_number: int | None = None
+    document_superseded: bool = False
+    document_approved_number: int | None = None
 
 
 @dataclass(frozen=True)
@@ -967,6 +972,7 @@ def snapshot_bundle(
             Evidence.collected_at,
             Evidence.sha256_hash,
             Evidence.source_list_version_id,
+            Evidence.source_document_version_id,
         )
         .select_from(ControlState)
         .join(EvidenceStateLink, EvidenceStateLink.control_state_id == ControlState.id)
@@ -1035,6 +1041,32 @@ def snapshot_bundle(
         row.cs_id: (row.family, row.control_id, row.objective_key) for row in ctrl_rows
     }
 
+    # Which version each attached document names, and whether it is
+    # superseded (item X): a superseded policy may no longer be in force,
+    # which the manifest and the implementation page say.
+    doc_version_ids = {
+        er.source_document_version_id for er in ev_rows if er.source_document_version_id
+    }
+    doc_versions = {}
+    if doc_version_ids:
+        Approved = DocumentVersion.__table__.alias("approved_version")
+        doc_versions = {
+            r.id: r
+            for r in session.execute(
+                select(
+                    DocumentVersion.id, DocumentVersion.version_number, DocumentVersion.status,
+                    Approved.c.version_number.label("approved_number"),
+                )
+                .outerjoin(
+                    Approved,
+                    (Approved.c.document_id == DocumentVersion.document_id)
+                    & (Approved.c.status == "approved"),
+                )
+                .where(DocumentVersion.id.in_(doc_version_ids))
+                .order_by(DocumentVersion.id)
+            )
+        }
+
     ev_by_cs: dict[uuid.UUID, list[EvidenceSnap]] = {}
     for er in ev_rows:
         cs_id: uuid.UUID = er.cs_id
@@ -1062,6 +1094,11 @@ def snapshot_bundle(
             sha256_hash=ev_hash,
             list_version_id=er.source_list_version_id,
         )
+        dv = doc_versions.get(er.source_document_version_id)
+        if dv is not None:
+            ev_snap.document_version_number = dv.version_number
+            ev_snap.document_superseded = dv.status == "superseded"
+            ev_snap.document_approved_number = dv.approved_number
         ev_by_cs.setdefault(cs_id, []).append(ev_snap)
 
     # --- evidence linked to no objective in this assessment (ADR 0007) ---
@@ -1102,6 +1139,10 @@ def snapshot_bundle(
             # A list version is evidence only through a link (L.4); one
             # linked in another assessment is not this one's stray artifact.
             Evidence.source_list_version_id.is_(None),
+            # Nor is a published document's (item X): publish writes the row
+            # and attaches nothing, and the approved version is already in
+            # ssp/06_documents.html.
+            Evidence.source_document_version_id.is_(None),
         )
         .order_by(Evidence.collected_at, Evidence.title, Evidence.id)
     ).all()
@@ -1373,18 +1414,27 @@ def snapshot_bundle(
         # sorted() below, which is the guarantee -- do not remove that sort
         # without adding an ORDER BY here.
         key_rows = session.execute(
-            select(Evidence.source_document_version_id, AssessmentObjective.objective_key)
+            select(
+                Evidence.source_document_version_id, Control.control_id,
+                AssessmentObjective.objective_key,
+            )
             .join(EvidenceStateLink, EvidenceStateLink.evidence_id == Evidence.id)
             .join(ControlState, ControlState.id == EvidenceStateLink.control_state_id)
             .join(AssessmentObjective, AssessmentObjective.id == ControlState.objective_id)
+            .join(Control, Control.id == AssessmentObjective.control_id)
             .where(
                 Evidence.source_document_version_id.in_(version_ids),
                 EvidenceStateLink.is_archived.is_(False),
+                # Attached in this assessment (item X): an attachment is a
+                # person's act on one assessment's objective.
+                ControlState.assessment_id == assessment_id,
             )
             .distinct()
         ).all()
-        for version_id, objective_key in key_rows:
-            doc_objective_keys.setdefault(version_id, []).append(objective_key)
+        for version_id, control_id, objective_key in key_rows:
+            doc_objective_keys.setdefault(version_id, []).append(
+                f"{control_id}[{objective_key}]"
+            )
 
     documents = [
         DocumentSnap(
@@ -1864,6 +1914,7 @@ def _implementation_body(snapshot: BundleSnapshot) -> str:
                         if e.kind == "file" and e.zip_path
                         else (
                             f" <span class='s-tag'>ref</span> {_esc(e.location or '')}"
+                            f"{_document_evidence_note(e)}"
                             if e.kind == "reference"
                             else (
                                 " <em style='color:#9ca3af'>"
@@ -2127,7 +2178,7 @@ def _documents_body(snapshot: BundleSnapshot) -> str:
         objectives = (
             ", ".join(_esc(k) for k in doc.objective_keys)
             if doc.objective_keys
-            else '<span class="no-stmt">—</span>'
+            else '<span class="no-stmt">Not attached as evidence in this assessment</span>'
         )
         body_html = render_document_html(doc.body_markdown) or (
             '<p class="no-stmt">This document has no content.</p>'
@@ -2140,7 +2191,7 @@ def _documents_body(snapshot: BundleSnapshot) -> str:
             f"<tr><th>Version</th><td>{doc.version_number}</td></tr>"
             f"<tr><th>Approved</th><td>{_esc(approved)}</td></tr>"
             f"<tr><th>Approved by</th><td>{_esc(doc.approved_by or '—')}</td></tr>"
-            f"<tr><th>Objectives</th><td>{objectives}</td></tr>"
+            f"<tr><th>Attached as evidence for</th><td>{objectives}</td></tr>"
             "</table>"
             f'<div class="doc-body">{body_html}</div>'
             "</section>"
@@ -2289,6 +2340,25 @@ def _list_evidence_note(ev: EvidenceSnap) -> str:
     )
 
 
+def _document_evidence_note(ev: EvidenceSnap) -> str:
+    """Which document version is attached, and if it is superseded, that it
+    may no longer be in force (item X) -- not a list's "newer version"."""
+    if ev.document_version_number is None:
+        return ""
+    n = ev.document_version_number
+    if not ev.document_superseded:
+        return f" <span class='ev-path'>version {n}</span>"
+    now = (
+        f"version {ev.document_approved_number} is the approved one"
+        if ev.document_approved_number is not None
+        else "no version is approved now"
+    )
+    return (
+        f" <span class='ev-path'>version {n}</span> <strong>superseded</strong>: {now}, "
+        f"and version {n} may no longer be in force"
+    )
+
+
 def _render_evidence_li(ev: EvidenceSnap, manifest_dir: str) -> str:
     """One manifest <li> for a single evidence item — shared by the
     per-objective sections and the unlinked-evidence section, since both
@@ -2326,7 +2396,7 @@ def _render_evidence_li(ev: EvidenceSnap, manifest_dir: str) -> str:
         )
     return (
         f"<li>&#x2197;&nbsp;{_esc(ev.title)}"
-        f" &mdash; {_esc(ev.location or '')}"
+        f" &mdash; {_esc(ev.location or '')}{_document_evidence_note(ev)}"
         f"&nbsp;<span style='color:#9ca3af;font-style:italic'>"
         f"not applicable &mdash; reference only</span></li>"
     )

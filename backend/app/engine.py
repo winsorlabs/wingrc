@@ -1179,10 +1179,11 @@ def deactivate_org_product(
     session.flush()
 
     # 3. Archive evidence_state_link rows on all tool-sourced states --
-    # except a list version linked as evidence (L.4). A person attached
-    # that list; no tool's coverage produced it, so a tool leaving is no
-    # reason to retire it, and archiving it would make the list's tag
-    # removable (list_library.tag_removal_blockers counts live links).
+    # except a list version linked as evidence (L.4) or a document version
+    # attached (item X). A person attached each; no tool's coverage
+    # produced it, so a tool leaving is no reason to retire it, and
+    # archiving a list link would make the list's tag removable
+    # (list_library.tag_removal_blockers counts live links).
     evidence_links_archived = 0
     if sourced_states:
         link_rows = session.scalars(
@@ -1192,6 +1193,7 @@ def deactivate_org_product(
                 EvidenceStateLink.control_state_id.in_(sourced_state_ids),
                 EvidenceStateLink.is_archived.is_(False),
                 Evidence.source_list_version_id.is_(None),
+                Evidence.source_document_version_id.is_(None),
             )
         ).all()
 

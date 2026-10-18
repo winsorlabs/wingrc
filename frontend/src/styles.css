@@ -796,6 +796,11 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .ev-list-others { margin: 0.15rem 0 0; padding: 0; list-style: none; font-size: 0.85rem; }
 .ev-list-others li { margin: 0.15rem 0; }
 .ev-list-others .btn-sm { margin-left: 0.35rem; }
+/* A superseded document version attached as evidence (item X). */
+.ev-superseded {
+  padding: 0.1rem 0.35rem; border-radius: 3px; font-size: 0.65rem; font-weight: 600;
+  background: var(--partial-bg); color: var(--partial-fg); flex-shrink: 0;
+}
 
 .ev-item {
   display: flex;

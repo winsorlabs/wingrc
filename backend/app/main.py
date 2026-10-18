@@ -31,6 +31,7 @@ from .routers import (
     bundle,
     contacts,
     dashboard,
+    document_evidence,
     documents,
     evidence,
     frameworks,
@@ -94,6 +95,7 @@ app.include_router(liongard_sync.router)
 app.include_router(documents.router)
 app.include_router(list_definitions.router)
 app.include_router(list_evidence.router)
+app.include_router(document_evidence.router)
 
 
 @lru_cache(maxsize=1)

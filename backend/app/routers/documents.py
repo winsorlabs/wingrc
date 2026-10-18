@@ -90,17 +90,14 @@ from ..document_reviews import (
     review_state,
 )
 from ..models import (
-    Assessment,
     AssessmentObjective,
     AuditLog,
     Contact,
-    ControlState,
     Document,
     DocumentApproval,
     DocumentObjectiveTag,
     DocumentVersion,
     Evidence,
-    EvidenceStateLink,
 )
 
 router = APIRouter(
@@ -543,8 +540,8 @@ def delete_document(
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "This document has been published and has evidence attached -- it "
-                    "cannot be deleted."
+                    "This document has been published, and its evidence record keeps it "
+                    "-- it cannot be deleted."
                 ),
             )
 
@@ -775,8 +772,8 @@ def publish_document(
     org_id: uuid.UUID, document_id: uuid.UUID, body: PublishIn,
     session: Session = Depends(get_session),
 ) -> DocumentOut:
-    """Approves the document's current version and attaches evidence --
-    roadmap N's own publish action, adapted for versioning:
+    """Approves the document's current version -- roadmap N's publish
+    action, adapted for versioning, and since item X it attaches nothing:
 
     1. status -> approved, approved_at -> now, approved_by_contact_id ->
        the named Contact (a real person recorded as granting approval --
@@ -784,30 +781,27 @@ def publish_document(
        docstring for why these are two different facts. The authenticated
        caller is captured separately by log_event's actor resolution).
     2. Any OTHER version of this same document that's still 'approved'
-       becomes 'superseded' (republish handling: at most one approved
-       version per document at a time). Its evidence links are archived
-       (EvidenceStateLink.is_archived), not deleted -- the Evidence row
-       itself is untouched and permanently resolvable (source_document_
-       version_id points at the version that was actually approved, never
-       "whatever is current"), so an already-generated bundle keeps
-       rendering exactly what it rendered; a fresh export after this call
-       correctly shows only the new version's evidence, matching every
-       other point-in-time guarantee in this codebase (state changes ARE
-       reflected in exports going forward; they don't rewrite exports
-       already produced, because those are frozen ZIP bytes already handed
-       out).
+       becomes 'superseded' (at most one approved version per document).
+       Its evidence links are left exactly where they are. A person
+       attached each one, and approving a new version -- perhaps someone
+       else, for reasons unrelated to that objective -- must not undo it:
+       today's state never rewrites yesterday's record. The link now says
+       its version is superseded, and moves only when a person moves it
+       (document_evidence.py).
     3. One new Evidence row (kind='reference', reference_location=doc_id,
-       source_document_version_id=this version) -- created even if there
-       are no tagged objectives or no in_progress assessment right now
-       (an "unlinked" reference is a normal state elsewhere in this
-       codebase, e.g. bundle_service.py's own unlinked-evidence section).
-    4. For each tagged objective, across every in_progress assessment for
-       this org (never assumed to be exactly one -- same precedent
-       review_cycles.py's own "active assessment(s)" resolution uses):
-       one EvidenceStateLink. control_state.status is NEVER touched here --
-       "candidates, never auto-met": evidence is attached, an engineer
-       reviews and marks objectives met by hand, same rule tool activation
-       and connector output already follow.
+       source_document_version_id=this version), linked to nothing.
+    4. published_objective_ids records the document's tags now, so "what
+       was this version approved for" survives a later untag.
+
+    **What "candidates, never auto-met" means here.** This docstring used
+    to cite that rule while breaking it: it read "candidates" as
+    candidates for being marked *met*, left control_state.status alone,
+    and attached the evidence to every tagged objective in the same step.
+    The rule is wider, and CLAUDE.md's product invariants now say it out
+    loud: candidates are offered and a person attaches them; nothing is
+    auto-attached. A published document is offered on its tagged
+    objectives; attaching it is a person's act (document_evidence.link).
+    control_state.status is still never touched here.
     """
     doc = _get_document(session, org_id, document_id)
     if doc.current_version_id is None:
@@ -844,34 +838,25 @@ def publish_document(
         now=now,
     )
 
-    # Republish: supersede any other version of this document still marked
-    # approved, and archive the evidence links its own Evidence row(s)
-    # produced -- never the Evidence rows themselves.
-    other_approved = session.scalars(
+    # Republish: supersede any other version still marked approved. Its
+    # evidence links stay where a person put them (step 2 above).
+    for v in session.scalars(
         select(DocumentVersion).where(
             DocumentVersion.document_id == doc.id,
             DocumentVersion.id != version.id,
             DocumentVersion.status == "approved",
         )
-    ).all()
-    if other_approved:
-        superseded_ids = [v.id for v in other_approved]
-        for v in other_approved:
-            v.status = "superseded"
-        prior_evidence_ids = session.scalars(
-            select(Evidence.id).where(Evidence.source_document_version_id.in_(superseded_ids))
+    ).all():
+        v.status = "superseded"
+
+    tag_objective_ids = sorted(
+        str(i) for i in session.scalars(
+            select(DocumentObjectiveTag.objective_id).where(
+                DocumentObjectiveTag.document_id == doc.id
+            )
         ).all()
-        if prior_evidence_ids:
-            old_links = session.scalars(
-                select(EvidenceStateLink).where(
-                    EvidenceStateLink.evidence_id.in_(prior_evidence_ids),
-                    EvidenceStateLink.is_archived.is_(False),
-                )
-            ).all()
-            for link in old_links:
-                link.is_archived = True
-                link.archived_at = now
-        session.flush()
+    )
+    version.published_objective_ids = tag_objective_ids
 
     ev = Evidence(
         org_id=org_id, kind="reference", title=doc.title, artifact_type="document",
@@ -880,35 +865,13 @@ def publish_document(
     session.add(ev)
     session.flush()
 
-    tag_objective_ids = session.scalars(
-        select(DocumentObjectiveTag.objective_id).where(DocumentObjectiveTag.document_id == doc.id)
-    ).all()
-    linked_count = 0
-    if tag_objective_ids:
-        assessment_ids = session.scalars(
-            select(Assessment.id).where(
-                Assessment.org_id == org_id, Assessment.status == "in_progress"
-            )
-        ).all()
-        if assessment_ids:
-            control_states = session.scalars(
-                select(ControlState).where(
-                    ControlState.assessment_id.in_(assessment_ids),
-                    ControlState.objective_id.in_(tag_objective_ids),
-                )
-            ).all()
-            for cs in control_states:
-                session.add(EvidenceStateLink(evidence_id=ev.id, control_state_id=cs.id))
-                linked_count += 1
-    session.flush()
-
     log_event(
         session, org_id=org_id, action="document.publish", entity_type="document_version",
         entity_id=version.id,
         after_value={
             "doc_id": doc.doc_id, "version_number": version.version_number,
             "approved_by_contact_id": str(body.approved_by_contact_id),
-            "evidence_id": str(ev.id), "linked_control_states": linked_count,
+            "evidence_id": str(ev.id), "tagged_objectives": len(tag_objective_ids),
         },
         context={"via": "api"},
     )
@@ -1019,26 +982,23 @@ _DOCUMENT_AUDIT_ACTIONS = (
     "document.objective_tag.add",
     "document.objective_tag.remove",
     "document.publish",
+    # Item X: attaching a version as evidence is logged against the
+    # version, so it is in this document's History for every role.
+    "evidence.document_link",
+    "evidence.document_move_forward",
+    "evidence.document_unlink",
 )
 
 
-def _published_objective_ids(session: Session, version: DocumentVersion) -> list[uuid.UUID]:
-    """Objectives a published version actually landed against.
-
-    Archived links are included on purpose: a later republish archives
-    them (publish_document's own step 2), and the question this answers
-    is "what did THIS version cover when it was approved" -- which that
-    archival must not erase.
+def _published_objective_ids(version: DocumentVersion) -> list[uuid.UUID]:
+    """Objectives a published version was approved for: the tags it was
+    published under (item X), which a later untag cannot rewrite.
+    Migration 0069 copied each earlier version's record in from the links
+    publish made then. No link is read as coverage any more: since X a
+    link is a person attaching evidence, not a statement of what the
+    version answers for.
     """
-    return list(
-        session.scalars(
-            select(ControlState.objective_id)
-            .join(EvidenceStateLink, EvidenceStateLink.control_state_id == ControlState.id)
-            .join(Evidence, Evidence.id == EvidenceStateLink.evidence_id)
-            .where(Evidence.source_document_version_id == version.id)
-            .distinct()
-        ).all()
-    )
+    return sorted(uuid.UUID(i) for i in version.published_objective_ids or [])
 
 
 def _current_tag_ids(session: Session, document_id: uuid.UUID) -> list[uuid.UUID]:
@@ -1053,7 +1013,7 @@ def _current_tag_ids(session: Session, document_id: uuid.UUID) -> list[uuid.UUID
 
 def _version_detail_out(session: Session, version: DocumentVersion) -> VersionDetailOut:
     if version.status in ("approved", "superseded"):
-        ids = _published_objective_ids(session, version)
+        ids = _published_objective_ids(version)
         basis = "published"
     else:
         ids = _current_tag_ids(session, version.document_id)
@@ -1369,7 +1329,8 @@ def reaffirm_document(
 
     Requires an already-approved version. A draft has nothing to reaffirm,
     and treating "reaffirm a draft" as approval would grant approval outside
-    `publish_document` -- the only path that attaches evidence.
+    `publish_document` -- the only path that writes a version's evidence
+    record.
 
     Refused for `c3pao_assessor` by the router-level `require_write` gate:
     an assessor reads approvals, never grants one.
