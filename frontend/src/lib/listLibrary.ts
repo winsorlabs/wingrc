@@ -8,7 +8,7 @@
 // makes the re-apply exact for every row the other editor did not touch, and
 // honest about the ones they did.
 
-import type { AdoptedFrom, LibraryListVersion, ListTagEvent, TemplateDistribution, VersionCause } from "../types";
+import type { AdoptedFrom, LibraryListVersion, ListLinkEvent, ListTagEvent, TemplateDistribution, VersionCause } from "../types";
 import { FAMILY_ORDER } from "./families";
 
 export function familyOf(controlKey: string): string {
@@ -308,9 +308,22 @@ export function tagSentence(e: Pick<ListTagEvent, "control_key" | "change" | "vi
     : `Untagged ${e.control_key}: this list no longer claims to serve it. By ${who}.`;
 }
 
+/** One line of a list's evidence history (L.10): which version, where, by whom. */
+export function linkSentence(e: ListLinkEvent): string {
+  const where = `${e.control_key}[${e.objective_key}] in assessment '${e.assessment_name}'`;
+  const who = e.saved_by ?? "a person";
+  if (e.change === "linked") return `Version ${e.version_number} attached as evidence for ${where}. By ${who}.`;
+  if (e.change === "moved_forward") {
+    const from = (e.from_version_numbers ?? []).join(", ");
+    return `Evidence for ${where} moved forward from version ${from} to version ${e.version_number}. By ${who}.`;
+  }
+  return `Version ${e.version_number} removed from the evidence for ${where}. By ${who}.`;
+}
+
 export type HistoryEntry =
   | { kind: "version"; at: string; version: LibraryListVersion }
-  | { kind: "tag"; at: string; event: ListTagEvent };
+  | { kind: "tag"; at: string; event: ListTagEvent }
+  | { kind: "link"; at: string; link: ListLinkEvent };
 
 /**
  * Versions and tag changes in one history, newest first (L.2.2). Tags are
@@ -320,10 +333,17 @@ export type HistoryEntry =
  * change made in the same moment as a version (a list built with its tags)
  * sorts after that version; tag events keep their recorded order.
  */
-export function historyEntries(versions: LibraryListVersion[], events: ListTagEvent[]): HistoryEntry[] {
+export function historyEntries(
+  versions: LibraryListVersion[],
+  events: ListTagEvent[],
+  links: ListLinkEvent[] = [],
+): HistoryEntry[] {
   const all = [
     ...versions.map((v, i) => ({ e: { kind: "version", at: v.created_at, version: v } as HistoryEntry, rank: 0, i })),
     ...events.map((ev, i) => ({ e: { kind: "tag", at: ev.created_at, event: ev } as HistoryEntry, rank: 1, i })),
+    // Evidence links too (L.10): "was this ever attached?" is answered here,
+    // not only in the audit log, which not every role can read.
+    ...links.map((l, i) => ({ e: { kind: "link", at: l.created_at, link: l } as HistoryEntry, rank: 2, i })),
   ];
   const time = (iso: string) => new Date(iso).getTime();
   all.sort((a, b) => time(a.e.at) - time(b.e.at) || a.rank - b.rank || a.i - b.i);

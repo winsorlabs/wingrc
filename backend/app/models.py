@@ -3355,3 +3355,56 @@ class ListTagEvent(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class ListLinkEvent(Base):
+    """One version of a list linked to an objective as evidence, moved
+    forward, or unlinked (L.10, migration 0068).
+
+    A record, not a link: `tag_removal_blockers` reads the live
+    EvidenceStateLinks. This is what lets the list's own history answer
+    "was this ever attached?" -- which the audit log alone could not, for
+    a role that cannot read it, and which L.2.2 already settled for tags:
+    one history, where a person looks first. Names the assessment as it
+    was, since the record outlives a rename or the assessment itself.
+    Append-only (a trigger rejects UPDATE)."""
+
+    __tablename__ = "list_link_event"
+    __table_args__ = (
+        CheckConstraint(
+            "change IN ('linked', 'moved_forward', 'unlinked')", name="ck_list_link_event_change"
+        ),
+        CheckConstraint(
+            "(change = 'moved_forward') = (from_version_numbers IS NOT NULL)",
+            name="ck_list_link_event_from",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    list_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("list_definition.id", ondelete="CASCADE"), index=True
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True), nullable=False)
+    change: Mapped[str] = mapped_column(String(20), nullable=False)
+    list_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("list_version.id", ondelete="CASCADE"), nullable=False
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    # none_as_null: otherwise None is written as JSON null, which IS NOT NULL
+    # and fails ck_list_link_event_from on every event but a move forward.
+    from_version_numbers: Mapped[list | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    assessment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    assessment_name: Mapped[str] = mapped_column(Text, nullable=False)
+    control_key: Mapped[str] = mapped_column(String(40), nullable=False)
+    objective_key: Mapped[str] = mapped_column(String(5), nullable=False)
+    saved_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

@@ -34,6 +34,8 @@ vi.mock("../api", async () => {
       getListTagEvents: vi.fn().mockResolvedValue([]),
       addListTag: vi.fn(),
       removeListTag: vi.fn(),
+      checkTagRemoval: vi.fn(),
+      getListLinkEvents: vi.fn().mockResolvedValue([]),
       createLibraryList: vi.fn(),
       adoptTemplates: vi.fn(),
       takeTemplateVersion: vi.fn(),
@@ -47,7 +49,7 @@ vi.mock("../api", async () => {
 function historyDetails(summary: HTMLElement): HTMLDetailsElement {
   const details = summary.closest("details");
   if (!details) throw new Error("History is not a <details>");
-  expect(summary.textContent).toMatch(/^History: versions and practices \(\d+\)$/);
+  expect(summary.textContent).toMatch(/^History: versions, practices and evidence \(\d+\)$/);
   expect(details.open).toBe(false);
   fireEvent.click(summary);
   details.open = true;
@@ -55,11 +57,11 @@ function historyDetails(summary: HTMLElement): HTMLDetailsElement {
 }
 
 async function openHistory(): Promise<HTMLDetailsElement> {
-  return historyDetails(await screen.findByText(/^History: versions and practices/));
+  return historyDetails(await screen.findByText(/^History: versions, practices and evidence/));
 }
 
 function openHistorySync(): HTMLDetailsElement {
-  return historyDetails(screen.getByText(/^History: versions and practices/));
+  return historyDetails(screen.getByText(/^History: versions, practices and evidence/));
 }
 
 afterEach(() => {
@@ -452,16 +454,73 @@ describe("tags (L.2.2)", () => {
     );
   });
 
-  it("asks before removing a practice, and shows the evidence that blocks it", async () => {
+  // L.10: the dialog used to state the rule ("it is refused while evidence
+  // rests on this list") beside an enabled button, whatever was linked. It
+  // now says what the server computed, and offers no removal it would refuse.
+  it("says the evidence that blocks a removal, and offers no button to try it", async () => {
     await openRisk(["CM.L2-3.4.1", "RA.L2-3.11.1"]);
+    vi.mocked(api.checkTagRemoval).mockResolvedValue({
+      removable: false,
+      refused: "CM.L2-3.4.1 cannot be removed from 3-11-1a-risk-register: evidence rests on it (version 2 linked to CM.L2-3.4.1[a] in assessment 'FY26'). Unlink that evidence first.",
+      blocked_by: ["version 2 linked to CM.L2-3.4.1[a] in assessment 'FY26'"],
+    });
     fireEvent.click(screen.getByRole("button", { name: "Remove CM.L2-3.4.1" }));
+    const dialog = screen.getByRole("group", { name: "Remove CM.L2-3.4.1" });
+    expect(within(dialog).getByText(/Checking what rests on CM\.L2-3\.4\.1/)).toBeTruthy();
+    expect(within(dialog).queryByRole("button", { name: /Yes, remove/ })).toBeNull();
+    expect(await within(dialog).findByText("version 2 linked to CM.L2-3.4.1[a] in assessment 'FY26'")).toBeTruthy();
+    expect(within(dialog).queryByRole("button", { name: /Yes, remove/ })).toBeNull();
+    expect(api.checkTagRemoval).toHaveBeenCalledWith("org", "risk", "CM.L2-3.4.1");
     expect(api.removeListTag).not.toHaveBeenCalled();
-    expect(screen.getByText(/refused while evidence rests on this list/)).toBeTruthy();
+  });
+
+  it("says nothing rests on a practice only when the server found nothing, then asks", async () => {
+    await openRisk(["CM.L2-3.4.1", "RA.L2-3.11.1"]);
+    vi.mocked(api.checkTagRemoval).mockResolvedValue({ removable: true, refused: null, blocked_by: [] });
+    fireEvent.click(screen.getByRole("button", { name: "Remove CM.L2-3.4.1" }));
+    const dialog = screen.getByRole("group", { name: "Remove CM.L2-3.4.1" });
+    expect(await within(dialog).findByText(/No evidence rests on this list for CM\.L2-3\.4\.1\./)).toBeTruthy();
+    expect(within(dialog).queryByText(/refused while evidence rests/)).toBeNull();
+    // A link made between the check and the click is still refused by the server.
     vi.mocked(api.removeListTag).mockRejectedValue(
-      new ApiError("CM.L2-3.4.1 cannot be removed from 3-11-1a-risk-register: evidence rests on it (Evidence 'Q3 export' in assessment 'FY26'). Unlink that evidence first.", 409),
+      new ApiError("CM.L2-3.4.1 cannot be removed from 3-11-1a-risk-register: evidence rests on it (version 2 linked to CM.L2-3.4.1[a] in assessment 'FY26'). Unlink that evidence first.", 409),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Yes, remove CM.L2-3.4.1" }));
-    expect(await screen.findByText(/Evidence 'Q3 export' in assessment 'FY26'/)).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Yes, remove CM.L2-3.4.1" }));
+    expect(await screen.findByText(/Unlink that evidence first/)).toBeTruthy();
+  });
+
+  it("says when it could not check, rather than that nothing rests on it", async () => {
+    await openRisk(["CM.L2-3.4.1", "RA.L2-3.11.1"]);
+    vi.mocked(api.checkTagRemoval).mockRejectedValue(new Error("network"));
+    fireEvent.click(screen.getByRole("button", { name: "Remove CM.L2-3.4.1" }));
+    const dialog = screen.getByRole("group", { name: "Remove CM.L2-3.4.1" });
+    expect(await within(dialog).findByText(/Could not check what rests on CM\.L2-3\.4\.1/)).toBeTruthy();
+    expect(within(dialog).queryByText(/No evidence rests/)).toBeNull();
+  });
+
+  it("shows in the list's history when a version was attached and detached", async () => {
+    vi.mocked(api.getListLinkEvents).mockResolvedValue([
+      {
+        id: "e1", change: "linked", version_number: 1, from_version_numbers: null, assessment_id: "a",
+        assessment_name: "FY26", control_key: "PE.L2-3.10.6", objective_key: "a", saved_by: "Jo Linker",
+        created_at: "2026-10-18T12:51:00Z",
+      },
+      {
+        id: "e2", change: "unlinked", version_number: 1, from_version_numbers: null, assessment_id: "a",
+        assessment_name: "FY26", control_key: "PE.L2-3.10.6", objective_key: "a", saved_by: "Jo Linker",
+        created_at: "2026-10-18T12:52:00Z",
+      },
+    ]);
+    await openRisk(["CM.L2-3.4.1", "RA.L2-3.11.1"]);
+    const history = await openHistory();
+    await waitFor(() =>
+      expect(
+        within(history).getByText("Version 1 attached as evidence for PE.L2-3.10.6[a] in assessment 'FY26'. By Jo Linker."),
+      ).toBeTruthy(),
+    );
+    expect(
+      within(history).getByText("Version 1 removed from the evidence for PE.L2-3.10.6[a] in assessment 'FY26'. By Jo Linker."),
+    ).toBeTruthy();
   });
 
   it("offers no removal of the last practice, and no tag controls to a read-only role", async () => {

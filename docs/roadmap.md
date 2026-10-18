@@ -5442,6 +5442,120 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### List library L.10: the screens say what is true ✅ DONE (2026-10-18, bench-verified; live pending)
+
+**Found by Jarrod on live, within ten minutes of L.4's first use.** He
+adopted *Physical Access Device Register* into Acme MSP (v1, the
+template's rows), tagged it PE.L2-3.10.6, saw it on that objective, removed
+the tag, and the list was gone from the objective. It read as a tag
+removal that skipped the evidence guard. **It was not:** the database, audit
+log and request log showed no attach request, no list evidence row
+anywhere, and no link on either PE.L2-3.10.6 objective. v1's rows were all
+`[PLACEHOLDER]`, so `is_populated` was false and the list was never offered.
+The guard ran (`remove_tag` calls `tag_removal_blockers`) and found nothing,
+correctly. Three screens misled the person who designed the rule:
+
+1. **The objective drew an unfilled list as evidence.** Attached, offered
+   and not-offered lists shared one row shape (the List chip, the title,
+   "version 1"), and only a muted footnote said "Not offered as evidence:
+   still showing template examples (2 of 2 rows)." Muting it and adding a
+   footnote is exactly what fooled him. Now `ObjectiveLists` has two shapes
+   that never look alike. "Lists attached as evidence" are evidence items.
+   Every other list sits under "Not attached" as a sentence with no chip
+   and no item box: "… can serve this practice and is not attached
+   [Attach version N]", or "… is tagged with this practice but is not
+   attached, and cannot be: still showing template examples (2 of 2
+   rows)."
+2. **The tag dialog stated the rule as if it were a result.** "It is refused
+   while evidence rests on this list for PE.L2-3.10.6" was rendered
+   unconditionally beside an enabled "Yes, remove". It now asks the server
+   first (`GET …/tags/{key}/removal`), which runs the DELETE's own checks
+   (the last-tag rule, then `tag_removal_blockers`) and returns the
+   DELETE's own sentence. The dialog shows "Checking what rests on {key}…"
+   with no button. If links rest on the tag, it names them and offers no
+   removal. If none do, it says "No evidence rests on this list for {key}."
+   and asks. If the check fails, it says it could not check, not that
+   nothing rests there. The DELETE still refuses on its own, for a link
+   made between the check and the click (tested).
+3. **The list's History could not say whether it was ever attached.** It had
+   versions and tags and no evidence, and answering took the request log,
+   which no operator can read. L.2.2's reason for putting tags in History
+   applies directly: two histories in two places is how the question goes
+   unanswered. Migration 0068 adds `list_link_event`. Every link, move
+   forward and unlink writes one beside its audit row, naming the version,
+   objective, assessment (with the name kept as it was) and the person.
+   It is append-only by trigger and RLS-gated. History is now "versions,
+   practices and evidence": "Version 1 attached as evidence for
+   PE.L2-3.10.6[a] in assessment 'FY26'. By …", "moved forward from version
+   1 to version 2", "removed from the evidence". A table, not a read of the
+   audit log, because `consultant_admin` cannot read the audit log
+   (tested: it reads these). An event is a record, not a link: the
+   blockers still read live EvidenceStateLinks only, and an unlinked
+   list's history blocks no tag (tested; `test_list_builder.py`'s guard
+   fired on the new table as designed and is settled with that reason). No
+   backfill: no list had been linked on live.
+
+**The invariant, generalised rather than added.** CLAUDE.md's fourth product
+invariant was "a check must not match its own invocation". It is now "a
+check must actually check: it must not match its own invocation, and a
+screen must not state a result it never computed." The process grep and
+the dialog are the same failure.
+
+**Why L.4's bench passed all of this.** L.4's 1797 backend and 418 frontend
+tests were green, and every one of them was true. The backend tests drove
+the server: the offer rule, the refusal, the blockers, the links. The
+frontend tests asserted the API calls made and the strings present. None
+asserted what a screen communicates: that an unattached list does not
+look attached, that a dialog's claim was computed, that History can
+answer the question it exists for. **This is not an L.4 gap. L.4 is where
+it bit, not where it lives.** Nothing in the product tests what a screen
+communicates. The frontend suite throughout asserts calls and strings,
+and that is now a product-wide expectation, item Z. So each L.10 fix
+carries a test written to fail on its own defect, asserting on rendered
+output, not API state:
+- the not-attached list has no chip and is not inside an `.ev-item`, and
+  "Lists attached as evidence" holds only the attached one, including the
+  live case alone;
+- the blocked dialog has no "Yes, remove" while checking or when blocked,
+  says "No evidence rests…" only when the server said so, and says it
+  could not check when the check fails;
+- History renders an attach and a detach, and the API returns them,
+  including to `consultant_admin`.
+
+**What the run against the old components proved, and what it did not.**
+The new frontend tests were run against `main`'s `ObjectiveLists.tsx` and
+`ListLibraryPanel.tsx`, and every one failed. **Every one failed because an
+element it looks for is absent:**
+- "Lists attached as evidence" and "Lists not attached" did not exist;
+- the dialog had no labelled group;
+- the old not-offered sentence had different words;
+- the old History never fetched link events.
+
+A test that fails because the element is absent has proved the components
+differ. It has not proved the test would catch a wrong value in an element
+that exists: say, a not-attached list given the chip inside the new
+"Not attached" group, a "No evidence rests…" shown despite blockers, or a
+detach worded as an attach. **None of the runs exercised that.** The
+stronger claim, that these tests catch their defects, is untested; do not
+read it into "every one failed". The test that would show it is a mutation
+run against the new components: put the defect back in an element that
+exists (the chip on an unattached row; the removable sentence ignoring
+`removable`) and watch the test fail on that assertion.
+
+**Found on the bench:** SQLAlchemy writes Python `None` into a JSONB column
+as JSON `null`, which `IS NOT NULL`. `ck_list_link_event_from` rejected
+every event but a move forward. Fixed with `JSONB(none_as_null=True)`. The
+constraint is what caught it.
+
+**Verification (bench `20261018-l10`, isolated):** migration 0068 applied
+clean. Backend full suite **1799 passed** (1797 on main), ruff clean.
+`tsc -b` clean, vitest **424** (418 on main), build OK. Live, after merge
+and deploy: Jarrod's same steps (an unfilled adopted list on an objective,
+the tag dialog on a linked and an unlinked tag, a list's History after an
+attach and a detach), read on the screen.
+
+---
+
 ### List library L.4: a populated list becomes evidence, and the export says what a list is for (T) ✅ DONE (2026-10-17, bench-verified; live pending)
 
 **What it does.** A list is offered as evidence on each objective of a
@@ -9404,6 +9518,41 @@ unnamed one gets a different generated name each side, so the test should
 require names). Unique constraints, indexes and FK `ondelete` drift the
 same way and could use the same comparison. They are a follow-on, not
 this item.
+
+### Z. A screen's tests assert what it tells a person -- a product-wide expectation
+
+**Found in L.10 (2026-10-18).** Three L.4 screens misled the person who
+designed the rule within ten minutes of first use, under 418 green
+frontend tests. Those tests assert which API calls a screen makes and
+which strings appear. Nothing in the product tests what a screen
+*communicates*: whether two different states look different, whether a
+claim on screen was computed, whether a record can answer the question
+it is there for. L.4 is where that bit, not where it lives. Every screen
+built so far was tested the same way.
+
+**The expectation, for every frontend slice from now on:** each screen
+that shows a state a person acts on gets a test on rendered output for
+what that state communicates. Specifically:
+- **states that mean different things are not drawn alike:** assert on
+  structure (which group, which element, which chip), not only on text;
+- **any sentence that states a result is driven by the computation it
+  reports:** test it with that result both ways, and with the computation
+  failing;
+- **a record's screen answers its question after the fact:** an attach
+  and a detach both still visible.
+
+Each such test is shown to catch its defect by putting the defect back
+into an element that exists and watching that assertion fail. Not by a
+run against old code where the element is absent, which proves only that
+the components differ (L.10's entry says what its own run did and did
+not prove).
+
+**Not in this item:** auditing the existing screens. That is a separate
+pass, and should be sized by listing which screens show an actionable
+state. The candidates are the evidence section, the bundle picker, the
+document approval and review states, and the onboarding approval queue.
+This item is the rule going forward, so the next slice inherits it rather
+than rediscovering it.
 
 ## Sequencing
 

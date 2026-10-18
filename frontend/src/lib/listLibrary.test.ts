@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { LibraryListVersion, ListTagEvent } from "../types";
+import type { LibraryListVersion, ListLinkEvent, ListTagEvent } from "../types";
 import {
   adoptedFromText,
   distributionText,
@@ -13,6 +13,7 @@ import {
   draftFrom,
   droppedColumns,
   historyEntries,
+  linkSentence,
   renamedColumns,
   tagSentence,
   familiesOf,
@@ -237,9 +238,28 @@ describe("tag history beside the versions", () => {
       [ver(1, t0), ver(2, "2026-10-15T12:00:00Z")],
       [tag("a", "PE.L2-3.10.3", "added", t0), tag("b", "PE.L2-3.10.4", "added", t0), tag("c", "CM.L2-3.4.2", "added", "2026-10-15T11:00:00Z")],
     );
-    expect(entries.map((e) => (e.kind === "version" ? `v${e.version.version_number}` : e.event.id))).toEqual([
+    expect(entries.map((e) => (e.kind === "version" ? `v${e.version.version_number}` : e.kind === "tag" ? e.event.id : e.link.id))).toEqual([
       "v2", "c", "b", "a", "v1",
     ]);
+  });
+
+  it("puts evidence links in the same history, and says each in words (L.10)", () => {
+    const link = (id: string, change: ListLinkEvent["change"], at: string, from: number[] | null = null): ListLinkEvent => ({
+      id, change, version_number: 2, from_version_numbers: from, assessment_id: "a", assessment_name: "FY26",
+      control_key: "PE.L2-3.10.3", objective_key: "b", saved_by: "Jo", created_at: at,
+    });
+    const entries = historyEntries(
+      [ver(1, "2026-10-15T10:00:00Z"), ver(2, "2026-10-15T12:00:00Z")],
+      [],
+      [link("l1", "moved_forward", "2026-10-15T13:00:00Z", [1]), link("l2", "unlinked", "2026-10-15T14:00:00Z")],
+    );
+    expect(entries.map((e) => (e.kind === "link" ? e.link.id : e.kind === "version" ? `v${e.version.version_number}` : "tag"))).toEqual([
+      "l2", "l1", "v2", "v1",
+    ]);
+    expect(linkSentence(link("x", "moved_forward", "", [1]))).toBe(
+      "Evidence for PE.L2-3.10.3[b] in assessment 'FY26' moved forward from version 1 to version 2. By Jo.",
+    );
+    expect(linkSentence(link("y", "linked", ""))).toBe("Version 2 attached as evidence for PE.L2-3.10.3[b] in assessment 'FY26'. By Jo.");
   });
 
   it("says who claimed or dropped a practice, a person or the importer", () => {

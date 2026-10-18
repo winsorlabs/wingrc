@@ -62,6 +62,7 @@ from app.models import (
     EvidenceStateLink,
     Framework,
     ListDefinition,
+    ListLinkEvent,
     Organization,
     OrgProduct,
     Product,
@@ -672,3 +673,86 @@ def test_no_org_reaches_another_orgs_list_links(db_session):
     assert intruder.get(f"{ONE.format(org=b['org'], list=d.id)}/evidence-links").status_code == 404
     assert intruder.get(f"/orgs/{b['org']}/assessments/{b['a']}/list-links").json() == []
     assert _lists(intruder, b, "PE.L2-3.10.3[a]") == {}
+
+
+# ---------------------------------------------------------------------------
+# L.10: what the screens say is computed, and the list's history has the links
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_the_removal_check_says_what_the_delete_would_do(db_session):
+    """The tag dialog read the rule aloud ("it is refused while evidence
+    rests on this list") beside an enabled button, whatever the links were.
+    It now asks this, which runs the DELETE's own checks."""
+    w = _world(db_session, "check")
+    tags = ("PE.L2-3.10.3", "AC.L2-3.1.1")
+    d = _list(db_session, w["org"], "visitor-log", REAL_ROWS, tags=tags)
+    client = _client(db_session, w["org"])
+    base = ONE.format(org=w["org"], list=d.id)
+
+    assert client.get(f"{base}/tags/PE.L2-3.10.3/removal").json() == {
+        "removable": True, "refused": None, "blocked_by": [],
+    }
+    assert _link(client, w, "PE.L2-3.10.3[a]", d.id).status_code == 201
+    check = client.get(f"{base}/tags/PE.L2-3.10.3/removal").json()
+    refused = client.delete(f"{base}/tags/PE.L2-3.10.3")
+    assert refused.status_code == 409
+    assert check == {
+        "removable": False,
+        "refused": refused.json()["detail"]["message"],
+        "blocked_by": ["version 1 linked to PE.L2-3.10.3[a] in assessment 'FY26 L2 check'"],
+    }, "the check and the DELETE must say the same thing"
+
+    assert client.delete(f"{base}/tags/AC.L2-3.1.1").status_code == 200
+    last = client.get(f"{base}/tags/PE.L2-3.10.3/removal").json()
+    assert last["removable"] is False and last["refused"].startswith("A list serves at least one")
+    assert client.get(f"{base}/tags/RA.L2-3.11.2/removal").status_code == 404
+
+
+@pytest.mark.integration
+def test_the_lists_history_answers_was_this_ever_attached(db_session):
+    """On live (2026-10-18) the question took the request log to answer:
+    the list's history had versions and tags and no links. Link, move
+    forward and unlink are now there, and stay after the link is gone."""
+    w = _world(db_session, "history")
+    tags = ("PE.L2-3.10.3", "AC.L2-3.1.1")
+    d = _list(db_session, w["org"], "visitor-log", REAL_ROWS, tags=tags)
+    client = _client(db_session, w["org"])
+    base = ONE.format(org=w["org"], list=d.id)
+    assert client.get(f"{base}/link-events").json() == [], (
+        "fixture must start with no events or this test proves nothing"
+    )
+
+    assert _link(client, w, "PE.L2-3.10.3[a]", d.id).status_code == 201
+    _edit(client, w["org"], d, REAL_ROWS[:1])
+    assert _link(client, w, "PE.L2-3.10.3[a]", d.id, "/move-forward").status_code == 200
+    cs_a = w["cs"]["PE.L2-3.10.3[a]"]
+    assert client.delete(
+        f"{STATE_LISTS.format(org=w['org'], a=w['a'], cs=cs_a)}/{d.id}"
+    ).status_code == 200
+
+    events = client.get(f"{base}/link-events").json()
+    assert [
+        (e["change"], e["version_number"], e["from_version_numbers"], e["control_key"],
+         e["objective_key"], e["assessment_name"], e["saved_by"])
+        for e in events
+    ] == [
+        ("linked", 1, None, "PE.L2-3.10.3", "a", "FY26 L2 history", "Lee Linker"),
+        ("moved_forward", 2, [1], "PE.L2-3.10.3", "a", "FY26 L2 history", "Lee Linker"),
+        ("unlinked", 2, None, "PE.L2-3.10.3", "a", "FY26 L2 history", "Lee Linker"),
+    ]
+    assert client.delete(f"{base}/tags/PE.L2-3.10.3").status_code == 200, (
+        "an event is a record, not a link: an unlinked list's history blocks no tag"
+    )
+
+    consultant = _client(db_session, w["org"], role="consultant_admin")
+    assert len(consultant.get(f"{base}/link-events").json()) == 3, (
+        "the reason this is a table: a role that cannot read the audit log reads this"
+    )
+
+    event = db_session.scalars(select(ListLinkEvent).where(ListLinkEvent.list_id == d.id)).first()
+    with pytest.raises(Exception, match="append-only"):
+        with db_session.begin_nested():
+            event.saved_by = "someone else"
+            db_session.flush()
