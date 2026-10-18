@@ -97,6 +97,26 @@ Violating these produces incorrect assessments. Enforce them in every review.
   + 52 controls × 1 pt** (max deduction 314 pts; score range −204 to 110). Any
   migration that touches control weights must be diffed against this.
 
+## Product invariants
+
+These rules have each decided a design more than once. Each used to be
+restated slice by slice; it is stated here once. Cite this section, not
+the slice that last applied a rule.
+
+- **Candidates are offered and a person attaches them; nothing is
+  auto-attached.** Why: evidence nobody chose changes what an assessor
+  reads without anyone having looked.
+- **Today's state never rewrites yesterday's record.** Why: a record is
+  read as what was true when it was made, so a change writes a new
+  version and says the drift.
+- **WinGRC does not author content into a customer's documents or lists,
+  and a customer's content never becomes template source.** Why: content
+  moves from template to customer only when a person adopts it, so one
+  tenant's records can never become another's examples.
+- **A check must not match its own invocation.** Why: a check that cannot
+  tell itself apart from its subject reports "fine" by construction (in
+  full under Stack & conventions).
+
 ---
 
 ## Stack & conventions

@@ -5447,8 +5447,8 @@ When it lands, remove the 422 and the panel note together.
 **What it does.** A list is offered as evidence on each objective of a
 practice it is tagged with, once `list_library.is_populated` says its rows
 are real; a person attaches it (`list_evidence.py`,
-`routers/list_evidence.py`, migration 0067). Nothing is attached for them,
-and nothing about linking reads or writes `control_state.status` or the
+`routers/list_evidence.py`, migration 0067). Nothing is attached for them
+(CLAUDE.md's product invariants), and nothing about linking reads or writes `control_state.status` or the
 SPRS score -- both negatives asserted directly
 (`tests/test_list_evidence.py`). A list that is not offered says why on the
 objective and on its own page -- "still showing template examples (2 of 2
@@ -5538,11 +5538,8 @@ importer to the same version". It will not. An export is one org's records
 for an assessor; a template is an MSP's examples for many orgs. Making the
 first readable as the second puts "export a customer's filled register"
 one step from "distribute it as everyone's template", which would mean
-client data landing in the wrong tenant. It is the same rule the product
-already keeps the other way round: WinGRC does not write content into a
-customer's templates (template content is distributed separately, per the
-monetization boundary, and L.7's adoption copies a template into an org
-and never writes back). An export is not a template source either. The
+client data landing in the wrong tenant. CLAUDE.md's product invariants
+rule it out: a customer's content never becomes template source. The
 importer reads rows 2/4/5/10 and the export writes 2/3/4/8, and that
 difference is the intended design, not a gap to close. If curated content
 ever needs an interchange format (N.4 and cross-deployment distribution
@@ -8591,8 +8588,8 @@ evidence (`EvidenceStateLink.is_archived.is_(False)` is already
 Verified directly: `test_republish_supersedes_prior_version_and_archives_
 its_evidence_links`. **Reopened as item X (2026-10-18):** the version
 pinning above stands, but the evidence moving to the new version, and
-publish attaching it at all, happen without anyone choosing them. That
-breaks "Candidates, never auto-met".
+publish attaching it at all, happen without anyone choosing them, against
+CLAUDE.md's product invariants.
 
 **What roadmap N's original spec kept vs. changed** (its field list dates
 to 2026-09-07, before any of this was real code):
@@ -9154,9 +9151,9 @@ this item is what fixes it.
 Shipped inside L.4: the export now carries What goes here, Responsible
 and Review cadence. The other half, an export that reads back through the
 importer as a template, is **withdrawn permanently** (2026-10-18). This
-is not a deferral. An export is a customer's records and is never a
-template source, just as WinGRC never writes content into a customer's
-templates; see the L.4 Done entry.
+is not a deferral. An export is a customer's records, and CLAUDE.md's
+product invariants say a customer's content never becomes template
+source.
 
 ### U. The login form shows a validation error as "[object Object]"
 
@@ -9296,20 +9293,19 @@ credential, if one is ever taken, is a row here the day it is.
 ### X. Publishing a document attaches it as evidence unchosen -- a hard-rule violation, live
 
 **Found in L.4 (2026-10-17).** This is not an inconsistency between two
-designs. It breaks "Candidates, never auto-met" as CLAUDE.md states it:
-imports and ingestion *propose*, a person confirms, and "an automated feed
-must never silently move the audit boundary." `routers/documents.py`'s
-`publish_document` does two things nobody chooses:
+designs. It breaks two of CLAUDE.md's product invariants: candidates are
+offered and a person attaches them, and today's state never rewrites
+yesterday's record. `routers/documents.py`'s `publish_document` does two
+things nobody chooses:
 
 1. **Publish attaches.** It links the new version's Evidence row to every
    tagged objective in every `in_progress` assessment in the org. No one
    is offered the document; it is simply there.
 2. **Republish moves the evidence forward.** It archives every live link
    on the superseded version's Evidence and attaches the new one in its
-   place. That is the silent drift L.4 was built to prevent: what an
-   objective's evidence says changes because someone approved a document,
-   not because anyone looked at that objective. And it is live in the
-   document path today.
+   place. What an objective's evidence says changes because someone
+   approved a document, not because anyone looked at that objective. That
+   is a silent drift, and it is live in the document path today.
 
 It does not touch `control_state.status` (the docstring says so and that
 holds), so no objective is marked met. What it moves is the evidence an
