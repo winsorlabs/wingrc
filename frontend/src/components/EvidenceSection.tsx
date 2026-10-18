@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, assetUrl } from "../api";
 import type { EvidenceRow } from "../types";
+import { ObjectiveLists } from "./ObjectiveLists";
 
 const ARTIFACT_LABELS: Record<string, string> = {
   screenshot: "Screenshot",
@@ -46,13 +47,16 @@ export function EvidenceSection({ orgId, assessmentId, controlStateId, canWrite,
   const [refRows, setRefRows] = useState<RefRow[]>([{ title: "", location: "" }]);
   const [addingRefs, setAddingRefs] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Lists linked as evidence (L.4) are listed by ObjectiveLists, not here.
+  const [linkedLists, setLinkedLists] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    onCountChange(items.length + linkedLists);
+  }, [items.length, linkedLists]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function reload() {
-    return api.listEvidence(orgId, assessmentId, controlStateId).then((rows) => {
-      setItems(rows);
-      onCountChange(rows.length);
-    });
+    return api.listEvidence(orgId, assessmentId, controlStateId).then(setItems);
   }
 
   useEffect(() => {
@@ -133,12 +137,12 @@ export function EvidenceSection({ orgId, assessmentId, controlStateId, canWrite,
     <div className="ev-section">
       <div className="ev-section-header">
         <span className="ev-section-label">Evidence</span>
-        {items.length > 0 && (
+        {items.length + linkedLists > 0 && (
           <span
             className="ev-count-badge"
-            aria-label={`${items.length} evidence item${items.length === 1 ? "" : "s"}`}
+            aria-label={`${items.length + linkedLists} evidence item${items.length + linkedLists === 1 ? "" : "s"}`}
           >
-            {items.length}
+            {items.length + linkedLists}
           </span>
         )}
       </div>
@@ -147,7 +151,7 @@ export function EvidenceSection({ orgId, assessmentId, controlStateId, canWrite,
         <div className="ev-status">Loading…</div>
       ) : (
         <>
-          {items.length === 0 && !uploading && (
+          {items.length === 0 && linkedLists === 0 && !uploading && (
             <div className="ev-status ev-empty">No evidence attached</div>
           )}
           <div className="ev-list">
@@ -210,6 +214,14 @@ export function EvidenceSection({ orgId, assessmentId, controlStateId, canWrite,
             ))}
             {uploading && <div className="ev-status">Uploading…</div>}
           </div>
+
+          <ObjectiveLists
+            orgId={orgId}
+            assessmentId={assessmentId}
+            controlStateId={controlStateId}
+            canWrite={canWrite}
+            onCountChange={setLinkedLists}
+          />
 
           {showRefForm && (
             <div className="ev-add-loc-form">

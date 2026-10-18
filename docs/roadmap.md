@@ -5442,6 +5442,135 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### List library L.4: a populated list becomes evidence, and the export says what a list is for (T) ✅ DONE (2026-10-17, bench-verified; live pending)
+
+**What it does.** A list is offered as evidence on each objective of a
+practice it is tagged with, once `list_library.is_populated` says its rows
+are real; a person attaches it (`list_evidence.py`,
+`routers/list_evidence.py`, migration 0067). Nothing is attached for them,
+and nothing about linking reads or writes `control_state.status` or the
+SPRS score -- both negatives asserted directly
+(`tests/test_list_evidence.py`). A list that is not offered says why on the
+objective and on its own page -- "still showing template examples (2 of 2
+rows)", "it has no rows yet", or that it is a template -- because an
+adopted copy starts unfilled by design and "my list isn't there" would
+otherwise read as the feature being broken. The rule is `is_populated`'s
+alone: `not_offered_reason` asks it, and a test flips its answer to prove
+the offer follows.
+
+**What the link points at, and the number that decided it.** A
+`list_version`, never the list: a nullable
+`evidence.source_list_version_id` (RESTRICT), `kind='reference'`, and a new
+artifact type `list` -- not `export`, which means a file someone uploaded
+from a tool. `ck_evidence_list_reference` makes a list artifact exactly an
+evidence row naming a version, and a reference. Not a third `kind`:
+**sixteen places branch on `Evidence.kind` today** (13 in the backend,
+seven of them in `bundle_service.py`; 3 in the frontend), and each would
+have had to learn the new value; N.1's documents had already chosen the
+version-column shape (`source_document_version_id`). One evidence row per
+list version, shared by every objective it is linked to; its
+`collected_at` is when the version was saved. `models.py`'s
+`ck_evidence_artifact_type` had not followed 0045's `attestation`; it does
+now.
+
+**Drift.** A link stays on its version when the list moves on. The drift
+is said in L.7's words -- "List version 4 is available. This evidence
+stays on version 2 until someone moves it forward." -- on the objective,
+on the list's page, and in the assessment's bundle picker. Moving forward
+is a deliberate act per objective: a new live link, and the old one
+archived, never rewritten. Linking the current version beside an older
+live link is refused ("move it forward instead"), so drift cannot hide
+behind a second link.
+
+**Confined to the tag set; `tag_removal_blockers` is live.** A list links
+only to objectives of practices it is tagged with (409 otherwise), and the
+function L.2.2 left returning `[]` now returns every live link from any
+version of the list to that practice's objectives, named -- "version 1
+linked to PE.L2-3.10.3[b] in assessment 'FY26 L2'". All three tag writers
+already asked it (a person, an import, an adopted copy taking a template
+version); tests drive the person and the import paths against real links.
+`test_list_builder.py`'s guard failed on `evidence` as designed and was
+settled the way its message says: one table name added to `_SETTLED`, with
+the real-link tests beside it. One thing the tests found about the rule
+itself: L.2.2's "the last tag stays" refusal runs first, so on a
+single-tag list the evidence blocker is never the reason given.
+
+**A product's deactivation leaves a list link alone.** The link exists
+because a person attached a list, not because a tool claimed coverage.
+The known limitation -- deactivation archives *every* link on a
+tool-sourced state, not just that tool's (see the multi-tool-coverage
+writeup) -- did reach this path: it would have archived the list link and
+made the tag removable at that moment. `engine.deactivate_org_product` now
+skips links to a list version; tested as the negative, with a tool's own
+evidence on the same objective still archived beside it.
+
+**The bundle.** Linked lists come first in the picker, still unticked. A
+chosen list is embedded as its current version *and* every version a live
+link in this assessment names, so evidence resolves to exactly what was
+linked; `lists/index.html` says which objectives each version serves,
+flags "not current -- linked at version 1; the list was at version 2",
+and lists the versions linked but not chosen. The manifest and the
+implementation page point a list link at its workbook, or say it was not
+chosen. Every new query is ordered to a key; the artifact log and the
+cover's second-order hash cover the linked version (asserted). **The
+unlinked section now excludes list evidence**: it took every org evidence
+row not linked into *this* assessment, so a list linked in another
+assessment would have appeared there as a stray artifact. Unlinking a
+list deletes its evidence row once nothing links to it, as the generic
+unlink does.
+
+**T: the export says what a list is for, who owns it, how often it is
+reviewed.** Rows 3-4 of the workbook are now "What goes here: …" and
+"Responsible: … | Review cadence: …", worded as the template header
+block's rows 4-5, with "not recorded" when empty; the column header moved
+to row 8 (`render.LIST_EXPORT_HEADER_ROW`). Every list export's bytes
+changed once, deliberately; the determinism and formula guards passed
+unchanged, and the two new cells open with a label, so no typed value can
+begin one. L.2.2's "a hand-built list's export carries the same header
+block an imported one does" was true and compared rows 2-5 while neither
+carried these fields -- a test passing while checking less than its name;
+it now compares rows 2-7 and pins the values.
+
+**T's open question -- should an export be re-importable as a template?
+Recommendation: no, not by converging the layouts.** An export is one
+org's records for an assessor; a template is an MSP's examples for many
+orgs. Making the first readable as the second puts "export a customer's
+filled register" one step from "distribute it as everyone's template" --
+client data landing in the wrong tenant. If curated content needs an
+interchange format (N.4 and cross-deployment distribution both point
+there), make it a separate, explicit template export of template versions
+only, in the importer's layout. The importer reads rows 2/4/5/10; the
+export writes 2/3/4/8; leave them apart until that is decided. This item's
+own Planned text asked for the export to "read back through the importer
+to the same version"; that half is withdrawn pending the decision.
+
+**Found, not fixed (out of scope):**
+
+- **Documents link the other way.** Publishing a document links it to
+  every tagged objective in every in-progress assessment automatically,
+  and republishing archives the old links -- evidence moves forward
+  without anyone choosing it (`routers/documents.py`'s publish). Lists are
+  offered and moved deliberately. Which is right for documents is its own
+  decision.
+- **The generic evidence unlink writes no audit row**
+  (`routers/evidence.py`'s `delete_evidence`). List links have their own
+  unlink, which does.
+- **The generic per-objective evidence list shows archived links** (it
+  has no `is_archived` filter), so a deactivated tool's evidence still
+  appears on the objective. List links are listed separately and only
+  when live.
+- **Attaching is per objective**, as all evidence is: a list serving a
+  practice with six objectives is six clicks. Capture once, reference
+  many holds for the data (one evidence row per version); the clicks are
+  a UI question.
+
+**Verification (bench `20261017-l4`, isolated):** migration 0067 applied
+clean; backend full suite **1797 passed** (1779 on main), ruff clean; tsc
+clean, vitest **418** (410 on main), build OK. Live, after merge and
+deploy: a real linked list in a real bundle, opened and read.
+
+---
+
 ### List library L.7: an org adopts a template, and later takes a newer one ✅ DONE (2026-10-16)
 
 Migration 0066. Jarrod found the hole on the live Lists screen: Winsorlabs
@@ -9016,31 +9145,12 @@ this item is what fixes it.
 
 **The restore has never been exercised. Not once, by anyone.**
 
-### T. The list export carries what the list is for, and who owns it
+### T. The list export carries what the list is for, and who owns it ✅ DONE (2026-10-17, with L.4)
 
-**Found in L.2.2 (2026-10-15).** A list exported from the library --
-standalone or in the assessor bundle -- carries its title, its practices,
-its columns and its rows, but not **What goes here**, **Responsible** or
-**Review cadence**: the template convention's rows 4-5, and the whole
-point of its header block. Every list is affected, imported or built by
-hand; the data is on every `list_version`, the renderer
-(`render.render_list_version_bytes`) just never writes it. So an assessor
-receives a register with no statement of what belongs in it or who keeps
-it.
-
-**The slice:** write rows 4-5 into the export's header block as the
-convention lays them out, so an exported list reads back through the
-importer to the same version (extend `test_list_builder.py`'s round trip
-to compare those fields, not only the labels).
-
-**It changes every export's bytes, deliberately.** That is a reason to
-re-verify the determinism guards, not a reason to be blocked by them:
-the export must still be a function of the version alone (same version,
-same bytes, standalone and in a bundle), and the formula guard
-(`tests/test_workbook_formulas.py`) must cover the three new cells, since
-each is text a person typed. Expect the bundle's `lists/index.html` and
-any pinned export hash to change once; say so in the slice's entry
-rather than letting it read as drift.
+Shipped inside L.4: the export now carries What goes here, Responsible
+and Review cadence. Whether an export should also read back through the
+importer as a template is a separate decision, recommended against
+converging the layouts -- see the L.4 Done entry.
 
 ### U. The login form shows a validation error as "[object Object]"
 

@@ -971,7 +971,9 @@ class Evidence(Base):
 
     kind='file'      — bytes stored in S3; storage_key is set.
     kind='reference' — a URL or filesystem path; reference_location is set,
-                       storage_key is NULL (nothing uploaded).
+                       storage_key is NULL (nothing uploaded). A list version
+                       linked as evidence (L.4) is a reference too, naming
+                       source_list_version_id.
 
     An artifact is stored once and can satisfy multiple control objectives via
     EvidenceStateLink (evidence minimization). Any control_state may have
@@ -982,12 +984,17 @@ class Evidence(Base):
     __table_args__ = (
         CheckConstraint(
             "artifact_type IN ('screenshot', 'export', 'document', 'link', 'policy', "
-            "'network_diagram', 'data_flow_diagram')",
+            "'network_diagram', 'data_flow_diagram', 'attestation', 'list')",
             name="ck_evidence_artifact_type",
         ),
         CheckConstraint(
             "kind IN ('file', 'reference')",
             name="ck_evidence_kind",
+        ),
+        CheckConstraint(
+            "(artifact_type = 'list') = (source_list_version_id IS NOT NULL) "
+            "AND (source_list_version_id IS NULL OR kind = 'reference')",
+            name="ck_evidence_list_reference",
         ),
     )
 
@@ -1028,6 +1035,14 @@ class Evidence(Base):
     # see DocumentVersion's own docstring.
     source_document_version_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("document_version.id", ondelete="RESTRICT"), nullable=True
+    )
+    # List library (L.4, migration 0067): the list version this evidence
+    # is, never the list -- a list moves on and the evidence must not move
+    # with it. kind='reference', artifact_type='list'; the workbook is
+    # rendered from the version on demand (list_evidence.py).
+    source_list_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("list_version.id", ondelete="RESTRICT"),
+        nullable=True, index=True,
     )
     sha256_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

@@ -781,6 +781,16 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
   margin-bottom: 0.35rem;
 }
 
+/* L.4: lists tagged with this objective's practice, under its evidence. */
+.ev-lists {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.35rem 0;
+}
+.ev-list-row .field-hint,
+.ev-list-row .doc-notice { margin: 0.2rem 0 0 0.5rem; }
+
 .ev-item {
   display: flex;
   align-items: center;
@@ -2136,6 +2146,9 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .list-library-actions { display: flex; gap: 0.5rem; align-items: center; }
 .list-serves { margin: 0.5rem 0 0.75rem; }
 .list-serves p { margin: 0 0 0.35rem; }
+.list-evidence { margin: 0 0 0.75rem; }
+.list-evidence p { margin: 0 0 0.35rem; }
+.list-evidence-links { margin: 0 0 0.5rem; padding-left: 1.25rem; }
 .list-merge { border: 1px solid var(--border); border-left: 3px solid var(--primary); border-radius: 6px; padding: 0.6rem 0.75rem; margin-bottom: 0.75rem; font-size: 0.85rem; }
 .list-merge-map { margin-top: 0.4rem; max-width: 32rem; }
 .list-merge-col { color: var(--primary); font-weight: normal; font-size: 0.72rem; }

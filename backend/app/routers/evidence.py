@@ -461,7 +461,13 @@ def list_evidence(
     ev_list = session.scalars(
         select(Evidence)
         .join(EvidenceStateLink, EvidenceStateLink.evidence_id == Evidence.id)
-        .where(EvidenceStateLink.control_state_id == cs.id)
+        .where(
+            EvidenceStateLink.control_state_id == cs.id,
+            # Lists linked as evidence have their own section, with the
+            # version linked and whether the list has moved on since
+            # (routers/list_evidence.py).
+            Evidence.source_list_version_id.is_(None),
+        )
         .order_by(Evidence.collected_at)
     ).all()
 

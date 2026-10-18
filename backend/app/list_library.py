@@ -25,7 +25,8 @@ Tags are not version content. Each records who put it there
 (`ListControlTag.added_via`) and every change is a `ListTagEvent`, so a
 list's history answers "since when, and who said so" for its tags as it
 does for its rows. An import manages only the tags it added. Removing a
-tag is refused while evidence rests on it (`tag_removal_blockers`).
+tag is refused while evidence rests on it (`tag_removal_blockers`, which
+reads the evidence links L.4 makes -- list_evidence.py).
 """
 
 from __future__ import annotations
@@ -44,7 +45,18 @@ from sqlalchemy.orm import Session
 
 from .audit import log_event
 from .list_templates import MERGES, ImportPlan, MergeRule, SheetResult, slug
-from .models import ListControlTag, ListDefinition, ListTagEvent, ListVersion
+from .models import (
+    Assessment,
+    AssessmentObjective,
+    Control,
+    ControlState,
+    Evidence,
+    EvidenceStateLink,
+    ListControlTag,
+    ListDefinition,
+    ListTagEvent,
+    ListVersion,
+)
 
 CONTENT_FIELDS = ("title", "description", "responsible", "review_cadence", "columns", "rows")
 
@@ -99,9 +111,10 @@ def example_rows(rows: Sequence[Sequence[str]]) -> int:
 def is_populated(rows: Sequence[Sequence[str]]) -> bool:
     """PLAN section 5's definition, stated once: a list with rows, none of
     which is still a template's example. Only a populated list may be
-    offered as evidence -- **L.4 must use this**, not a second rule. An
-    adopted copy starts unpopulated because its rows are the template's
-    examples, and becomes a candidate when the org has filled them in."""
+    offered as evidence -- list_evidence.not_offered_reason uses this, and
+    nothing restates it (L.4). An adopted copy starts unpopulated because
+    its rows are the template's examples, and becomes a candidate when the
+    org has filled them in."""
     return bool(rows) and example_rows(rows) == 0
 
 
@@ -201,17 +214,41 @@ def tag_removal_blockers(session: Session, list_id: uuid.UUID, control_key: str)
     """The evidence links that rest on this list serving `control_key`, each
     named so the refusal can say which -- an empty list means the tag may go.
 
-    The rule (L.2.2, decided before any link exists): a list linked as
+    The rule (L.2.2, decided before any link existed): a list linked as
     evidence covers the controls it is tagged with (docs/PLAN-list-library
     .md section 5), so removing a tag while a link to that control's state
     exists would silently narrow what an assessment rests on. Adding is
-    always safe; removing is refused while such a link exists, by a person
-    and by an import alike. Nothing links a list as evidence until L.4, so
-    today nothing blocks. **L.4 must answer here**: every non-archived
-    EvidenceStateLink from this list's evidence to a control_state of
-    `control_key`'s control. tests/test_list_builder.py fails when a table
-    that references lists appears without that being settled."""
-    return []
+    always safe; removing is refused while such a link exists, by a person,
+    an import and an adopted copy taking a template version alike.
+
+    A link is every non-archived EvidenceStateLink from evidence naming any
+    version of this list (L.4, list_evidence.py) to a control_state of
+    `control_key`'s practice. Archived links do not block: the only thing
+    that archives a list link is moving it forward, which leaves a live one
+    in its place -- a product's deactivation never does (engine.py)."""
+    rows = session.execute(
+        select(
+            ListVersion.version_number, Assessment.name, AssessmentObjective.objective_key,
+        )
+        .select_from(EvidenceStateLink)
+        .join(Evidence, Evidence.id == EvidenceStateLink.evidence_id)
+        .join(ListVersion, ListVersion.id == Evidence.source_list_version_id)
+        .join(ControlState, ControlState.id == EvidenceStateLink.control_state_id)
+        .join(Assessment, Assessment.id == ControlState.assessment_id)
+        .join(AssessmentObjective, AssessmentObjective.id == ControlState.objective_id)
+        .join(Control, Control.id == AssessmentObjective.control_id)
+        .where(
+            ListVersion.list_id == list_id,
+            Control.control_id == control_key,
+            EvidenceStateLink.is_archived.is_(False),
+        )
+        .order_by(Assessment.name, AssessmentObjective.objective_key, EvidenceStateLink.id)
+    ).all()
+    return [
+        f"version {r.version_number} linked to {control_key}[{r.objective_key}] "
+        f"in assessment '{r.name}'"
+        for r in rows
+    ]
 
 
 def tag_origins(session: Session, list_id: uuid.UUID) -> dict[str, str]:

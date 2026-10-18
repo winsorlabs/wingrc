@@ -1635,3 +1635,44 @@ export interface ListImportReport {
   not_imported: { source_ref: string; status: string; reason: string }[];
   not_ingested: string[];
 }
+
+// ── L.4: a list version linked as evidence ─────────────────────────────────
+
+/** A list tagged with an objective's practice, as its evidence section shows
+ * it: offered or why not, and the version linked here, if one is. */
+export interface ListEvidenceCandidate {
+  list_id: string;
+  list_key: string;
+  title: string;
+  current_version_id: string | null;
+  current_version_number: number | null;
+  offered: boolean;
+  not_offered: string | null;
+  linked_version_id: string | null;
+  linked_version_number: number | null;
+  evidence_id: string | null;
+  // "List version 4 is available. This evidence stays on version 2 until …"
+  drift: string | null;
+}
+
+/** One live list link, on a list's page or in an assessment. */
+export interface ListEvidenceLink {
+  list_id: string;
+  list_key: string;
+  title: string;
+  current_version_number: number | null;
+  linked_version_id: string;
+  linked_version_number: number;
+  assessment_id: string;
+  assessment_name: string;
+  control_state_id: string;
+  control_key: string;
+  objective_key: string;
+  drift: string | null;
+}
+
+export interface ListEvidenceStatus {
+  offered: boolean;
+  not_offered: string | null;
+  links: ListEvidenceLink[];
+}

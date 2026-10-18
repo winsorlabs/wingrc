@@ -183,7 +183,7 @@ def test_the_bundle_names_the_version_it_embedded_and_hashes_it(db_session):
         next(n for n in zf.namelist() if n.endswith("lists/devices_v1.xlsx"))
     ], "only the chosen list"
     cells = _cells(xlsx)
-    assert version_id in cells[2][0]
+    assert version_id in cells[4][0]
     assert ["ALPHA-01", "SN1"] in cells
     index = _member(zf, "lists/index.html").decode()
     assert version_id in index and hashlib.sha256(xlsx).hexdigest() in index
