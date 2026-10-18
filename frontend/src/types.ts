@@ -1355,9 +1355,23 @@ export interface DocumentRow {
   updated_at: string;
 }
 
+export interface TaggedObjective {
+  objective_id: string;
+  /** In full: "AC.L2-3.1.1[a]". */
+  objective_key: string;
+  text: string;
+}
+
 export interface DocumentDetail extends DocumentRow {
   versions: DocumentVersionRow[];
   tagged_objective_ids: string[];
+  tagged_objectives: TaggedObjective[];
+}
+
+export interface DocumentTagsAdded {
+  document_id: string;
+  added: TaggedObjective[];
+  already_tagged: TaggedObjective[];
 }
 
 /** Half-open [start, end) character range within one diff line. */
@@ -1708,9 +1722,18 @@ export interface ListLinkEvent {
   created_at: string;
 }
 
-/** What removing a tag would do, computed by the server's own checks (L.10). */
+/** One live evidence link a tag removal would narrow (L.10, X.1). */
+export interface RestingLink {
+  version_number: number;
+  /** In full: "PE.L2-3.10.6[b]". */
+  objective_key: string;
+  assessment_name: string;
+}
+
+/** What removing a tag would do, computed by the server's own checks (L.10).
+ * Fields, not a sentence: the screen writes the sentence (X.1). */
 export interface TagRemovalCheck {
   removable: boolean;
-  refused: string | null;
-  blocked_by: string[];
+  reason: "last_tag" | "evidence" | null;
+  links: RestingLink[];
 }

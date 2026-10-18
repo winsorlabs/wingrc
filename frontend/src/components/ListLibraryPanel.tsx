@@ -39,8 +39,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api, ListConflictError } from "../api";
+import { api, ListConflictError, TagRemovalRefusedError } from "../api";
 import { AdoptTemplates } from "./AdoptTemplates";
+import { TagRemovalDialog } from "./TagRemovalDialog";
 import { FAMILY_NAMES } from "../lib/families";
 import {
   adoptedFromText,
@@ -549,7 +550,9 @@ function LibraryListView({
       await load();
       onSaved();
     } catch (e) {
-      setTagError(e instanceof Error ? e.message : "Could not change this list's practices");
+      // Refused on the race between check and click: said as the check says it.
+      if (e instanceof TagRemovalRefusedError) setRemoval(e.check);
+      else setTagError(e instanceof Error ? e.message : "Could not change this list's practices");
     } finally {
       setTagBusy(false);
     }
@@ -747,47 +750,15 @@ function LibraryListView({
           ))}
         </span>
         {confirmRemove && (
-          <div className="doc-notice doc-notice-warn list-tag-confirm" role="group" aria-label={`Remove ${confirmRemove}`}>
-            {removal === null && <p>Checking what rests on {confirmRemove}…</p>}
-            {removal !== null && removal !== "failed" && !removal.removable && (
-              <>
-                <p>
-                  <strong>{confirmRemove}</strong> cannot be removed: {removal.refused}
-                </p>
-                {removal.blocked_by.length > 0 && (
-                  <ul>
-                    {removal.blocked_by.map((b) => (
-                      <li key={b}>{b}</li>
-                    ))}
-                  </ul>
-                )}
-              </>
-            )}
-            {removal !== null && (removal === "failed" || removal.removable) && (
-              <p>
-                Remove <strong>{confirmRemove}</strong>? This list will no longer claim to serve it, and the change is
-                recorded in its history with your name.{" "}
-                {removal === "failed"
-                  ? `Could not check what rests on ${confirmRemove}; if evidence does, removing it will be refused.`
-                  : `No evidence rests on this list for ${confirmRemove}.`}
-              </p>
-            )}
-            {removal !== null && (removal === "failed" || removal.removable) && (
-              <>
-                <button
-                  type="button"
-                  className="btn-primary btn-sm"
-                  disabled={tagBusy}
-                  onClick={() => changeTag("remove", confirmRemove)}
-                >
-                  Yes, remove {confirmRemove}
-                </button>{" "}
-              </>
-            )}
-            <button type="button" className="btn-ghost btn-sm" onClick={() => setConfirmRemove(null)}>
-              Keep it
-            </button>
-          </div>
+          <TagRemovalDialog
+            tag={confirmRemove}
+            subject={base.title}
+            consequence="This list will no longer claim to serve it, and the change is recorded in its history with your name."
+            check={removal}
+            busy={tagBusy}
+            onConfirm={() => changeTag("remove", confirmRemove)}
+            onCancel={() => setConfirmRemove(null)}
+          />
         )}
         {canDefine && (
           <div className="list-tag-add">

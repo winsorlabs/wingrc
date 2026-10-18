@@ -40,10 +40,20 @@ evidence attached is not a practice met.
 
 `control_key_for` and `live_link_row` are list_evidence's: the two paths
 share those and nothing else verbatim (item X counts the rest).
+
+**Tags (X.1).** A document is tagged per objective, where a list is
+tagged per practice: a policy paragraph can satisfy one objective and not
+its siblings. Typing a practice expands to its objectives
+(`resolve_tag_key`), so a policy covering a whole practice is typed once,
+and each objective is still its own tag, removable alone. Removing one is
+refused while a live link rests on it (`tag_removal_links`), as for lists;
+the refusal is returned as fields (`list_library.RestingLink`) and the
+screen writes the sentence.
 """
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -53,8 +63,12 @@ from sqlalchemy.orm import Session
 
 from .audit import log_event
 from .list_evidence import control_key_for, live_link_row
+from .list_library import RestingLink
+from .list_templates import practice_key
 from .models import (
     Assessment,
+    AssessmentObjective,
+    Control,
     ControlState,
     Document,
     DocumentObjectiveTag,
@@ -69,6 +83,8 @@ class DocumentLinkRefused(ValueError):
 
 
 NOT_APPROVED = "no version of it has been approved yet. Publish one first"
+# Since X.1 a tag a live link rests on cannot be removed, so this is said
+# only of a tag removed before X.1. Kept: such links can exist.
 NOT_TAGGED = "it is no longer tagged with this objective"
 
 
@@ -320,3 +336,112 @@ def unlink(
             session, org_id, "evidence.document_unlink", cs, doc, lv, control_key, objective_key
         )
     session.flush()
+
+
+# ---------------------------------------------------------------------------
+# Tags (item X.1): what a person types, and what a removal would narrow
+# ---------------------------------------------------------------------------
+
+_OBJECTIVE_SUFFIX = re.compile(r"^(.*?)\s*\[\s*([A-Za-z0-9]{1,5})\s*\]$")
+
+
+class TagKeyRefused(ValueError):
+    """What was typed names no single objective set, and this says which."""
+
+
+@dataclass(frozen=True)
+class TaggedObjective:
+    objective_id: uuid.UUID
+    objective_key: str  # in full: "AC.L2-3.1.1[a]"
+    text: str
+
+
+def resolve_tag_key(session: Session, org_id: uuid.UUID, typed: str) -> list[TaggedObjective]:
+    """The objectives a typed key names. 'AC.L2-3.1.1[a]' or '3.1.1[a]' is
+    one objective; 'AC.L2-3.1.1' or '3.1.1' is the practice, expanded to
+    each of its objectives -- a convenience for the person typing, while
+    the tags stored stay one per objective, each removable on its own.
+    Resolved in the frameworks this org has assessments in (any, when it
+    has none). Refused, naming what was typed, when it is no practice,
+    names an objective the practice does not have, or matches more than
+    one of those frameworks."""
+    raw = typed.strip()
+    m = _OBJECTIVE_SUFFIX.match(raw)
+    practice_text, letter = (m.group(1), m.group(2).lower()) if m else (raw, None)
+    try:
+        practice = practice_key(practice_text)
+    except ValueError:
+        raise TagKeyRefused(
+            f"{raw!r} is not an objective or practice like AC.L2-3.1.1[a] or 3.1.1"
+        ) from None
+    rows = session.execute(
+        select(AssessmentObjective, Control.framework_id)
+        .join(Control, Control.id == AssessmentObjective.control_id)
+        .where(Control.control_id == practice)
+        .order_by(AssessmentObjective.objective_key, AssessmentObjective.id)
+    ).all()
+    assessed = set(
+        session.scalars(select(Assessment.framework_id).where(Assessment.org_id == org_id)).all()
+    )
+    if assessed:
+        rows = [r for r in rows if r[1] in assessed]
+    if letter is not None:
+        rows = [r for r in rows if r[0].objective_key == letter]
+    if not rows:
+        what = f"{practice}[{letter}]" if letter else practice
+        raise TagKeyRefused(f"{raw!r}: {what} is not in the catalog")
+    if len({fw for _, fw in rows}) > 1:
+        raise TagKeyRefused(f"{raw!r} matches {practice} in more than one framework")
+    return [TaggedObjective(o.id, f"{practice}[{o.objective_key}]", o.text) for o, _ in rows]
+
+
+def objective_named(session: Session, objective: AssessmentObjective) -> TaggedObjective:
+    control_key = session.scalar(
+        select(Control.control_id).where(Control.id == objective.control_id)
+    )
+    key = f"{control_key}[{objective.objective_key}]"
+    return TaggedObjective(objective.id, key, objective.text)
+
+
+def tagged_objectives(session: Session, document_id: uuid.UUID) -> list[TaggedObjective]:
+    rows = session.execute(
+        select(AssessmentObjective, Control.control_id)
+        .join(DocumentObjectiveTag, DocumentObjectiveTag.objective_id == AssessmentObjective.id)
+        .join(Control, Control.id == AssessmentObjective.control_id)
+        .where(DocumentObjectiveTag.document_id == document_id)
+        .order_by(Control.sequence_order, AssessmentObjective.objective_key, AssessmentObjective.id)
+    ).all()
+    return [TaggedObjective(o.id, f"{c}[{o.objective_key}]", o.text) for o, c in rows]
+
+
+def tag_removal_links(
+    session: Session, document_id: uuid.UUID, objective_id: uuid.UUID
+) -> list[RestingLink]:
+    """L.4's `tag_removal_blockers` rule, for documents: the live links
+    from any version of this document onto `objective_id`, in any
+    assessment. Removing the tag while one exists would leave a chosen
+    link resting on nothing ("it is no longer tagged with this
+    objective"), so the removal is refused until it is detached. Archived
+    links do not block: only moving forward archives a document link, and
+    it leaves a live one in its place."""
+    rows = session.execute(
+        select(DocumentVersion.version_number, Assessment.name, Control.control_id,
+               AssessmentObjective.objective_key)
+        .select_from(EvidenceStateLink)
+        .join(Evidence, Evidence.id == EvidenceStateLink.evidence_id)
+        .join(DocumentVersion, DocumentVersion.id == Evidence.source_document_version_id)
+        .join(ControlState, ControlState.id == EvidenceStateLink.control_state_id)
+        .join(Assessment, Assessment.id == ControlState.assessment_id)
+        .join(AssessmentObjective, AssessmentObjective.id == ControlState.objective_id)
+        .join(Control, Control.id == AssessmentObjective.control_id)
+        .where(
+            DocumentVersion.document_id == document_id,
+            ControlState.objective_id == objective_id,
+            EvidenceStateLink.is_archived.is_(False),
+        )
+        .order_by(Assessment.name, DocumentVersion.version_number, EvidenceStateLink.id)
+    ).all()
+    return [
+        RestingLink(r.version_number, f"{r.control_id}[{r.objective_key}]", r.name)
+        for r in rows
+    ]

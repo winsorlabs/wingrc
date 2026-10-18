@@ -38,8 +38,9 @@ Endpoints:
   GET    /orgs/{org_id}/documents/{document_id}/versions/{id}        One version + objective set
   GET    /orgs/{org_id}/documents/{document_id}/diff                 Diff any two versions
   GET    /orgs/{org_id}/documents/{document_id}/history              Versions + audit timeline
-  POST   /orgs/{org_id}/documents/{document_id}/objective-tags       Tag an objective
-  DELETE /orgs/{org_id}/documents/{document_id}/objective-tags/{id}  Untag
+  POST   /orgs/{org_id}/documents/{document_id}/objective-tags       Tag objectives (X.1)
+  GET    /orgs/{org_id}/documents/{document_id}/objective-tags/{id}/removal  What untagging would do
+  DELETE /orgs/{org_id}/documents/{document_id}/objective-tags/{id}  Untag, refused under evidence
   POST   /orgs/{org_id}/documents/{document_id}/publish              Approve current version
   GET    /orgs/{org_id}/documents/{document_id}/approvals            Approval history (N.3)
   POST   /orgs/{org_id}/documents/{document_id}/reaffirm             Re-approve, unchanged (N.3)
@@ -72,13 +73,14 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from .. import document_evidence, list_library
 from ..audit import identity_out, log_event, parse_actor_uuid, resolve_identities
-from ..auth import require_org_access, require_write
+from ..auth import CurrentUser, require_org_access, require_write
 from ..db import get_session
 from ..document_diff import BodyDiff, diff_bodies, diff_sets
 from ..document_reviews import (
@@ -99,6 +101,7 @@ from ..models import (
     DocumentVersion,
     Evidence,
 )
+from .list_definitions import DEFINE_ROLES, TagRemovalOut, links_out, tag_refusal
 
 router = APIRouter(
     prefix="/orgs",
@@ -212,9 +215,17 @@ class DocumentOut(BaseModel):
     updated_at: datetime
 
 
+class TaggedObjectiveOut(BaseModel):
+    objective_id: uuid.UUID
+    objective_key: str  # in full: "AC.L2-3.1.1[a]"
+    text: str
+
+
 class DocumentDetailOut(DocumentOut):
     versions: list[DocumentVersionOut]
     tagged_objective_ids: list[uuid.UUID]
+    # The same tags, as a screen shows them (X.1): bare ids named nothing.
+    tagged_objectives: list[TaggedObjectiveOut]
 
 
 class DocumentCreateIn(BaseModel):
@@ -313,7 +324,24 @@ class VersionStatusPatchIn(BaseModel):
 
 
 class ObjectiveTagIn(BaseModel):
-    objective_id: uuid.UUID
+    """One of the two. `objective_key` is what a person types (X.1):
+    "AC.L2-3.1.1[a]" or "3.1.1[a]" for one objective, "AC.L2-3.1.1" or
+    "3.1.1" for every objective of the practice."""
+
+    objective_id: uuid.UUID | None = None
+    objective_key: str | None = None
+
+    @model_validator(mode="after")
+    def _one(self) -> ObjectiveTagIn:
+        if (self.objective_id is None) == (self.objective_key is None):
+            raise ValueError("give objective_id or objective_key, not both")
+        return self
+
+
+class ObjectiveTagsOut(BaseModel):
+    document_id: uuid.UUID
+    added: list[TaggedObjectiveOut]
+    already_tagged: list[TaggedObjectiveOut]
 
 
 class PublishIn(BaseModel):
@@ -380,13 +408,18 @@ def _document_detail_out(session: Session, doc: Document) -> DocumentDetailOut:
         .where(DocumentVersion.document_id == doc.id)
         .order_by(DocumentVersion.version_number.desc())
     ).all()
-    tag_ids = session.scalars(
-        select(DocumentObjectiveTag.objective_id).where(DocumentObjectiveTag.document_id == doc.id)
-    ).all()
+    tagged = document_evidence.tagged_objectives(session, doc.id)
     return DocumentDetailOut(
         **base.model_dump(),
         versions=[_version_out(v) for v in versions],
-        tagged_objective_ids=list(tag_ids),
+        tagged_objective_ids=[t.objective_id for t in tagged],
+        tagged_objectives=[_tagged_out(t) for t in tagged],
+    )
+
+
+def _tagged_out(t: document_evidence.TaggedObjective) -> TaggedObjectiveOut:
+    return TaggedObjectiveOut(
+        objective_id=t.objective_id, objective_key=t.objective_key, text=t.text
     )
 
 
@@ -707,43 +740,64 @@ def patch_document_version_status(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/{org_id}/documents/{document_id}/objective-tags", status_code=201)
+# Who tags a document: who defines a list (L.2.2), so both kinds of
+# candidate are made candidates by the same people. customer_poc writes a
+# document's text and does not decide what it is offered as evidence for,
+# as it fills a list's rows and does not tag it; c3pao_assessor does neither.
+_TAG_ROLES = DEFINE_ROLES
+
+
+@router.post(
+    "/{org_id}/documents/{document_id}/objective-tags",
+    response_model=ObjectiveTagsOut, status_code=201,
+)
 def add_objective_tag(
     org_id: uuid.UUID, document_id: uuid.UUID, body: ObjectiveTagIn,
     session: Session = Depends(get_session),
-) -> dict:
+    _user: CurrentUser = Depends(require_org_access(*_TAG_ROLES)),
+) -> ObjectiveTagsOut:
+    """Tag the objectives a typed key names: a practice key expands to each
+    of its objectives, and each is stored as its own tag. Adding is safe --
+    it makes the document a candidate there, nothing more."""
     doc = _get_document(session, org_id, document_id)
-    objective = session.get(AssessmentObjective, body.objective_id)
-    if objective is None:
-        raise HTTPException(status_code=422, detail="Unknown objective_id")
-
-    existing = session.scalars(
-        select(DocumentObjectiveTag).where(
-            DocumentObjectiveTag.document_id == doc.id,
-            DocumentObjectiveTag.objective_id == body.objective_id,
-        )
-    ).first()
-    if existing is not None:
-        return {"document_id": doc.id, "objective_id": body.objective_id}
-
-    tag = DocumentObjectiveTag(document_id=doc.id, org_id=org_id, objective_id=body.objective_id)
-    session.add(tag)
-    session.flush()
-    log_event(
-        session, org_id=org_id, action="document.objective_tag.add", entity_type="document",
-        entity_id=doc.id, after_value={"objective_id": str(body.objective_id)},
-        context={"via": "api"},
+    if body.objective_key is not None:
+        try:
+            wanted = document_evidence.resolve_tag_key(session, org_id, body.objective_key)
+        except document_evidence.TagKeyRefused as e:
+            raise HTTPException(status_code=422, detail=str(e)) from None
+    else:
+        objective = session.get(AssessmentObjective, body.objective_id)
+        if objective is None:
+            raise HTTPException(status_code=422, detail="Unknown objective_id")
+        wanted = [document_evidence.objective_named(session, objective)]
+    have = set(
+        session.scalars(
+            select(DocumentObjectiveTag.objective_id).where(
+                DocumentObjectiveTag.document_id == doc.id
+            )
+        ).all()
     )
+    added = [t for t in wanted if t.objective_id not in have]
+    for t in added:
+        session.add(
+            DocumentObjectiveTag(document_id=doc.id, org_id=org_id, objective_id=t.objective_id)
+        )
+        session.flush()
+        log_event(
+            session, org_id=org_id, action="document.objective_tag.add", entity_type="document",
+            entity_id=doc.id,
+            after_value={"objective_id": str(t.objective_id), "objective_key": t.objective_key},
+            context={"via": "api", "typed": body.objective_key},
+        )
     session.commit()
-    return {"document_id": doc.id, "objective_id": body.objective_id}
+    return ObjectiveTagsOut(
+        document_id=doc.id,
+        added=[_tagged_out(t) for t in added],
+        already_tagged=[_tagged_out(t) for t in wanted if t.objective_id in have],
+    )
 
 
-@router.delete("/{org_id}/documents/{document_id}/objective-tags/{objective_id}", status_code=204)
-def remove_objective_tag(
-    org_id: uuid.UUID, document_id: uuid.UUID, objective_id: uuid.UUID,
-    session: Session = Depends(get_session),
-) -> None:
-    doc = _get_document(session, org_id, document_id)
+def _tag(session: Session, doc: Document, objective_id: uuid.UUID) -> DocumentObjectiveTag:
     tag = session.scalars(
         select(DocumentObjectiveTag).where(
             DocumentObjectiveTag.document_id == doc.id,
@@ -752,11 +806,53 @@ def remove_objective_tag(
     ).first()
     if tag is None:
         raise HTTPException(status_code=404, detail="Tag not found")
+    return tag
 
+
+@router.get(
+    "/{org_id}/documents/{document_id}/objective-tags/{objective_id}/removal",
+    response_model=TagRemovalOut,
+)
+def check_objective_tag_removal(
+    org_id: uuid.UUID, document_id: uuid.UUID, objective_id: uuid.UUID,
+    session: Session = Depends(get_session),
+) -> TagRemovalOut:
+    """What removing this tag would do, by the DELETE's own check, so the
+    confirmation says a result rather than the rule (L.10)."""
+    doc = _get_document(session, org_id, document_id)
+    _tag(session, doc, objective_id)
+    links = document_evidence.tag_removal_links(session, doc.id, objective_id)
+    if links:
+        return TagRemovalOut(removable=False, reason="evidence", links=links_out(links))
+    return TagRemovalOut(removable=True, reason=None, links=[])
+
+
+@router.delete(
+    "/{org_id}/documents/{document_id}/objective-tags/{objective_id}", status_code=204
+)
+def remove_objective_tag(
+    org_id: uuid.UUID, document_id: uuid.UUID, objective_id: uuid.UUID,
+    session: Session = Depends(get_session),
+    _user: CurrentUser = Depends(require_org_access(*_TAG_ROLES)),
+) -> None:
+    """Refused while a live link rests on the tag, naming it -- checked
+    here as well as by the removal check, for a link made between the
+    check and the click. This is the only path that removes one tag;
+    deleting a document cascades its tags, and a document with an
+    Evidence row (any link's precondition) cannot be deleted."""
+    doc = _get_document(session, org_id, document_id)
+    tag = _tag(session, doc, objective_id)
+    objective = session.get(AssessmentObjective, objective_id)
+    named = document_evidence.objective_named(session, objective)
+    links = document_evidence.tag_removal_links(session, doc.id, objective_id)
+    if links:
+        message = str(list_library.TagRemovalRefused(doc.doc_id, named.objective_key, links))
+        raise tag_refusal(message, "evidence", links)
     session.delete(tag)
     log_event(
         session, org_id=org_id, action="document.objective_tag.remove", entity_type="document",
-        entity_id=doc.id, before_value={"objective_id": str(objective_id)},
+        entity_id=doc.id,
+        before_value={"objective_id": str(objective_id), "objective_key": named.objective_key},
         context={"via": "api"},
     )
     session.commit()

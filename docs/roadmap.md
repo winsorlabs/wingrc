@@ -5442,6 +5442,149 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### Item X.1: documents get a tag editor, and a tag a link rests on cannot be removed ✅ DONE (2026-10-18, bench-verified; live walk pending, with X's)
+
+**Documents can be tagged from a screen for the first time.** Before
+this, no component called the document tag routes. Live had 0
+`document_objective_tag` rows, so item X was dormant: no document was
+offered anywhere. The document's Edit/Read tab now has *Tagged
+objectives* (`DocumentTags.tsx`):
+- each tag as `AC.L2-3.1.1[a]` with its objective text;
+- a remove control on each;
+- a typed-key input, "AC.L2-3.1.1[a], or 3.1.1 for all its objectives".
+
+`DocumentDetailOut.tagged_objectives` carries the keys and text. It sits
+beside `tagged_objective_ids`, which named nothing a screen could show.
+
+**The shared refusal was fixed first.** This closes L.10's folded-forward
+items 1 and 2. The decision is the one L.10 recorded: the server answers
+in fields and the client writes the sentence.
+- **One link shape.** `list_library.RestingLink` (version number, full
+  objective key, assessment name) is what both `tag_removal_links`
+  return, the list one and `document_evidence`'s. Its `str()` is the old
+  log sentence, so imports, adoption, the CLI and each 409's `message`
+  are unchanged.
+- **The checks answer in fields.** Both removal checks return
+  `{removable, reason: last_tag | evidence | null, links}`, where they
+  used to return `refused`/`blocked_by` sentences. Each DELETE's 409
+  carries the same `reason` and `links` beside its `message`. `api.ts`
+  raises that as `TagRemovalRefusedError`, so a refusal on the race
+  between check and click reads exactly like a refused check.
+- **One dialog.** Both screens use `TagRemovalDialog.tsx`. It says the
+  fact once, using the title and never the key: "{tag} can't be removed
+  from {title} while evidence rests on it:", then one bullet per link,
+  "version 2, evidence for PE.L2-3.10.6[b] in *{assessment}*", then
+  "Detach it first."
+- **L.10's item 3 is not touched.** That is the possible overlap of "Not
+  attached" with the evidence buttons. It is still unconfirmed and still
+  needs a full-window screenshot before anything changes.
+
+**Granularity: documents tag objectives and lists tag practices.** That
+stays, and a practice key now expands to its objectives. A policy
+paragraph can satisfy one objective and not its siblings, so the stored
+truth stays per objective. Typing once is the convenience; without it, a
+policy covering a whole practice would be L.4's
+six-clicks-per-practice friction in a second place.
+
+`DocumentObjectiveTag` made this clean. It is one row per (document,
+objective) with a unique constraint and nothing else: no `added_via`, no
+event table. So expanding is a loop that inserts the missing rows, and
+the model does not change. Each expanded objective:
+- is its own row;
+- is its own audit row (`document.objective_tag.add`, which now carries
+  `objective_key`, so History says which);
+- is its own chip, removed alone.
+
+How a typed key is read:
+- **Both spellings.** `AC.L2-3.1.1` and `3.1.1` are accepted, through
+  `practice_key`, the list input's own parser, with an optional `[x]`
+  suffix.
+- **Unknown keys are named.** A key is refused (422), naming what was
+  typed, when it is not a practice, names an objective the practice
+  lacks, or matches more than one framework.
+- **Which frameworks.** A key resolves in the frameworks the org has
+  assessments in, since a deployment can carry more than one. Live has
+  one.
+- The `objective_id` body is still accepted.
+
+**The refusal is L.4's rule for documents.**
+`document_evidence.tag_removal_links` returns the live links from any
+version of the document onto that objective, in any assessment. A
+superseded version's link blocks, because a republish leaves it where it
+is (item X). Archived links do not block: only moving forward archives
+one, and it leaves a live link in its place.
+- **The DELETE refuses on its own,** for a link made between the check
+  and the click.
+- **It is the only path that removes one tag.** Deleting a document
+  cascades its tags, but a document with an Evidence row cannot be
+  deleted, and every link needs one.
+- **`NOT_TAGGED` stays.** It is now reachable only for a tag removed
+  before X.1, and live had none.
+
+**Who tags is who defines a list.** That is `DEFINE_ROLES`: `msp_admin`,
+`consultant_admin` and `msp_engineer`. The brief named the first two;
+L.2.2 settled lists on all three, and documents match that.
+- `customer_poc` is refused (403), as for list tags. It writes a
+  document's text and does not decide what the document is offered for.
+  This narrows the document tag routes, which before allowed any write
+  role. Live had 0 tags, so no one lost a tag they had made.
+- `c3pao_assessor` sees the tags and no controls, gets 403 on both
+  writes, and can read the removal check (a GET, like the list's).
+
+**Tests changed, each saying why:**
+- `test_list_builder.py`: its stand-in moves to `tag_removal_links`.
+- `test_list_evidence.py`: three tests assert fields.
+- `test_document_evidence.py`'s
+  `test_only_an_approved_version_on_a_tagged_objective_is_offered`: the
+  untag-after-attach is now 409. The row is deleted directly to stand in
+  for a tag removed before X.1, so `NOT_TAGGED` is still covered.
+- `ListLibraryPanel.test.tsx`: fields. The race test now asserts the
+  check-shaped refusal and no log sentence.
+
+**The row-shape rule.** No component this slice touches renders an
+attached item beside a not-attached one: the tag list and the dialog
+show tags, not evidence. `ObjectiveLists` and `ObjectiveDocuments` are
+unchanged, and their shape tests stand.
+
+**Verified on the bench** (wl-util-1, isolated `wingrc_verify_x1a`):
+- **Backend:** 1820 passed, none failed or skipped (1813 on main, plus the 7 here).
+- **Lint and types:** `ruff` clean; `tsc -b` clean.
+- **Frontend:** 443 vitest passed (432 on main), and the build
+  succeeded.
+- **New tests:**
+  - `test_document_tags.py`: 6 through the database and HTTP, plus 1
+    route-shape test;
+  - `DocumentTags.test.tsx`: 9;
+  - `ListLibraryPanel.test.tsx`: 2 more (the fact said once in the
+    title, and the only-practice reason).
+
+Mutation runs, each restored afterwards:
+- Putting the client prefix back, so the fact is said twice, fails both
+  "said once" tests.
+- Using the list's key as its name fails the key test and the
+  nothing-rests test.
+- Making a failed check say "No evidence rests" fails both "could not
+  check" tests.
+- Offering "Yes" whatever the check said fails 5.
+- Dropping the DELETE's own refusal fails 2.
+- Expanding a practice key to its first objective only fails the
+  expansion test.
+
+**Live walk (Jarrod), pending. It covers X and X.1 together, through the
+UI.** The count at X's deploy (2026-10-18, `d0d745c`) was 0 document tags
+and 0 document links.
+1. In Library › Policies, open a document and tag it under *Tagged
+   objectives*, either `AC.L2-3.1.1[a]` or the practice.
+2. Publish it. On the objective, confirm it is offered and not attached.
+3. Attach it.
+4. Edit and republish. Confirm the link stayed on the version he chose
+   and reads as superseded.
+5. Remove the tag. The dialog should refuse, naming the link, with no
+   "Yes".
+6. Then I verify the result by DB and audit log.
+
+---
+
 ### Lesson: a record that rested on a side effect (item X, migration 0069)
 
 A document version's "what was this approved for" was never stored. It was
@@ -5468,7 +5611,7 @@ then read for nothing.
 
 ---
 
-### Item X: a published document is offered, and a person attaches it ✅ DONE (2026-10-18; live walk pending)
+### Item X: a published document is offered, and a person attaches it ✅ DONE (2026-10-18; live walk pending, done with X.1's)
 
 **What changed.** `publish_document` writes the new version's Evidence row
 and links it to nothing. A document with an approved version is offered
@@ -5662,10 +5805,9 @@ A link made by publish before X has no attach event. Its record is the
   Pinned by `test_a_superseded_document_reads_as_superseded_in_the_bundle`
   (v1's own text under v1's id, v2's under v2's, two exports identical)
   and `test_a_superseded_version_nothing_names_is_not_carried`.
-- **A document tag that a link rests on can be removed.** Planned as the
-  next slice, together with the tag editor: "X.1. Documents get a tag
-  editor, and a tag a link rests on cannot be removed".
-- **No screen tags a document with an objective.** `api.ts` has
+- **A document tag that a link rests on can be removed.** Closed by
+  X.1 (Done entry "Item X.1: documents get a tag editor…").
+- **No screen tags a document with an objective.** Closed by X.1. `api.ts` has
   `addDocumentObjectiveTag`/`removeDocumentObjectiveTag`, and no component
   calls them. Live has 0 `document_objective_tag` rows. So on live,
   through the UI, nothing is ever offered, and the live walk below needs
@@ -5676,7 +5818,8 @@ A link made by publish before X has no attach event. Its record is the
 - A document's page does not list where it is attached. The list page has
   that and the document's History has the events.
 - The three L.10 tag-refusal cosmetics stay folded forward. They are in
-  the list library's frontend and would widen this diff.
+  the list library's frontend and would widen this diff. Items 1 and 2
+  were closed by X.1; item 3 is still unconfirmed.
 
 **Verified on the bench** (wl-util-1, isolated `wingrc_verify_x1303`):
 - 1812 backend tests passed, none skipped;
@@ -5690,7 +5833,9 @@ Mutation runs, each restored afterwards:
 - Rendering an offered document inside the attached row's shape fails the
   shape test.
 
-**Live walk (Jarrod), pending:**
+**Live walk (Jarrod), pending.** It is done with X.1's walk, through
+the UI, rather than with the tag made through the API (Jarrod,
+2026-10-18). X.1's Done entry has the combined steps. The original steps:
 1. Publish a tagged document, and confirm it is offered, not attached, on
    the objective.
 2. Attach it.
@@ -5835,7 +5980,10 @@ L.4's own live step (a real linked list in a real bundle, read by hand)
 is still open; this run did not build a bundle.
 
 **Found on live, folded into the next frontend slice (not their own
-slice).** All three are on the tag-refusal screen or next to it:
+slice).** All three are on the tag-refusal screen or next to it. **Items 1
+and 2 were closed by X.1** (2026-10-18; see its Done entry), as decided
+here: fields from the server, one sentence written by the client, in one
+dialog shared with documents. Item 3 is still open:
 1. **The refusal says one fact three times.** The client wraps the
    server's sentence ("PE.L2-3.10.6 cannot be removed from
    3-10-5a-access-devices-own: evidence rests on it (version 2 linked to
@@ -9795,7 +9943,19 @@ the superseded flag. Backend: publish/republish, four routes, the
 beside lists. One slice, bench-verified like L.4, with the live link count
 taken before the deploy.
 
-### X.1. Documents get a tag editor, and a tag a link rests on cannot be removed -- the next slice
+### X.1. Documents get a tag editor, and a tag a link rests on cannot be removed ✅ BUILT (2026-10-18)
+
+**Built as the Done entry "Item X.1: documents get a tag editor, and a tag
+a link rests on cannot be removed".** That entry records what the slice
+decided. The text below is the spec as written, kept as it was. Changes
+from it:
+- **Practice keys expand.** A typed practice key expands to its
+  objectives.
+- **The removal check answers in fields.** It returns `reason` and
+  `links` rather than `blocked_by`, and the list's check changed the same
+  way.
+- **The roles are three.** They are `DEFINE_ROLES`, which includes
+  `msp_engineer`.
 
 **Why together.** Item X makes a published document an offered candidate
 on its tagged objectives, but no screen tags a document. `api.ts` has the

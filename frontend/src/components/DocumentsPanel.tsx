@@ -13,9 +13,10 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 
 import { api } from "../api";
-import { deriveCanWrite } from "../lib/roles";
+import { canDefineLists, deriveCanWrite } from "../lib/roles";
 import { DocumentDiffView } from "./DocumentDiffView";
 import { DocumentHistoryPanel } from "./DocumentHistoryPanel";
+import { DocumentTags } from "./DocumentTags";
 import type { Contact, DocumentDetail, DocumentReviewState, DocumentReviewStatus, DocumentRow, DocumentType } from "../types";
 
 // TipTap and ProseMirror are ~700 kB of the production bundle, and every
@@ -344,6 +345,9 @@ export function DocumentsPanel({
   docType?: DocumentType;
 }) {
   const canEdit = deriveCanWrite(currentUserRole);
+  // Who tags a document is who defines a list (X.1): what something is
+  // offered as evidence for is the same decision for both.
+  const canTag = canDefineLists(currentUserRole);
 
   const [docs, setDocs] = useState<DocumentRow[] | null>(null);
   const [selected, setSelected] = useState<DocumentDetail | null>(null);
@@ -512,6 +516,7 @@ export function DocumentsPanel({
                     onPublished={() => void refreshSelected()}
                   />
                 )}
+                <DocumentTags orgId={orgId} doc={selected} canTag={canTag} onChanged={refreshSelected} />
               </>
             )}
 

@@ -335,10 +335,14 @@ def test_a_tag_removal_that_evidence_rests_on_is_refused_naming_the_link(
     that both writers -- a person, and an import whose source dropped the
     practice -- ask tag_removal_blockers and stop on its answer, writing
     nothing. When L.4 lands, test_a_new_table_referencing_lists_must_settle
-    _the_tag_removal_rule makes it wire the real links in."""
-    link = "Evidence 'Visitor log export' linked to PE.L2-3.10.4 in assessment 'FY26 L2'"
+    _the_tag_removal_rule makes it wire the real links in.
+
+    Was a stand-in for tag_removal_blockers returning a sentence; since
+    X.1 both writers read tag_removal_links (fields, so a screen writes
+    its own sentence), and the import's sentences are built from it."""
+    link = list_library.RestingLink(1, "PE.L2-3.10.4[a]", "Visitor log export FY26 L2")
     monkeypatch.setattr(
-        list_library, "tag_removal_blockers",
+        list_library, "tag_removal_links",
         lambda session, list_id, key: [link] if key in ("PE.L2-3.10.4", "RA.L2-3.11.2") else [],
     )
     org_id = _org(db_session)
@@ -348,7 +352,10 @@ def test_a_tag_removal_that_evidence_rests_on_is_refused_naming_the_link(
 
     r = client.delete(f"{base}/tags/PE.L2-3.10.4")
     assert r.status_code == 409
-    assert r.json()["detail"]["blocked_by"] == [link]
+    assert r.json()["detail"]["links"] == [{
+        "version_number": 1, "objective_key": "PE.L2-3.10.4[a]",
+        "assessment_name": "Visitor log export FY26 L2",
+    }]
     assert "PE.L2-3.10.4" in client.get(base).json()["control_keys"]
     assert [e["change"] for e in client.get(f"{base}/tag-events").json()] == ["added", "added"]
 

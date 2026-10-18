@@ -29,7 +29,7 @@ import zipfile
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from app import document_evidence, list_evidence, review_cycles
 from app.auth import get_current_user
@@ -42,6 +42,7 @@ from app.models import (
     Contact,
     ControlState,
     ControlStateHistory,
+    DocumentObjectiveTag,
     Evidence,
     EvidenceStateLink,
 )
@@ -231,12 +232,21 @@ def test_only_an_approved_version_on_a_tagged_objective_is_offered(db_session):
     r = _attach(avery, w, "AC.L2-3.1.1[a]")
     assert r.status_code == 409 and "already attached" in r.json()["detail"]
 
-    # Untagged after attaching: the link is still there, so it is still shown.
+    # Was: untagged through the API after attaching, the link still shown.
+    # Since X.1 that removal is refused while the link rests on the tag
+    # (test_document_tags.py). A tag removed before X.1 can still leave a
+    # link like this, so the row is deleted directly to stand in for one,
+    # and NOT_TAGGED is still what it says.
     blake = _as(db_session, w["blake"])
     objective = _objective(db_session, w, "AC.L2-3.1.1[a]")
     assert blake.delete(
         f"{DOCS.format(org=w['org'])}/{w['doc']['id']}/objective-tags/{objective}"
-    ).status_code == 204
+    ).status_code == 409
+    db_session.execute(delete(DocumentObjectiveTag).where(
+        DocumentObjectiveTag.document_id == uuid.UUID(w["doc"]["id"]),
+        DocumentObjectiveTag.objective_id == objective,
+    ))
+    db_session.flush()
     shown = _docs(blake, w, "AC.L2-3.1.1[a]")["AC-POL-001"]
     assert shown["linked_version_number"] == 1
     assert shown["not_offered"] == document_evidence.NOT_TAGGED

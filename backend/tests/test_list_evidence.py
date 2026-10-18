@@ -438,9 +438,10 @@ def test_a_tag_a_live_link_rests_on_cannot_be_removed_by_a_person(db_session):
 
     r = client.delete(f"{base}/tags/PE.L2-3.10.3")
     assert r.status_code == 409, r.text
-    assert r.json()["detail"]["blocked_by"] == [
-        "version 1 linked to PE.L2-3.10.3[b] in assessment 'FY26 L2 tagperson'"
-    ]
+    assert r.json()["detail"]["links"] == [{
+        "version_number": 1, "objective_key": "PE.L2-3.10.3[b]",
+        "assessment_name": "FY26 L2 tagperson",
+    }], "was `blocked_by` sentences; fields since X.1, so the screen writes one sentence"
     assert "PE.L2-3.10.3" in client.get(base).json()["control_keys"]
 
     cs_b = w["cs"]["PE.L2-3.10.3[b]"]
@@ -543,7 +544,7 @@ def test_deactivating_a_product_on_the_same_practice_leaves_the_list_link_alone(
     )
     assert result["evidence_links_archived"] == 1
     r = client.delete(f"{ONE.format(org=w['org'], list=d.id)}/tags/PE.L2-3.10.3")
-    assert r.status_code == 409 and r.json()["detail"]["blocked_by"], (
+    assert r.status_code == 409 and r.json()["detail"]["links"], (
         "the tag is still blocked: the link it rests on is still live"
     )
 
@@ -684,7 +685,12 @@ def test_no_org_reaches_another_orgs_list_links(db_session):
 def test_the_removal_check_says_what_the_delete_would_do(db_session):
     """The tag dialog read the rule aloud ("it is refused while evidence
     rests on this list") beside an enabled button, whatever the links were.
-    It now asks this, which runs the DELETE's own checks."""
+    It now asks this, which runs the DELETE's own checks.
+
+    Was `refused`/`blocked_by` sentences, built for a log: on live the
+    dialog wrapped them in its own prefix and named the list by key, one
+    fact three times (L.10's live finding). Since X.1 the check answers
+    in fields, and the DELETE's 409 carries the same fields."""
     w = _world(db_session, "check")
     tags = ("PE.L2-3.10.3", "AC.L2-3.1.1")
     d = _list(db_session, w["org"], "visitor-log", REAL_ROWS, tags=tags)
@@ -692,21 +698,25 @@ def test_the_removal_check_says_what_the_delete_would_do(db_session):
     base = ONE.format(org=w["org"], list=d.id)
 
     assert client.get(f"{base}/tags/PE.L2-3.10.3/removal").json() == {
-        "removable": True, "refused": None, "blocked_by": [],
+        "removable": True, "reason": None, "links": [],
     }
     assert _link(client, w, "PE.L2-3.10.3[a]", d.id).status_code == 201
     check = client.get(f"{base}/tags/PE.L2-3.10.3/removal").json()
     refused = client.delete(f"{base}/tags/PE.L2-3.10.3")
     assert refused.status_code == 409
-    assert check == {
-        "removable": False,
-        "refused": refused.json()["detail"]["message"],
-        "blocked_by": ["version 1 linked to PE.L2-3.10.3[a] in assessment 'FY26 L2 check'"],
-    }, "the check and the DELETE must say the same thing"
+    links = [{
+        "version_number": 1, "objective_key": "PE.L2-3.10.3[a]",
+        "assessment_name": "FY26 L2 check",
+    }]
+    assert check == {"removable": False, "reason": "evidence", "links": links}
+    detail = refused.json()["detail"]
+    assert (detail["reason"], detail["links"]) == ("evidence", links), (
+        "the check and the DELETE must say the same thing"
+    )
 
     assert client.delete(f"{base}/tags/AC.L2-3.1.1").status_code == 200
     last = client.get(f"{base}/tags/PE.L2-3.10.3/removal").json()
-    assert last["removable"] is False and last["refused"].startswith("A list serves at least one")
+    assert last == {"removable": False, "reason": "last_tag", "links": []}
     assert client.get(f"{base}/tags/RA.L2-3.11.2/removal").status_code == 404
 
 
