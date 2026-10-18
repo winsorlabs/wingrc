@@ -8,7 +8,8 @@ audit_log history, approved documents rendered into the bundle and PDF).
 **Item X** (2026-10-18, migration 0069) changed N.1's publish: it attaches
 nothing. A person attaches a published document on an objective, and a
 republish leaves links where they are. See `docs/roadmap.md`'s item X Done
-entry. **N.3 ✅ DONE** (2026-09-30, migration 0062 — `document_approval` as the
+entry. **Item X.1** added the document page's tag editor (per objective; a
+practice key expands) and refuses removing a tag evidence rests on. **N.3 ✅ DONE** (2026-09-30, migration 0062 — `document_approval` as the
 single authoritative approval record, a derived review cadence that is
 never stored, and a digest job that changes no document state). See
 `docs/roadmap.md`'s Done entries for all three writeups, including N.2's §0

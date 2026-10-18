@@ -1,4 +1,4 @@
-import type { ApiTokenRow, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, TlsExpiry, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent, AdoptResult, TakeTemplateResult, ListEvidenceCandidate, ListEvidenceLink, ListEvidenceStatus, ListLinkEvent, TagRemovalCheck, DocumentEvidenceCandidate } from "./types";
+import type { ApiTokenRow, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, TlsExpiry, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent, AdoptResult, TakeTemplateResult, ListEvidenceCandidate, ListEvidenceLink, ListEvidenceStatus, ListLinkEvent, TagRemovalCheck, DocumentEvidenceCandidate, DocumentTagsAdded } from "./types";
 
 const BASE = "/api";
 
@@ -80,6 +80,17 @@ function detailText(detail: unknown, fallback: string): string {
   return fallback;
 }
 
+/** A tag removal the server refused on the DELETE -- a link made between
+ * the check and the click. Carries the check's own fields, so the dialog
+ * says it as it says a refused check (X.1). */
+export class TagRemovalRefusedError extends ApiError {
+  check: TagRemovalCheck;
+  constructor(message: string, check: TagRemovalCheck) {
+    super(message, 409);
+    this.check = check;
+  }
+}
+
 async function send<T>(path: string, method: string, body?: unknown): Promise<T> {
   const r = await fetch(`${BASE}${path}`, {
     method,
@@ -88,7 +99,11 @@ async function send<T>(path: string, method: string, body?: unknown): Promise<T>
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const payload = await r.json().catch(() => ({}));
-  if (!r.ok) throw new ApiError(detailText(payload.detail, `${r.status} ${r.statusText}`), r.status);
+  const d = payload.detail;
+  if (r.status === 409 && d && typeof d === "object" && "reason" in d && Array.isArray(d.links)) {
+    throw new TagRemovalRefusedError(String(d.message), { removable: false, reason: d.reason, links: d.links });
+  }
+  if (!r.ok) throw new ApiError(detailText(d, `${r.status} ${r.statusText}`), r.status);
   return payload as T;
 }
 
@@ -1490,23 +1505,20 @@ export const api = {
   getDocumentHistory: (orgId: string, documentId: string) =>
     req<DocumentHistory>(`/orgs/${orgId}/documents/${documentId}/history`),
 
-  addDocumentObjectiveTag: (orgId: string, documentId: string, objectiveId: string) =>
-    req<{ document_id: string; objective_id: string }>(
-      `/orgs/${orgId}/documents/${documentId}/objective-tags`,
-      { method: "POST", body: JSON.stringify({ objective_id: objectiveId }) },
+  /** `objectiveKey` as typed: "AC.L2-3.1.1[a]" or "3.1.1[a]" for one
+   * objective, "AC.L2-3.1.1" or "3.1.1" for each of the practice's (X.1). */
+  addDocumentObjectiveTag: (orgId: string, documentId: string, objectiveKey: string) =>
+    send<DocumentTagsAdded>(`/orgs/${orgId}/documents/${documentId}/objective-tags`, "POST", {
+      objective_key: objectiveKey,
+    }),
+
+  checkDocumentTagRemoval: (orgId: string, documentId: string, objectiveId: string) =>
+    req<TagRemovalCheck>(
+      `/orgs/${orgId}/documents/${documentId}/objective-tags/${objectiveId}/removal`,
     ),
 
-  removeDocumentObjectiveTag: async (
-    orgId: string,
-    documentId: string,
-    objectiveId: string,
-  ): Promise<void> => {
-    const r = await fetch(
-      `${BASE}/orgs/${orgId}/documents/${documentId}/objective-tags/${objectiveId}`,
-      { method: "DELETE", credentials: "include" },
-    );
-    if (!r.ok) throw new ApiError(`${r.status} ${r.statusText}`, r.status);
-  },
+  removeDocumentObjectiveTag: (orgId: string, documentId: string, objectiveId: string) =>
+    send<void>(`/orgs/${orgId}/documents/${documentId}/objective-tags/${objectiveId}`, "DELETE"),
 
   publishDocument: (orgId: string, documentId: string, approvedByContactId: string) =>
     req<DocumentRow>(`/orgs/${orgId}/documents/${documentId}/publish`, {

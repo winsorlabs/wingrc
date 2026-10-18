@@ -6,7 +6,7 @@
 // race keeps the second editor's work and tells them what happened.
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, ApiError, ListConflictError } from "../api";
+import { api, ApiError, ListConflictError, TagRemovalRefusedError } from "../api";
 import type {
   LibraryListDetail,
   LibraryListSummary,
@@ -21,6 +21,7 @@ vi.mock("../api", async () => {
   return {
     ListConflictError: actual.ListConflictError,
     ApiError: actual.ApiError,
+    TagRemovalRefusedError: actual.TagRemovalRefusedError,
     api: {
       listLibrary: vi.fn(),
       listViews: vi.fn(),
@@ -426,6 +427,7 @@ describe("the List Builder (L.2.2)", () => {
 describe("tags (L.2.2)", () => {
   const v1 = version(1, [["R-1", "Open"]]);
   const tagged = (keys: string[]) => detail(v1, { control_keys: keys });
+  const LINK = { version_number: 2, objective_key: "CM.L2-3.4.1[a]", assessment_name: "FY26" };
 
   async function openRisk(keys: string[], canWrite = true, canDefine = canWrite) {
     mockIndex();
@@ -459,16 +461,12 @@ describe("tags (L.2.2)", () => {
   // now says what the server computed, and offers no removal it would refuse.
   it("says the evidence that blocks a removal, and offers no button to try it", async () => {
     await openRisk(["CM.L2-3.4.1", "RA.L2-3.11.1"]);
-    vi.mocked(api.checkTagRemoval).mockResolvedValue({
-      removable: false,
-      refused: "CM.L2-3.4.1 cannot be removed from 3-11-1a-risk-register: evidence rests on it (version 2 linked to CM.L2-3.4.1[a] in assessment 'FY26'). Unlink that evidence first.",
-      blocked_by: ["version 2 linked to CM.L2-3.4.1[a] in assessment 'FY26'"],
-    });
+    vi.mocked(api.checkTagRemoval).mockResolvedValue({ removable: false, reason: "evidence", links: [LINK] });
     fireEvent.click(screen.getByRole("button", { name: "Remove CM.L2-3.4.1" }));
     const dialog = screen.getByRole("group", { name: "Remove CM.L2-3.4.1" });
     expect(within(dialog).getByText(/Checking what rests on CM\.L2-3\.4\.1/)).toBeTruthy();
     expect(within(dialog).queryByRole("button", { name: /Yes, remove/ })).toBeNull();
-    expect(await within(dialog).findByText("version 2 linked to CM.L2-3.4.1[a] in assessment 'FY26'")).toBeTruthy();
+    expect(await within(dialog).findByText(/version 2, evidence for CM\.L2-3\.4\.1\[a\] in/)).toBeTruthy();
     expect(within(dialog).queryByRole("button", { name: /Yes, remove/ })).toBeNull();
     expect(api.checkTagRemoval).toHaveBeenCalledWith("org", "risk", "CM.L2-3.4.1");
     expect(api.removeListTag).not.toHaveBeenCalled();
@@ -476,17 +474,47 @@ describe("tags (L.2.2)", () => {
 
   it("says nothing rests on a practice only when the server found nothing, then asks", async () => {
     await openRisk(["CM.L2-3.4.1", "RA.L2-3.11.1"]);
-    vi.mocked(api.checkTagRemoval).mockResolvedValue({ removable: true, refused: null, blocked_by: [] });
+    vi.mocked(api.checkTagRemoval).mockResolvedValue({ removable: true, reason: null, links: [] });
     fireEvent.click(screen.getByRole("button", { name: "Remove CM.L2-3.4.1" }));
     const dialog = screen.getByRole("group", { name: "Remove CM.L2-3.4.1" });
-    expect(await within(dialog).findByText(/No evidence rests on this list for CM\.L2-3\.4\.1\./)).toBeTruthy();
+    expect(await within(dialog).findByText(/No evidence rests on Risk Register for CM\.L2-3\.4\.1\./)).toBeTruthy();
     expect(within(dialog).queryByText(/refused while evidence rests/)).toBeNull();
-    // A link made between the check and the click is still refused by the server.
+    // A link made between the check and the click is still refused by the
+    // server, and said the way a refused check is said.
     vi.mocked(api.removeListTag).mockRejectedValue(
-      new ApiError("CM.L2-3.4.1 cannot be removed from 3-11-1a-risk-register: evidence rests on it (version 2 linked to CM.L2-3.4.1[a] in assessment 'FY26'). Unlink that evidence first.", 409),
+      new TagRemovalRefusedError("log sentence 3-11-1a-risk-register", { removable: false, reason: "evidence", links: [LINK] }),
     );
     fireEvent.click(within(dialog).getByRole("button", { name: "Yes, remove CM.L2-3.4.1" }));
-    expect(await screen.findByText(/Unlink that evidence first/)).toBeTruthy();
+    expect(await within(dialog).findByText(/version 2, evidence for CM\.L2-3\.4\.1\[a\] in/)).toBeTruthy();
+    expect(within(dialog).queryByRole("button", { name: /Yes, remove/ })).toBeNull();
+    expect(screen.queryByText(/log sentence/)).toBeNull();
+  });
+
+  // L.10's live finding: the refusal said one fact three times -- a client
+  // prefix around the server's log sentence, then a bullet repeating it --
+  // and named the list by its key. Said once now, in the list's title.
+  it("states a refusal once, in the list's title, never its key", async () => {
+    await openRisk(["CM.L2-3.4.1", "RA.L2-3.11.1"]);
+    vi.mocked(api.checkTagRemoval).mockResolvedValue({ removable: false, reason: "evidence", links: [LINK] });
+    fireEvent.click(screen.getByRole("button", { name: "Remove CM.L2-3.4.1" }));
+    const dialog = screen.getByRole("group", { name: "Remove CM.L2-3.4.1" });
+    await within(dialog).findByText(/version 2, evidence for/);
+    const text = dialog.textContent ?? "";
+    expect(text).toContain("CM.L2-3.4.1 can't be removed from Risk Register while evidence rests on it");
+    expect(text).not.toContain("3-11-1a-risk-register");
+    expect(text.match(/can.t be removed|cannot be removed/g)).toHaveLength(1);
+    expect(text.match(/version 2/g)).toHaveLength(1);
+    expect(within(dialog).getAllByRole("listitem")).toHaveLength(1);
+  });
+
+  it("says a list's only practice cannot go, without asking", async () => {
+    await openRisk(["CM.L2-3.4.1", "RA.L2-3.11.1"]);
+    vi.mocked(api.checkTagRemoval).mockResolvedValue({ removable: false, reason: "last_tag", links: [] });
+    fireEvent.click(screen.getByRole("button", { name: "Remove CM.L2-3.4.1" }));
+    const dialog = screen.getByRole("group", { name: "Remove CM.L2-3.4.1" });
+    expect(await within(dialog).findByText(/is the only practice/)).toBeTruthy();
+    expect(within(dialog).queryByRole("button", { name: /Yes, remove/ })).toBeNull();
+    expect(within(dialog).queryByText(/No evidence rests/)).toBeNull();
   });
 
   it("says when it could not check, rather than that nothing rests on it", async () => {

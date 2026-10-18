@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -596,10 +597,42 @@ def add_list_tag(
 LAST_TAG = "A list serves at least one practice; add another before removing this one."
 
 
+class RestingLinkOut(BaseModel):
+    version_number: int
+    objective_key: str
+    assessment_name: str
+
+
 class TagRemovalOut(BaseModel):
+    """What removing a tag would do, as fields: the screen writes the one
+    sentence, in the subject's title (L.10's live finding; X.1). Shared with
+    the document tag check (routers/documents.py)."""
+
     removable: bool
-    refused: str | None  # the sentence the DELETE would answer with
-    blocked_by: list[str]  # the live links resting on the tag, named
+    reason: Literal["last_tag", "evidence"] | None
+    links: list[RestingLinkOut]  # the live links resting on the tag
+
+
+def links_out(links: list[list_library.RestingLink]) -> list[RestingLinkOut]:
+    return [
+        RestingLinkOut(
+            version_number=k.version_number, objective_key=k.objective_key,
+            assessment_name=k.assessment_name,
+        )
+        for k in links
+    ]
+
+
+def tag_refusal(message: str, reason: str, links: list[list_library.RestingLink]) -> HTTPException:
+    """The DELETE's 409: the log sentence plus the check's own fields, so
+    a refusal on the race between check and click reads like the check."""
+    return HTTPException(
+        status_code=409,
+        detail={
+            "message": message, "reason": reason,
+            "links": [k.model_dump() for k in links_out(links)],
+        },
+    )
 
 
 @router.get(
@@ -620,12 +653,11 @@ def check_list_tag_removal(
     if control_key not in origins:
         raise HTTPException(status_code=404, detail=f"This list does not serve {control_key}.")
     if len(origins) == 1:
-        return TagRemovalOut(removable=False, refused=LAST_TAG, blocked_by=[])
-    blockers = list_library.tag_removal_blockers(session, d.id, control_key)
-    if blockers:
-        refused = str(list_library.TagRemovalRefused(d.list_key, control_key, blockers))
-        return TagRemovalOut(removable=False, refused=refused, blocked_by=blockers)
-    return TagRemovalOut(removable=True, refused=None, blocked_by=[])
+        return TagRemovalOut(removable=False, reason="last_tag", links=[])
+    links = list_library.tag_removal_links(session, d.id, control_key)
+    if links:
+        return TagRemovalOut(removable=False, reason="evidence", links=links_out(links))
+    return TagRemovalOut(removable=True, reason=None, links=[])
 
 
 @router.delete(
@@ -646,15 +678,13 @@ def remove_list_tag(
     if control_key not in origins:
         raise HTTPException(status_code=404, detail=f"This list does not serve {control_key}.")
     if len(origins) == 1:
-        raise HTTPException(status_code=409, detail=LAST_TAG)
+        raise tag_refusal(LAST_TAG, "last_tag", [])
     try:
         event = list_library.remove_tag(
             session, d, control_key, "api", current_user.display_name or current_user.email
         )
     except list_library.TagRemovalRefused as e:
-        raise HTTPException(
-            status_code=409, detail={"message": str(e), "blocked_by": e.blockers}
-        ) from None
+        raise tag_refusal(str(e), "evidence", e.links) from None
     log_event(
         session, org_id=org_id, action="list.tag_remove", entity_type="list_definition",
         entity_id=d.id,

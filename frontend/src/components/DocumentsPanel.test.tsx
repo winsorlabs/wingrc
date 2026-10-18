@@ -92,6 +92,7 @@ function detail(overrides: Partial<DocumentDetail> = {}): DocumentDetail {
     ...row(),
     versions: [version()],
     tagged_objective_ids: [],
+    tagged_objectives: [],
     ...overrides,
   };
 }

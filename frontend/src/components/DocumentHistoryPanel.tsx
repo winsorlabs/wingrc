@@ -34,6 +34,10 @@ const ACTION_LABEL: Record<string, string> = {
 // Where an attachment was made (item X): which version, which objective,
 // which assessment -- from the audit row's own after_value.
 function linkDetail(event: DocumentAuditEvent): string | null {
+  if (event.action.startsWith("document.objective_tag.")) {
+    const key = (event.after_value ?? event.before_value ?? {}).objective_key;
+    return typeof key === "string" ? key : null;
+  }
   if (!event.action.startsWith("evidence.document_")) return null;
   const v = event.after_value ?? {};
   const where = `${String(v.control_key)}[${String(v.objective_key)}] in "${String(v.assessment_name)}"`;

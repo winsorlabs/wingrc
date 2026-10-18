@@ -199,18 +199,47 @@ def create_version(
     return version
 
 
-class TagRemovalRefused(ValueError):
-    """Removing this tag would narrow what an assessment rests on."""
+@dataclass(frozen=True)
+class RestingLink:
+    """One live evidence link a tag removal would narrow, as fields, so a
+    screen writes its own sentence (L.10's finding: a sentence built for a
+    log names the list by key and says the fact three times on screen).
+    Shared by lists and documents (item X.1)."""
 
-    def __init__(self, list_key: str, control_key: str, blockers: list[str]):
-        self.list_key, self.control_key, self.blockers = list_key, control_key, blockers
+    version_number: int
+    objective_key: str  # in full: "PE.L2-3.10.6[b]"
+    assessment_name: str
+
+    def __str__(self) -> str:
+        return (
+            f"version {self.version_number} linked to {self.objective_key} "
+            f"in assessment '{self.assessment_name}'"
+        )
+
+
+class TagRemovalRefused(ValueError):
+    """Removing this tag would narrow what an assessment rests on. The
+    message is for the log, the CLI and the 409's `message`; a screen
+    composes its own from `links`."""
+
+    def __init__(self, subject: str, tag: str, links: list[RestingLink]):
+        self.subject, self.tag, self.links = subject, tag, links
+        self.blockers = [str(link) for link in links]
         super().__init__(
-            f"{control_key} cannot be removed from {list_key}: evidence rests on it "
-            f"({'; '.join(blockers)}). Unlink that evidence first."
+            f"{tag} cannot be removed from {subject}: evidence rests on it "
+            f"({'; '.join(self.blockers)}). Unlink that evidence first."
         )
 
 
 def tag_removal_blockers(session: Session, list_id: uuid.UUID, control_key: str) -> list[str]:
+    """`tag_removal_links` as the sentences an import's or adoption's
+    refusal joins -- an empty list means the tag may go."""
+    return [str(link) for link in tag_removal_links(session, list_id, control_key)]
+
+
+def tag_removal_links(
+    session: Session, list_id: uuid.UUID, control_key: str
+) -> list[RestingLink]:
     """The evidence links that rest on this list serving `control_key`, each
     named so the refusal can say which -- an empty list means the tag may go.
 
@@ -245,9 +274,7 @@ def tag_removal_blockers(session: Session, list_id: uuid.UUID, control_key: str)
         .order_by(Assessment.name, AssessmentObjective.objective_key, EvidenceStateLink.id)
     ).all()
     return [
-        f"version {r.version_number} linked to {control_key}[{r.objective_key}] "
-        f"in assessment '{r.name}'"
-        for r in rows
+        RestingLink(r.version_number, f"{control_key}[{r.objective_key}]", r.name) for r in rows
     ]
 
 
@@ -301,9 +328,9 @@ def remove_tag(
     None when the list does not carry it."""
     if key not in tag_origins(session, definition.id):
         return None
-    blockers = tag_removal_blockers(session, definition.id, key)
-    if blockers:
-        raise TagRemovalRefused(definition.list_key, key, blockers)
+    links = tag_removal_links(session, definition.id, key)
+    if links:
+        raise TagRemovalRefused(definition.list_key, key, links)
     session.execute(
         delete(ListControlTag).where(
             ListControlTag.list_id == definition.id, ListControlTag.control_key == key
