@@ -5,7 +5,10 @@ split, the status transition table, the republish decision). **N.2 ✅ DONE**
 (2026-09-28, no migration — GFM-subset Markdown as the body format, TipTap
 on a constrained schema, structured server-side diffs, versions-plus-
 audit_log history, approved documents rendered into the bundle and PDF).
-**N.3 ✅ DONE** (2026-09-30, migration 0062 — `document_approval` as the
+**Item X** (2026-10-18, migration 0069) changed N.1's publish: it attaches
+nothing. A person attaches a published document on an objective, and a
+republish leaves links where they are. See `docs/roadmap.md`'s item X Done
+entry. **N.3 ✅ DONE** (2026-09-30, migration 0062 — `document_approval` as the
 single authoritative approval record, a derived review cadence that is
 never stored, and a digest job that changes no document state). See
 `docs/roadmap.md`'s Done entries for all three writeups, including N.2's §0
@@ -107,7 +110,9 @@ org profile, or by the operator explicitly.
 
 **4. Candidates, never auto-applied.** Suggested documents are suggestions:
 nothing is added, removed or approved automatically. Publishing attaches
-evidence; it never marks a control met. Roadmap N is already explicit —
+nothing and never marks a control met. A published document is offered on
+its tagged objectives, and a person attaches it (item X, CLAUDE.md's
+product invariants). Roadmap N is already explicit —
 "`control_state.status` is NOT changed — evidence is attached; engineer
 must review and manually mark objectives met."
 
@@ -132,7 +137,9 @@ explain why it doesn't fit — do not build a parallel notifier.
 `document` + `document_version` (append-only) + `document_objective_tag`.
 CRUD, RLS, roles. Publish → `Evidence` (`kind='reference'`) +
 `EvidenceStateLink` against the active assessment's `control_state` rows
-for each tagged objective, status untouched.
+for each tagged objective, status untouched. *(Superseded by item X,
+2026-10-18: publish writes the Evidence row only, and a person attaches
+it.)*
 
 Editing can be a plain text area in this slice — the editor is N.2. The
 point of N.1 is that the record shape is right.

@@ -156,8 +156,10 @@ BODY = "Our access control policy states that access is limited."
 
 
 def _published_doc(client, db_session, d: dict, *, doc_id: str = "AC-POL-001") -> dict:
-    """A document tagged to an objective and published, so it has an
-    Evidence row and a live EvidenceStateLink to assert stay untouched."""
+    """A document tagged to an objective, published, and attached there, so
+    it has an Evidence row and a live EvidenceStateLink to assert stay
+    untouched. Publishing attached it until item X; now a person does, so
+    the fixture does what that person would."""
     org_id = d["org"].id
     r = client.post(
         f"/orgs/{org_id}/documents",
@@ -175,7 +177,13 @@ def _published_doc(client, db_session, d: dict, *, doc_id: str = "AC-POL-001") -
         json={"approved_by_contact_id": str(d["contact"].id)},
     )
     assert r.status_code == 200, r.text
-    return r.json()
+    published = r.json()
+    r = client.post(
+        f"/orgs/{org_id}/assessments/{d['assessment'].id}/control-states/{d['cs_a'].id}"
+        f"/documents/{doc['id']}"
+    )
+    assert r.status_code == 201, r.text
+    return published
 
 
 def _backdate_approvals(db_session, document_id, *, days: int) -> None:
@@ -387,7 +395,8 @@ def test_reaffirm_refused_when_there_is_no_approved_version(
     """A draft has nothing to reaffirm.
 
     Allowing it would grant approval outside publish_document -- the only
-    path that attaches evidence -- so this is 409, not a convenience.
+    path that writes a version's evidence record -- so this is 409, not a
+    convenience.
     """
     d = _seed(db_session, fake_msp_admin)
     org_id = d["org"].id

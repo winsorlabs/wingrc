@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, assetUrl } from "../api";
 import type { EvidenceRow } from "../types";
+import { ObjectiveDocuments } from "./ObjectiveDocuments";
 import { ObjectiveLists } from "./ObjectiveLists";
 
 const ARTIFACT_LABELS: Record<string, string> = {
@@ -47,13 +48,15 @@ export function EvidenceSection({ orgId, assessmentId, controlStateId, canWrite,
   const [refRows, setRefRows] = useState<RefRow[]>([{ title: "", location: "" }]);
   const [addingRefs, setAddingRefs] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Lists linked as evidence (L.4) are listed by ObjectiveLists, not here.
+  // Lists linked as evidence (L.4) are listed by ObjectiveLists, and
+  // documents attached (item X) by ObjectiveDocuments, not here.
   const [linkedLists, setLinkedLists] = useState(0);
+  const [linkedDocuments, setLinkedDocuments] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    onCountChange(items.length + linkedLists);
-  }, [items.length, linkedLists]); // eslint-disable-line react-hooks/exhaustive-deps
+    onCountChange(items.length + linkedLists + linkedDocuments);
+  }, [items.length, linkedLists, linkedDocuments]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function reload() {
     return api.listEvidence(orgId, assessmentId, controlStateId).then(setItems);
@@ -221,6 +224,14 @@ export function EvidenceSection({ orgId, assessmentId, controlStateId, canWrite,
             controlStateId={controlStateId}
             canWrite={canWrite}
             onCountChange={setLinkedLists}
+          />
+
+          <ObjectiveDocuments
+            orgId={orgId}
+            assessmentId={assessmentId}
+            controlStateId={controlStateId}
+            canWrite={canWrite}
+            onCountChange={setLinkedDocuments}
           />
 
           {showRefForm && (

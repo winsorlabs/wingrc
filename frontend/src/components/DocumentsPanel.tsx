@@ -179,9 +179,9 @@ function reviewDetail(review: DocumentReviewState): string {
  * Re-approve an already-approved document without changing it (N.3).
  *
  * Deliberately does not offer an "edit and re-approve" shortcut: editing
- * creates a draft version and goes through Publish, which is what attaches
- * evidence. This button exists for the other case -- reviewed, unchanged,
- * still current -- and records exactly that.
+ * creates a draft version and goes through Publish, which writes the new
+ * version's evidence record. This button exists for the other case --
+ * reviewed, unchanged, still current -- and records exactly that.
  */
 function ReaffirmControl({
   orgId,
@@ -324,9 +324,10 @@ function PublishControl({
         {busy ? "Publishing…" : `Publish version ${current.version_number}`}
       </button>
       <p className="field-hint">
-        Publishing approves this version and attaches it as evidence to every objective the
-        document is tagged with. It does <strong>not</strong> mark any control met — an engineer
-        reviews and does that by hand.
+        Publishing approves this version. It attaches nothing: the document is offered as
+        evidence on each objective it is tagged with, and someone attaches it there. Evidence
+        already attached stays on the version it names. Publishing does <strong>not</strong> mark
+        any control met.
       </p>
       {error && <div className="doc-notice doc-notice-error">{error}</div>}
     </div>

@@ -2923,6 +2923,14 @@ class DocumentVersion(Base):
     approved_by_contact_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("contact.id", ondelete="SET NULL"), nullable=True
     )
+    # The document's objective tags when this version was published
+    # (migration 0069, item X): what it was approved to answer for. Tags
+    # are document-level, so without this a later untag would rewrite what
+    # an old version covered. NULL until published; 0069 backfilled earlier
+    # versions from the links publish made then.
+    published_objective_ids: Mapped[list | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

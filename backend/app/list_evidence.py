@@ -92,7 +92,10 @@ def drift_text(linked_version: int, current_version: int) -> str | None:
     )
 
 
-def _control_key(session: Session, cs: ControlState) -> tuple[str, str]:
+def control_key_for(session: Session, cs: ControlState) -> tuple[str, str]:
+    """(practice, objective key) for a state. Shared with document_evidence.py,
+    as is live_link_row: the two are all the list and document paths share
+    verbatim (item X)."""
     row = session.execute(
         select(Control.control_id, AssessmentObjective.objective_key)
         .join(AssessmentObjective, AssessmentObjective.control_id == Control.id)
@@ -143,7 +146,7 @@ def candidates(session: Session, org_id: uuid.UUID, cs: ControlState) -> list[Ca
     """The org's lists tagged with this objective's practice, each with why
     it is not offered (if it is not) and the version linked here (if one
     is). Templates included, so the reason can be said."""
-    control_key, _ = _control_key(session, cs)
+    control_key, _ = control_key_for(session, cs)
     rows = session.execute(
         select(ListDefinition, ListVersion)
         .join(ListControlTag, ListControlTag.list_id == ListDefinition.id)
@@ -173,7 +176,7 @@ def _offerable(
     d = session.get(ListDefinition, list_id)
     if d is None or d.org_id != org_id:
         raise LookupError("list not found")
-    control_key, objective_key = _control_key(session, cs)
+    control_key, objective_key = control_key_for(session, cs)
     tagged = session.scalar(
         select(ListControlTag.id).where(
             ListControlTag.list_id == d.id, ListControlTag.control_key == control_key
@@ -213,7 +216,7 @@ def _evidence_for(session: Session, org_id: uuid.UUID, v: ListVersion) -> Eviden
     return ev
 
 
-def _link_row(session: Session, ev: Evidence, cs: ControlState) -> EvidenceStateLink:
+def live_link_row(session: Session, ev: Evidence, cs: ControlState) -> EvidenceStateLink:
     existing = session.scalar(
         select(EvidenceStateLink).where(
             EvidenceStateLink.evidence_id == ev.id, EvidenceStateLink.control_state_id == cs.id
@@ -268,7 +271,7 @@ def link(
                 f"version {lv.version_number} is linked here; move it forward to version "
                 f"{v.version_number} instead"
             )
-    row = _link_row(session, _evidence_for(session, org_id, v), cs)
+    row = live_link_row(session, _evidence_for(session, org_id, v), cs)
     session.flush()
     _audit(session, org_id, "evidence.list_link", cs, d, v, control_key, objective_key)
     _record(session, org_id, "linked", cs, d, v, control_key, objective_key, saved_by)
@@ -292,7 +295,7 @@ def move_forward(
     for lk, _ in old:
         lk.is_archived = True
         lk.archived_at = now
-    row = _link_row(session, _evidence_for(session, org_id, v), cs)
+    row = live_link_row(session, _evidence_for(session, org_id, v), cs)
     session.flush()
     _audit(
         session, org_id, "evidence.list_move_forward", cs, d, v, control_key, objective_key,
@@ -318,7 +321,7 @@ def unlink(
     live = [(lk, lv) for lk, _, lv in _live_list_links(session, [cs.id]) if lv.list_id == d.id]
     if not live:
         raise LookupError("this list is not linked here")
-    control_key, objective_key = _control_key(session, cs)
+    control_key, objective_key = control_key_for(session, cs)
     for lk, lv in live:
         ev_id = lk.evidence_id
         session.delete(lk)

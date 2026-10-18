@@ -5442,6 +5442,265 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### Lesson: a record that rested on a side effect (item X, migration 0069)
+
+A document version's "what was this approved for" was never stored. It was
+read back from the EvidenceStateLinks that publish made as a side effect
+of approving (`_published_objective_ids`, archived links included). X
+removed the side effect, which was the defect, and that removed the record
+with it. Nothing failed: the query still ran and returned an empty set, so
+every newly published version would have said it covered nothing. The
+version-detail screen would then state a result nobody computed. It
+surfaced only because reading `VersionDetailOut`'s docstring for X showed
+where the "published" basis came from.
+
+**The shape will recur.** When an action's side effect is removed or
+changed, ask what else reads that side effect as a record. Look for:
+- a query over rows the action produced, standing in for a fact nobody
+  wrote down;
+- a count or a set "recovered" from links, events or rows made for
+  another purpose.
+
+The fix is to write the fact where it is decided, at the moment it is
+decided (0069 stores the tags at publish). Earlier rows are backfilled
+from the old proxy while it is still the true record, and the proxy is
+then read for nothing.
+
+---
+
+### Item X: a published document is offered, and a person attaches it ✅ DONE (2026-10-18; live walk pending)
+
+**What changed.** `publish_document` writes the new version's Evidence row
+and links it to nothing. A document with an approved version is offered
+on each objective it is tagged with (`document_evidence.py`,
+`routers/document_evidence.py`), and a person attaches it on the
+objective's evidence section (`ObjectiveDocuments.tsx`, beside
+`ObjectiveLists`). A link names a document version and stays there. A
+republish leaves it, and the link then says its version is superseded.
+Moving forward is per objective: a new link, with the old one archived.
+Each attach, move and removal is an audit row
+(`evidence.document_link` / `document_move_forward` / `document_unlink`),
+logged against the document version, so the document's History shows it.
+control_state and SPRS are untouched, as before, and the tests assert it
+again.
+
+**The docstring cited the rule in the act of breaking it.** Step 4 of
+`publish_document`'s docstring said *"control_state.status is NEVER
+touched here -- 'candidates, never auto-met': evidence is attached"*. Its
+writer read "candidates" as candidates for being marked *met*, saw that
+status was untouched, and attached evidence to every tagged objective in
+the same sentence. They believed they were following the rule they were
+breaking, and that is why it went unnoticed for weeks. CLAUDE.md's
+product invariants now say the wider rule out loud: *"Candidates are
+offered and a person attaches them; nothing is auto-attached."* The
+docstring now says what the rule means for this path, records the
+misreading, and points to the invariant, so the next reader does not
+inherit it.
+
+**The republish block archives nothing now.** It used to archive every
+live link on every superseded version's Evidence. Before this slice that
+was bad but symmetrical: it archived links nobody chose. After it, the
+same code would let a person approving version 3 silently undo another
+person's deliberate link to version 2, perhaps for reasons unrelated to
+that objective. That breaks *today's state never rewrites yesterday's
+record*, and it would be worse than the original defect, because the
+record erased was chosen. I found no case worth keeping:
+- A superseded version's links are the historical record.
+- The superseded flag is what tells a reader their status.
+- Moving a link is a person's act, per objective.
+
+`test_a_persons_link_survives_another_persons_republish` pins it: Avery
+attaches v1, Blake publishes v2, Avery's link is still live on v1, and it
+reads as superseded. Restoring the archive block fails four tests.
+
+**Generalise or twin: twin, by count.** `list_evidence.py` has about 350
+lines of code under its docstring.
+- **Shared verbatim with documents: 27 lines.** These are
+  `control_key_for` (8), `live_link_row` (16) and the refusal class (3).
+  The first two are now public and imported by `document_evidence.py`.
+- **About 75 lines share their shape and differ in every call they
+  make:**
+  - `link`, `move_forward` and `unlink`. Documents' `unlink` also differs
+    in behaviour: it must not delete the Evidence row, which is the
+    publish record that `delete_document`'s refusal rests on.
+  - `_audit` and `_record`.
+- **The rest is list-specific, with no document counterpart:**
+  - `is_populated`'s offer rule;
+  - practice-level tags (documents are tagged per objective);
+  - lazily created Evidence (documents' rows exist from publish);
+  - `LinkView`/`links` for the list page and bundle picker;
+  - `list_link_event`.
+
+Abstracting a 75-line skeleton over two modules that disagree in every
+step would make both harder to follow. On the frontend,
+`ObjectiveDocuments.tsx` copies `ObjectiveLists.tsx`'s structure, but
+every field, string and API call differs. Lists were out of scope, so
+L.10's component was left alone. Both components carry the L.10 rule, and
+each has its own rendered-output test for it. Restoring a shared row shape
+fails that test.
+
+**Superseded is not drift, and the two sentences say so.**
+- A list: *"List version 3 is available. This evidence stays on version 2
+  until someone moves it forward."*
+- A document: *"Version 2, attached here, is superseded: version 3 is the
+  approved one, and version 2 may no longer be in force. This evidence
+  stays on version 2 until someone moves it forward."*
+
+A list's older version was true when linked and is still a true record. A
+superseded policy may no longer be in force, which is a different fact
+for an assessor. The two sentences are pinned side by side
+(`test_superseded_is_said_as_superseded_not_as_a_newer_version`). In the
+bundle, the manifest and the implementation page print *"version 2
+**superseded**: version 3 is the approved one, and version 2 may no
+longer be in force"* beside the evidence. The UI shows a *superseded*
+badge on the attached row.
+
+**The general rule for any path that links evidence.** Ask two questions:
+1. Is the link created by a person's own act?
+2. Does it move an existing link?
+
+A link is right only for "yes, no". How each path answers:
+- **Attaching here:** passes.
+- **Moving forward:** a person's act, per objective, whose whole purpose
+  is the move.
+- **Publish:** failed both questions.
+- **`review_cycles.close_cycle`:** unchanged by X, and it passes only on
+  the path a person closes.
+  - When the last reviewer attests, `attest` closes the cycle with
+    `completed`. That attestation is the person's act, for exactly
+    AC.L2-3.1.1[a]/[c], and it moves nothing:
+    `test_closing_a_review_cycle_is_a_persons_act_and_moves_nothing` checks
+    that a person's link on the same objective is untouched.
+  - **The deadline close is a different decision.** I first recorded it as
+    passing if the act counted is the opening of the cycle. Jarrod's better
+    question was what the attestation records: on a deadline or
+    undeliverable close, it records that nobody attested. Decided: attach
+    only what attests. See "Review cycles attach only what attests" under
+    Planned (not built in X).
+
+**Links already on live: none.** I took the count on live (b70958d,
+2026-10-18) before deploying:
+
+| What | Count |
+| --- | --- |
+| Live document links | 0 |
+| Archived document links | 0 |
+| Evidence rows naming a document version | 2 (one org) |
+| Approved versions | 2 |
+| Draft versions | 2 |
+
+The two approved versions were published when nothing would link them,
+so there is nothing to leave in place or re-offer.
+
+**Actor:** no history entry claims an attachment nobody made. There is no
+document twin of `list_link_event`. A document's History is versions plus
+audit rows (N.2's decision: no parallel history table), and every role
+that can read the document can read it. L.10's reason for a table, that
+the audit log was not readable where the list was, does not hold here.
+A link made by publish before X has no attach event. Its record is the
+`document.publish` audit row, made by whoever published.
+
+**Decided in the slice:**
+- **The version records what it was approved for.** Migration 0069 adds
+  `document_version.published_objective_ids`, the document's tags at
+  publish.
+  - The version detail's "published" objective set used to be read back
+    from publish's links. With no links, every new version would have
+    claimed to cover nothing: a screen stating a result it never
+    computed.
+  - Earlier versions are backfilled from the links publish made then,
+    which were their record. A version published with no in_progress
+    assessment gets `[]`, which is what its record says.
+  - No link is read as coverage any more.
+  - The test now untags after publishing, and v1 still answers with its
+    own set.
+- **The bundle's documents page** now reads *"Attached as evidence for"*
+  (it said *Objectives*). It lists this assessment's attachments as
+  `AC.L2-3.1.1[a]`, where it used to show a bare `a` from any assessment.
+  With none, it says *"Not attached as evidence in this assessment"*
+  rather than a dash.
+- **A published document's Evidence row is not stray evidence.** It is
+  excluded from the bundle's Unlinked Evidence section, as list versions
+  already were.
+  - It is also excluded from the general evidence list on an objective,
+    since `ObjectiveDocuments` shows it.
+  - The general remove route no longer deletes such a row when its last
+    link goes. Before X that route could quietly make a published
+    document deletable.
+- **A product's deactivation leaves an attached document alone**, as L.4
+  did for lists.
+- **Copy that described the old behaviour is rewritten:**
+  - the publish hint ("attaches it as evidence to every objective…");
+  - the delete refusal ("has evidence attached");
+  - two docstrings, in reaffirm and the N.3 test.
+
+**Found after the build, before merge (2026-10-18):**
+- **The bundle did not carry the text of a superseded version a link
+  names. Fixed in this PR, before merge.** L.3/L.4 established that a
+  bundle renders the exact version a link names: `lists/` embeds every
+  version a live link points at. A document body rendered in one place,
+  `ssp/06_documents.html` and the PDF built from the same function, and
+  only for `approved` versions. So for a link on a superseded v2:
+  - the manifest named v2;
+  - the documents page carried v3's text under its own label;
+  - v2's text was nowhere.
+
+  Before X this state could not exist, because a republish archived every
+  link on the superseded version. Shipping it would have meant the first
+  bundle anyone generated named evidence it did not carry. The fix:
+  - `06_documents.html` (and so the PDF) has a second section, *Superseded
+    Versions Attached as Evidence*. It carries every superseded version
+    that a live link **in this assessment** names, with its own text,
+    under `doc-<slug>-v<n>`, marked superseded with the version approved
+    now.
+  - The approved section and its `doc-<slug>` ids are unchanged.
+  - Each document evidence line in the manifest and on the implementation
+    page now links its version number to that section.
+  - A superseded version nothing in this assessment names, including one
+    attached only in another assessment, is not carried.
+
+  Pinned by `test_a_superseded_document_reads_as_superseded_in_the_bundle`
+  (v1's own text under v1's id, v2's under v2's, two exports identical)
+  and `test_a_superseded_version_nothing_names_is_not_carried`.
+- **A document tag that a link rests on can be removed.** Planned as the
+  next slice, together with the tag editor: "X.1. Documents get a tag
+  editor, and a tag a link rests on cannot be removed".
+- **No screen tags a document with an objective.** `api.ts` has
+  `addDocumentObjectiveTag`/`removeDocumentObjectiveTag`, and no component
+  calls them. Live has 0 `document_objective_tag` rows. So on live,
+  through the UI, nothing is ever offered, and the live walk below needs
+  its tag made through the API. Before X the same fact meant publish never
+  linked anything on live, which is why the count was 0.
+
+**Not done; noted for later:**
+- A document's page does not list where it is attached. The list page has
+  that and the document's History has the events.
+- The three L.10 tag-refusal cosmetics stay folded forward. They are in
+  the list library's frontend and would widen this diff.
+
+**Verified on the bench** (wl-util-1, isolated `wingrc_verify_x1303`):
+- 1812 backend tests passed, none skipped;
+- `ruff` clean;
+- `tsc -b` clean, 432 vitest passed, build succeeded.
+
+Mutation runs, each restored afterwards:
+- Putting back the republish archive fails 4 tests.
+- Putting back publish's auto-link fails 13.
+- Dropping the bundle's superseded wording fails 1.
+- Rendering an offered document inside the attached row's shape fails the
+  shape test.
+
+**Live walk (Jarrod), pending:**
+1. Publish a tagged document, and confirm it is offered, not attached, on
+   the objective.
+2. Attach it.
+3. Edit and republish.
+4. Confirm the link stayed on the version he chose and reads as
+   superseded.
+5. Then I verify the result by DB and audit log.
+
+---
+
 ### List library L.10: the screens say what is true ✅ DONE (2026-10-18, verified on live)
 
 **Found by Jarrod on live, within ten minutes of L.4's first use.** He
@@ -8758,7 +9017,8 @@ Verified directly: `test_republish_supersedes_prior_version_and_archives_
 its_evidence_links`. **Reopened as item X (2026-10-18):** the version
 pinning above stands, but the evidence moving to the new version, and
 publish attaching it at all, happen without anyone choosing them, against
-CLAUDE.md's product invariants.
+CLAUDE.md's product invariants. **Closed by item X (2026-10-18):** publish
+attaches nothing, and a republish leaves every link where a person put it.
 
 **What roadmap N's original spec kept vs. changed** (its field list dates
 to 2026-09-07, before any of this was real code):
@@ -9459,7 +9719,12 @@ expiry date per credential, checked the same way the certificate is, by
 the same banner -- and a rotation procedure for the Fernet key. A DNS
 credential, if one is ever taken, is a row here the day it is.
 
-### X. Publishing a document attaches it as evidence unchosen -- a hard-rule violation, live
+### X. Publishing a document attaches it as evidence unchosen -- a hard-rule violation, live ✅ BUILT (2026-10-18)
+
+**Built as the Done entry "Item X: a published document is offered, and a
+person attaches it".** That entry records what the slice decided. The text
+below is the spec as written, kept as it was. One change from it: a
+migration was needed after all (0069, `published_objective_ids`).
 
 **Found in L.4 (2026-10-17).** This is not an inconsistency between two
 designs. It breaks two of CLAUDE.md's product invariants: candidates are
@@ -9529,6 +9794,127 @@ the superseded flag. Backend: publish/republish, four routes, the
 `publish_document` tests rewritten. Frontend: documents on the objective
 beside lists. One slice, bench-verified like L.4, with the live link count
 taken before the deploy.
+
+### X.1. Documents get a tag editor, and a tag a link rests on cannot be removed -- the next slice
+
+**Why together.** Item X makes a published document an offered candidate
+on its tagged objectives, but no screen tags a document. `api.ts` has the
+two calls and no component uses them, and live has 0
+`document_objective_tag` rows. Without an editor, X ships dormant: a
+feature reachable only by API. The refusal on its own would be a second
+slice reachable only by API. The editor is what makes X usable, and the
+refusal is the rule it must obey from its first day. Neither is worth
+shipping alone.
+
+**The refusal is L.4's `tag_removal_blockers` rule, for documents.** It
+matters more after X than before. The links are a person's deliberate
+act now, so removing the tag silently narrows what a chosen link rests
+on. Today the link survives, and the objective shows "it is no longer
+tagged with this objective". The record of why it is there goes.
+
+**The slice:**
+- **Backend:**
+  - `DocumentDetailOut` carries `tagged_objectives` as
+    `{objective_id, control_key, objective_key, text}`. Today
+    `tagged_objective_ids` is bare ids, which no screen can show.
+  - `POST …/objective-tags` also accepts `objective_key`
+    (`"AC.L2-3.1.1[a]"`), resolved against the catalog. It is refused when
+    the key matches nothing, or more than one framework.
+  - `document_evidence.tag_removal_blockers(document_id, objective_id)`
+    returns the live links from any version of the document onto that
+    objective, in any assessment.
+  - `DELETE …/objective-tags/{objective_id}` refuses with 409 and
+    `blocked_by`, as `list_definitions` does.
+  - `GET …/objective-tags/{objective_id}/removal` runs the DELETE's own
+    checks (L.10).
+- **Frontend:** a *Tagged objectives* block on the document's Edit/Read
+  tab. Each tag is shown as `AC.L2-3.1.1[a]` plus its text, with a remove
+  control. It works like the list library's tag input: type the objective
+  key, then Add. Removing asks the server first and says what it found,
+  in L.10's dialog form, with no Yes when blocked. c3pao sees the tags and
+  no controls.
+- **Tests:**
+  - Backend (~8): add by key, with an unknown or ambiguous key refused;
+    detail carries keys; refused while a link rests on the tag, with the
+    blocker named; allowed once unlinked; a link in another assessment
+    blocks; the check and the DELETE agree; c3pao refused.
+  - Frontend (~5, item Z's form): rendered tags, add, blocked dialog with
+    no Yes, removable dialog, read-only.
+- **Then:** `NOT_TAGGED` becomes reachable only for a tag removed before
+  X.1. Keep it, and say so.
+
+**Size:** about L.10's.
+- **Editor:** about 100 frontend lines, because it copies the list
+  library's tag input and L.10's dialog rather than inventing a picker.
+- **Backend:** about 60 lines.
+- No migration.
+
+**One slice: yes.** A browsable objective picker over 320 objectives
+would not fit, and would be its own slice if wanted later. The typed key
+keeps it the size of what L.2.2 and L.10 already built.
+
+### Review cycles attach only what attests -- decided 2026-10-18, not built
+
+**The rule: attach only what attests.** A `completed` cycle attaches its
+attestation to AC.L2-3.1.1[a]/[c]. A deadline close (`closed_unattested`)
+or an undeliverable close (`closed_undeliverable`) keeps its record and
+attaches nothing:
+- The record is the Evidence row and the cycle with its reviewers.
+- Non-response stays recorded, which is what D.3's §3 wanted kept.
+- It is not filed as an attestation of objectives nobody reviewed.
+
+**What `close_cycle` does today.** The scheduler (`scheduler.py`, past
+`due_at`) calls `close_cycle(status="closed_unattested")`. If no reviewer
+was ever notified, `close_cycle` upgrades that to `closed_undeliverable`.
+Either way it writes:
+- `kind='file'`, `artifact_type='attestation'`;
+- title *"Periodic user/device review -- <date>"*;
+- an HTML body whose outcome line reads *"…without full attestation"* or
+  *"…no reviewer could be notified…, so no review was actually
+  attempted"*.
+
+It links that to [a]/[c] on every in_progress assessment, exactly as a
+completed cycle does.
+
+**The deciding fact: a screen reports what nothing computed** (CLAUDE.md's
+fourth invariant). The dashboard's *blocked objectives* widget
+(`routers/dashboard.py:_blocked_objectives`) treats any link as evidence
+present. So an objective nobody reviewed drops off it the moment a
+deadline close attaches. Other places that read it as an attestation:
+- the control-states evidence count (`routers/assessments.py`);
+- the bundle manifest, which shows only the title and an `attestation`
+  tag.
+
+None of this moves control_state or SPRS.
+
+**The slice, when built:**
+- `close_cycle` links only when `status == "completed"`.
+- The no-response Evidence row is still written, still reachable from the
+  cycle, and not linked.
+- The tests that assert a deadline close links (`test_review_cycles.py`,
+  the scheduler tests) keep their scenarios. They assert no link and say
+  why.
+- Item X's `test_closing_a_review_cycle_is_a_persons_act_and_moves_nothing`
+  keeps covering the completed path.
+- Existing deadline-closed links on live are counted first, then left or
+  re-offered by decision. Nothing is removed silently.
+
+Small: a few lines and the test updates.
+
+**Separately: the widget's "any link means covered" test is weak on its
+own.** `_blocked_objectives` asks whether *any* `evidence_state_link`
+row exists. It does not filter `is_archived`, so a link archived by a
+product's deactivation counts as evidence present. It does not ask
+whether the evidence is current either:
+- a list link that has drifted counts;
+- a superseded document version counts;
+- an expired artifact counts.
+
+The deadline-close attestation is one case of the weakness, not the whole
+of it. The widget needs a stated definition of "has evidence". At least
+live links only, and probably the same set the bundle's per-objective
+evidence uses. That belongs with item Z: a screen's count says what it
+computed.
 
 ### Y. A test that models.py's CHECK constraints are the database's
 

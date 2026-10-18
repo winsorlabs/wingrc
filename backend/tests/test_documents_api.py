@@ -256,9 +256,17 @@ def test_tagging_unknown_objective_422s(client, db_session, fake_msp_admin):
 # ---------------------------------------------------------------------------
 
 
-def test_publish_attaches_evidence_for_every_tagged_objective_and_leaves_control_state_alone(
+def test_publish_offers_the_document_on_every_tagged_objective_and_attaches_it_to_none(
     client, db_session, fake_msp_admin
 ):
+    """Was `test_publish_attaches_evidence_for_every_tagged_objective_and_
+    leaves_control_state_alone`, and asserted two links here. That was the
+    behaviour as built, and it was deliberate: publish's docstring cited
+    "candidates, never auto-met" and read it as "never auto-*met*". Item X
+    (2026-10-18) found that it broke the rule it cited -- nobody chose
+    those links -- so the same scenario now asserts no link at all, and
+    the document offered on both objectives instead. control_state is
+    still untouched, as it always was."""
     d = _seed(db_session, fake_msp_admin)
     doc = _create_doc(client, d["org"].id)
     for obj in (d["obj_a"], d["obj_b"]):
@@ -295,13 +303,19 @@ def test_publish_attaches_evidence_for_every_tagged_objective_and_leaves_control
             EvidenceStateLink.control_state_id.in_([d["cs_a"].id, d["cs_b"].id])
         )
     ).all()
-    assert len(links) == 2
-    evidence_ids = {link.evidence_id for link in links}
-    assert len(evidence_ids) == 1, "one Evidence row satisfies both tagged objectives"
-    ev = db_session.get(Evidence, evidence_ids.pop())
+    assert links == [], "publish attaches nothing; a person attaches the document (item X)"
+    ev = db_session.scalars(
+        select(Evidence).where(Evidence.reference_location == "AC-POL-001")
+    ).one()
     assert ev.kind == "reference"
-    assert ev.reference_location == "AC-POL-001"
     assert ev.artifact_type == "document"
+    for cs in (d["cs_a"], d["cs_b"]):
+        [offer] = client.get(
+            f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/control-states/{cs.id}"
+            "/documents"
+        ).json()
+        assert offer["offered"] is True and offer["linked_version_id"] is None
+        assert offer["approved_version_id"] == body["current_version"]["id"]
 
 
 def test_evidence_resolves_to_the_approved_version_not_current(client, db_session, fake_msp_admin):
@@ -399,9 +413,16 @@ def test_publish_rejects_contact_from_another_org(client, db_session, fake_msp_a
 # ---------------------------------------------------------------------------
 
 
-def test_republish_supersedes_prior_version_and_archives_its_evidence_links(
+def test_republish_supersedes_prior_version_and_leaves_its_evidence_links_alone(
     client, db_session, fake_msp_admin
 ):
+    """Was `test_republish_supersedes_prior_version_and_archives_its_
+    evidence_links`, and asserted v1's link archived and a v2 link made in
+    its place. That was §3's deliberate decision (docs/roadmap.md, N.1).
+    Item X reversed it: once a person attaches v1, a republish archiving
+    that link is one person's act silently undoing another's. The
+    scenario stays; v1's link now stays live on v1, and v2's Evidence row
+    is written and attached to nothing."""
     d = _seed(db_session, fake_msp_admin)
     doc = _create_doc(client, d["org"].id)
     client.post(
@@ -414,6 +435,11 @@ def test_republish_supersedes_prior_version_and_archives_its_evidence_links(
         f"/orgs/{d['org'].id}/documents/{doc['id']}/publish",
         json={"approved_by_contact_id": str(d["contact"].id)},
     )
+    r = client.post(
+        f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/control-states/"
+        f"{d['cs_a'].id}/documents/{doc['id']}"
+    )
+    assert r.status_code == 201, r.text
     db_session.expire_all()
     v1_evidence = db_session.scalars(
         select(Evidence).where(Evidence.source_document_version_id == uuid.UUID(v1_id))
@@ -441,21 +467,20 @@ def test_republish_supersedes_prior_version_and_archives_its_evidence_links(
     v2_after = db_session.get(DocumentVersion, uuid.UUID(v2_id))
     assert v2_after.status == "approved"
 
-    # The OLD evidence row is untouched (still resolvable, never deleted) --
-    # only its LINK is archived.
+    # The OLD evidence row is untouched (still resolvable, never deleted),
+    # and so is its link: it stays where the person put it.
     db_session.refresh(v1_evidence)
     assert v1_evidence.source_document_version_id == uuid.UUID(v1_id)
     db_session.refresh(v1_link)
-    assert v1_link.is_archived is True
-    assert v1_link.archived_at is not None
+    assert v1_link.is_archived is False
+    assert v1_link.archived_at is None
 
     v2_evidence = db_session.scalars(
         select(Evidence).where(Evidence.source_document_version_id == uuid.UUID(v2_id))
     ).one()
-    v2_link = db_session.scalars(
+    assert db_session.scalars(
         select(EvidenceStateLink).where(EvidenceStateLink.evidence_id == v2_evidence.id)
-    ).one()
-    assert v2_link.is_archived is False
+    ).all() == [], "v2 is offered, not attached"
     assert v2_evidence.id != v1_evidence.id, "republish creates a new Evidence row, not a mutation"
 
 
@@ -853,9 +878,11 @@ def test_objective_set_change_is_reported_even_when_the_body_is_identical(
 def test_published_version_objective_set_survives_being_superseded(
     client, db_session, fake_msp_admin
 ):
-    """A republish archives the earlier version's evidence links. "What
-    did v1 cover" must survive that -- so the lookup deliberately includes
-    archived links.
+    """"What did v1 cover" must survive a republish. It used to be read
+    from the links publish made, archived ones included; since item X
+    publish makes none, and v1 records its tags when published
+    (published_objective_ids). The untag below is what the record is for:
+    tags are document-level, and v1's answer must not follow them.
     """
     d = _seed(db_session, fake_msp_admin)
     doc = _create_doc(client, d["org"].id)
@@ -873,6 +900,10 @@ def test_published_version_objective_set_survives_being_superseded(
         f"/orgs/{d['org'].id}/documents/{doc['id']}/publish",
         json={"approved_by_contact_id": str(d["contact"].id)},
     )
+    r = client.delete(
+        f"/orgs/{d['org'].id}/documents/{doc['id']}/objective-tags/{d['obj_a'].id}"
+    )
+    assert r.status_code == 204
 
     v1 = client.get(f"/orgs/{d['org'].id}/documents/{doc['id']}/versions/{v1_id}").json()
     assert v1["status"] == "superseded"

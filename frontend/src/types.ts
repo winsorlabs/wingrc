@@ -1640,6 +1640,23 @@ export interface ListImportReport {
 
 /** A list tagged with an objective's practice, as its evidence section shows
  * it: offered or why not, and the version linked here, if one is. */
+// A document on one objective (item X): tagged with it, attached to it, or both.
+export interface DocumentEvidenceCandidate {
+  document_id: string;
+  doc_id: string;
+  title: string;
+  approved_version_id: string | null;
+  approved_version_number: number | null;
+  offered: boolean;
+  not_offered: string | null;
+  linked_version_id: string | null;
+  linked_version_number: number | null;
+  linked_superseded: boolean;
+  evidence_id: string | null;
+  // "Version 2, attached here, is superseded: version 3 is the approved one, …"
+  superseded: string | null;
+}
+
 export interface ListEvidenceCandidate {
   list_id: string;
   list_key: string;
