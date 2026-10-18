@@ -81,6 +81,7 @@ import type {
   LibraryListSummary,
   LibraryListVersion,
   ListImportReport,
+  ListEvidenceStatus,
   ListTagEvent,
   ListViewSummary,
 } from "../types";
@@ -297,6 +298,50 @@ interface ConflictState {
   keepMine: Set<number>;
 }
 
+/** Where this list is evidence, and whether it can be (L.4). A link stays
+ * on the version it named; the list moving on is said, not fixed here --
+ * an objective's evidence is where a link is moved forward. */
+function ListAsEvidence({ status, isTemplate }: { status: ListEvidenceStatus; isTemplate: boolean }) {
+  if (isTemplate && status.links.length === 0) return null;
+  const drifted = status.links.filter((l) => l.drift);
+  return (
+    <section className="list-evidence" aria-label="As evidence">
+      {status.offered ? (
+        status.links.length === 0 && (
+          <p className="field-hint">
+            Offered as evidence for the practices above. Nothing is attached until someone attaches it from an
+            objective&apos;s evidence.
+          </p>
+        )
+      ) : (
+        <p className="field-hint">Not offered as evidence: {status.not_offered}.</p>
+      )}
+      {status.links.length > 0 && (
+        <>
+          <p>
+            Evidence for {status.links.length} objective{status.links.length === 1 ? "" : "s"}:
+          </p>
+          <ul className="list-evidence-links">
+            {status.links.map((l) => (
+              <li key={`${l.control_state_id}-${l.linked_version_id}`}>
+                {l.assessment_name}: {l.control_key}[{l.objective_key}], version {l.linked_version_number}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {drifted.length > 0 && (
+        <div className="doc-notice doc-notice-warn">
+          {[...new Set(drifted.map((l) => l.drift))].map((d) => (
+            <p key={d}>{d}</p>
+          ))}
+          <p className="field-hint">Each objective&apos;s evidence is where its link is moved forward.</p>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function LibraryListView({
   orgId,
   listId,
@@ -338,6 +383,7 @@ function LibraryListView({
   const [take, setTake] = useState<TakeTemplateResult | null>(null);
   const [takeBusy, setTakeBusy] = useState(false);
   const [takeError, setTakeError] = useState<string | null>(null);
+  const [asEvidence, setAsEvidence] = useState<ListEvidenceStatus | null>(null);
   const [setRowsScroller, sideways] = useSideScroll();
 
   const load = useCallback(async () => {
@@ -356,6 +402,13 @@ function LibraryListView({
       (es) => setTagEvents(es ?? []),
       () => setTagEvents([]),
     );
+    // So does where it is evidence (L.4).
+    Promise.resolve()
+      .then(() => api.listEvidenceStatus(orgId, listId))
+      .then(
+        (st) => setAsEvidence(st ?? null),
+        () => setAsEvidence(null),
+      );
   }, [orgId, listId]);
 
   useEffect(() => {
@@ -369,6 +422,7 @@ function LibraryListView({
     setTagError(null);
     setTake(null);
     setTakeError(null);
+    setAsEvidence(null);
     load();
   }, [load]);
 
@@ -714,6 +768,8 @@ function LibraryListView({
         )}
         {tagError && <div className="form-error">{tagError}</div>}
       </section>
+
+      {asEvidence && <ListAsEvidence status={asEvidence} isTemplate={detail.is_template} />}
 
       {/* Actionable first, then the rows: the rows are what this page is for (L.8). */}
       {detail.adopted_from && (detail.adopted_from.update_available || takeError) && (

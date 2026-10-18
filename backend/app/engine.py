@@ -48,6 +48,7 @@ from .models import (
     ControlState,
     ControlStateContributor,
     ControlStateHistory,
+    Evidence,
     EvidenceStateLink,
     EvidenceTask,
     EvidenceTaskStateLink,
@@ -1027,7 +1028,8 @@ def deactivate_org_product(
         this was the last contributor, responsibility is left exactly as it was
         (this is the original, pre-multi-contributor behavior, preserved
         unchanged) -- only status moves to needs_review either way.
-      - Evidence-state links on ALL affected states → archived. NOTE: this
+      - Evidence-state links on ALL affected states → archived, except a
+        list version a person linked (L.4, list_evidence.py). NOTE: this
         remains all-or-nothing per control_state, not scoped to which product's
         evidence it is -- a state with two contributors has ALL its evidence
         archived if EITHER one deactivates, which can archive evidence that
@@ -1176,13 +1178,20 @@ def deactivate_org_product(
     session.add_all(history_rows)
     session.flush()
 
-    # 3. Archive evidence_state_link rows on all tool-sourced states
+    # 3. Archive evidence_state_link rows on all tool-sourced states --
+    # except a list version linked as evidence (L.4). A person attached
+    # that list; no tool's coverage produced it, so a tool leaving is no
+    # reason to retire it, and archiving it would make the list's tag
+    # removable (list_library.tag_removal_blockers counts live links).
     evidence_links_archived = 0
     if sourced_states:
         link_rows = session.scalars(
-            select(EvidenceStateLink).where(
+            select(EvidenceStateLink)
+            .join(Evidence, Evidence.id == EvidenceStateLink.evidence_id)
+            .where(
                 EvidenceStateLink.control_state_id.in_(sourced_state_ids),
                 EvidenceStateLink.is_archived.is_(False),
+                Evidence.source_list_version_id.is_(None),
             )
         ).all()
 

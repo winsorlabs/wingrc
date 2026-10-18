@@ -1,4 +1,4 @@
-import type { ApiTokenRow, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, TlsExpiry, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent, AdoptResult, TakeTemplateResult } from "./types";
+import type { ApiTokenRow, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, TlsExpiry, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent, AdoptResult, TakeTemplateResult, ListEvidenceCandidate, ListEvidenceLink, ListEvidenceStatus } from "./types";
 
 const BASE = "/api";
 
@@ -377,6 +377,37 @@ export const api = {
     );
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   },
+
+  // ── L.4: lists as evidence. Offered, never attached: a person links one.
+  stateLists: (orgId: string, assessmentId: string, controlStateId: string) =>
+    send<ListEvidenceCandidate[]>(
+      `/orgs/${orgId}/assessments/${assessmentId}/control-states/${controlStateId}/lists`,
+      "GET"
+    ),
+
+  linkList: (orgId: string, assessmentId: string, controlStateId: string, listId: string) =>
+    send<ListEvidenceCandidate[]>(
+      `/orgs/${orgId}/assessments/${assessmentId}/control-states/${controlStateId}/lists/${listId}`,
+      "POST"
+    ),
+
+  moveListForward: (orgId: string, assessmentId: string, controlStateId: string, listId: string) =>
+    send<ListEvidenceCandidate[]>(
+      `/orgs/${orgId}/assessments/${assessmentId}/control-states/${controlStateId}/lists/${listId}/move-forward`,
+      "POST"
+    ),
+
+  unlinkList: (orgId: string, assessmentId: string, controlStateId: string, listId: string) =>
+    send<ListEvidenceCandidate[]>(
+      `/orgs/${orgId}/assessments/${assessmentId}/control-states/${controlStateId}/lists/${listId}`,
+      "DELETE"
+    ),
+
+  assessmentListLinks: (orgId: string, assessmentId: string) =>
+    send<ListEvidenceLink[]>(`/orgs/${orgId}/assessments/${assessmentId}/list-links`, "GET"),
+
+  listEvidenceStatus: (orgId: string, listId: string) =>
+    send<ListEvidenceStatus>(`/orgs/${orgId}/list-definitions/${listId}/evidence-links`, "GET"),
 
   addReferences: (
     orgId: string,

@@ -89,9 +89,11 @@ def test_the_requirement_table_matches_the_seeded_catalog():
     assert counts == _REQUIREMENTS
 
 
-# Tables that reference a list today, each settled for the tag-removal rule:
-# none of them links a list as evidence.
-_SETTLED = {"list_definition", "list_version", "list_control_tag", "list_tag_event"}
+# Tables that reference a list today, each settled for the tag-removal rule.
+# `evidence` links a list version as evidence (L.4, migration 0067):
+# tag_removal_blockers reads its links, which
+# test_list_evidence.py's tag tests pin against real rows.
+_SETTLED = {"list_definition", "list_version", "list_control_tag", "list_tag_event", "evidence"}
 
 
 def test_a_new_table_referencing_lists_must_settle_the_tag_removal_rule():
@@ -154,16 +156,20 @@ def _build(client, org_id, **over) -> dict:
 
 def _header_block(xlsx: bytes, first_column: str) -> dict:
     """The export's header block, by position, with the version's own values
-    taken out: the label each of rows 2-5 opens with, and the row the column
-    headers sit on."""
+    taken out: the label each of rows 2-7 opens with, and the row the column
+    headers sit on. Before roadmap T this compared rows 2-5 and passed while
+    neither export carried What goes here, Responsible or Review cadence --
+    the same header block, checking less than its name said."""
     ws = openpyxl.load_workbook(io.BytesIO(xlsx)).active
-    head = [ws.cell(row=r, column=1).value or "" for r in range(1, 6)]
+    head = [ws.cell(row=r, column=1).value or "" for r in range(1, 8)]
     return {
         "title_present": bool(head[0]),
         "row2": head[1].split(":")[0],
-        "row3": head[2].split(" ")[:2],
-        "row4": head[3].split(".")[0],
-        "row5": head[4],
+        "row3": head[2].split(":")[0],
+        "row4": [part.split(":")[0].strip() for part in head[3].split("|")],
+        "row5": head[4].split(" ")[:2],
+        "row6": head[5].split(".")[0],
+        "row7": head[6],
         "header_row": next(
             r for r in range(1, 12) if ws.cell(row=r, column=1).value == first_column
         ),
@@ -208,8 +214,10 @@ def test_a_list_built_by_hand_round_trips_like_an_imported_one(db_session, tmp_p
     ws = openpyxl.load_workbook(io.BytesIO(hand)).active
     assert ws["A1"].value == "Visitor Log"
     assert ws["A2"].value.endswith("PE.L2-3.10.3 / PE.L2-3.10.4")
-    assert "by Pat Builder" in ws["A3"].value
-    assert [ws.cell(row=7, column=c).value for c in (1, 2, 3)] == [
+    assert ws["A3"].value == "What goes here: Everyone escorted through the CUI area."
+    assert ws["A4"].value == "Responsible: Office Manager   |   Review cadence: Monthly"
+    assert "by Pat Builder" in ws["A5"].value
+    assert [ws.cell(row=9, column=c).value for c in (1, 2, 3)] == [
         "2026-10-15", "A. Visitor", "J. Escort"
     ]
 

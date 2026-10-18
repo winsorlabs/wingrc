@@ -276,6 +276,24 @@ class EvidenceSnap:
     file_size_bytes: int | None
     collected_at: datetime
     sha256_hash: str | None = None
+    # A list version linked as evidence (L.4): kind 'reference', and
+    # zip_path is lists/<file> when the bundle embeds that version.
+    list_version_id: uuid.UUID | None = None
+
+
+@dataclass(frozen=True)
+class ListLinkSnap:
+    """One live list link in this assessment (L.4), for lists/index.html:
+    which objective names which version, so an assessor sees drift without
+    cross-referencing."""
+
+    list_id: str
+    list_key: str
+    title: str
+    version_id: str
+    version_number: int
+    control_id: str
+    objective_key: str
 
 
 @dataclass
@@ -475,8 +493,13 @@ class BundleSnapshot:
     sprs_submissions: list[SprsSubmissionSnap] = field(default_factory=list)
     documents: list[DocumentSnap] = field(default_factory=list)
     # The lists the operator chose at export (roadmap L.3), each the version
-    # current at this snapshot. Empty means none were chosen -- never "all".
+    # current at this snapshot, plus every version a live evidence link in
+    # this assessment names (L.4). Empty means none were chosen -- never "all".
     lists: list[ListVersionSnap] = field(default_factory=list)
+    # Which of `lists` are current versions, by version id.
+    list_current_version_ids: frozenset[str] = frozenset()
+    # Every live list link in this assessment, chosen or not.
+    list_links: list[ListLinkSnap] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -943,6 +966,7 @@ def snapshot_bundle(
             Evidence.reference_location,
             Evidence.collected_at,
             Evidence.sha256_hash,
+            Evidence.source_list_version_id,
         )
         .select_from(ControlState)
         .join(EvidenceStateLink, EvidenceStateLink.control_state_id == ControlState.id)
@@ -1036,6 +1060,7 @@ def snapshot_bundle(
             file_size_bytes=er.file_size_bytes,
             collected_at=er.collected_at,
             sha256_hash=ev_hash,
+            list_version_id=er.source_list_version_id,
         )
         ev_by_cs.setdefault(cs_id, []).append(ev_snap)
 
@@ -1074,6 +1099,9 @@ def snapshot_bundle(
         .where(
             Evidence.org_id == org_id,
             ~Evidence.id.in_(_linked_ev_ids),
+            # A list version is evidence only through a link (L.4); one
+            # linked in another assessment is not this one's stray artifact.
+            Evidence.source_list_version_id.is_(None),
         )
         .order_by(Evidence.collected_at, Evidence.title, Evidence.id)
     ).all()
@@ -1372,25 +1400,66 @@ def snapshot_bundle(
         for r in document_rows
     ]
 
-    # --- lists the operator chose (roadmap L.3) ---
+    # --- lists the operator chose (roadmap L.3), and lists linked (L.4) ---
     # Never "every list in the org": most of an MSP's lists are unadopted
-    # templates, and a bundle is one tenant's assessment. Until a list can
-    # be linked as evidence (L.4) the operator names the lists at export,
-    # and lists/index.html records that choice. Each is embedded as the
-    # version current at this snapshot and named by that version's id --
-    # versions are append-only (migration 0064), so the id is the content.
+    # templates, and a bundle is one tenant's assessment. The operator names
+    # the lists at export, and lists/index.html records that choice. Each
+    # chosen list is embedded as the version current at this snapshot and
+    # named by that version's id -- versions are append-only (migration
+    # 0064), so the id is the content -- and also as every version a live
+    # evidence link in this assessment names, so the evidence resolves to
+    # exactly what was linked even after the list moved on.
+    list_link_rows = session.execute(
+        select(
+            ListDefinition.id, ListDefinition.list_key, ListVersion.title,
+            ListVersion.id.label("version_id"), ListVersion.version_number,
+            Control.control_id, AssessmentObjective.objective_key,
+        )
+        .select_from(EvidenceStateLink)
+        .join(Evidence, Evidence.id == EvidenceStateLink.evidence_id)
+        .join(ListVersion, ListVersion.id == Evidence.source_list_version_id)
+        .join(ListDefinition, ListDefinition.id == ListVersion.list_id)
+        .join(ControlState, ControlState.id == EvidenceStateLink.control_state_id)
+        .join(AssessmentObjective, AssessmentObjective.id == ControlState.objective_id)
+        .join(Control, Control.id == AssessmentObjective.control_id)
+        .where(
+            ControlState.assessment_id == assessment_id,
+            EvidenceStateLink.is_archived.is_(False),
+        )
+        .order_by(
+            ListDefinition.list_key, ListVersion.version_number, Control.control_id,
+            AssessmentObjective.objective_key, EvidenceStateLink.id,
+        )
+    ).all()
+    list_links = [
+        ListLinkSnap(
+            list_id=str(r.id), list_key=r.list_key, title=r.title,
+            version_id=str(r.version_id), version_number=r.version_number,
+            control_id=r.control_id, objective_key=r.objective_key,
+        )
+        for r in list_link_rows
+    ]
+
     lists: list[ListVersionSnap] = []
+    current_ids: set[str] = set()
     wanted = sorted(set(list_ids))
     if wanted:
-        list_rows = session.execute(
-            select(ListDefinition, ListVersion)
-            .join(ListVersion, ListVersion.id == ListDefinition.current_version_id)
+        defs = session.scalars(
+            select(ListDefinition)
             .where(ListDefinition.org_id == org_id, ListDefinition.id.in_(wanted))
             .order_by(ListDefinition.list_key, ListDefinition.id)
         ).all()
-        missing = set(wanted) - {d.id for d, _ in list_rows}
+        missing = set(wanted) - {d.id for d in defs}
         if missing:
             raise LookupError(f"lists not found in this organization: {sorted(map(str, missing))}")
+        version_ids = {d.current_version_id for d in defs if d.current_version_id} | {
+            r.version_id for r in list_link_rows if r.id in set(wanted)
+        }
+        versions = session.scalars(
+            select(ListVersion)
+            .where(ListVersion.id.in_(version_ids))
+            .order_by(ListVersion.list_id, ListVersion.version_number, ListVersion.id)
+        ).all()
         tag_rows = session.execute(
             select(ListControlTag.list_id, ListControlTag.control_key)
             .where(ListControlTag.list_id.in_(wanted))
@@ -1399,7 +1468,20 @@ def snapshot_bundle(
         tags: dict[uuid.UUID, list[str]] = {}
         for list_id, key in tag_rows:
             tags.setdefault(list_id, []).append(key)
-        lists = [snap_version(d, v, tuple(tags.get(d.id, ()))) for d, v in list_rows]
+        by_list: dict[uuid.UUID, list[ListVersion]] = {}
+        for v in versions:
+            by_list.setdefault(v.list_id, []).append(v)
+        for d in defs:
+            for v in by_list.get(d.id, []):
+                lists.append(snap_version(d, v, tuple(tags.get(d.id, ()))))
+        current_ids = {str(d.current_version_id) for d in defs if d.current_version_id}
+
+    # A list link's evidence points at its embedded workbook, if embedded.
+    embedded = {s.version_id: f"lists/{s.filename}" for s in lists}
+    for snaps in ev_by_cs.values():
+        for e in snaps:
+            if e.list_version_id is not None:
+                e.zip_path = embedded.get(str(e.list_version_id))
 
     # Stamp generated_at after all data is collected
     generated_at = datetime.now(UTC)
@@ -1423,6 +1505,8 @@ def snapshot_bundle(
         sprs_submissions=sprs_submissions,
         documents=documents,
         lists=lists,
+        list_current_version_ids=frozenset(current_ids),
+        list_links=list_links,
     )
 
 
@@ -1774,7 +1858,9 @@ def _implementation_body(snapshot: BundleSnapshot) -> str:
                     f"<li>{_esc(e.title)} "
                     f"<span class='s-tag'>{_esc(e.artifact_type)}</span>"
                     + (
-                        f" <span class='ev-path'>{_esc(e.zip_path or '')}</span>"
+                        _list_evidence_note(e)
+                        if e.list_version_id is not None
+                        else f" <span class='ev-path'>{_esc(e.zip_path or '')}</span>"
                         if e.kind == "file" and e.zip_path
                         else (
                             f" <span class='s-tag'>ref</span> {_esc(e.location or '')}"
@@ -2193,10 +2279,32 @@ def _render_ssp_pdf(snapshot: BundleSnapshot) -> bytes:
     return HTML(string=html_doc).write_pdf()
 
 
+def _list_evidence_note(ev: EvidenceSnap) -> str:
+    """Where a linked list version is in this bundle, or that it is not."""
+    if ev.zip_path:
+        return f" <span class='ev-path'>{_esc(ev.zip_path)}</span>"
+    return (
+        f" {_esc(ev.location or '')} <em style='color:#9ca3af'>"
+        "(list not chosen for this bundle; see lists/index.html)</em>"
+    )
+
+
 def _render_evidence_li(ev: EvidenceSnap, manifest_dir: str) -> str:
     """One manifest <li> for a single evidence item — shared by the
     per-objective sections and the unlinked-evidence section, since both
     render the same file/reference/unavailable cases (ADR 0007)."""
+    if ev.list_version_id is not None:
+        if ev.zip_path:
+            href = posixpath.relpath(ev.zip_path, manifest_dir)
+            return (
+                f'<li><a href="{_esc(href)}">{_esc(ev.title)}</a>'
+                f' <span class="s-tag">list</span> {_esc(ev.location or "")}'
+                "<br><span class='ev-path'>SHA-256 in artifact_log.txt</span></li>"
+            )
+        return (
+            f"<li>{_esc(ev.title)} <span class='s-tag'>list</span>"
+            f"{_list_evidence_note(ev)}</li>"
+        )
     if ev.kind == "file":
         if ev.zip_path:
             href = posixpath.relpath(ev.zip_path, manifest_dir)
@@ -2475,58 +2583,96 @@ def _render_outstanding(snapshot: BundleSnapshot) -> str:
     return _html_page("Outstanding Items", body)
 
 
+def _chosen_list_count(snapshot: BundleSnapshot) -> int:
+    return len({s.list_id for s in snapshot.lists})
+
+
 def _lists_summary(snapshot: BundleSnapshot) -> str:
-    n = len(snapshot.lists)
+    n = _chosen_list_count(snapshot)
     if n == 0:
         return "None chosen at export (see lists/index.html)"
     return (
-        f"{n} chosen at export, each embedded as one list version named by its id "
+        f"{n} chosen at export, each embedded as list versions named by id "
         "(see lists/index.html)"
     )
 
 
 def _render_lists(snapshot: BundleSnapshot, list_hashes: dict[str, str]) -> str:
-    """lists/index.html: which lists this bundle carries, and that the
-    operator chose them. The choice is the record -- an absent list was
-    not chosen, not forgotten -- so the page exists even when it is empty."""
+    """lists/index.html: which lists this bundle carries, that the operator
+    chose them, and which versions this assessment's evidence links name.
+    The choice is the record -- an absent list was not chosen, not
+    forgotten -- so the page exists even when it is empty."""
     head = (
         f"{_stamp(snapshot)}<h1>Lists</h1>"
         "<p>Lists are included in a bundle only when the operator chooses them at "
         "export; no list is included by default. Each is embedded as the list version "
-        "that was current when this bundle was generated, named by that version's id. "
+        "that was current when this bundle was generated, and as every version this "
+        "assessment's evidence links name, each named by that version's id. "
         "A list version is never changed once saved, so the id identifies exactly that "
         "version's rows; the list itself may have moved on since, and this bundle does not.</p>"
     )
+    links_by_version: dict[str, list[ListLinkSnap]] = {}
+    for lk in snapshot.list_links:
+        links_by_version.setdefault(lk.version_id, []).append(lk)
+    chosen = {s.list_id for s in snapshot.lists}
     if not snapshot.lists:
         body = head + "<p class='no-stmt'>No lists were chosen for this bundle.</p>"
-        return _html_page("Lists", body)
-    rows = []
-    for s in snapshot.lists:
-        rel = f"lists/{s.filename}"
-        kind = (
-            " <span class='badge'>template: rows are examples</span>" if s.is_template else ""
+    else:
+        rows = []
+        for s in snapshot.lists:
+            rel = f"lists/{s.filename}"
+            kind = (
+                " <span class='badge'>template: rows are examples</span>" if s.is_template else ""
+            )
+            current = s.version_id in snapshot.list_current_version_ids
+            linked = links_by_version.get(s.version_id, [])
+            role = "current" if current else "<strong>not current</strong>"
+            if linked:
+                where = ", ".join(f"{lk.control_id}[{lk.objective_key}]" for lk in linked)
+                role += f"; evidence for {_esc(where)}"
+                if not current:
+                    newest = max(
+                        x.version_number for x in snapshot.lists if x.list_id == s.list_id
+                    )
+                    role += (
+                        f" -- linked at version {s.version_number}; the list was at "
+                        f"version {newest} when this bundle was generated"
+                    )
+            rows.append(
+                "<tr>"
+                f"<td>{_esc(s.title)}{kind}</td>"
+                f"<td>{_esc(', '.join(s.control_keys))}</td>"
+                f"<td>{s.version_number}</td>"
+                f"<td>{role}</td>"
+                f"<td><span class='ev-path'>{_esc(s.version_id)}</span></td>"
+                f"<td>{_esc(s.saved_at.strftime('%Y-%m-%d %H:%M UTC'))}"
+                f" by {_esc(s.saved_by or 'the template import')}</td>"
+                f"<td>{len(s.rows)}</td>"
+                f"<td><a href=\"{_esc(s.filename)}\">{_esc(s.filename)}</a><br>"
+                f"<span class='ev-path'>SHA-256 {_esc(list_hashes[rel])}</span></td>"
+                "</tr>"
+            )
+        body = (
+            head
+            + f"<p>{_chosen_list_count(snapshot)} list(s) chosen for this bundle.</p>"
+            "<table><tr><th>List</th><th>Serves</th><th>Version</th><th>In this bundle as</th>"
+            "<th>Version id</th><th>Saved</th><th>Rows</th><th>File</th></tr>"
+            + "".join(rows)
+            + "</table>"
         )
-        rows.append(
-            "<tr>"
-            f"<td>{_esc(s.title)}{kind}</td>"
-            f"<td>{_esc(', '.join(s.control_keys))}</td>"
-            f"<td>{s.version_number}</td>"
-            f"<td><span class='ev-path'>{_esc(s.version_id)}</span></td>"
-            f"<td>{_esc(s.saved_at.strftime('%Y-%m-%d %H:%M UTC'))}"
-            f" by {_esc(s.saved_by or 'the template import')}</td>"
-            f"<td>{len(s.rows)}</td>"
-            f"<td><a href=\"{_esc(s.filename)}\">{_esc(s.filename)}</a><br>"
-            f"<span class='ev-path'>SHA-256 {_esc(list_hashes[rel])}</span></td>"
-            "</tr>"
+    unchosen = [lk for lk in snapshot.list_links if lk.list_id not in chosen]
+    if unchosen:
+        items = "".join(
+            f"<li>{_esc(lk.title)}, version {lk.version_number} "
+            f"(<span class='ev-path'>{_esc(lk.version_id)}</span>): evidence for "
+            f"{_esc(lk.control_id)}[{_esc(lk.objective_key)}]</li>"
+            for lk in unchosen
         )
-    body = (
-        head
-        + f"<p>{len(snapshot.lists)} list(s) chosen for this bundle.</p>"
-        "<table><tr><th>List</th><th>Serves</th><th>Version</th><th>Version id</th>"
-        "<th>Saved</th><th>Rows</th><th>File</th></tr>"
-        + "".join(rows)
-        + "</table>"
-    )
+        body += (
+            "<h2>Linked as evidence, not chosen for this bundle</h2>"
+            "<p>These list versions are evidence in this assessment, and the operator "
+            f"did not include them; their workbooks are not in this bundle.</p><ul>{items}</ul>"
+        )
     return _html_page("Lists", body)
 
 
@@ -2544,7 +2690,7 @@ def _render_index(snapshot: BundleSnapshot) -> str:
         ("SSP — Customer Responsibility Matrix", "ssp/05_customer_responsibility_matrix.html"),
         ("SSP — Approved Policies &amp; Procedures", "ssp/06_documents.html"),
         ("SSP — Consolidated PDF", "ssp/system_security_plan.pdf"),
-        (f"Lists ({len(snapshot.lists)} chosen at export)", "lists/index.html"),
+        (f"Lists ({_chosen_list_count(snapshot)} chosen at export)", "lists/index.html"),
         ("Evidence Manifest", "evidence/manifest.html"),
         ("SPRS Scoring Summary", "summary/scoring.html"),
         ("Outstanding Items", "summary/outstanding.html"),

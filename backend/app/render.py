@@ -170,6 +170,12 @@ def _pinned(xlsx: bytes, when: datetime) -> bytes:
     return out.getvalue()
 
 
+# The export's column header row. Not the importer's (list_templates
+# .HEADER_ROW, row 10): an export is not a template -- see docs/roadmap.md
+# item T on whether it should become one.
+LIST_EXPORT_HEADER_ROW = 8
+
+
 def render_list_version_bytes(snap: ListVersionSnap, generated_by: str = "WinGRC") -> bytes:
     """One list-library version as a workbook, in memory -- never a shared
     path (the lists slice's export defect, 2026-10-07)."""
@@ -184,27 +190,38 @@ def render_list_version_bytes(snap: ListVersionSnap, generated_by: str = "WinGRC
     ws["A1"].font = _TITLE_FONT
     ws["A2"] = "CMMC Practice / NIST 800-171: " + " / ".join(snap.control_keys)
     ws["A2"].font = _META_FONT
-    ws["A3"] = (
+    # What the list is for, who owns it and how often it is reviewed: for a
+    # CMMC artifact, most of the point (roadmap T). Worded as the template
+    # header block's rows 4 and 5 are, and said when absent rather than left
+    # blank, so an assessor can tell "not recorded" from a missing row.
+    ws["A3"] = f"What goes here: {snap.description or 'not recorded'}"
+    ws["A3"].font = _META_FONT
+    ws["A4"] = (
+        f"Responsible: {snap.responsible or 'not recorded'}   |   "
+        f"Review cadence: {snap.review_cadence or 'not recorded'}"
+    )
+    ws["A4"].font = _META_FONT
+    ws["A5"] = (
         f"List version {snap.version_number}, version id {snap.version_id}: saved "
         f"{saved_at.strftime('%Y-%m-%d %H:%M UTC')} by "
         f"{snap.saved_by or 'the template import'} ({len(snap.rows)} row(s))."
     )
-    ws["A3"].font = _META_FONT
+    ws["A5"].font = _META_FONT
     note = (
         f"Exported by {generated_by} from its list library. A list version is fixed once "
         "saved; this workbook is that version, not a hand-edited sheet."
     )
     if snap.is_template:
         note += " This is an MSP template: its rows are illustrative examples."
-    ws["A4"] = note
-    ws["A4"].font = _META_FONT
-    ws["A5"] = (
+    ws["A6"] = note
+    ws["A6"].font = _META_FONT
+    ws["A7"] = (
         "Highlighted [PLACEHOLDER] cells are template examples or known absent for the "
         "stated reason; blank cells have no value recorded."
     )
-    ws["A5"].font = _META_FONT
+    ws["A7"].font = _META_FONT
 
-    header_row_num = 6
+    header_row_num = LIST_EXPORT_HEADER_ROW
     for col_idx, display in enumerate(snap.columns, start=1):
         cell = ws.cell(row=header_row_num, column=col_idx, value=display)
         cell.font = _COLHEAD_FONT

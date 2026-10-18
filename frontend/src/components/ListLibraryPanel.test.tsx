@@ -7,7 +7,13 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, ApiError, ListConflictError } from "../api";
-import type { LibraryListDetail, LibraryListSummary, LibraryListVersion, ListViewSummary } from "../types";
+import type {
+  LibraryListDetail,
+  LibraryListSummary,
+  LibraryListVersion,
+  ListEvidenceStatus,
+  ListViewSummary,
+} from "../types";
 import { ListLibraryPanel } from "./ListLibraryPanel";
 
 vi.mock("../api", async () => {
@@ -32,6 +38,7 @@ vi.mock("../api", async () => {
       adoptTemplates: vi.fn(),
       takeTemplateVersion: vi.fn(),
       getOrgs: vi.fn(),
+      listEvidenceStatus: vi.fn(),
     },
   };
 });
@@ -654,5 +661,41 @@ describe("adopting templates (L.7)", () => {
     render(<ListLibraryPanel orgId="org" canWrite={true} />);
     await screen.findByText("Separation of Duties");
     expect(screen.queryByRole("button", { name: "Adopt templates" })).toBeNull();
+  });
+});
+
+describe("as evidence (L.4)", () => {
+  const filled = version(2, [["R-1", "Open"]]);
+
+  async function openOwn(status: ListEvidenceStatus) {
+    mockIndex();
+    vi.mocked(api.getLibraryList).mockResolvedValue(detail(filled, { is_template: false }));
+    vi.mocked(api.getLibraryListVersions).mockResolvedValue([filled]);
+    vi.mocked(api.listEvidenceStatus).mockResolvedValue(status);
+    render(<ListLibraryPanel orgId="org" canWrite />);
+    await screen.findByText("Separation of Duties");
+    fireEvent.click(screen.getByRole("button", { name: "Risk Register" }));
+    return screen.findByRole("region", { name: "As evidence" });
+  }
+
+  it("says why a list is not offered, rather than leaving it out", async () => {
+    const section = await openOwn({
+      offered: false, not_offered: "still showing template examples (2 of 2 rows)", links: [],
+    });
+    expect(section.textContent).toContain("Not offered as evidence: still showing template examples (2 of 2 rows).");
+  });
+
+  it("names where it is evidence, and says the drift in L.7's words", async () => {
+    const drift = "List version 2 is available. This evidence stays on version 1 until someone moves it forward.";
+    const section = await openOwn({
+      offered: true, not_offered: null,
+      links: [{
+        list_id: "risk", list_key: "3-11-1a-risk-register", title: "Risk Register", current_version_number: 2,
+        linked_version_id: "v1", linked_version_number: 1, assessment_id: "a", assessment_name: "FY26 L2",
+        control_state_id: "cs", control_key: "RA.L2-3.11.1", objective_key: "a", drift,
+      }],
+    });
+    expect(section.textContent).toContain("FY26 L2: RA.L2-3.11.1[a], version 1");
+    expect(section.textContent).toContain(drift);
   });
 });

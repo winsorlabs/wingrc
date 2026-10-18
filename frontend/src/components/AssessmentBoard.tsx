@@ -241,7 +241,7 @@ export function AssessmentBoard({ org, assessment, canWrite, currentUserRole }: 
           </div>
           <div className="board-topbar-right">
             <div className="board-meta">{met} / {rows.length} objectives met</div>
-            <BundleListsPicker orgId={org.id} selected={bundleLists} onChange={setBundleLists} />
+            <BundleListsPicker orgId={org.id} assessmentId={assessment.id} selected={bundleLists} onChange={setBundleLists} />
             <button
               className="btn-ghost btn-sm"
               onClick={handleGenerateBundle}
