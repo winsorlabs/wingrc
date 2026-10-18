@@ -413,12 +413,11 @@ def test_closing_a_review_cycle_is_a_persons_act_and_moves_nothing(db_session):
     person made on the same objective is live and unchanged after. A
     person's act: when the last reviewer attests (`attest` closes the
     cycle), the attestation is that act, for exactly these objectives.
-    The scheduler also closes a cycle at its deadline
-    (`scheduler.py`, status closed_unattested); there the act is the
-    opening of the cycle, which named these objectives and the deadline,
-    and the attestation records who did not answer. That reading is
-    recorded in docs/roadmap.md item X rather than assumed. close_cycle
-    is unchanged by X.
+    This test covers that path only. The scheduler's deadline close
+    (status closed_unattested or closed_undeliverable) attaches a record
+    that nobody attested. That is an open decision about filing evidence of
+    absence as evidence ("Review-cycle deadline close…" in
+    docs/roadmap.md), not settled by X. close_cycle is unchanged by X.
     """
     w = _setup(db_session, "cycle")
     _publish(_as(db_session, w["blake"]), w)

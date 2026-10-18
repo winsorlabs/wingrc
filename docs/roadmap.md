@@ -5442,6 +5442,32 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### Lesson: a record that rested on a side effect (item X, migration 0069)
+
+A document version's "what was this approved for" was never stored. It was
+read back from the EvidenceStateLinks that publish made as a side effect
+of approving (`_published_objective_ids`, archived links included). X
+removed the side effect, which was the defect, and that removed the record
+with it. Nothing failed: the query still ran and returned an empty set, so
+every newly published version would have said it covered nothing. The
+version-detail screen would then state a result nobody computed. It
+surfaced only because reading `VersionDetailOut`'s docstring for X showed
+where the "published" basis came from.
+
+**The shape will recur.** When an action's side effect is removed or
+changed, ask what else reads that side effect as a record. Look for:
+- a query over rows the action produced, standing in for a fact nobody
+  wrote down;
+- a count or a set "recovered" from links, events or rows made for
+  another purpose.
+
+The fix is to write the fact where it is decided, at the moment it is
+decided (0069 stores the tags at publish). Earlier rows are backfilled
+from the old proxy while it is still the true record, and the proxy is
+then read for nothing.
+
+---
+
 ### Item X: a published document is offered, and a person attaches it ✅ DONE (2026-10-18; live walk pending)
 
 **What changed.** `publish_document` writes the new version's Evidence row
@@ -5538,16 +5564,18 @@ A link is right only for "yes, no". How each path answers:
 - **Moving forward:** a person's act, per objective, whose whole purpose
   is the move.
 - **Publish:** failed both questions.
-- **`review_cycles.close_cycle`:** passes, and is unchanged.
-  - When the last reviewer attests, that attestation is the act, for
-    exactly AC.L2-3.1.1[a]/[c].
-  - It moves nothing: `test_closing_a_review_cycle_is_a_persons_act_and_moves_nothing`
-    checks a person's link on the same objective is untouched.
-  - **The scheduler's deadline close** (`closed_unattested`) passes the
-    first question only if the act counted is *opening* the cycle. The
-    opening named those objectives and the deadline, and the attestation
-    records who did not answer. This reading is recorded here and is open
-    to being overruled. Nothing in this slice depends on it.
+- **`review_cycles.close_cycle`:** unchanged by X, and it passes only on
+  the path a person closes.
+  - When the last reviewer attests, `attest` closes the cycle with
+    `completed`. That attestation is the person's act, for exactly
+    AC.L2-3.1.1[a]/[c], and it moves nothing:
+    `test_closing_a_review_cycle_is_a_persons_act_and_moves_nothing` checks
+    that a person's link on the same objective is untouched.
+  - **The deadline close is a different decision, and it is open.** I first
+    recorded it as passing if the act counted is the opening of the cycle.
+    Jarrod's better question is what the attestation records. See
+    "Review-cycle deadline close files evidence of absence as evidence"
+    under Planned.
 
 **Links already on live: none.** I took the count on live (b70958d,
 2026-10-18) before deploying:
@@ -5605,14 +5633,34 @@ A link made by publish before X has no attach event. Its record is the
   - the delete refusal ("has evidence attached");
   - two docstrings, in reaffirm and the N.3 test.
 
+**Found after the build, before merge (2026-10-18):**
+- **The bundle does not carry the text of a superseded version a link
+  names.** This is a correctness hole that X introduces, not a deferred
+  nicety. L.3/L.4 established that a bundle renders the exact version a
+  link names: `lists/` embeds every version a live link points at. A
+  document body renders in one place, `ssp/06_documents.html` and the PDF
+  built from the same function (`_documents_body`). That page takes
+  `approved` versions only. For a link on a superseded v2, the bundle
+  shows:
+  - **manifest and implementation page:** the v2 line, *"version 2
+    superseded: version 3 is the approved one…"*, with no href;
+  - **documents page:** v3's body, under its own "Version 3" label;
+  - **v2's text:** nowhere.
+
+  So it is not v3's text under a v2 label. It is v2 named with nothing to
+  read. Before X this state could not exist, because a republish archived
+  every link on the superseded version. Live has no such link (0 document
+  links). Decision pending before deploy.
+- **A document tag that a link rests on can be removed.** Planned as the
+  next slice: "X.1. A document tag a link rests on cannot be removed".
+- **No screen tags a document with an objective.** `api.ts` has
+  `addDocumentObjectiveTag`/`removeDocumentObjectiveTag`, and no component
+  calls them. Live has 0 `document_objective_tag` rows. So on live,
+  through the UI, nothing is ever offered, and the live walk below needs
+  its tag made through the API. Before X the same fact meant publish never
+  linked anything on live, which is why the count was 0.
+
 **Not done; noted for later:**
-- Removing a document's objective tag is not refused while a link rests on
-  it, unlike a list's tag. The link stays, and the objective still shows
-  it with "it is no longer tagged with this objective". Whether to refuse,
-  as lists do, is for N.4 or a small follow-up.
-- A superseded version's body is not embedded in the bundle. The manifest
-  says it is superseded and which version is approved, and the documents
-  page carries the approved one.
 - A document's page does not list where it is attached. The list page has
   that and the document's History has the events.
 - The three L.10 tag-refusal cosmetics stay folded forward. They are in
@@ -9734,6 +9782,83 @@ the superseded flag. Backend: publish/republish, four routes, the
 `publish_document` tests rewritten. Frontend: documents on the objective
 beside lists. One slice, bench-verified like L.4, with the live link count
 taken before the deploy.
+
+### X.1. A document tag a link rests on cannot be removed -- the next slice
+
+**L.4's `tag_removal_blockers` rule, for documents.** A list's tag cannot
+be removed while a live link rests on it; a document's objective tag can.
+After item X this matters more than it did before. The links are now a
+person's deliberate act, and removing the tag quietly narrows what the
+document is offered for underneath a link someone chose. The link
+survives today, and the objective shows it with "it is no longer tagged
+with this objective". But the record of why it was there, the tag, is gone.
+
+**The slice:**
+- **Backend:**
+  - `document_evidence.tag_removal_blockers(session, document_id,
+    objective_id)` returns the live links from any version of the
+    document onto control states of that objective, with the assessment,
+    objective and version.
+  - `DELETE …/documents/{id}/objective-tags/{objective_id}` refuses with
+    409 and `blocked_by`, as `list_definitions` does.
+  - A `GET …/objective-tags/{objective_id}/removal` check runs the
+    DELETE's own logic (L.10's rule: a screen states only what it
+    computed).
+- **Frontend:** none needed yet. No screen tags documents (item X's
+  finding), so the refusal is API-only until a tag editor exists. When
+  one is built, it inherits L.10's dialog: ask the server, say what it
+  found.
+- **Tests (~5):**
+  - refused while a link rests on the tag, with the blocker named;
+  - allowed once unlinked;
+  - a link in another assessment blocks too;
+  - c3pao cannot remove a tag at all;
+  - the check and the DELETE agree.
+- **Then:** `NOT_TAGGED` becomes reachable only for a tag removed before
+  X.1. Keep it, and say so.
+
+**Size:** small. No migration, about 40 lines of code. Smaller than L.10.
+
+### Review-cycle deadline close files evidence of absence as evidence -- found 2026-10-18, decision open
+
+**What `close_cycle` writes on the no-response path.** The scheduler
+(`scheduler.py`, past `due_at`) calls `close_cycle(status=
+"closed_unattested")`. If no reviewer was ever notified, `close_cycle`
+upgrades that to `closed_undeliverable`. Either way it writes the same
+Evidence:
+- `kind='file'`, `artifact_type='attestation'`;
+- title *"Periodic user/device review -- <date>"*;
+- an HTML body whose outcome line reads *"Cycle closed at its due date
+  without full attestation"* or *"…no reviewer could be notified…, so no
+  review was actually attempted"*.
+
+It links that Evidence to AC.L2-3.1.1[a]/[c] on every in_progress
+assessment, the same as a completed cycle.
+
+**So a deadline-closed cycle can file, as an attestation, a record that
+nobody attested,** and in the undeliverable case one saying no review
+happened. That is evidence of absence filed as evidence. The record itself
+is right and valuable: non-response is evidence §3 of D.3 wanted kept.
+What it is filed as is the problem:
+- **The bundle manifest** shows only the title and the `attestation` tag.
+  The outcome is inside the file, and the evidence description is not
+  rendered.
+- **The dashboard's "blocked objectives" widget** counts any link as
+  evidence present (`routers/dashboard.py:_blocked_objectives`), so the
+  link clears [a]/[c] from it.
+- **The control-states evidence count** (`routers/assessments.py`) counts
+  it too.
+
+None of these moves control_state or SPRS.
+
+**This is not the question item X recorded.** X asked whether the close is
+a person's act. The decision here is what an unattested record should be
+filed as, and whether it is attached at all. Options for that decision:
+- offer it rather than attach it;
+- attach it with an artifact type and a title that say "not attested";
+- keep the record on the cycle and attach nothing.
+
+Report only; not fixed.
 
 ### Y. A test that models.py's CHECK constraints are the database's
 
