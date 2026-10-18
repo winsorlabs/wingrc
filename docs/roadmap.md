@@ -5471,7 +5471,8 @@ version-column shape (`source_document_version_id`). One evidence row per
 list version, shared by every objective it is linked to; its
 `collected_at` is when the version was saved. `models.py`'s
 `ck_evidence_artifact_type` had not followed 0045's `attestation`; it does
-now.
+now. Nothing would have caught it, and nothing catches the next one; see
+item Y.
 
 **Drift.** A link stays on its version when the list moves on. The drift
 is said in L.7's words -- "List version 4 is available. This evidence
@@ -5531,27 +5532,27 @@ block an imported one does" was true and compared rows 2-5 while neither
 carried these fields -- a test passing while checking less than its name;
 it now compares rows 2-7 and pins the values.
 
-**T's open question -- should an export be re-importable as a template?
-Recommendation: no, not by converging the layouts.** An export is one
-org's records for an assessor; a template is an MSP's examples for many
-orgs. Making the first readable as the second puts "export a customer's
-filled register" one step from "distribute it as everyone's template" --
-client data landing in the wrong tenant. If curated content needs an
-interchange format (N.4 and cross-deployment distribution both point
-there), make it a separate, explicit template export of template versions
-only, in the importer's layout. The importer reads rows 2/4/5/10; the
-export writes 2/3/4/8; leave them apart until that is decided. This item's
-own Planned text asked for the export to "read back through the importer
-to the same version"; that half is withdrawn pending the decision.
+**T's round-trip half is withdrawn permanently (Jarrod, 2026-10-18).**
+This item's Planned text asked for the export to "read back through the
+importer to the same version". It will not. An export is one org's records
+for an assessor; a template is an MSP's examples for many orgs. Making the
+first readable as the second puts "export a customer's filled register"
+one step from "distribute it as everyone's template", which would mean
+client data landing in the wrong tenant. It is the same rule the product
+already keeps the other way round: WinGRC does not write content into a
+customer's templates (template content is distributed separately, per the
+monetization boundary, and L.7's adoption copies a template into an org
+and never writes back). An export is not a template source either. The
+importer reads rows 2/4/5/10 and the export writes 2/3/4/8, and that
+difference is the intended design, not a gap to close. If curated content
+ever needs an interchange format (N.4 and cross-deployment distribution
+both point there), it is a new item for template versions only, in the
+importer's layout. It does not reopen this one.
 
 **Found, not fixed (out of scope):**
 
-- **Documents link the other way.** Publishing a document links it to
-  every tagged objective in every in-progress assessment automatically,
-  and republishing archives the old links -- evidence moves forward
-  without anyone choosing it (`routers/documents.py`'s publish). Lists are
-  offered and moved deliberately. Which is right for documents is its own
-  decision.
+- **Documents attach themselves, and that breaks a hard rule.** Raised to
+  its own item, X.
 - **The generic evidence unlink writes no audit row**
   (`routers/evidence.py`'s `delete_evidence`). List links have their own
   unlink, which does.
@@ -8588,7 +8589,10 @@ those frozen bytes regardless of what happens to the document later. A
 evidence (`EvidenceStateLink.is_archived.is_(False)` is already
 `bundle_service.py`'s existing filter — no changes needed there at all).
 Verified directly: `test_republish_supersedes_prior_version_and_archives_
-its_evidence_links`.
+its_evidence_links`. **Reopened as item X (2026-10-18):** the version
+pinning above stands, but the evidence moving to the new version, and
+publish attaching it at all, happen without anyone choosing them. That
+breaks "Candidates, never auto-met".
 
 **What roadmap N's original spec kept vs. changed** (its field list dates
 to 2026-09-07, before any of this was real code):
@@ -9148,9 +9152,11 @@ this item is what fixes it.
 ### T. The list export carries what the list is for, and who owns it ✅ DONE (2026-10-17, with L.4)
 
 Shipped inside L.4: the export now carries What goes here, Responsible
-and Review cadence. Whether an export should also read back through the
-importer as a template is a separate decision, recommended against
-converging the layouts -- see the L.4 Done entry.
+and Review cadence. The other half, an export that reads back through the
+importer as a template, is **withdrawn permanently** (2026-10-18). This
+is not a deferral. An export is a customer's records and is never a
+template source, just as WinGRC never writes content into a customer's
+templates; see the L.4 Done entry.
 
 ### U. The login form shows a validation error as "[object Object]"
 
@@ -9286,6 +9292,122 @@ exists in this file yet; one was said to be open elsewhere.
 expiry date per credential, checked the same way the certificate is, by
 the same banner -- and a rotation procedure for the Fernet key. A DNS
 credential, if one is ever taken, is a row here the day it is.
+
+### X. Publishing a document attaches it as evidence unchosen -- a hard-rule violation, live
+
+**Found in L.4 (2026-10-17).** This is not an inconsistency between two
+designs. It breaks "Candidates, never auto-met" as CLAUDE.md states it:
+imports and ingestion *propose*, a person confirms, and "an automated feed
+must never silently move the audit boundary." `routers/documents.py`'s
+`publish_document` does two things nobody chooses:
+
+1. **Publish attaches.** It links the new version's Evidence row to every
+   tagged objective in every `in_progress` assessment in the org. No one
+   is offered the document; it is simply there.
+2. **Republish moves the evidence forward.** It archives every live link
+   on the superseded version's Evidence and attaches the new one in its
+   place. That is the silent drift L.4 was built to prevent: what an
+   objective's evidence says changes because someone approved a document,
+   not because anyone looked at that objective. And it is live in the
+   document path today.
+
+It does not touch `control_state.status` (the docstring says so and that
+holds), so no objective is marked met. What it moves is the evidence an
+engineer and an assessor read when they decide one, and the bundle's
+manifest and implementation page follow it.
+
+**The slice:** documents get L.4's shape.
+- A published version is *offered* on its tagged objectives, and a person
+  attaches it.
+- A republish leaves existing links on the version they name, and says so
+  ("Document version 3 is approved. This evidence stays on version 2 until
+  someone moves it forward.").
+- Moving forward is a deliberate act per objective: a new link, and the
+  old one archived.
+- Audited the way `evidence.list_link` / `list_move_forward` are.
+
+`list_evidence.py` and `ObjectiveLists.tsx` are the pattern. Whether to
+generalise them or write a document twin is decided in the slice, by
+counting what the two share.
+
+**Probably no migration.** Each published version already has its own
+Evidence row naming it (`source_document_version_id`), so publish keeps
+creating that row and stops linking it.
+
+**Decisions the slice has to make and record:**
+- **A superseded document is not like an older list version.** A list's v2
+  was true when it was linked. A superseded policy is no longer in force.
+  So the drift notice for a document should probably be stronger: flagged
+  as superseded in the manifest and the bundle, not just "a newer version
+  exists". It still moves only when a person moves it.
+- **Links already on live.** Every link publish has made so far was made
+  unchosen. Count them first:
+  `SELECT count(*) FROM evidence_state_link l JOIN evidence e ON e.id = l.evidence_id WHERE e.source_document_version_id IS NOT NULL`,
+  split by archived and live. My recommendation is to leave the live ones
+  where they are. Removing them would be its own silent move. The drift
+  notice then shows wherever they now trail. Re-offering them would be the
+  alternative.
+- **Tests that assert the current behaviour**
+  (`test_republish_supersedes_prior_version_and_archives_…` and the
+  publish-links tests). The scenario is still reachable but its outcome
+  changes, so update the assertion and write down why. Do not delete them.
+- **Review-cycle closing attaches too.** `review_cycles.py`'s `close_cycle`
+  links the attestation to every mapped control state. Check it against
+  the same rule in the slice and record the answer. My read: it is
+  different in kind. Closing the cycle is the person's act that produces
+  the attestation for exactly those objectives, and no earlier link is
+  moved. But that is to be said in the slice, not assumed here.
+
+**Size:** smaller than L.4. The link model, drift wording and UI pattern
+already exist. No migration expected and no bundle-layout change beyond
+the superseded flag. Backend: publish/republish, four routes, the
+`publish_document` tests rewritten. Frontend: documents on the objective
+beside lists. One slice, bench-verified like L.4, with the live link count
+taken before the deploy.
+
+### Y. A test that models.py's CHECK constraints are the database's
+
+**Found in L.4 (2026-10-17).** `models.py`'s `ck_evidence_artifact_type`
+had been missing `attestation` since migration 0045, five weeks, and
+nothing noticed. Nothing compares the two. The tests run against the
+migrated schema (`conftest.py` runs `alembic upgrade head`), so the model's
+copy of a CHECK is never exercised at all. It is documentation that
+compiles. Alembic's autogenerate does not compare CHECK constraints
+either, so `alembic check` would not have caught it. A model copy that
+drifts misleads the next reader in exactly the way the attestation one
+could have: a new artifact type added to the model alone would pass
+review and fail on the first insert in production.
+
+**The test (one integration test, general over every table):**
+- In the migrated test database, create a scratch schema.
+- Run `Base.metadata.create_all` into it, via `schema_translate_map`.
+- Read `pg_constraint` (`contype = 'c'`) with `pg_get_constraintdef` for
+  both schemas, keyed by (table, constraint name).
+- Assert that the name sets match in both directions and that each
+  definition is identical.
+
+Comparing two strings Postgres itself produced avoids hand-normalising
+expressions. Postgres rewrites `IN (…)` to `= ANY (ARRAY[…])` and adds
+casts and parentheses, and a test that parsed `sqltext` would be fragile
+in exactly the way this one must not be. Drop the scratch schema after.
+Mutation-check it before trusting it: remove one value from a model CHECK
+and watch it fail with the table, the name and both definitions in the
+message.
+
+**What it will find on its first run is the real work.** Attestation is
+fixed; others may not be. Fix each one in the direction of the database
+(migrations are what live runs), unless the model is the one that is
+right, in which case that fix is a migration and its own decision. Each
+is decided on its own, not swept up in a batch, and each is reported.
+
+**Size:** small. One test file of roughly a hundred lines, plus whatever
+drift it turns up. Things to confirm while building: that `create_all`
+into a second schema works with pgvector's type (it lives in `public`,
+which stays on the search path), and that no model CHECK is unnamed (an
+unnamed one gets a different generated name each side, so the test should
+require names). Unique constraints, indexes and FK `ondelete` drift the
+same way and could use the same comparison. They are a follow-on, not
+this item.
 
 ## Sequencing
 
