@@ -356,8 +356,8 @@ that edit is named. See the roadmap's L.7 entry.
 **L.8 — the list page puts the rows first ✅ Done 2026-10-16.** Frontend
 only. See the roadmap's L.8 entry.
 
-**L.10 — the screens say what is true ✅ Done 2026-10-18 (bench-verified;
-live pending).** Found by Jarrod within ten minutes of L.4's first use on
+**L.10 — the screens say what is true ✅ Done 2026-10-18 (verified on
+live).** Found by Jarrod within ten minutes of L.4's first use on
 live: an unfilled list drawn like an attached one, a tag dialog stating
 the rule rather than checking it, and a History that could not say
 whether the list had ever been attached. Migration 0068

@@ -5442,7 +5442,7 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
-### List library L.10: the screens say what is true ✅ DONE (2026-10-18, bench-verified; live pending)
+### List library L.10: the screens say what is true ✅ DONE (2026-10-18, verified on live)
 
 **Found by Jarrod on live, within ten minutes of L.4's first use.** He
 adopted *Physical Access Device Register* into Acme MSP (v1, the
@@ -5549,10 +5549,65 @@ constraint is what caught it.
 
 **Verification (bench `20261018-l10`, isolated):** migration 0068 applied
 clean. Backend full suite **1799 passed** (1797 on main), ruff clean.
-`tsc -b` clean, vitest **424** (418 on main), build OK. Live, after merge
-and deploy: Jarrod's same steps (an unfilled adopted list on an objective,
-the tag dialog on a linked and an unlinked tag, a list's History after an
-attach and a detach), read on the screen.
+`tsc -b` clean, vitest **424** (418 on main), build OK.
+
+**Verified on live (2026-10-18, `b70958d`, migration 0068).** Jarrod ran the
+loop on *Physical Access Device Register* in Acme MSP:
+- re-tagged PE.L2-3.10.6;
+- filled the rows (v2);
+- attached v2 to PE.L2-3.10.6[b];
+- opened the tag dialog while it was linked;
+- detached it;
+- removed the tag.
+
+He read each step on screen. From the database, audit log and request
+log:
+- **Link events:** two `list_link_event` rows, `linked` then `unlinked`,
+  version 2, PE.L2-3.10.6[b], *CMMC L2 Assessment 2026-09-09*, Jarrod
+  Winsor, with matching `evidence.list_link` and `evidence.list_unlink`
+  audit rows.
+- **The check while linked:** the first removal check returned blocked
+  and no DELETE followed, because the dialog offered none.
+- **The check after detaching:** the second check returned removable,
+  and only then the DELETE (200, `list.tag_remove`).
+- **No state change:** no `control_state_history` rows.
+
+L.4's own live step (a real linked list in a real bundle, read by hand)
+is still open; this run did not build a bundle.
+
+**Found on live, folded into the next frontend slice (not their own
+slice).** All three are on the tag-refusal screen or next to it:
+1. **The refusal says one fact three times.** The client wraps the
+   server's sentence ("PE.L2-3.10.6 cannot be removed from
+   3-10-5a-access-devices-own: evidence rests on it (version 2 linked to
+   …)") in its own "PE.L2-3.10.6 cannot be removed:", and the blocker
+   bullet repeats the parenthetical. Say it once.
+2. **The server's sentence was written for a log.** It names the list by
+   its key (`3-10-5a-access-devices-own`), where every other screen uses
+   the title. Decision: **the client composes the sentence from
+   structured blockers**, and the server's string stays for the log, the
+   CLI's import refusals and the DELETE's 409. The removal check
+   (`GET …/tags/{key}/removal`) returns a reason (`last_tag` or
+   `evidence`) and each blocker as fields: version number, control key,
+   objective key, assessment name. The client writes, once, in the
+   list's title: "PE.L2-3.10.6 can't be removed from Physical Access
+   Device Register while evidence rests on it", then one bullet per
+   link, "version 2, evidence for PE.L2-3.10.6[b] in *CMMC L2 Assessment
+   2026-09-09*", then "Detach it first." The DELETE's 409, shown only on
+   the race between check and click, gets the same structured
+   `blocked_by` so the client says it the same way. Per item Z, test it:
+   the rendered dialog contains the list title and not its key, and
+   states the fact once.
+3. **The "Not attached" block may overlap "No evidence attached" and the
+   Attach file / Add location buttons.** This is unconfirmed: it may be a
+   screenshot crop. Read statically, nothing permits an overlap. The
+   evidence section, `.ev-lists`, `.ev-list-others`, `.ev-footer` and
+   the drawer's objective containers are all in normal flow, with no
+   absolute positioning, no negative margins, no fixed heights and no
+   clipped overflow. A static read is not a rendering. Confirm with a
+   full-window screenshot at normal width before changing anything; if
+   it is real, find the cause in the rendered page, not by guessing at
+   margins.
 
 ---
 
