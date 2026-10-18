@@ -15,6 +15,9 @@
              "linked as evidence" group.
   GET    /orgs/{org}/list-definitions/{list_id}/evidence-links
              The list's page: offered or why not, and where it is linked.
+  GET    /orgs/{org}/list-definitions/{list_id}/link-events
+             Every link, move forward and unlink, for the list's History
+             (L.10).
 
 None of these reads or writes control_state.status or the SPRS score.
 Read-only roles (c3pao_assessor) see every GET and make, move or break
@@ -24,13 +27,14 @@ nothing -- require_write, router-wide.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .. import list_evidence
-from ..auth import require_org_access, require_write
+from ..auth import CurrentUser, require_org_access, require_write
 from ..db import get_session
 from ..models import Assessment, ControlState, ListDefinition, ListVersion
 
@@ -68,6 +72,19 @@ class ListLinkOut(BaseModel):
     control_key: str
     objective_key: str
     drift: str | None
+
+
+class LinkEventOut(BaseModel):
+    id: uuid.UUID
+    change: str  # linked | moved_forward | unlinked
+    version_number: int
+    from_version_numbers: list[int] | None
+    assessment_id: uuid.UUID
+    assessment_name: str
+    control_key: str
+    objective_key: str
+    saved_by: str | None
+    created_at: datetime
 
 
 class ListEvidenceOut(BaseModel):
@@ -120,10 +137,12 @@ def state_lists(
     return [_candidate_out(c) for c in list_evidence.candidates(session, org_id, cs)]
 
 
-def _act(fn, org_id, assessment_id, cs_id, list_id, session) -> list[ListCandidateOut]:
+def _act(
+    fn, org_id, assessment_id, cs_id, list_id, session, user: CurrentUser
+) -> list[ListCandidateOut]:
     cs = _state(session, org_id, assessment_id, cs_id)
     try:
-        fn(session, org_id, cs, list_id)
+        fn(session, org_id, cs, list_id, saved_by=user.display_name or user.email)
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except list_evidence.ListLinkRefused as e:
@@ -139,8 +158,11 @@ def _act(fn, org_id, assessment_id, cs_id, list_id, session) -> list[ListCandida
 def link_list(
     org_id: uuid.UUID, assessment_id: uuid.UUID, cs_id: uuid.UUID, list_id: uuid.UUID,
     session: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(require_org_access()),
 ) -> list[ListCandidateOut]:
-    return _act(list_evidence.link, org_id, assessment_id, cs_id, list_id, session)
+    return _act(
+        list_evidence.link, org_id, assessment_id, cs_id, list_id, session, current_user
+    )
 
 
 @router.post(
@@ -150,8 +172,11 @@ def link_list(
 def move_list_forward(
     org_id: uuid.UUID, assessment_id: uuid.UUID, cs_id: uuid.UUID, list_id: uuid.UUID,
     session: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(require_org_access()),
 ) -> list[ListCandidateOut]:
-    return _act(list_evidence.move_forward, org_id, assessment_id, cs_id, list_id, session)
+    return _act(
+        list_evidence.move_forward, org_id, assessment_id, cs_id, list_id, session, current_user
+    )
 
 
 @router.delete(
@@ -161,8 +186,11 @@ def move_list_forward(
 def unlink_list(
     org_id: uuid.UUID, assessment_id: uuid.UUID, cs_id: uuid.UUID, list_id: uuid.UUID,
     session: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(require_org_access()),
 ) -> list[ListCandidateOut]:
-    return _act(list_evidence.unlink, org_id, assessment_id, cs_id, list_id, session)
+    return _act(
+        list_evidence.unlink, org_id, assessment_id, cs_id, list_id, session, current_user
+    )
 
 
 @router.get("/assessments/{assessment_id}/list-links", response_model=list[ListLinkOut])
@@ -190,3 +218,21 @@ def list_evidence_links(
         offered=reason is None, not_offered=reason,
         links=[_link_out(x) for x in list_evidence.links(session, org_id, list_id=list_id)],
     )
+
+
+@router.get("/list-definitions/{list_id}/link-events", response_model=list[LinkEventOut])
+def list_link_events(
+    org_id: uuid.UUID, list_id: uuid.UUID, session: Session = Depends(get_session),
+) -> list[LinkEventOut]:
+    d = session.get(ListDefinition, list_id)
+    if d is None or d.org_id != org_id:
+        raise HTTPException(status_code=404, detail="List not found")
+    return [
+        LinkEventOut(
+            id=e.id, change=e.change, version_number=e.version_number,
+            from_version_numbers=e.from_version_numbers, assessment_id=e.assessment_id,
+            assessment_name=e.assessment_name, control_key=e.control_key,
+            objective_key=e.objective_key, saved_by=e.saved_by, created_at=e.created_at,
+        )
+        for e in list_evidence.link_events(session, d.id)
+    ]

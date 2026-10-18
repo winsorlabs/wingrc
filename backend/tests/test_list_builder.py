@@ -93,7 +93,13 @@ def test_the_requirement_table_matches_the_seeded_catalog():
 # `evidence` links a list version as evidence (L.4, migration 0067):
 # tag_removal_blockers reads its links, which
 # test_list_evidence.py's tag tests pin against real rows.
-_SETTLED = {"list_definition", "list_version", "list_control_tag", "list_tag_event", "evidence"}
+# `list_link_event` (L.10, migration 0068) is the history of those links, not
+# a link: an unlinked list's events must not block a tag, and the blockers
+# read the live EvidenceStateLinks only (tested in test_list_evidence.py).
+_SETTLED = {
+    "list_definition", "list_version", "list_control_tag", "list_tag_event", "evidence",
+    "list_link_event",
+}
 
 
 def test_a_new_table_referencing_lists_must_settle_the_tag_removal_rule():

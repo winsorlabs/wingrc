@@ -14,6 +14,8 @@ Endpoints:
   POST /orgs/{org_id}/list-definitions/{list_id}/versions    edit = new version
   POST   /orgs/{org_id}/list-definitions/{list_id}/tags        add a practice tag
   DELETE /orgs/{org_id}/list-definitions/{list_id}/tags/{key}  remove one
+  GET    /orgs/{org_id}/list-definitions/{list_id}/tags/{key}/removal
+                                                             would it be refused, and why (L.10)
   GET  /orgs/{org_id}/list-definitions/{list_id}/tag-events  who tagged what, when
   POST /orgs/{org_id}/list-definitions/adopt                 copy templates in (L.7)
   POST /orgs/{org_id}/list-definitions/{list_id}/take-template-version
@@ -591,6 +593,41 @@ def add_list_tag(
     return _event_out(event)
 
 
+LAST_TAG = "A list serves at least one practice; add another before removing this one."
+
+
+class TagRemovalOut(BaseModel):
+    removable: bool
+    refused: str | None  # the sentence the DELETE would answer with
+    blocked_by: list[str]  # the live links resting on the tag, named
+
+
+@router.get(
+    "/{org_id}/list-definitions/{list_id}/tags/{control_key}/removal",
+    response_model=TagRemovalOut,
+)
+def check_list_tag_removal(
+    org_id: uuid.UUID,
+    list_id: uuid.UUID,
+    control_key: str,
+    session: Session = Depends(get_session),
+) -> TagRemovalOut:
+    """What removing this tag would do, computed by the same checks the
+    DELETE runs, so the confirmation says a result rather than the rule
+    (L.10: a screen must not state a result it never computed)."""
+    d = _definition(session, org_id, list_id)
+    origins = list_library.tag_origins(session, d.id)
+    if control_key not in origins:
+        raise HTTPException(status_code=404, detail=f"This list does not serve {control_key}.")
+    if len(origins) == 1:
+        return TagRemovalOut(removable=False, refused=LAST_TAG, blocked_by=[])
+    blockers = list_library.tag_removal_blockers(session, d.id, control_key)
+    if blockers:
+        refused = str(list_library.TagRemovalRefused(d.list_key, control_key, blockers))
+        return TagRemovalOut(removable=False, refused=refused, blocked_by=blockers)
+    return TagRemovalOut(removable=True, refused=None, blocked_by=[])
+
+
 @router.delete(
     "/{org_id}/list-definitions/{list_id}/tags/{control_key}", response_model=TagEventOut
 )
@@ -609,10 +646,7 @@ def remove_list_tag(
     if control_key not in origins:
         raise HTTPException(status_code=404, detail=f"This list does not serve {control_key}.")
     if len(origins) == 1:
-        raise HTTPException(
-            status_code=409,
-            detail="A list serves at least one practice; add another before removing this one.",
-        )
+        raise HTTPException(status_code=409, detail=LAST_TAG)
     try:
         event = list_library.remove_tag(
             session, d, control_key, "api", current_user.display_name or current_user.email

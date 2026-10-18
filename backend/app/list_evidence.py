@@ -30,6 +30,11 @@ because a person attached a list, not because a tool claimed coverage, so
 version. Were it otherwise, deactivating any tool covering the same
 objective would archive the link, and the tag it rests on would become
 removable at that moment -- the failure the tag rule exists to prevent.
+
+**Every link change is in the list's own history** (L.10): each link, move
+forward and unlink writes a `list_link_event` beside the audit row, so the
+list's History answers "was this ever attached?" for anyone who can read
+the list -- not only for whoever can read the audit log.
 """
 
 from __future__ import annotations
@@ -52,6 +57,7 @@ from .models import (
     EvidenceStateLink,
     ListControlTag,
     ListDefinition,
+    ListLinkEvent,
     ListVersion,
 )
 
@@ -236,8 +242,21 @@ def _audit(session, org_id, action, cs, d, v, control_key, objective_key, **extr
     )
 
 
+def _record(
+    session, org_id, change, cs, d, v, control_key, objective_key, saved_by, from_versions=None
+):
+    a = session.get(Assessment, cs.assessment_id)
+    session.add(ListLinkEvent(
+        list_id=d.id, org_id=org_id, change=change, list_version_id=v.id,
+        version_number=v.version_number, from_version_numbers=from_versions,
+        assessment_id=a.id, assessment_name=a.name, control_key=control_key,
+        objective_key=objective_key, saved_by=saved_by,
+    ))
+
+
 def link(
-    session: Session, org_id: uuid.UUID, cs: ControlState, list_id: uuid.UUID
+    session: Session, org_id: uuid.UUID, cs: ControlState, list_id: uuid.UUID,
+    saved_by: str | None = None,
 ) -> EvidenceStateLink:
     """Attach the list's current version to this objective."""
     d, v, control_key, objective_key = _offerable(session, org_id, cs, list_id)
@@ -252,11 +271,14 @@ def link(
     row = _link_row(session, _evidence_for(session, org_id, v), cs)
     session.flush()
     _audit(session, org_id, "evidence.list_link", cs, d, v, control_key, objective_key)
+    _record(session, org_id, "linked", cs, d, v, control_key, objective_key, saved_by)
+    session.flush()
     return row
 
 
 def move_forward(
-    session: Session, org_id: uuid.UUID, cs: ControlState, list_id: uuid.UUID
+    session: Session, org_id: uuid.UUID, cs: ControlState, list_id: uuid.UUID,
+    saved_by: str | None = None,
 ) -> EvidenceStateLink:
     """Move this objective's link onto the list's current version: a new
     live link, and the old one archived -- never rewritten."""
@@ -276,10 +298,18 @@ def move_forward(
         session, org_id, "evidence.list_move_forward", cs, d, v, control_key, objective_key,
         from_version_numbers=[lv.version_number for _, lv in old],
     )
+    _record(
+        session, org_id, "moved_forward", cs, d, v, control_key, objective_key, saved_by,
+        from_versions=sorted(lv.version_number for _, lv in old),
+    )
+    session.flush()
     return row
 
 
-def unlink(session: Session, org_id: uuid.UUID, cs: ControlState, list_id: uuid.UUID) -> None:
+def unlink(
+    session: Session, org_id: uuid.UUID, cs: ControlState, list_id: uuid.UUID,
+    saved_by: str | None = None,
+) -> None:
     """Remove this list from this objective's evidence. The live link goes;
     links archived by an earlier move forward stay as the record."""
     d = session.get(ListDefinition, list_id)
@@ -294,6 +324,7 @@ def unlink(session: Session, org_id: uuid.UUID, cs: ControlState, list_id: uuid.
         session.delete(lk)
         session.flush()
         _audit(session, org_id, "evidence.list_unlink", cs, d, lv, control_key, objective_key)
+        _record(session, org_id, "unlinked", cs, d, lv, control_key, objective_key, saved_by)
         # As routers/evidence.py's unlink does: a row nothing links to goes.
         # It holds no bytes, and the version it named is still in the list.
         if session.scalar(
@@ -371,3 +402,10 @@ def links(
         )
         for r in session.execute(q).all()
     ]
+
+
+def link_events(session: Session, list_id: uuid.UUID) -> list[ListLinkEvent]:
+    """The list's evidence history, oldest first."""
+    return list(session.scalars(
+        select(ListLinkEvent).where(ListLinkEvent.list_id == list_id).order_by(ListLinkEvent.seq)
+    ))

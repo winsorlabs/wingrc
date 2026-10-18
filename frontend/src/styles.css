@@ -790,6 +790,12 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 }
 .ev-list-row .field-hint,
 .ev-list-row .doc-notice { margin: 0.2rem 0 0 0.5rem; }
+/* L.10: a list that is not evidence here is not drawn as evidence. No chip,
+   no item box: an offer is a sentence with a button, and a list not offered
+   is a sentence saying why. */
+.ev-list-others { margin: 0.15rem 0 0; padding: 0; list-style: none; font-size: 0.85rem; }
+.ev-list-others li { margin: 0.15rem 0; }
+.ev-list-others .btn-sm { margin-left: 0.35rem; }
 
 .ev-item {
   display: flex;
@@ -2196,6 +2202,10 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .list-history li.list-history-tag { border-left-style: dashed; }
 .tag-added { color: #047857; }
 .tag-removed { color: #b91c1c; }
+/* L.10: evidence links, in the same history, marked apart from tags. */
+.list-history li.list-history-link { border-left-style: double; }
+.link-linked, .link-moved_forward { color: #1d4ed8; }
+.link-unlinked { color: #b91c1c; }
 .list-tag-remove { padding: 0 .3rem; margin-left: .2rem; line-height: 1; }
 .list-tag-add { margin-top: .4rem; }
 .list-tag-confirm { margin-top: .5rem; }

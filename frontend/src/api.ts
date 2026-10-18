@@ -1,4 +1,4 @@
-import type { ApiTokenRow, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, TlsExpiry, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent, AdoptResult, TakeTemplateResult, ListEvidenceCandidate, ListEvidenceLink, ListEvidenceStatus } from "./types";
+import type { ApiTokenRow, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, TlsExpiry, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent, AdoptResult, TakeTemplateResult, ListEvidenceCandidate, ListEvidenceLink, ListEvidenceStatus, ListLinkEvent, TagRemovalCheck } from "./types";
 
 const BASE = "/api";
 
@@ -799,6 +799,14 @@ export const api = {
     send<ListTagEvent>(`/orgs/${orgId}/list-definitions/${listId}/tags`, "POST", {
       control_key: controlKey,
     }),
+
+  checkTagRemoval: (orgId: string, listId: string, controlKey: string) =>
+    req<TagRemovalCheck>(
+      `/orgs/${orgId}/list-definitions/${listId}/tags/${encodeURIComponent(controlKey)}/removal`,
+    ),
+
+  getListLinkEvents: (orgId: string, listId: string) =>
+    req<ListLinkEvent[]>(`/orgs/${orgId}/list-definitions/${listId}/link-events`),
 
   removeListTag: (orgId: string, listId: string, controlKey: string) =>
     send<ListTagEvent>(

@@ -56,6 +56,7 @@ import {
   draftFrom,
   droppedColumns,
   historyEntries,
+  linkSentence,
   renamedColumns,
   tagSentence,
   type DraftColumn,
@@ -82,7 +83,9 @@ import type {
   LibraryListVersion,
   ListImportReport,
   ListEvidenceStatus,
+  ListLinkEvent,
   ListTagEvent,
+  TagRemovalCheck,
   ListViewSummary,
 } from "../types";
 import { ListBuilder } from "./ListBuilder";
@@ -380,6 +383,9 @@ function LibraryListView({
   const [tagBusy, setTagBusy] = useState(false);
   const [tagError, setTagError] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  // What the server says removing confirmRemove would do; null while asking.
+  const [removal, setRemoval] = useState<TagRemovalCheck | "failed" | null>(null);
+  const [linkEvents, setLinkEvents] = useState<ListLinkEvent[]>([]);
   const [take, setTake] = useState<TakeTemplateResult | null>(null);
   const [takeBusy, setTakeBusy] = useState(false);
   const [takeError, setTakeError] = useState<string | null>(null);
@@ -402,6 +408,13 @@ function LibraryListView({
       (es) => setTagEvents(es ?? []),
       () => setTagEvents([]),
     );
+    // So do its evidence links (L.10).
+    Promise.resolve()
+      .then(() => api.getListLinkEvents(orgId, listId))
+      .then(
+        (es) => setLinkEvents(es ?? []),
+        () => setLinkEvents([]),
+      );
     // So does where it is evidence (L.4).
     Promise.resolve()
       .then(() => api.listEvidenceStatus(orgId, listId))
@@ -507,6 +520,20 @@ function LibraryListView({
     setDraft((d) => d && d.map((r) => ({ ...r, cells: [...r.cells, ""] })));
   }
 
+  // The confirmation says what the server computed for this tag, never the
+  // rule in the abstract: a screen must not state a result it never computed.
+  function askRemove(key: string) {
+    setTagError(null);
+    setConfirmRemove(key);
+    setRemoval(null);
+    Promise.resolve()
+      .then(() => api.checkTagRemoval(orgId, listId, key))
+      .then(
+        (r) => setRemoval(r ?? "failed"),
+        () => setRemoval("failed"),
+      );
+  }
+
   async function changeTag(action: "add" | "remove", key: string) {
     if (tagBusy) return;
     setTagBusy(true);
@@ -609,7 +636,7 @@ function LibraryListView({
     draftCols !== null &&
     (draftCols.some((c) => !c.name.trim()) ||
       new Set(draftCols.map((c) => c.name.trim().toLowerCase())).size !== draftCols.length);
-  const history = historyEntries(versions.length ? versions : [base], tagEvents);
+  const history = historyEntries(versions.length ? versions : [base], tagEvents, linkEvents);
 
   return (
     <div className="contacts-panel list-library-detail">
@@ -711,10 +738,7 @@ function LibraryListView({
                   className="btn-ghost btn-sm list-tag-remove"
                   aria-label={`Remove ${k}`}
                   disabled={tagBusy}
-                  onClick={() => {
-                    setTagError(null);
-                    setConfirmRemove(k);
-                  }}
+                  onClick={() => askRemove(k)}
                 >
                   ×
                 </button>
@@ -723,20 +747,43 @@ function LibraryListView({
           ))}
         </span>
         {confirmRemove && (
-          <div className="doc-notice doc-notice-warn list-tag-confirm">
-            <p>
-              Remove <strong>{confirmRemove}</strong>? This list will no longer claim to serve it, and the change is
-              recorded in its history with your name. It is refused while evidence rests on this list for{" "}
-              {confirmRemove}.
-            </p>
-            <button
-              type="button"
-              className="btn-primary btn-sm"
-              disabled={tagBusy}
-              onClick={() => changeTag("remove", confirmRemove)}
-            >
-              Yes, remove {confirmRemove}
-            </button>{" "}
+          <div className="doc-notice doc-notice-warn list-tag-confirm" role="group" aria-label={`Remove ${confirmRemove}`}>
+            {removal === null && <p>Checking what rests on {confirmRemove}…</p>}
+            {removal !== null && removal !== "failed" && !removal.removable && (
+              <>
+                <p>
+                  <strong>{confirmRemove}</strong> cannot be removed: {removal.refused}
+                </p>
+                {removal.blocked_by.length > 0 && (
+                  <ul>
+                    {removal.blocked_by.map((b) => (
+                      <li key={b}>{b}</li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
+            {removal !== null && (removal === "failed" || removal.removable) && (
+              <p>
+                Remove <strong>{confirmRemove}</strong>? This list will no longer claim to serve it, and the change is
+                recorded in its history with your name.{" "}
+                {removal === "failed"
+                  ? `Could not check what rests on ${confirmRemove}; if evidence does, removing it will be refused.`
+                  : `No evidence rests on this list for ${confirmRemove}.`}
+              </p>
+            )}
+            {removal !== null && (removal === "failed" || removal.removable) && (
+              <>
+                <button
+                  type="button"
+                  className="btn-primary btn-sm"
+                  disabled={tagBusy}
+                  onClick={() => changeTag("remove", confirmRemove)}
+                >
+                  Yes, remove {confirmRemove}
+                </button>{" "}
+              </>
+            )}
             <button type="button" className="btn-ghost btn-sm" onClick={() => setConfirmRemove(null)}>
               Keep it
             </button>
@@ -1211,10 +1258,24 @@ function LibraryListView({
 
       <details className="list-history" aria-label="History">
         <summary>
-          History: versions and practices ({history.length})
+          History: versions, practices and evidence ({history.length})
         </summary>
           <ol>
             {history.map((h) => {
+              if (h.kind === "link") {
+                const l = h.link;
+                return (
+                  <li key={l.id} className="list-history-link">
+                    <span className={`cause-badge link-${l.change}`}>
+                      {l.change === "linked" ? "attached" : l.change === "moved_forward" ? "moved forward" : "detached"}
+                    </span>{" "}
+                    <span className="field-hint">
+                      {l.saved_by ?? "a person"} · {formatWhen(l.created_at)}
+                    </span>
+                    <div className="list-history-why">{linkSentence(l)}</div>
+                  </li>
+                );
+              }
               if (h.kind === "tag") {
                 const e = h.event;
                 return (

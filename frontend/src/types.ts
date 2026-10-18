@@ -1676,3 +1676,24 @@ export interface ListEvidenceStatus {
   not_offered: string | null;
   links: ListEvidenceLink[];
 }
+
+/** One link change, as the list's History shows it (L.10). */
+export interface ListLinkEvent {
+  id: string;
+  change: "linked" | "moved_forward" | "unlinked";
+  version_number: number;
+  from_version_numbers: number[] | null;
+  assessment_id: string;
+  assessment_name: string;
+  control_key: string;
+  objective_key: string;
+  saved_by: string | null;
+  created_at: string;
+}
+
+/** What removing a tag would do, computed by the server's own checks (L.10). */
+export interface TagRemovalCheck {
+  removable: boolean;
+  refused: string | null;
+  blocked_by: string[];
+}
