@@ -284,6 +284,8 @@ class EvidenceSnap:
     document_version_number: int | None = None
     document_superseded: bool = False
     document_approved_number: int | None = None
+    # The anchor on ssp/06_documents.html that carries that version's text.
+    document_anchor: str | None = None
 
 
 @dataclass(frozen=True)
@@ -476,6 +478,23 @@ class DocumentSnap:
     approved_by: str | None
     body_markdown: str | None
     objective_keys: list[str] = field(default_factory=list)
+    # A superseded version is here only because a live evidence link in
+    # this assessment names it (item X): the bundle carries the exact
+    # version a link names, as lists/ does (L.3/L.4).
+    superseded: bool = False
+    approved_number: int | None = None
+
+    @property
+    def anchor(self) -> str:
+        return _document_anchor(self.doc_id, self.version_number, self.superseded)
+
+
+def _document_anchor(doc_id: str, version_number: int, superseded: bool) -> str:
+    """The id of a version's section on ssp/06_documents.html. An approved
+    version keeps the id it always had; a superseded one is named by
+    version, since it sits beside its document's approved one."""
+    slug = _safe_slug(doc_id)
+    return f"doc-{slug}-v{version_number}" if superseded else f"doc-{slug}"
 
 
 @dataclass
@@ -1055,8 +1074,9 @@ def snapshot_bundle(
             for r in session.execute(
                 select(
                     DocumentVersion.id, DocumentVersion.version_number, DocumentVersion.status,
-                    Approved.c.version_number.label("approved_number"),
+                    Approved.c.version_number.label("approved_number"), Document.doc_id,
                 )
+                .join(Document, Document.id == DocumentVersion.document_id)
                 .outerjoin(
                     Approved,
                     (Approved.c.document_id == DocumentVersion.document_id)
@@ -1099,6 +1119,10 @@ def snapshot_bundle(
             ev_snap.document_version_number = dv.version_number
             ev_snap.document_superseded = dv.status == "superseded"
             ev_snap.document_approved_number = dv.approved_number
+            if dv.status in ("approved", "superseded"):
+                ev_snap.document_anchor = _document_anchor(
+                    dv.doc_id, dv.version_number, dv.status == "superseded"
+                )
         ev_by_cs.setdefault(cs_id, []).append(ev_snap)
 
     # --- evidence linked to no objective in this assessment (ADR 0007) ---
@@ -1384,12 +1408,29 @@ def snapshot_bundle(
     # point-in-time bundle handed to an assessor. Ordered by doc_id so the
     # section is stable across exports (the three-export byte comparison
     # in test_lifecycle.py depends on that stability).
+    #
+    # Item X: a superseded version is carried too when a live evidence link
+    # in this assessment names it -- a person attached it, and the bundle
+    # must carry the text the evidence names, not only the version approved
+    # now. It is marked superseded where it is shown.
+    # DETERMINISM-EXEMPT: an IN subquery, not a collection read.
+    attached_here = (
+        select(Evidence.source_document_version_id)
+        .join(EvidenceStateLink, EvidenceStateLink.evidence_id == Evidence.id)
+        .join(ControlState, ControlState.id == EvidenceStateLink.control_state_id)
+        .where(
+            ControlState.assessment_id == assessment_id,
+            EvidenceStateLink.is_archived.is_(False),
+            Evidence.source_document_version_id.is_not(None),
+        )
+    )
     document_rows = session.execute(
         select(
             Document.doc_id,
             Document.title,
             Document.doc_type,
             DocumentVersion.version_number,
+            DocumentVersion.status,
             DocumentVersion.approved_at,
             DocumentVersion.body,
             DocumentVersion.id.label("version_id"),
@@ -1397,7 +1438,14 @@ def snapshot_bundle(
         )
         .join(DocumentVersion, DocumentVersion.document_id == Document.id)
         .outerjoin(Contact, Contact.id == DocumentVersion.approved_by_contact_id)
-        .where(Document.org_id == org_id, DocumentVersion.status == "approved")
+        .where(
+            Document.org_id == org_id,
+            (DocumentVersion.status == "approved")
+            | (
+                (DocumentVersion.status == "superseded")
+                & DocumentVersion.id.in_(attached_here)
+            ),
+        )
         # DETERMINISM-TOTAL: doc_id is unique per org (uq_document_doc_id)
         # and version_number is unique within a document
         # (uq_document_version_identity).
@@ -1436,6 +1484,9 @@ def snapshot_bundle(
                 f"{control_id}[{objective_key}]"
             )
 
+    approved_number = {
+        r.doc_id: r.version_number for r in document_rows if r.status == "approved"
+    }
     documents = [
         DocumentSnap(
             doc_id=r.doc_id,
@@ -1446,6 +1497,8 @@ def snapshot_bundle(
             approved_by=r.approved_by,
             body_markdown=r.body,
             objective_keys=sorted(doc_objective_keys.get(r.version_id, [])),
+            superseded=r.status == "superseded",
+            approved_number=approved_number.get(r.doc_id),
         )
         for r in document_rows
     ]
@@ -1914,7 +1967,7 @@ def _implementation_body(snapshot: BundleSnapshot) -> str:
                         if e.kind == "file" and e.zip_path
                         else (
                             f" <span class='s-tag'>ref</span> {_esc(e.location or '')}"
-                            f"{_document_evidence_note(e)}"
+                            f"{_document_evidence_note(e, 'ssp')}"
                             if e.kind == "reference"
                             else (
                                 " <em style='color:#9ca3af'>"
@@ -2164,39 +2217,64 @@ def _documents_body(snapshot: BundleSnapshot) -> str:
     why what it is given is built this way. See markdown_doc.py's module
     docstring for the full argument.
     """
-    if not snapshot.documents:
-        return (
-            '<h1 id="ssp-documents">Approved Policies &amp; Procedures</h1>'
-            '<p class="no-stmt">No approved documents for this organization.</p>'
-        )
-
+    approved = [d for d in snapshot.documents if not d.superseded]
+    superseded = [d for d in snapshot.documents if d.superseded]
     parts = ['<h1 id="ssp-documents">Approved Policies &amp; Procedures</h1>']
-    for doc in snapshot.documents:
-        approved = (
-            doc.approved_at.strftime("%Y-%m-%d") if doc.approved_at is not None else "—"
-        )
-        objectives = (
-            ", ".join(_esc(k) for k in doc.objective_keys)
-            if doc.objective_keys
-            else '<span class="no-stmt">Not attached as evidence in this assessment</span>'
-        )
-        body_html = render_document_html(doc.body_markdown) or (
-            '<p class="no-stmt">This document has no content.</p>'
-        )
+    if not approved:
+        parts.append('<p class="no-stmt">No approved documents for this organization.</p>')
+    parts.extend(_document_entry(d) for d in approved)
+    if superseded:
         parts.append(
-            f'<section class="doc-entry" id="doc-{_safe_slug(doc.doc_id)}">'
-            f"<h2>{_esc(doc.doc_id)} — {_esc(doc.title)}</h2>"
-            "<table>"
-            f"<tr><th>Type</th><td>{_esc(doc.doc_type)}</td></tr>"
-            f"<tr><th>Version</th><td>{doc.version_number}</td></tr>"
-            f"<tr><th>Approved</th><td>{_esc(approved)}</td></tr>"
-            f"<tr><th>Approved by</th><td>{_esc(doc.approved_by or '—')}</td></tr>"
-            f"<tr><th>Attached as evidence for</th><td>{objectives}</td></tr>"
-            "</table>"
-            f'<div class="doc-body">{body_html}</div>'
-            "</section>"
+            '<h1 id="ssp-documents-superseded">Superseded Versions Attached as Evidence</h1>'
+            '<p class="no-stmt">Each version below has been superseded and may no longer be '
+            "in force. It is here because evidence in this assessment names it, and a "
+            "bundle carries the version its evidence names.</p>"
         )
+        parts.extend(_document_entry(d) for d in superseded)
     return "".join(parts)
+
+
+def _superseded_line(n: int, approved_number: int | None) -> str:
+    now = (
+        f"version {approved_number} is the approved one"
+        if approved_number is not None
+        else "no version is approved now"
+    )
+    return f"<strong>superseded</strong>: {now}, and version {n} may no longer be in force"
+
+
+def _document_entry(doc: DocumentSnap) -> str:
+    approved = doc.approved_at.strftime("%Y-%m-%d") if doc.approved_at is not None else "—"
+    objectives = (
+        ", ".join(_esc(k) for k in doc.objective_keys)
+        if doc.objective_keys
+        else '<span class="no-stmt">Not attached as evidence in this assessment</span>'
+    )
+    body_html = render_document_html(doc.body_markdown) or (
+        '<p class="no-stmt">This document has no content.</p>'
+    )
+    heading = f"{_esc(doc.doc_id)} — {_esc(doc.title)}"
+    status = ""
+    if doc.superseded:
+        heading += f", version {doc.version_number} (superseded)"
+        status = (
+            f"<tr><th>Status</th><td>Version {doc.version_number} "
+            f"{_superseded_line(doc.version_number, doc.approved_number)}</td></tr>"
+        )
+    return (
+        f'<section class="doc-entry" id="{doc.anchor}">'
+        f"<h2>{heading}</h2>"
+        "<table>"
+        f"<tr><th>Type</th><td>{_esc(doc.doc_type)}</td></tr>"
+        f"<tr><th>Version</th><td>{doc.version_number}</td></tr>"
+        f"{status}"
+        f"<tr><th>Approved</th><td>{_esc(approved)}</td></tr>"
+        f"<tr><th>Approved by</th><td>{_esc(doc.approved_by or '—')}</td></tr>"
+        f"<tr><th>Attached as evidence for</th><td>{objectives}</td></tr>"
+        "</table>"
+        f'<div class="doc-body">{body_html}</div>'
+        "</section>"
+    )
 
 
 def _render_documents(snapshot: BundleSnapshot) -> str:
@@ -2340,23 +2418,22 @@ def _list_evidence_note(ev: EvidenceSnap) -> str:
     )
 
 
-def _document_evidence_note(ev: EvidenceSnap) -> str:
-    """Which document version is attached, and if it is superseded, that it
-    may no longer be in force (item X) -- not a list's "newer version"."""
+def _document_evidence_note(ev: EvidenceSnap, page_dir: str) -> str:
+    """Which document version is attached, linked to where this bundle
+    carries its text, and if it is superseded, that it may no longer be in
+    force (item X) -- not a list's "newer version". `page_dir` is the
+    directory of the page the line is on."""
     if ev.document_version_number is None:
         return ""
     n = ev.document_version_number
-    if not ev.document_superseded:
-        return f" <span class='ev-path'>version {n}</span>"
-    now = (
-        f"version {ev.document_approved_number} is the approved one"
-        if ev.document_approved_number is not None
-        else "no version is approved now"
-    )
-    return (
-        f" <span class='ev-path'>version {n}</span> <strong>superseded</strong>: {now}, "
-        f"and version {n} may no longer be in force"
-    )
+    version = f"version {n}"
+    if ev.document_anchor:
+        href = f"{posixpath.relpath('ssp/06_documents.html', page_dir)}#{ev.document_anchor}"
+        version = f'<a href="{_esc(href)}">{version}</a>'
+    note = f" <span class='ev-path'>{version}</span>"
+    if ev.document_superseded:
+        note += " " + _superseded_line(n, ev.document_approved_number)
+    return note
 
 
 def _render_evidence_li(ev: EvidenceSnap, manifest_dir: str) -> str:
@@ -2396,7 +2473,7 @@ def _render_evidence_li(ev: EvidenceSnap, manifest_dir: str) -> str:
         )
     return (
         f"<li>&#x2197;&nbsp;{_esc(ev.title)}"
-        f" &mdash; {_esc(ev.location or '')}{_document_evidence_note(ev)}"
+        f" &mdash; {_esc(ev.location or '')}{_document_evidence_note(ev, manifest_dir)}"
         f"&nbsp;<span style='color:#9ca3af;font-style:italic'>"
         f"not applicable &mdash; reference only</span></li>"
     )

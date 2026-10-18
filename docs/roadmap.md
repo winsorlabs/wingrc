@@ -5571,11 +5571,12 @@ A link is right only for "yes, no". How each path answers:
     AC.L2-3.1.1[a]/[c], and it moves nothing:
     `test_closing_a_review_cycle_is_a_persons_act_and_moves_nothing` checks
     that a person's link on the same objective is untouched.
-  - **The deadline close is a different decision, and it is open.** I first
-    recorded it as passing if the act counted is the opening of the cycle.
-    Jarrod's better question is what the attestation records. See
-    "Review-cycle deadline close files evidence of absence as evidence"
-    under Planned.
+  - **The deadline close is a different decision.** I first recorded it as
+    passing if the act counted is the opening of the cycle. Jarrod's better
+    question was what the attestation records: on a deadline or
+    undeliverable close, it records that nobody attested. Decided: attach
+    only what attests. See "Review cycles attach only what attests" under
+    Planned (not built in X).
 
 **Links already on live: none.** I took the count on live (b70958d,
 2026-10-18) before deploying:
@@ -5634,25 +5635,36 @@ A link made by publish before X has no attach event. Its record is the
   - two docstrings, in reaffirm and the N.3 test.
 
 **Found after the build, before merge (2026-10-18):**
-- **The bundle does not carry the text of a superseded version a link
-  names.** This is a correctness hole that X introduces, not a deferred
-  nicety. L.3/L.4 established that a bundle renders the exact version a
-  link names: `lists/` embeds every version a live link points at. A
-  document body renders in one place, `ssp/06_documents.html` and the PDF
-  built from the same function (`_documents_body`). That page takes
-  `approved` versions only. For a link on a superseded v2, the bundle
-  shows:
-  - **manifest and implementation page:** the v2 line, *"version 2
-    superseded: version 3 is the approved one…"*, with no href;
-  - **documents page:** v3's body, under its own "Version 3" label;
-  - **v2's text:** nowhere.
+- **The bundle did not carry the text of a superseded version a link
+  names. Fixed in this PR, before merge.** L.3/L.4 established that a
+  bundle renders the exact version a link names: `lists/` embeds every
+  version a live link points at. A document body rendered in one place,
+  `ssp/06_documents.html` and the PDF built from the same function, and
+  only for `approved` versions. So for a link on a superseded v2:
+  - the manifest named v2;
+  - the documents page carried v3's text under its own label;
+  - v2's text was nowhere.
 
-  So it is not v3's text under a v2 label. It is v2 named with nothing to
-  read. Before X this state could not exist, because a republish archived
-  every link on the superseded version. Live has no such link (0 document
-  links). Decision pending before deploy.
+  Before X this state could not exist, because a republish archived every
+  link on the superseded version. Shipping it would have meant the first
+  bundle anyone generated named evidence it did not carry. The fix:
+  - `06_documents.html` (and so the PDF) has a second section, *Superseded
+    Versions Attached as Evidence*. It carries every superseded version
+    that a live link **in this assessment** names, with its own text,
+    under `doc-<slug>-v<n>`, marked superseded with the version approved
+    now.
+  - The approved section and its `doc-<slug>` ids are unchanged.
+  - Each document evidence line in the manifest and on the implementation
+    page now links its version number to that section.
+  - A superseded version nothing in this assessment names, including one
+    attached only in another assessment, is not carried.
+
+  Pinned by `test_a_superseded_document_reads_as_superseded_in_the_bundle`
+  (v1's own text under v1's id, v2's under v2's, two exports identical)
+  and `test_a_superseded_version_nothing_names_is_not_carried`.
 - **A document tag that a link rests on can be removed.** Planned as the
-  next slice: "X.1. A document tag a link rests on cannot be removed".
+  next slice, together with the tag editor: "X.1. Documents get a tag
+  editor, and a tag a link rests on cannot be removed".
 - **No screen tags a document with an objective.** `api.ts` has
   `addDocumentObjectiveTag`/`removeDocumentObjectiveTag`, and no component
   calls them. Live has 0 `document_objective_tag` rows. So on live,
@@ -9783,82 +9795,126 @@ the superseded flag. Backend: publish/republish, four routes, the
 beside lists. One slice, bench-verified like L.4, with the live link count
 taken before the deploy.
 
-### X.1. A document tag a link rests on cannot be removed -- the next slice
+### X.1. Documents get a tag editor, and a tag a link rests on cannot be removed -- the next slice
 
-**L.4's `tag_removal_blockers` rule, for documents.** A list's tag cannot
-be removed while a live link rests on it; a document's objective tag can.
-After item X this matters more than it did before. The links are now a
-person's deliberate act, and removing the tag quietly narrows what the
-document is offered for underneath a link someone chose. The link
-survives today, and the objective shows it with "it is no longer tagged
-with this objective". But the record of why it was there, the tag, is gone.
+**Why together.** Item X makes a published document an offered candidate
+on its tagged objectives, but no screen tags a document. `api.ts` has the
+two calls and no component uses them, and live has 0
+`document_objective_tag` rows. Without an editor, X ships dormant: a
+feature reachable only by API. The refusal on its own would be a second
+slice reachable only by API. The editor is what makes X usable, and the
+refusal is the rule it must obey from its first day. Neither is worth
+shipping alone.
+
+**The refusal is L.4's `tag_removal_blockers` rule, for documents.** It
+matters more after X than before. The links are a person's deliberate
+act now, so removing the tag silently narrows what a chosen link rests
+on. Today the link survives, and the objective shows "it is no longer
+tagged with this objective". The record of why it is there goes.
 
 **The slice:**
 - **Backend:**
-  - `document_evidence.tag_removal_blockers(session, document_id,
-    objective_id)` returns the live links from any version of the
-    document onto control states of that objective, with the assessment,
-    objective and version.
-  - `DELETE …/documents/{id}/objective-tags/{objective_id}` refuses with
-    409 and `blocked_by`, as `list_definitions` does.
-  - A `GET …/objective-tags/{objective_id}/removal` check runs the
-    DELETE's own logic (L.10's rule: a screen states only what it
-    computed).
-- **Frontend:** none needed yet. No screen tags documents (item X's
-  finding), so the refusal is API-only until a tag editor exists. When
-  one is built, it inherits L.10's dialog: ask the server, say what it
-  found.
-- **Tests (~5):**
-  - refused while a link rests on the tag, with the blocker named;
-  - allowed once unlinked;
-  - a link in another assessment blocks too;
-  - c3pao cannot remove a tag at all;
-  - the check and the DELETE agree.
+  - `DocumentDetailOut` carries `tagged_objectives` as
+    `{objective_id, control_key, objective_key, text}`. Today
+    `tagged_objective_ids` is bare ids, which no screen can show.
+  - `POST …/objective-tags` also accepts `objective_key`
+    (`"AC.L2-3.1.1[a]"`), resolved against the catalog. It is refused when
+    the key matches nothing, or more than one framework.
+  - `document_evidence.tag_removal_blockers(document_id, objective_id)`
+    returns the live links from any version of the document onto that
+    objective, in any assessment.
+  - `DELETE …/objective-tags/{objective_id}` refuses with 409 and
+    `blocked_by`, as `list_definitions` does.
+  - `GET …/objective-tags/{objective_id}/removal` runs the DELETE's own
+    checks (L.10).
+- **Frontend:** a *Tagged objectives* block on the document's Edit/Read
+  tab. Each tag is shown as `AC.L2-3.1.1[a]` plus its text, with a remove
+  control. It works like the list library's tag input: type the objective
+  key, then Add. Removing asks the server first and says what it found,
+  in L.10's dialog form, with no Yes when blocked. c3pao sees the tags and
+  no controls.
+- **Tests:**
+  - Backend (~8): add by key, with an unknown or ambiguous key refused;
+    detail carries keys; refused while a link rests on the tag, with the
+    blocker named; allowed once unlinked; a link in another assessment
+    blocks; the check and the DELETE agree; c3pao refused.
+  - Frontend (~5, item Z's form): rendered tags, add, blocked dialog with
+    no Yes, removable dialog, read-only.
 - **Then:** `NOT_TAGGED` becomes reachable only for a tag removed before
   X.1. Keep it, and say so.
 
-**Size:** small. No migration, about 40 lines of code. Smaller than L.10.
+**Size:** about L.10's.
+- **Editor:** about 100 frontend lines, because it copies the list
+  library's tag input and L.10's dialog rather than inventing a picker.
+- **Backend:** about 60 lines.
+- No migration.
 
-### Review-cycle deadline close files evidence of absence as evidence -- found 2026-10-18, decision open
+**One slice: yes.** A browsable objective picker over 320 objectives
+would not fit, and would be its own slice if wanted later. The typed key
+keeps it the size of what L.2.2 and L.10 already built.
 
-**What `close_cycle` writes on the no-response path.** The scheduler
-(`scheduler.py`, past `due_at`) calls `close_cycle(status=
-"closed_unattested")`. If no reviewer was ever notified, `close_cycle`
-upgrades that to `closed_undeliverable`. Either way it writes the same
-Evidence:
+### Review cycles attach only what attests -- decided 2026-10-18, not built
+
+**The rule: attach only what attests.** A `completed` cycle attaches its
+attestation to AC.L2-3.1.1[a]/[c]. A deadline close (`closed_unattested`)
+or an undeliverable close (`closed_undeliverable`) keeps its record and
+attaches nothing:
+- The record is the Evidence row and the cycle with its reviewers.
+- Non-response stays recorded, which is what D.3's §3 wanted kept.
+- It is not filed as an attestation of objectives nobody reviewed.
+
+**What `close_cycle` does today.** The scheduler (`scheduler.py`, past
+`due_at`) calls `close_cycle(status="closed_unattested")`. If no reviewer
+was ever notified, `close_cycle` upgrades that to `closed_undeliverable`.
+Either way it writes:
 - `kind='file'`, `artifact_type='attestation'`;
 - title *"Periodic user/device review -- <date>"*;
-- an HTML body whose outcome line reads *"Cycle closed at its due date
-  without full attestation"* or *"…no reviewer could be notified…, so no
-  review was actually attempted"*.
+- an HTML body whose outcome line reads *"…without full attestation"* or
+  *"…no reviewer could be notified…, so no review was actually
+  attempted"*.
 
-It links that Evidence to AC.L2-3.1.1[a]/[c] on every in_progress
-assessment, the same as a completed cycle.
+It links that to [a]/[c] on every in_progress assessment, exactly as a
+completed cycle does.
 
-**So a deadline-closed cycle can file, as an attestation, a record that
-nobody attested,** and in the undeliverable case one saying no review
-happened. That is evidence of absence filed as evidence. The record itself
-is right and valuable: non-response is evidence §3 of D.3 wanted kept.
-What it is filed as is the problem:
-- **The bundle manifest** shows only the title and the `attestation` tag.
-  The outcome is inside the file, and the evidence description is not
-  rendered.
-- **The dashboard's "blocked objectives" widget** counts any link as
-  evidence present (`routers/dashboard.py:_blocked_objectives`), so the
-  link clears [a]/[c] from it.
-- **The control-states evidence count** (`routers/assessments.py`) counts
-  it too.
+**The deciding fact: a screen reports what nothing computed** (CLAUDE.md's
+fourth invariant). The dashboard's *blocked objectives* widget
+(`routers/dashboard.py:_blocked_objectives`) treats any link as evidence
+present. So an objective nobody reviewed drops off it the moment a
+deadline close attaches. Other places that read it as an attestation:
+- the control-states evidence count (`routers/assessments.py`);
+- the bundle manifest, which shows only the title and an `attestation`
+  tag.
 
-None of these moves control_state or SPRS.
+None of this moves control_state or SPRS.
 
-**This is not the question item X recorded.** X asked whether the close is
-a person's act. The decision here is what an unattested record should be
-filed as, and whether it is attached at all. Options for that decision:
-- offer it rather than attach it;
-- attach it with an artifact type and a title that say "not attested";
-- keep the record on the cycle and attach nothing.
+**The slice, when built:**
+- `close_cycle` links only when `status == "completed"`.
+- The no-response Evidence row is still written, still reachable from the
+  cycle, and not linked.
+- The tests that assert a deadline close links (`test_review_cycles.py`,
+  the scheduler tests) keep their scenarios. They assert no link and say
+  why.
+- Item X's `test_closing_a_review_cycle_is_a_persons_act_and_moves_nothing`
+  keeps covering the completed path.
+- Existing deadline-closed links on live are counted first, then left or
+  re-offered by decision. Nothing is removed silently.
 
-Report only; not fixed.
+Small: a few lines and the test updates.
+
+**Separately: the widget's "any link means covered" test is weak on its
+own.** `_blocked_objectives` asks whether *any* `evidence_state_link`
+row exists. It does not filter `is_archived`, so a link archived by a
+product's deactivation counts as evidence present. It does not ask
+whether the evidence is current either:
+- a list link that has drifted counts;
+- a superseded document version counts;
+- an expired artifact counts.
+
+The deadline-close attestation is one case of the weakness, not the whole
+of it. The widget needs a stated definition of "has evidence". At least
+live links only, and probably the same set the bundle's per-objective
+evidence uses. That belongs with item Z: a screen's count says what it
+computed.
 
 ### Y. A test that models.py's CHECK constraints are the database's
 

@@ -23,6 +23,7 @@ What these pin:
 from __future__ import annotations
 
 import io
+import re
 import uuid
 import zipfile
 
@@ -33,7 +34,7 @@ from sqlalchemy import func, select
 from app import document_evidence, list_evidence, review_cycles
 from app.auth import get_current_user
 from app.db import get_session
-from app.engine import activate_org_product, deactivate_org_product
+from app.engine import activate_org_product, deactivate_org_product, start_assessment
 from app.main import app
 from app.models import (
     Assessment,
@@ -368,10 +369,20 @@ def test_deactivating_a_product_leaves_an_attached_document_alone(db_session):
     assert archived is False, "a person attached it; a tool leaving does not retire it"
 
 
+def _unstamped(page: str) -> str:
+    return re.sub(r"generated [^<]*", "", page)
+
+
 def _member(content: bytes, rel: str) -> str:
     zf = zipfile.ZipFile(io.BytesIO(content))
     [name] = [n for n in zf.namelist() if n.split("/", 1)[1] == rel]
     return zf.read(name).decode()
+
+
+def _sections(docs_html: str) -> dict[str, str]:
+    """Each document section on ssp/06_documents.html, by its id."""
+    pattern = r'<section class="doc-entry" id="([^"]+)">(.*?)</section>'
+    return dict(re.findall(pattern, docs_html, re.S))
 
 
 @pytest.mark.integration
@@ -386,20 +397,64 @@ def test_a_superseded_document_reads_as_superseded_in_the_bundle(db_session):
     r = blake.get(BUNDLE.format(org=w["org"], a=w["a"]))
     assert r.status_code == 200, r.text
     said = (
-        "<span class='ev-path'>version 1</span> <strong>superseded</strong>: version 2 is the "
-        "approved one, and version 1 may no longer be in force"
+        "<strong>superseded</strong>: version 2 is the approved one, and version 1 may no "
+        "longer be in force"
     )
     manifest = _member(r.content, "evidence/manifest.html")
-    assert said in manifest
+    assert (
+        "<span class='ev-path'><a href=\"../ssp/06_documents.html#doc-ac_pol_001-v1\">"
+        "version 1</a></span> " + said
+    ) in manifest
     assert manifest.count("Access Control Policy") == 1, (
         "version 2's unattached Evidence row is not stray evidence"
     )
-    assert said in _member(r.content, "ssp/02_implementation.html")
-    docs = _member(r.content, "ssp/06_documents.html")
-    assert "<tr><th>Version</th><td>2</td></tr>" in docs
-    assert "Not attached as evidence in this assessment" in docs, (
+    impl = _member(r.content, "ssp/02_implementation.html")
+    assert '<a href="06_documents.html#doc-ac_pol_001-v1">version 1</a>' in impl
+    assert said in impl
+
+    # L.3/L.4's rule: the bundle carries the exact version the link names.
+    sections = _sections(_member(r.content, "ssp/06_documents.html"))
+    assert set(sections) == {"doc-ac_pol_001", "doc-ac_pol_001-v1"}
+    v1, v2 = sections["doc-ac_pol_001-v1"], sections["doc-ac_pol_001"]
+    assert "Version one." in v1 and "Version two." not in v1, "v1's own text, not v2's"
+    assert "version 1 (superseded)" in v1 and said in v1
+    assert "AC.L2-3.1.1[a]" in v1
+    assert "Version two." in v2 and "superseded" not in v2
+    assert "Not attached as evidence in this assessment" in v2, (
         "version 2 is the approved one and nobody has attached it"
     )
+    pages = ("ssp/06_documents.html", "evidence/manifest.html", "ssp/02_implementation.html")
+    again = blake.get(BUNDLE.format(org=w["org"], a=w["a"])).content
+    for rel in pages:
+        assert _unstamped(_member(r.content, rel)) == _unstamped(_member(again, rel))
+
+
+@pytest.mark.integration
+def test_a_superseded_version_nothing_names_is_not_carried(db_session):
+    """Only a version a live link in this assessment names is carried: one
+    nobody attached, or attached only in another assessment, is not."""
+    w = _setup(db_session, "unnamed")
+    _publish(_as(db_session, w["blake"]), w)
+    second = start_assessment(db_session, w["org"], w["fw"], "Second")
+    db_session.flush()
+    cs2 = db_session.scalar(select(ControlState).where(
+        ControlState.assessment_id == second.id,
+        ControlState.objective_id == _objective(db_session, w, "AC.L2-3.1.1[a]"),
+    ))
+    avery = _as(db_session, w["avery"])
+    r = avery.post(
+        f"{STATE_DOCS.format(org=w['org'], a=second.id, cs=cs2.id)}/{w['doc']['id']}"
+    )
+    assert r.status_code == 201, "fixture: v1 attached in the other assessment"
+    blake = _as(db_session, w["blake"])
+    _edit(blake, w, "Version two.")
+    _publish(blake, w)
+
+    sections = _sections(_member(
+        blake.get(BUNDLE.format(org=w["org"], a=w["a"])).content, "ssp/06_documents.html"
+    ))
+    assert set(sections) == {"doc-ac_pol_001"}
+    assert "Version one." not in sections["doc-ac_pol_001"]
 
 
 @pytest.mark.integration
@@ -414,10 +469,10 @@ def test_closing_a_review_cycle_is_a_persons_act_and_moves_nothing(db_session):
     person's act: when the last reviewer attests (`attest` closes the
     cycle), the attestation is that act, for exactly these objectives.
     This test covers that path only. The scheduler's deadline close
-    (status closed_unattested or closed_undeliverable) attaches a record
-    that nobody attested. That is an open decision about filing evidence of
-    absence as evidence ("Review-cycle deadline close…" in
-    docs/roadmap.md), not settled by X. close_cycle is unchanged by X.
+    (status closed_unattested or closed_undeliverable) still attaches a
+    record that nobody attested. The decision is to attach only what
+    attests ("Review cycles attach only what attests" in docs/roadmap.md).
+    It is not built here: close_cycle is unchanged by X.
     """
     w = _setup(db_session, "cycle")
     _publish(_as(db_session, w["blake"]), w)
