@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, assetUrl } from "../api";
 import { canManageReviewCycles } from "../lib/roles";
-import type { ReviewCycle, ReviewCycleDetail, ReviewCycleItem } from "../types";
+import type { ReviewCycle, ReviewCycleDetail, ReviewCycleItem, ReviewCycleRecord } from "../types";
 
 // Periodic review & attestation (D.3's first half) -- the client's
 // acknowledgement IS the artifact here, so this screen is reachable by
@@ -143,6 +143,34 @@ interface DetailProps {
   onChanged: () => void;
 }
 
+// Where the cycle's record is attached is said from the links the server
+// read, not from the status. A record of nobody attesting is attached
+// nowhere and offers no way to attach it: it would file "nobody reviewed
+// this" as evidence that someone did.
+function CycleRecord({ record }: { record: ReviewCycleRecord }) {
+  const href = assetUrl(record.download_url);
+  return (
+    <div className="card" role="region" aria-label="Record">
+      <h3>Record</h3>
+      <p>
+        {href ? <a href={href}>{record.title}</a> : record.title}
+      </p>
+      {record.attached_to.length > 0 ? (
+        <p>
+          Attached as evidence to{" "}
+          {record.attached_to.map((a) => `${a.objective_key} in ${a.assessment_name}`).join("; ")}.
+        </p>
+      ) : (
+        <p className="field-hint">
+          Not attached as evidence. No reviewer attested, so this record does not show that
+          anyone reviewed the users and devices. It is kept as the record of who was asked and
+          who did not respond.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function ReviewCycleDetailView({ orgId, detail, currentUserId, canManage, onBack, onChanged }: DetailProps) {
   const [comment, setComment] = useState("");
   const [attesting, setAttesting] = useState(false);
@@ -214,6 +242,8 @@ function ReviewCycleDetailView({ orgId, detail, currentUserId, canManage, onBack
           )}
         </div>
       )}
+
+      {detail.record && <CycleRecord record={detail.record} />}
 
       {canAttest && (
         <div className="card">

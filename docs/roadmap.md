@@ -5442,6 +5442,149 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### Review cycles attach only what attests ✅ DONE (2026-10-19, bench-verified, migration 0070; live detach pending)
+
+**The rule: a completed cycle attaches; an unattested or undeliverable
+close records and attaches nothing.** `close_cycle` writes, stores and
+keeps its record for every status, as before. It is the record of who
+was asked and who did not answer, which D.3 called the most valuable part
+of the feature. Only when `status == "completed"` does it link the
+record to AC.L2-3.1.1[a]/[c] on every in_progress assessment. The
+reviewer statuses that are the record's content (`no_response` against
+`not_notified`, and the 2026-09-13 fix behind them) are untouched.
+
+**The docstring said the old behaviour, so it was rewritten in the same
+commit.** It used to read "linked to AC.L2-3.1.1[a]/[c]'s control_state
+rows on every currently in_progress assessment", for every status. That
+is item X's lesson again: a docstring that states the old behaviour is
+how the next reader inherits the mistake. It now says the rule, why
+(attaching would file "nobody reviewed this" as evidence that someone
+did), and cites CLAUDE.md's product invariant that a screen must not
+state a result nothing computed. `_mapped_control_states`' docstring
+(which said the record waits "until a human links it") and item X's
+`document_evidence.py` note and test docstring were corrected with it.
+
+**Where an unattached record surfaces: checked, not assumed.**
+- **The bundle: already carried.** Evidence never linked into an
+  assessment is in `evidence/manifest.html`'s *Unlinked Evidence*, with
+  its file under `evidence/unlinked/`. Pinned by a test through
+  `snapshot_bundle`. One catch: that section leaves out evidence whose
+  only links were *archived* (a deactivated product's, on purpose). So
+  the detach deletes the link rows rather than archiving them; an
+  archived link would hide the record from the bundle, and the dashboard
+  counts archived links as evidence anyway.
+- **The cycle's page: did not show it, and could not.** Evidence is
+  listed per objective, and nothing on a cycle pointed at its record. The
+  only route to it was the objective it was attached to, which this
+  slice removes. This was the slice's real work:
+  - **`evidence.source_review_cycle_id`** (migration 0070), nullable,
+    RESTRICT, indexed, the pattern of `source_document_version_id` and
+    `source_list_version_id`. `close_cycle` sets it.
+  - **Backfilled from what `close_cycle` wrote.** It stamps the cycle's
+    `closed_at` and the record's `collected_at` with one value, so a
+    record is the attestation in the cycle's org collected at the
+    moment the cycle closed. A record two cycles would claim refuses the
+    migration rather than guess. On a copy of live (restored on the
+    bench, then dropped) it named all 3 records' cycles, 3 of 3, and
+    left their links as they were (2, 0, 2).
+  - **The cycle's page has a *Record* card**: the record's title,
+    linked to its download, then where it is attached, read from the
+    live links and never from the status. A completed cycle's says
+    "Attached as evidence to AC.L2-3.1.1[a] in …; AC.L2-3.1.1[c] in …".
+    Otherwise it says "Not attached as evidence. No reviewer attested,
+    so this record does not show that anyone reviewed the users and
+    devices. It is kept as the record of who was asked and who did not
+    respond." It has no button. `GET …/review-cycles/{id}` carries it as
+    `record`.
+
+**Offering it as a candidate: considered and rejected.** Offering would
+invite someone to attach "nobody reviewed this" as evidence for the
+thing nobody reviewed, which is the same harm with an extra click in
+front of it. The page says it is not attached and gives no way to attach
+it. Do not reopen this as a convenience.
+
+**The evidence ✕ no longer deletes a cycle's record.** The generic
+unlink deletes the Evidence row and its stored file when the last link
+goes; it exempted only a document version's row, and now a cycle's too.
+**This is the narrow fix only.** The general defect (the ✕ deletes the
+artifact and its bytes, writes no audit row, and is presented as
+*Remove*) is its own entry under Planned, "The evidence ✕ deletes the
+artifact", and is **not** fixed here.
+
+**The detach** (`wingrc review-cycles-detach-unattested --org-id …`).
+Dry-run by default; `--org-id` required, and the org's name printed
+before anything. It finds whatever links from records of unattested or
+undeliverable closes exist when it runs, so a cycle the scheduler closes
+before the deploy is included, and a second run reports nothing to do.
+Each link is deleted with one `evidence.attestation_detach` audit row on
+the Evidence, naming the objective, the assessment, the cycle and the
+reason. The record (the Evidence row, its stored HTML, the cycle and its
+reviewers) is not touched. It does not go through the ✕.
+- **Why detach, against item X's precedent.** See the decision in the
+  Planned entry: X's links were true evidence chosen by nobody; these
+  say something false where they are attached.
+- **Rehearsed on the copy of live** (bench, then dropped): Acme MSP's
+  dry run listed the 2 links, the run removed exactly those 2 with 2
+  audit rows, and a second run said "Nothing to do". The record stayed
+  stored, with 0 links, and the statuses were where they had been.
+
+**Out of scope, and kept apart:**
+- **Acme's [a] and [c] read `met` with no evidence after the detach.**
+  They were marked met by hand on 2026-09-13, three weeks before the link
+  existed (2026-10-05). The detach neither caused that nor fixes it; it
+  is its own question.
+- The general ✕ defect (above).
+- The blocked-objectives widget's "any link means covered" test (with
+  item Z).
+- The evidence section cosmetics.
+
+**Tests.** New: `test_review_cycle_record.py`, 7 tests through the
+database and HTTP:
+- completed attaches, and the page names where (an archived link is not
+  attached);
+- unattested and undeliverable, parametrized: the record is written and
+  stored and says so, has no link, keeps its reviewer status, is on the
+  page and in the bundle's unlinked evidence; no status or SPRS change;
+- another org gets 404 on its own path and 403 on this org's, for the
+  cycle and the download;
+- the ✕ on a completed record's links keeps the record and its bytes;
+- the detach: the dry run is what the run does, a completed cycle's
+  links stay, the record and its bytes are read back unchanged, one
+  audit row per link with the reason, a second run is empty, the bundle
+  then carries it as unlinked, no status or SPRS change;
+- 0070's backfill run against records written before the column.
+
+`ReviewCyclesPanel.test.tsx`: 3 (unattested: not attached, linked, no
+button; completed: names where; open: no card). No existing assertion
+changed. The scheduler's close tests seed no assessment, so they never
+asserted a link; `test_full_attestation_closes_cycle_and_creates_linked_
+evidence` still passes unchanged. The determinism guard still scans
+`close_cycle`; no query was added to it.
+
+**Verified on the bench** (wl-util-1, isolated `wingrc_verify_att1`):
+- **Backend:** 1827 passed (1820 on main plus 7), none failed or
+  skipped, with `WINGRC_MIN_TESTS_RUN=500`.
+- **Lint and types:** `ruff` clean; `tsc -b` clean.
+- **Frontend:** 446 vitest passed (443 plus 3), and the build
+  succeeded.
+
+Mutation runs, each restored afterwards:
+- Attaching for every status fails 4.
+- Archiving the link instead of deleting it fails the detach test.
+- Writing the detach's audit row under another action fails it.
+- Dropping the ✕ exemption fails the ✕ test.
+- Letting the page count archived links as attached passed at first.
+  The completed-cycle test then gained the archived-link assertion, and
+  it fails.
+
+**Live, after the deploy (pending).** The detach runs in this order,
+each confirmed by Jarrod before it writes: Acme MSP's dry run, shown,
+then the run; then the same for Winsorlabs. Afterwards both Evidence
+rows and both stored objects are read back, and the objectives'
+statuses checked against where they were.
+
+---
+
 ### Item X.1: documents get a tag editor, and a tag a link rests on cannot be removed ✅ DONE (2026-10-18, verified on live with X's walk)
 
 **Documents can be tagged from a screen for the first time.** Before
@@ -6151,7 +6294,8 @@ importer's layout. It does not reopen this one.
   its own item, X.
 - **The generic evidence unlink writes no audit row**
   (`routers/evidence.py`'s `delete_evidence`). List links have their own
-  unlink, which does.
+  unlink, which does. Now its own entry under Planned, "The evidence ✕
+  deletes the artifact" (2026-10-19).
 - **The generic per-objective evidence list shows archived links** (it
   has no `is_archived` filter), so a deactivated tool's evidence still
   appears on the objective. List links are listed separately and only
@@ -10036,7 +10180,13 @@ tagged with this objective". The record of why it is there goes.
 would not fit, and would be its own slice if wanted later. The typed key
 keeps it the size of what L.2.2 and L.10 already built.
 
-### Review cycles attach only what attests -- the next slice (decided 2026-10-18)
+### Review cycles attach only what attests ✅ BUILT (2026-10-19)
+
+**Built as the Done entry "Review cycles attach only what attests".** It
+records what the slice found and decided. The text below is the plan,
+kept as it was. Changes from it: the record had to be made findable
+(migration 0070 and the cycle page's *Record* card), and the detach
+deletes the link rows rather than archiving them.
 
 **Next, ahead of the evidence section cosmetics** (Jarrod, 2026-10-19).
 Two records of reviews that never happened are attached as evidence on
@@ -10184,6 +10334,25 @@ no migration. Small.
    is.
 3. **L.10's remaining items: none.** Items 1 and 2 were closed by X.1,
    and item 3 was cleared by the live walk.
+
+### The evidence ✕ deletes the artifact, unaudited, and says "Remove" -- not fixed
+
+**Recorded 2026-10-19, while building "Review cycles attach only what
+attests", which fixed one narrow case of it.** The objective's evidence
+✕ (`EvidenceSection.tsx`, title *Remove*, no confirmation) calls
+`routers/evidence.py`'s `delete_evidence`:
+- It deletes the link, and when that was the artifact's last link it
+  deletes the Evidence row and the stored file too.
+- It writes no audit row (first noted, as one line, in L.4's "Found,
+  not fixed").
+- It reads as detaching evidence from one objective, and can destroy the
+  artifact for every objective and every assessment.
+
+Exempt so far: a published document version's record (item X) and a
+review cycle's record (2026-10-19). Those exemptions are not the fix.
+The fix decides what *Remove* means (detach only, with the artifact kept
+until someone deletes it deliberately, or a delete that says so), and
+gives every path an audit row.
 
 ### Y. A test that models.py's CHECK constraints are the database's
 

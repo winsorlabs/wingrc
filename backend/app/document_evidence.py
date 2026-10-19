@@ -26,7 +26,9 @@ it move an existing link? A link is right only if the first is yes and the
 second is no. Attaching here passes; moving forward is a person's act
 whose whole purpose is the move; publish passed neither, and republish
 moved links. `review_cycles.close_cycle` passes both (see its test,
-`test_closing_a_review_cycle_is_a_persons_act_and_moves_nothing`).
+`test_closing_a_review_cycle_is_a_persons_act_and_moves_nothing`), and
+attaches only a completed cycle's record: one that says nobody attested
+is not evidence that someone did.
 
 **History is the audit log, on the version.** Each attach, move and
 removal is an audit row against the document version, so the document's

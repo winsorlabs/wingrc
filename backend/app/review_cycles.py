@@ -64,6 +64,10 @@ MAPPED_OBJECTIVE_KEYS = {"user": "a", "device": "c"}
 # only the OPENING cadence (Organization.review_cadence_months) is the
 # contractual fact that varies client to client; the response window for
 # one open cycle is an operational constant.
+# The one closing status whose record is attached as evidence; see
+# close_cycle.
+ATTESTS = "completed"
+
 RESPONSE_WINDOW_DAYS = 21
 REMINDER_DAYS = (7, 14)  # reminder_number 1 at day 7, 2 at day 14 of the window
 
@@ -348,11 +352,9 @@ def _render_attestation_html(
 
 def _mapped_control_states(session: Session, *, org_id: uuid.UUID) -> list[ControlState]:
     """ControlState rows for AC.L2-3.1.1[a]/[c], across every currently
-    in_progress assessment for this org -- evidence attaches to whatever
-    assessment is actually active, same as any other evidence collected
-    today. If no assessment is in_progress, returns []; the Evidence row
-    is still created (org-scoped, no link required), just unlinked until
-    a human links it via the existing evidence UI."""
+    in_progress assessment for this org -- what a completed cycle's
+    record attaches to (close_cycle). If no assessment is in_progress,
+    returns []; the record is still written, unattached."""
     from .models import Assessment  # local import: avoids a cycle with engine.py's own imports
 
     objective_ids = session.scalars(
@@ -390,11 +392,25 @@ def close_cycle(
     record §3 calls the most valuable part of this feature -- never left
     ambiguous, never silently dropped, and -- since a live bug on
     wl-util-1 (2026-09-13) -- never a false claim that someone failed to
-    respond to a request nobody ever sent them), and produces the
-    Evidence row: an HTML document, kind='file', artifact_type=
-    'attestation' (see migration 0045 for why this needed a new type),
-    linked to AC.L2-3.1.1[a]/[c]'s control_state rows on every currently
-    in_progress assessment for this org.
+    respond to a request nobody ever sent them), and writes the record:
+    an Evidence row naming the cycle (`source_review_cycle_id`), an HTML
+    document, kind='file', artifact_type='attestation' (see migration
+    0045 for why this needed a new type). Every close writes it.
+
+    **Only a completed cycle's record is attached** -- to AC.L2-3.1.1[a]/
+    [c] on every in_progress assessment for this org (2026-10-19). A
+    deadline close (`closed_unattested`) or an undeliverable one
+    (`closed_undeliverable`) records that nobody attested, and attaching
+    that would file "nobody reviewed this" as evidence that someone did:
+    the objectives would read as covered on the dashboard and in the
+    bundle, by a record whose own outcome line says otherwise. It stays
+    the record of who was asked and who did not answer -- shown on the
+    cycle's page and in the bundle's unlinked evidence -- and is never
+    offered as a candidate, which would put the same claim one click
+    away. CLAUDE.md's product invariants: a screen must not state a
+    result nothing computed. This used to attach for every status, and
+    this docstring said so; two such records were attached on live
+    (docs/roadmap.md, "Review cycles attach only what attests").
 
     If the caller passes status='closed_unattested' but NO reviewer was
     ever successfully notified (every notified_at is still NULL), the
@@ -457,6 +473,7 @@ def close_cycle(
     evidence = Evidence(
         id=uuid.uuid4(),
         org_id=cycle.org_id,
+        source_review_cycle_id=cycle.id,
         title=f"Periodic user/device review -- {cycle.opened_at.date().isoformat()}",
         description=(
             f"Attestation record for the review cycle opened {cycle.opened_at.date().isoformat()} "
@@ -474,11 +491,85 @@ def close_cycle(
     session.add(evidence)
     session.flush()
 
-    for cs in _mapped_control_states(session, org_id=cycle.org_id):
-        session.add(EvidenceStateLink(evidence_id=evidence.id, control_state_id=cs.id))
-    session.flush()
+    if status == ATTESTS:
+        for cs in _mapped_control_states(session, org_id=cycle.org_id):
+            session.add(EvidenceStateLink(evidence_id=evidence.id, control_state_id=cs.id))
+        session.flush()
 
     return evidence
+
+
+# ---------------------------------------------------------------------------
+# Records attached before only what attests was attached
+# ---------------------------------------------------------------------------
+
+DETACH_REASON = (
+    "the review cycle closed without attestation: its record says no review "
+    "happened, so it does not satisfy this objective (only what attests is attached)"
+)
+
+
+def unattested_links(session: Session, *, org_id: uuid.UUID) -> list[dict]:
+    """Every link from a record of an unattested or undeliverable close in
+    this org, whatever is there when asked -- the scheduler may have
+    closed another since anyone counted."""
+    from .models import Assessment
+
+    rows = session.execute(
+        select(
+            EvidenceStateLink, Evidence, ReviewCycle, Control.control_id,
+            AssessmentObjective.objective_key, Assessment.name, Assessment.id,
+        )
+        .join(Evidence, Evidence.id == EvidenceStateLink.evidence_id)
+        .join(ReviewCycle, ReviewCycle.id == Evidence.source_review_cycle_id)
+        .join(ControlState, ControlState.id == EvidenceStateLink.control_state_id)
+        .join(AssessmentObjective, AssessmentObjective.id == ControlState.objective_id)
+        .join(Control, Control.id == AssessmentObjective.control_id)
+        .join(Assessment, Assessment.id == ControlState.assessment_id)
+        .where(Evidence.org_id == org_id, ReviewCycle.status != ATTESTS)
+        .order_by(ReviewCycle.opened_at, Assessment.name, AssessmentObjective.objective_key,
+                  EvidenceStateLink.id)
+    ).all()
+    return [
+        {
+            "link": lk, "evidence": ev, "cycle": cy,
+            "objective_key": f"{control}[{key}]", "assessment_name": a_name,
+            "assessment_id": a_id,
+        }
+        for lk, ev, cy, control, key, a_name, a_id in rows
+    ]
+
+
+def detach_unattested(session: Session, *, org_id: uuid.UUID, actor: str) -> list[dict]:
+    """Removes each such link, with one audit row apiece saying why. The
+    link row is deleted, not archived: an archived link still reads as
+    evidence to the dashboard and keeps the record out of the bundle's
+    unlinked section. The record itself -- the Evidence row, its stored
+    HTML, the cycle and its reviewers -- is not touched."""
+    from .audit import log_event
+
+    found = unattested_links(session, org_id=org_id)
+    for f in found:
+        lk, ev, cy = f["link"], f["evidence"], f["cycle"]
+        log_event(
+            session, org_id=org_id, action="evidence.attestation_detach",
+            entity_type="evidence", entity_id=ev.id,
+            before_value={
+                "control_state_id": str(lk.control_state_id),
+                "objective_key": f["objective_key"],
+                "assessment_id": str(f["assessment_id"]),
+                "assessment_name": f["assessment_name"],
+                "was_archived": lk.is_archived,
+            },
+            context={
+                "reason": DETACH_REASON, "review_cycle_id": str(cy.id),
+                "cycle_status": cy.status, "evidence_title": ev.title,
+            },
+            actor=actor, actor_type="system",
+        )
+        session.delete(lk)
+    session.flush()
+    return found
 
 
 # ---------------------------------------------------------------------------

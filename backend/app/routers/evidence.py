@@ -606,8 +606,15 @@ def delete_evidence(
     ).first()
     # A published document's Evidence row is the record that the version
     # was published, and delete_document's refusal rests on it (item X):
-    # removing the last link leaves it.
-    if remaining is None and ev.source_document_version_id is None:
+    # removing the last link leaves it. So is a review cycle's record of
+    # who was asked and who answered. This is that record's exemption
+    # only: for any other artifact the last unlink still deletes it and
+    # its bytes, unaudited -- its own roadmap entry, not fixed here.
+    if (
+        remaining is None
+        and ev.source_document_version_id is None
+        and ev.source_review_cycle_id is None
+    ):
         if ev.kind == "file" and ev.storage_key:
             storage.delete_file(ev.storage_key)
         session.delete(ev)

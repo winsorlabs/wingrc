@@ -11,6 +11,7 @@ import type { ReviewCycle, ReviewCycleDetail } from "../types";
 import { ReviewCyclesPanel } from "./ReviewCyclesPanel";
 
 vi.mock("../api", () => ({
+  assetUrl: (p: string | null) => p,
   api: {
     listReviewCycles: vi.fn(),
     getReviewCycle: vi.fn(),
@@ -55,6 +56,7 @@ function makeDetail(overrides: Partial<ReviewCycleDetail> = {}): ReviewCycleDeta
       },
     ],
     flags: [],
+    record: null,
     ...overrides,
   };
 }
@@ -203,5 +205,61 @@ describe("ReviewCyclesPanel — detail & attest", () => {
     await screen.findByText("jane.doe");
     expect(screen.getByText(/closed without reaching anyone/)).toBeTruthy();
     expect(screen.getByText("not_notified")).toBeTruthy();
+  });
+});
+
+// Review cycles attach only what attests: the page shows the record a
+// closed cycle wrote, and says where it is attached from what the server
+// read -- never from the status, and with no way to attach a record of
+// nobody attesting.
+describe("ReviewCyclesPanel — the cycle's record", () => {
+  const record = {
+    evidence_id: "e1",
+    title: "Periodic user/device review -- 2026-09-15",
+    download_url: "/orgs/org1/evidence/e1/download",
+  };
+
+  async function openWith(detail: ReviewCycleDetail) {
+    vi.mocked(api.listReviewCycles).mockResolvedValue([makeCycle({ status: detail.status })]);
+    vi.mocked(api.getReviewCycle).mockResolvedValue(detail);
+    render(<ReviewCyclesPanel orgId="org1" currentUserId="u9" currentUserRole="msp_admin" />);
+    fireEvent.click(await screen.findByText(detail.status));
+    return screen.findByRole("region", { name: "Record" });
+  }
+
+  it("says an unattested record is attached nowhere, links it, and offers no attach", async () => {
+    const region = await openWith(makeDetail({
+      status: "closed_unattested", closed_at: "2026-10-07T00:00:00Z",
+      record: { ...record, attached_to: [] },
+    }));
+    const link = region.querySelector("a");
+    expect(link?.textContent).toBe(record.title);
+    expect(link?.getAttribute("href")).toBe(record.download_url);
+    expect(region.textContent).toContain("Not attached as evidence. No reviewer attested");
+    expect(region.textContent).not.toContain("Attached as evidence to");
+    expect(region.querySelector("button")).toBeNull();
+  });
+
+  it("names where a completed cycle's record is attached", async () => {
+    const region = await openWith(makeDetail({
+      status: "completed", closed_at: "2026-10-07T00:00:00Z",
+      record: { ...record, attached_to: [
+        { assessment_name: "FY26", objective_key: "AC.L2-3.1.1[a]" },
+        { assessment_name: "FY26", objective_key: "AC.L2-3.1.1[c]" },
+      ] },
+    }));
+    expect(region.textContent).toContain(
+      "Attached as evidence to AC.L2-3.1.1[a] in FY26; AC.L2-3.1.1[c] in FY26.",
+    );
+    expect(region.textContent).not.toContain("Not attached");
+  });
+
+  it("shows no record while the cycle is open", async () => {
+    vi.mocked(api.listReviewCycles).mockResolvedValue([makeCycle()]);
+    vi.mocked(api.getReviewCycle).mockResolvedValue(makeDetail());
+    render(<ReviewCyclesPanel orgId="org1" currentUserId="u1" currentUserRole="msp_admin" />);
+    fireEvent.click(await screen.findByText("open"));
+    await screen.findByText("jane.doe");
+    expect(screen.queryByRole("region", { name: "Record" })).toBeNull();
   });
 });

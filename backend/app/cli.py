@@ -830,6 +830,64 @@ def lists_import_cmd(
         session.close()
 
 
+@app.command(name="review-cycles-detach-unattested")
+def review_cycles_detach_unattested_cmd(
+    org_id: str = typer.Option(
+        ..., help="Target org id. Required: there is deliberately no default."
+    ),
+    apply: bool = typer.Option(False, help="Remove the links (default: dry-run only)"),
+) -> None:
+    """Detach the record of a review cycle that closed without attestation
+    from the objectives it was attached to. Dry-run by default.
+
+    Until 2026-10-19 a deadline close attached its record, which says
+    nobody reviewed, to AC.L2-3.1.1[a]/[c] (docs/roadmap.md, "Review
+    cycles attach only what attests"). Each link found is listed, then
+    removed with an audit row giving the reason. The record -- the
+    Evidence row, its stored file, the cycle -- stays. It finds whatever
+    is there when it runs, and a second run has nothing to do.
+    """
+    import uuid as _uuid
+
+    from .review_cycles import detach_unattested, unattested_links
+    from .rls import set_current_org
+
+    session = SessionLocal()
+    try:
+        try:
+            target = _uuid.UUID(org_id)
+        except ValueError:
+            typer.echo(f"--org-id {org_id!r} is not a UUID", err=True)
+            raise typer.Exit(2) from None
+        set_current_org(session, target)
+        org = session.get(Organization, target)
+        if org is None:
+            typer.echo(f"No organization {target}", err=True)
+            raise typer.Exit(2)
+        typer.echo(f"Target org: {org.name} ({target}){' -- WRITING' if apply else ''}")
+        found = (
+            detach_unattested(session, org_id=target, actor="cli:review-cycles-detach-unattested")
+            if apply
+            else unattested_links(session, org_id=target)
+        )
+        if not found:
+            typer.echo("Nothing to do: no record of an unattested close is attached.")
+            return
+        for f in found:
+            typer.echo(
+                f"  {f['evidence'].title} ({f['cycle'].status}, evidence {f['evidence'].id}) "
+                f"-> {f['objective_key']} in {f['assessment_name']!r}"
+                f"{' [archived]' if f['link'].is_archived else ''}"
+            )
+        if apply:
+            session.commit()
+            typer.echo(f"Detached {len(found)} link(s), one audit row each. Records kept.")
+        else:
+            typer.echo(f"{len(found)} link(s). Dry-run only. Re-run with --apply to remove.")
+    finally:
+        session.close()
+
+
 @app.command(name="seed-baselines")
 def seed_baselines_cmd(
     db_url: str = typer.Option(None, "--db-url", help="Override DATABASE_URL"),

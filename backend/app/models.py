@@ -1044,6 +1044,15 @@ class Evidence(Base):
         UUID(as_uuid=True), ForeignKey("list_version.id", ondelete="RESTRICT"),
         nullable=True, index=True,
     )
+    # The review cycle whose closing wrote this record (migration 0070).
+    # Every closed cycle writes one, attested or not; only a completed
+    # cycle's is attached (review_cycles.close_cycle). This is how the
+    # cycle's page finds its record, and why removing the record's last
+    # link keeps it (routers/evidence.py).
+    source_review_cycle_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("review_cycle.id", ondelete="RESTRICT"),
+        nullable=True, index=True,
+    )
     sha256_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

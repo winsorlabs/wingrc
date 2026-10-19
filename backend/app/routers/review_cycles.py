@@ -5,7 +5,7 @@ and the derived AC.L2-3.1.1[a]/[c] control mapping).
 
   POST /orgs/{org_id}/review-cycles                          Open a cycle now (MSP-side only)
   GET  /orgs/{org_id}/review-cycles                           List cycles, newest first
-  GET  /orgs/{org_id}/review-cycles/{cycle_id}                Detail: items + reviewers + flags
+  GET  /orgs/{org_id}/review-cycles/{cycle_id}                Detail, with its record
   POST /orgs/{org_id}/review-cycles/{cycle_id}/attest         Record the caller's attestation
   POST .../items/{item_id}/flag                               Flag an item for MSP follow-up
   POST .../flags/{flag_id}/resolve                            Resolve a flag (MSP-side only)
@@ -43,8 +43,19 @@ from .. import review_cycles
 from ..audit import log_event
 from ..auth import CurrentUser, require_org_access, require_write
 from ..db import get_session
-from ..models import ReviewCycle, ReviewCycleFlag, ReviewCycleItem, ReviewCycleReviewer
-from ..storage import StorageClient, get_storage_client
+from ..models import (
+    Assessment,
+    AssessmentObjective,
+    Control,
+    ControlState,
+    Evidence,
+    EvidenceStateLink,
+    ReviewCycle,
+    ReviewCycleFlag,
+    ReviewCycleItem,
+    ReviewCycleReviewer,
+)
+from ..storage import StorageClient, evidence_download_path, get_storage_client
 
 router = APIRouter(
     prefix="/orgs/{org_id}/review-cycles",
@@ -112,10 +123,27 @@ class ReviewCycleOut(BaseModel):
     opened_by: str
 
 
+class AttachedToOut(BaseModel):
+    assessment_name: str
+    objective_key: str
+
+
+class CycleRecordOut(BaseModel):
+    """The record a closed cycle wrote, and where it is attached as
+    evidence -- read from the live links, never from the status. Only a
+    completed cycle's is attached (review_cycles.close_cycle)."""
+
+    evidence_id: uuid.UUID
+    title: str
+    download_url: str | None
+    attached_to: list[AttachedToOut]
+
+
 class ReviewCycleDetailOut(ReviewCycleOut):
     items: list[ReviewCycleItemOut]
     reviewers: list[ReviewCycleReviewerOut]
     flags: list[ReviewCycleFlagOut]
+    record: CycleRecordOut | None
 
 
 class AttestIn(BaseModel):
@@ -172,6 +200,32 @@ def list_cycles(org_id: uuid.UUID, db: Session = Depends(get_session)) -> list[R
     return [_cycle_out(c) for c in rows]
 
 
+def _record_out(db: Session, org_id: uuid.UUID, cycle_id: uuid.UUID) -> CycleRecordOut | None:
+    ev = db.scalars(
+        select(Evidence).where(Evidence.source_review_cycle_id == cycle_id).order_by(Evidence.id)
+    ).first()
+    if ev is None:
+        return None
+    attached = db.execute(
+        select(Assessment.name, Control.control_id, AssessmentObjective.objective_key)
+        .select_from(EvidenceStateLink)
+        .join(ControlState, ControlState.id == EvidenceStateLink.control_state_id)
+        .join(Assessment, Assessment.id == ControlState.assessment_id)
+        .join(AssessmentObjective, AssessmentObjective.id == ControlState.objective_id)
+        .join(Control, Control.id == AssessmentObjective.control_id)
+        .where(EvidenceStateLink.evidence_id == ev.id, EvidenceStateLink.is_archived.is_(False))
+        .order_by(Assessment.name, AssessmentObjective.objective_key)
+    ).all()
+    return CycleRecordOut(
+        evidence_id=ev.id,
+        title=ev.title,
+        download_url=evidence_download_path(org_id, ev.id) if ev.storage_key else None,
+        attached_to=[
+            AttachedToOut(assessment_name=n, objective_key=f"{c}[{k}]") for n, c, k in attached
+        ],
+    )
+
+
 @router.get("/{cycle_id}", response_model=ReviewCycleDetailOut)
 def get_cycle(
     org_id: uuid.UUID,
@@ -208,10 +262,12 @@ def get_cycle(
                 ReviewCycleFlag.cycle_item_id.in_([i.id for i in items])
             )
         ).all()
+    record = _record_out(db, org_id, cycle_id)
     db.commit()
 
     return ReviewCycleDetailOut(
         **_cycle_out(cycle).model_dump(),
+        record=record,
         items=[
             ReviewCycleItemOut(
                 id=i.id, subject_type=i.subject_type, natural_key=i.natural_key,
