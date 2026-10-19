@@ -5442,7 +5442,7 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
-### Review cycles attach only what attests ✅ DONE (2026-10-19, bench-verified, migration 0070; live detach pending)
+### Review cycles attach only what attests ✅ DONE (2026-10-19, migration 0070; deployed and detached on live, read back)
 
 **Changed before merge (Jarrod, 2026-10-19): the detach archives; it
 does not delete.** The first build deleted the link rows, so the bundle
@@ -5611,11 +5611,63 @@ Mutation runs, each restored afterwards:
   The completed-cycle test then gained the archived-link assertion, and
   it fails.
 
-**Live, after the deploy (pending).** The detach runs in this order,
-each confirmed by Jarrod before it writes: Acme MSP's dry run, shown,
-then the run; then the same for Winsorlabs. Afterwards both Evidence
-rows and both stored objects are read back, and the objectives'
-statuses checked against where they were.
+**Live (2026-10-19).** Deployed `8340edf` (PR #47). `/health` reported
+that build, migration `0070_evidence_review_cycle` and database ok.
+0070 named all 3 records' cycles. No cycle had closed since the count,
+and the links were as counted.
+
+The detach ran in the order set. Each step was confirmed by Jarrod
+before it wrote:
+1. Acme MSP's dry run listed 2 links ([a], [c] in "CMMC L2 Assessment
+   2026-09-09"), the same as the rehearsal. Neither had been archived by
+   a deactivation.
+2. Acme's run archived those 2. A dry run straight after said "Nothing
+   to do".
+3. Winsorlabs' dry run listed 2 links ([a], [c] in "CMMC L2 Assessment
+   2026-09-16").
+4. Winsorlabs' run archived those 2. A dry run straight after said
+   "Nothing to do".
+
+**Read back afterwards, from the database and from storage, not from
+the command's output:**
+- **Both Evidence rows are present.** Each is `file`/`attestation` and
+  names its cycle (both cycles `closed_unattested`):
+  - Acme's `95193c1a…` names cycle `b327e64c…`.
+  - Winsorlabs' `c83ff359…` names cycle `bbd7e124…`.
+- **Both stored files were read out of storage.**
+  - Their byte counts equal `file_size_bytes` (1686 and 1262).
+  - Winsorlabs' SHA-256 equals its stored `sha256_hash`. Acme's row has
+    no stored hash to compare: the hash is filled on a bundle export,
+    and none has run for that assessment since the record was written.
+  - Both still read "Cycle closed at its due date without full
+    attestation".
+- **All four link rows exist.** Each has `is_archived` true,
+  `archived_at` set (Acme 14:05:12 UTC, Winsorlabs 14:32:37 UTC) and no
+  product. `linked_at` is unchanged (2026-10-05 and 2026-10-07).
+- **Four audit rows**, action `evidence.attestation_detach`, actor
+  `cli:review-cycles-detach-unattested` (`system`), one per link:
+
+  | Audit row | Evidence | Objective | Was archived |
+  | --- | --- | --- | --- |
+  | `413407e0…` | `95193c1a…` | [a] | false |
+  | `563cd4bb…` | `95193c1a…` | [c] | false |
+  | `bef9ecb5…` | `c83ff359…` | [a] | false |
+  | `9e034e1d…` | `c83ff359…` | [c] | false |
+
+  Each row's `after_value` is `{"is_archived": true,
+  "archived_by_product": null}`. Each carries the cycle id, its status
+  and the reason.
+- **Statuses unchanged.**
+  - Acme [a]/[c] are `met`/`met`, SPRS −199.
+  - Winsorlabs [a]/[c] are `not_met`/`not_met`, SPRS −204.
+  - Each score equals its assessment's last `sprs_snapshot` (2026-09-29
+    and 2026-10-14).
+  - No `control_state_history` row was written on any of the four since
+    the deploy.
+- **What else is live on those objectives.** Winsorlabs [a] keeps
+  AC-POL-01 v4's live link (v3's archived, from the X walk). Acme's [a]
+  and [c] now have no live evidence while `met`: the separate question
+  recorded above.
 
 ---
 
@@ -10262,7 +10314,7 @@ tagged with this objective". The record of why it is there goes.
 would not fit, and would be its own slice if wanted later. The typed key
 keeps it the size of what L.2.2 and L.10 already built.
 
-### Review cycles attach only what attests ✅ BUILT (2026-10-19)
+### Review cycles attach only what attests ✅ DONE (2026-10-19, deployed; both live detaches run and read back)
 
 **Built as the Done entry "Review cycles attach only what attests".** It
 records what the slice found and decided. The text below is the plan,
