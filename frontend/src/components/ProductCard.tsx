@@ -4,6 +4,9 @@ import type { ProductRow } from "../types";
 
 interface Props {
   product: ProductRow;
+  // The library's other products, any of which the person may name as
+  // this one's replacement when deactivating it.
+  others: ProductRow[];
   orgId: string;
   assessmentId: string;
   canWrite: boolean;
@@ -11,9 +14,11 @@ interface Props {
   onDeactivated: () => void;
 }
 
-export function ProductCard({ product, orgId, assessmentId, canWrite, onActivated, onDeactivated }: Props) {
+export function ProductCard({ product, others, orgId, assessmentId, canWrite, onActivated, onDeactivated }: Props) {
   const [activating, setActivating] = useState(false);
   const [deactivating, setDeactivating] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [replacedBy, setReplacedBy] = useState("");
   const [movingVersion, setMovingVersion] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,7 +39,8 @@ export function ProductCard({ product, orgId, assessmentId, canWrite, onActivate
     setDeactivating(true);
     setError(null);
     try {
-      await api.deactivateProduct(orgId, assessmentId, product.id);
+      await api.deactivateProduct(orgId, assessmentId, product.id, replacedBy || null);
+      setAsking(false);
       onDeactivated();
     } catch (e: unknown) {
       setError((e as Error).message);
@@ -117,14 +123,41 @@ export function ProductCard({ product, orgId, assessmentId, canWrite, onActivate
                   : `Move to v${product.current_version_number}`}
               </button>
             )}
-            {canWrite && (
+            {canWrite && !asking && (
               <button
                 className="btn-ghost btn-sm product-deactivate-btn"
-                onClick={handleDeactivate}
-                disabled={deactivating}
+                onClick={() => { setAsking(true); setReplacedBy(""); }}
               >
-                {deactivating ? "Deactivating…" : "Deactivate"}
+                Deactivate
               </button>
+            )}
+            {canWrite && asking && (
+              // Jarrod, 2026-10-19: "Replaced by X" exists only when a
+              // person names X here. Optional: blank is a real answer, and
+              // the common one. Any product may be named; it need not cover
+              // the same objectives, and the evidence says whether it does.
+              <div className="product-deactivate-form" role="group" aria-label={`Deactivate ${product.name}`}>
+                <label>
+                  Replaced by{" "}
+                  <select value={replacedBy} onChange={(e) => setReplacedBy(e.target.value)} disabled={deactivating}>
+                    <option value="">Nothing — not replaced</option>
+                    {others.map((o) => (
+                      <option key={o.id} value={o.id}>{o.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <span className="field-hint">
+                  Optional. If you name one, its evidence here reads “Replaced by” it, with your name and
+                  today’s date, on the objective and in the bundle. Left blank, it reads as archived, and an
+                  objective left with no evidence says so.
+                </span>
+                <button className="btn-primary btn-sm" onClick={handleDeactivate} disabled={deactivating}>
+                  {deactivating ? "Deactivating…" : "Deactivate"}
+                </button>
+                <button className="btn-ghost btn-sm" onClick={() => setAsking(false)} disabled={deactivating}>
+                  Cancel
+                </button>
+              </div>
             )}
           </>
         ) : (

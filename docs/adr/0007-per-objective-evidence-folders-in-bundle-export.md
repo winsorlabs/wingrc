@@ -208,3 +208,9 @@ detach). The section says none of it is current evidence, and nothing
 archived is placed in an objective's folder. The test that pinned the
 exclusion keeps its scenario, now driven through
 `engine.deactivate_org_product`, with its assertion inverted.
+
+Since migration 0071 (the same day) the reason is read from the link's
+`archive_cause`, not inferred from which columns are set, and there is a
+third: a person's detach, with who and when. A deactivation says what
+replaced the product only where the person deactivating it named a
+replacement, with their name; otherwise it says nothing was named.

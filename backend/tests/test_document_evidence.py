@@ -349,7 +349,17 @@ def test_removing_the_link_keeps_the_published_record(db_session):
     assert _attach(avery, w, "AC.L2-3.1.1[a]").status_code == 201
     r = _attach(avery, w, "AC.L2-3.1.1[a]", "delete")
     assert r.status_code == 200, r.text
-    assert _live_links(db_session, w) == []
+    # _live_links returns archived rows too (the move-forward tests read
+    # them). This asserted [] while unlink deleted the link; since
+    # 2026-10-19 the link stays, archived as detached, and says by whom
+    # (evidence_links.py).
+    assert [archived for *_, archived in _live_links(db_session, w)] == [True]
+    detached = db_session.scalars(
+        select(EvidenceStateLink).join(Evidence, Evidence.id == EvidenceStateLink.evidence_id)
+        .where(Evidence.source_document_version_id == uuid.UUID(v1["id"]))
+    ).all()
+    assert [(lk.is_archived, lk.archive_cause) for lk in detached] == [(True, "detached")]
+    assert detached[0].detached_by
     assert db_session.scalar(
         select(func.count()).select_from(Evidence)
         .where(Evidence.source_document_version_id == uuid.UUID(v1["id"]))

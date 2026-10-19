@@ -66,6 +66,7 @@ export function ProductsPanel({ orgId, assessmentId, canWrite, onClose, onActiva
               <ProductCard
                 key={p.id}
                 product={p}
+                others={products.filter((o) => o.id !== p.id)}
                 orgId={orgId}
                 assessmentId={assessmentId}
                 canWrite={canWrite}

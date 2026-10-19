@@ -797,6 +797,21 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .ev-list-others li { margin: 0.15rem 0; }
 .ev-list-others .btn-sm { margin-left: 0.35rem; }
 /* A superseded document version attached as evidence (item X). */
+/* Archived evidence (2026-10-19): greyed sentences beneath the live
+   evidence, never .ev-item rows -- an archived artifact and a live one do
+   not share a shape (L.10). */
+.ev-archived { margin-top: 0.5rem; opacity: 0.85; }
+.ev-archived ul { margin: 0.15rem 0 0; padding: 0; list-style: none; font-size: 0.85rem; color: var(--muted); }
+.ev-archived-item { margin: 0.2rem 0; }
+.ev-archived-title { text-decoration: line-through; }
+.ev-archived-item .btn-sm { margin-left: 0.35rem; }
+.ev-alarm {
+  margin: 0.35rem 0; padding: 0.45rem 0.6rem; border-radius: 6px; font-size: 0.85rem; font-weight: 600;
+  background: var(--not-met-bg, #fee2e2); color: var(--not-met-fg, #991b1b);
+}
+.ev-detach { margin-left: auto; }
+.ev-detach-confirm { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; width: 100%; font-size: 0.8rem; }
+.ev-template-note { margin: 0.15rem 0 0; }
 .ev-superseded {
   padding: 0.1rem 0.35rem; border-radius: 3px; font-size: 0.65rem; font-weight: 600;
   background: var(--partial-bg); color: var(--partial-fg); flex-shrink: 0;
@@ -2275,3 +2290,5 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .list-library-detail .list-cell-empty { color: #6c757d; }
 .list-history > summary { cursor: pointer; font-weight: 600; font-size: 0.95rem; padding: 0.25rem 0; }
 .list-history[open] > summary { margin-bottom: 0.4rem; }
+/* Deactivation asks what replaces the product, optionally (2026-10-19). */
+.product-deactivate-form { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; width: 100%; font-size: 0.8rem; }

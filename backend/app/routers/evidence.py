@@ -6,11 +6,15 @@ Endpoints:
   POST   /orgs/{org_id}/assessments/{assessment_id}/control-states/{cs_id}/evidence/references
              Add one or more location references (URL / UNC path / drive path).
   GET    /orgs/{org_id}/assessments/{assessment_id}/control-states/{cs_id}/evidence
-             List all evidence (files + references) linked to a control state.
+             List the evidence (files + references) live on a control state.
+  GET    /orgs/{org_id}/assessments/{assessment_id}/control-states/{cs_id}/evidence/archived
+             What used to be attached to a control state, and why it is not.
   GET    /orgs/{org_id}/evidence/{evidence_id}/download
              Redirect to a presigned download URL (file-kind only).
-  DELETE /orgs/{org_id}/assessments/{assessment_id}/control-states/{cs_id}/evidence/{evidence_id}
-             Unlink evidence from this control state; delete artifact if no links remain.
+  POST   /orgs/{org_id}/assessments/{assessment_id}/control-states/{cs_id}
+             /evidence/{evidence_id}/detach
+             This objective stops resting on the artifact: the link is
+             archived and audited; the artifact and its bytes stay.
   GET    /orgs/{org_id}/assessments/{assessment_id}/evidence-manifest
              Point-in-time manifest of every objective's evidence for bundle export.
 
@@ -18,7 +22,8 @@ Invariants:
   - None of these endpoints modify control_state.status.
   - Any control_state can have evidence regardless of responsibility value
     (customer_owns does NOT block attachment).
-  - Removing evidence never changes status either.
+  - Detaching evidence never changes status either, and never deletes
+    anything (evidence_links.py).
 """
 from __future__ import annotations
 
@@ -33,21 +38,27 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from .. import evidence_links
 from ..audit import log_event
-from ..auth import require_org_access, require_write
+from ..auth import CurrentUser, require_org_access, require_write
 from ..db import get_session
 from ..models import (
     Assessment,
     AssessmentObjective,
     Control,
     ControlState,
+    ControlStateContributor,
+    DocumentVersion,
     Evidence,
     EvidenceStateLink,
     EvidenceTask,
     EvidenceTaskStateLink,
+    ListVersion,
+    OrgProduct,
+    Product,
 )
 from ..storage import (
     StorageClient,
@@ -191,6 +202,40 @@ class EvidenceOut(BaseModel):
     reference_location: str | None  # reference only
     note: str | None               # set to _REFERENCE_NOTE for references
     collected_at: datetime
+
+
+class ArchivedEvidenceOut(BaseModel):
+    """One link that no longer counts on this objective, in fields: the
+    client writes the sentence (L.10)."""
+
+    link_id: uuid.UUID
+    evidence_id: uuid.UUID
+    source: str                    # 'evidence' | 'list' | 'document'
+    kind: str
+    title: str
+    artifact_type: str
+    version_number: int | None     # the list or document version it named
+    download_url: str | None
+    archive_cause: str             # evidence_links.CAUSES, less moved_forward
+    archived_at: datetime | None
+    detached_by: str | None
+    detached_at: datetime | None
+    # A deactivation's: the product, who deactivated it, the replacement
+    # they named if any, and whether that replacement contributes to this
+    # objective now. Never inferred.
+    product_name: str | None
+    deactivated_by: str | None
+    replaced_by_name: str | None
+    replaced_by_covers: bool | None
+
+
+class ArchivedSectionOut(BaseModel):
+    items: list[ArchivedEvidenceOut]
+    # Computed here, so the screen states only what was counted: live
+    # links of every kind on this objective, and the products contributing
+    # to it now.
+    live_evidence: int
+    covered_by: list[str]
 
 
 class ReferenceIn(BaseModel):
@@ -463,6 +508,9 @@ def list_evidence(
         .join(EvidenceStateLink, EvidenceStateLink.evidence_id == Evidence.id)
         .where(
             EvidenceStateLink.control_state_id == cs.id,
+            # Archived links are shown apart, by list_archived_evidence: an
+            # archived item and a live one never share a list.
+            EvidenceStateLink.is_archived.is_(False),
             # Lists linked as evidence have their own section, with the
             # version linked and whether the list has moved on since
             # (routers/list_evidence.py). So do documents (item X), with
@@ -566,22 +614,120 @@ def download_evidence(
 
 
 # ---------------------------------------------------------------------------
-# Delete
+# Archived, and detach
 # ---------------------------------------------------------------------------
 
 
-@router.delete(
-    "/assessments/{assessment_id}/control-states/{cs_id}/evidence/{evidence_id}",
+@router.get(
+    "/assessments/{assessment_id}/control-states/{cs_id}/evidence/archived",
+    response_model=ArchivedSectionOut,
+)
+def list_archived_evidence(
+    org_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    cs_id: uuid.UUID,
+    session: Session = Depends(get_session),
+) -> ArchivedSectionOut:
+    """What used to rest on this objective, and why it does not now. A
+    link moved forward is left out: its newer version is live here, and
+    the list's or document's drift says so."""
+    _check_assessment(session, org_id, assessment_id)
+    cs = _check_cs(session, assessment_id, cs_id)
+
+    Replacement = Product.__table__.alias("replacement")
+    rows = session.execute(
+        select(
+            EvidenceStateLink, Evidence,
+            ListVersion.version_number.label("list_version"),
+            DocumentVersion.version_number.label("document_version"),
+            Product.name.label("product_name"),
+            OrgProduct.deactivated_by,
+            OrgProduct.replaced_by_product_id,
+            Replacement.c.name.label("replaced_by_name"),
+        )
+        .join(Evidence, Evidence.id == EvidenceStateLink.evidence_id)
+        .outerjoin(ListVersion, ListVersion.id == Evidence.source_list_version_id)
+        .outerjoin(DocumentVersion, DocumentVersion.id == Evidence.source_document_version_id)
+        .outerjoin(Product, Product.id == EvidenceStateLink.archived_by_product)
+        .outerjoin(
+            OrgProduct,
+            (OrgProduct.org_id == org_id)
+            & (OrgProduct.product_id == EvidenceStateLink.archived_by_product),
+        )
+        .outerjoin(Replacement, Replacement.c.id == OrgProduct.replaced_by_product_id)
+        .where(
+            EvidenceStateLink.control_state_id == cs.id,
+            EvidenceStateLink.is_archived.is_(True),
+            EvidenceStateLink.archive_cause != evidence_links.MOVED_FORWARD,
+        )
+        .order_by(EvidenceStateLink.archived_at.desc(), Evidence.title, EvidenceStateLink.id)
+    ).all()
+
+    contributors = session.execute(
+        select(Product.id, Product.name)
+        .join(ControlStateContributor, ControlStateContributor.product_id == Product.id)
+        .where(ControlStateContributor.control_state_id == cs.id)
+        .order_by(Product.name, Product.id)
+    ).all()
+    contributor_ids = {pid for pid, _ in contributors}
+    live = session.scalar(
+        select(func.count(EvidenceStateLink.id)).where(
+            EvidenceStateLink.control_state_id == cs.id,
+            EvidenceStateLink.is_archived.is_(False),
+        )
+    )
+
+    items = []
+    for r in rows:
+        lk, ev = r.EvidenceStateLink, r.Evidence
+        source = (
+            "list" if ev.source_list_version_id
+            else "document" if ev.source_document_version_id
+            else "evidence"
+        )
+        deactivated = r.product_name is not None
+        items.append(ArchivedEvidenceOut(
+            link_id=lk.id, evidence_id=ev.id, source=source, kind=ev.kind, title=ev.title,
+            artifact_type=ev.artifact_type,
+            version_number=r.list_version or r.document_version,
+            download_url=(
+                evidence_download_path(org_id, ev.id)
+                if ev.kind == "file" and ev.storage_key
+                else None
+            ),
+            archive_cause=lk.archive_cause, archived_at=lk.archived_at,
+            detached_by=lk.detached_by, detached_at=lk.detached_at,
+            product_name=r.product_name,
+            deactivated_by=r.deactivated_by if deactivated else None,
+            replaced_by_name=r.replaced_by_name if deactivated else None,
+            replaced_by_covers=(
+                r.replaced_by_product_id in contributor_ids
+                if deactivated and r.replaced_by_product_id
+                else None
+            ),
+        ))
+    return ArchivedSectionOut(
+        items=items, live_evidence=live or 0, covered_by=[name for _, name in contributors]
+    )
+
+
+@router.post(
+    "/assessments/{assessment_id}/control-states/{cs_id}/evidence/{evidence_id}/detach",
     status_code=204,
 )
-def delete_evidence(
+def detach_evidence(
     org_id: uuid.UUID,
     assessment_id: uuid.UUID,
     cs_id: uuid.UUID,
     evidence_id: uuid.UUID,
     session: Session = Depends(get_session),
-    storage: StorageClient = Depends(get_storage_client),
+    current_user: CurrentUser = Depends(require_org_access()),
 ) -> None:
+    """This objective stops resting on the artifact. The link is archived
+    and audited (evidence_links.detach); the Evidence row and its stored
+    bytes stay, for every objective and every assessment. A link a
+    deactivation archived can be detached too, so that the product's
+    reactivation does not bring it back."""
     _check_assessment(session, org_id, assessment_id)
     _check_cs(session, assessment_id, cs_id)
 
@@ -597,28 +743,14 @@ def delete_evidence(
     ).first()
     if link is None:
         raise HTTPException(status_code=404, detail="Evidence not linked to this control state")
-
-    session.delete(link)
-    session.flush()
-
-    remaining = session.scalars(
-        select(EvidenceStateLink).where(EvidenceStateLink.evidence_id == evidence_id)
-    ).first()
-    # A published document's Evidence row is the record that the version
-    # was published, and delete_document's refusal rests on it (item X):
-    # removing the last link leaves it. So is a review cycle's record of
-    # who was asked and who answered. This is that record's exemption
-    # only: for any other artifact the last unlink still deletes it and
-    # its bytes, unaudited -- its own roadmap entry, not fixed here.
-    if (
-        remaining is None
-        and ev.source_document_version_id is None
-        and ev.source_review_cycle_id is None
-    ):
-        if ev.kind == "file" and ev.storage_key:
-            storage.delete_file(ev.storage_key)
-        session.delete(ev)
-
+    try:
+        evidence_links.detach(
+            session, org_id=org_id, link=link,
+            by=current_user.display_name or current_user.email,
+            context={"via": "api"},
+        )
+    except evidence_links.AlreadyDetached as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     session.commit()
 
 
@@ -662,7 +794,11 @@ def get_evidence_manifest(
         .select_from(ControlState)
         .join(AssessmentObjective, AssessmentObjective.id == ControlState.objective_id)
         .join(Control, Control.id == AssessmentObjective.control_id)
-        .outerjoin(EvidenceStateLink, EvidenceStateLink.control_state_id == ControlState.id)
+        .outerjoin(
+            EvidenceStateLink,
+            (EvidenceStateLink.control_state_id == ControlState.id)
+            & EvidenceStateLink.is_archived.is_(False),
+        )
         .outerjoin(Evidence, Evidence.id == EvidenceStateLink.evidence_id)
         .where(ControlState.assessment_id == assessment_id)
         .order_by(

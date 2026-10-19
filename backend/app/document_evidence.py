@@ -63,6 +63,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from . import evidence_links
 from .audit import log_event
 from .list_evidence import control_key_for, live_link_row
 from .list_library import RestingLink
@@ -308,8 +309,7 @@ def move_forward(
         raise DocumentLinkRefused(f"already at version {v.version_number}")
     now = datetime.now(UTC)
     for lk, _ in old:
-        lk.is_archived = True
-        lk.archived_at = now
+        evidence_links.archive(lk, cause=evidence_links.MOVED_FORWARD, now=now)
     row = live_link_row(session, _evidence_for(session, org_id, doc, v), cs)
     session.flush()
     _audit(
@@ -321,18 +321,21 @@ def move_forward(
 
 
 def unlink(
-    session: Session, org_id: uuid.UUID, cs: ControlState, document_id: uuid.UUID
+    session: Session, org_id: uuid.UUID, cs: ControlState, document_id: uuid.UUID,
+    saved_by: str | None = None,
 ) -> None:
-    """Remove this document from this objective's evidence. Only the link
-    goes: the Evidence row is the record that the version was published,
-    and `delete_document`'s refusal rests on it."""
+    """Detach this document from this objective's evidence. The link is
+    archived (evidence_links.py), never deleted; the Evidence row is the
+    record that the version was published, and `delete_document`'s refusal
+    rests on it."""
     doc = _document(session, org_id, document_id)
     live = _live_for(session, cs, doc.id)
     if not live:
         raise LookupError("this document is not attached here")
     control_key, objective_key = control_key_for(session, cs)
+    now = datetime.now(UTC)
     for lk, lv in live:
-        session.delete(lk)
+        evidence_links.archive(lk, cause=evidence_links.DETACHED, now=now, by=saved_by)
         session.flush()
         _audit(
             session, org_id, "evidence.document_unlink", cs, doc, lv, control_key, objective_key

@@ -1,6 +1,30 @@
+/**
+ * An objective's evidence section tells the truth about what is attached,
+ * what used to be, and what happened to it (2026-10-19).
+ *
+ * - Attached: files and locations, then lists, then documents, each an
+ *   evidence item with a chip.
+ * - Not attached: lists and documents that are tagged here and could be,
+ *   under one heading that belongs to this section.
+ * - No longer attached: archived links, greyed, each a sentence with its
+ *   reason, never an item: an archived artifact and a live one never share
+ *   a row shape (L.10). "Replaced by X" appears only where a person named
+ *   X at deactivation. A product taken away with nothing named, on an
+ *   objective with no current evidence, is said loudly, from what the
+ *   server counted.
+ *
+ * Detach archives the link and keeps the artifact (evidence_links.py). It
+ * used to be a ✕ titled "Remove" that deleted the artifact and its bytes.
+ */
 import { useEffect, useRef, useState } from "react";
 import { api, assetUrl } from "../api";
-import type { EvidenceRow } from "../types";
+import type {
+  ArchivedEvidence,
+  ArchivedEvidenceSection,
+  DocumentEvidenceCandidate,
+  EvidenceRow,
+  ListEvidenceCandidate,
+} from "../types";
 import { ObjectiveDocuments } from "./ObjectiveDocuments";
 import { ObjectiveLists } from "./ObjectiveLists";
 
@@ -27,6 +51,38 @@ function formatBytes(n: number | null): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "12 Sep 2026", in UTC. Built by hand: a locale's short month is the
+ * runtime's ICU data (en-GB gives "Sept" on some, "Sep" on others). */
+function day(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
+function archivedName(a: ArchivedEvidence): string {
+  if (a.source === "list" && a.version_number !== null) return `${a.title} (list, version ${a.version_number})`;
+  if (a.source === "document" && a.version_number !== null) return `${a.title} (document, version ${a.version_number})`;
+  return a.title;
+}
+
+/** The reason, from the row's fields; never inferred. */
+function archivedReason(a: ArchivedEvidence): string {
+  if (a.archive_cause === "deactivation") {
+    if (a.replaced_by_name) {
+      const who = a.deactivated_by ? ` by ${a.deactivated_by}` : "";
+      return `Replaced by ${a.replaced_by_name} — stated${who} when ${a.product_name} was deactivated, ${day(a.archived_at)}`;
+    }
+    return `(Archived ${day(a.archived_at)} — ${a.product_name} was deactivated)`;
+  }
+  if (a.archive_cause === "attestation_detach") {
+    return `(Detached ${day(a.detached_at)}: the record of a review cycle that closed without attestation)`;
+  }
+  const who = a.detached_by ? ` by ${a.detached_by}` : "";
+  return `(Detached ${day(a.detached_at)}${who})`;
+}
+
 interface RefRow {
   title: string;
   location: string;
@@ -48,24 +104,53 @@ export function EvidenceSection({ orgId, assessmentId, controlStateId, canWrite,
   const [refRows, setRefRows] = useState<RefRow[]>([{ title: "", location: "" }]);
   const [addingRefs, setAddingRefs] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Lists linked as evidence (L.4) are listed by ObjectiveLists, and
-  // documents attached (item X) by ObjectiveDocuments, not here.
-  const [linkedLists, setLinkedLists] = useState(0);
-  const [linkedDocuments, setLinkedDocuments] = useState(0);
+  // Lists linked as evidence (L.4) and documents attached (item X) are
+  // drawn by ObjectiveLists and ObjectiveDocuments; the rows load here, so
+  // that the section can say "Not attached" once for both.
+  const [lists, setLists] = useState<ListEvidenceCandidate[]>([]);
+  const [docs, setDocs] = useState<DocumentEvidenceCandidate[]>([]);
+  const [archived, setArchived] = useState<ArchivedEvidenceSection | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [detaching, setDetaching] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const linkedLists = lists.filter((l) => l.linked_version_id !== null).length;
+  const linkedDocuments = docs.filter((d) => d.linked_version_id !== null).length;
+  const liveCount = items.length + linkedLists + linkedDocuments;
+
   useEffect(() => {
-    onCountChange(items.length + linkedLists + linkedDocuments);
-  }, [items.length, linkedLists, linkedDocuments]); // eslint-disable-line react-hooks/exhaustive-deps
+    onCountChange(liveCount);
+  }, [liveCount]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function reloadArchived() {
+    return api.archivedEvidence(orgId, assessmentId, controlStateId).then(setArchived, (e: Error) => setError(e.message));
+  }
 
   function reload() {
-    return api.listEvidence(orgId, assessmentId, controlStateId).then(setItems);
+    return Promise.all([
+      api.listEvidence(orgId, assessmentId, controlStateId).then(setItems),
+      reloadArchived(),
+    ]);
   }
 
   useEffect(() => {
     setLoading(true);
-    reload().finally(() => setLoading(false));
+    Promise.all([
+      reload(),
+      api.stateLists(orgId, assessmentId, controlStateId).then(setLists, (e: Error) => setError(e.message)),
+      api.stateDocuments(orgId, assessmentId, controlStateId).then(setDocs, (e: Error) => setError(e.message)),
+    ]).finally(() => setLoading(false));
   }, [orgId, assessmentId, controlStateId]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  function listsChanged(rows: ListEvidenceCandidate[]) {
+    setLists(rows);
+    void reloadArchived();
+  }
+
+  function docsChanged(rows: DocumentEvidenceCandidate[]) {
+    setDocs(rows);
+    void reloadArchived();
+  }
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -83,13 +168,17 @@ export function EvidenceSection({ orgId, assessmentId, controlStateId, canWrite,
     }
   }
 
-  async function handleDelete(id: string) {
+  async function handleDetach(id: string) {
     setError(null);
+    setDetaching(true);
     try {
-      await api.deleteEvidence(orgId, assessmentId, controlStateId, id);
+      await api.detachEvidence(orgId, assessmentId, controlStateId, id);
+      setConfirming(null);
       await reload();
     } catch (err: unknown) {
       setError((err as Error).message);
+    } finally {
+      setDetaching(false);
     }
   }
 
@@ -136,16 +225,31 @@ export function EvidenceSection({ orgId, assessmentId, controlStateId, canWrite,
     }
   }
 
+  const unattachedLists = lists.some((l) => l.linked_version_id === null);
+  const unattachedDocs = docs.some((d) => d.linked_version_id === null);
+  const archivedItems = archived?.items ?? [];
+  // Said only from what the server counted: no live evidence of any kind,
+  // and a product deactivated here with nothing named to replace it.
+  const unreplaced = [
+    ...new Set(
+      archivedItems
+        .filter((a) => a.archive_cause === "deactivation" && !a.replaced_by_name)
+        .map((a) => a.product_name ?? ""),
+    ),
+  ];
+  const alarm = archived !== null && archived.live_evidence === 0 && unreplaced.length > 0;
+  const coveredBy = archived?.covered_by ?? [];
+
   return (
     <div className="ev-section">
       <div className="ev-section-header">
         <span className="ev-section-label">Evidence</span>
-        {items.length + linkedLists > 0 && (
+        {liveCount > 0 && (
           <span
             className="ev-count-badge"
-            aria-label={`${items.length + linkedLists} evidence item${items.length + linkedLists === 1 ? "" : "s"}`}
+            aria-label={`${liveCount} evidence item${liveCount === 1 ? "" : "s"}`}
           >
-            {items.length + linkedLists}
+            {liveCount}
           </span>
         )}
       </div>
@@ -154,7 +258,16 @@ export function EvidenceSection({ orgId, assessmentId, controlStateId, canWrite,
         <div className="ev-status">Loading…</div>
       ) : (
         <>
-          {items.length === 0 && linkedLists === 0 && !uploading && (
+          {alarm && (
+            <div className="ev-alarm" role="alert">
+              {unreplaced.join(", ")} {unreplaced.length === 1 ? "was" : "were"} deactivated and nothing was named
+              to replace {unreplaced.length === 1 ? "it" : "them"}. This objective has no current evidence
+              {coveredBy.length === 0
+                ? ", and no active tool contributes to it."
+                : `; ${coveredBy.join(", ")} still ${coveredBy.length === 1 ? "contributes" : "contribute"} to it.`}
+            </div>
+          )}
+          {liveCount === 0 && !uploading && !alarm && (
             <div className="ev-status ev-empty">No evidence attached</div>
           )}
           <div className="ev-list">
@@ -203,15 +316,29 @@ export function EvidenceSection({ orgId, assessmentId, controlStateId, canWrite,
                     ↓
                   </a>
                 )}
-                {canWrite && (
+                {canWrite && confirming !== ev.id && (
                   <button
-                    className="ev-remove"
-                    onClick={() => handleDelete(ev.id)}
-                    title="Remove"
-                    aria-label={`Remove ${ev.title}`}
+                    className="btn-ghost btn-sm ev-detach"
+                    onClick={() => setConfirming(ev.id)}
+                    title="Detach from this objective. The artifact stays; this objective stops resting on it."
+                    aria-label={`Detach ${ev.title}`}
                   >
-                    ✕
+                    Detach
                   </button>
+                )}
+                {confirming === ev.id && (
+                  <div className="ev-detach-confirm" role="group" aria-label={`Detach ${ev.title}?`}>
+                    <span>
+                      The artifact stays, for every objective it serves. This objective stops resting
+                      on it and shows it under No longer attached.
+                    </span>
+                    <button className="btn-primary btn-sm" disabled={detaching} onClick={() => handleDetach(ev.id)}>
+                      {detaching ? "Detaching…" : "Detach"}
+                    </button>
+                    <button className="btn-ghost btn-sm" disabled={detaching} onClick={() => setConfirming(null)}>
+                      Cancel
+                    </button>
+                  </div>
                 )}
               </div>
             ))}
@@ -223,7 +350,9 @@ export function EvidenceSection({ orgId, assessmentId, controlStateId, canWrite,
             assessmentId={assessmentId}
             controlStateId={controlStateId}
             canWrite={canWrite}
-            onCountChange={setLinkedLists}
+            lists={lists}
+            onChange={listsChanged}
+            part="attached"
           />
 
           <ObjectiveDocuments
@@ -231,8 +360,76 @@ export function EvidenceSection({ orgId, assessmentId, controlStateId, canWrite,
             assessmentId={assessmentId}
             controlStateId={controlStateId}
             canWrite={canWrite}
-            onCountChange={setLinkedDocuments}
+            docs={docs}
+            onChange={docsChanged}
+            part="attached"
           />
+
+          {(unattachedLists || unattachedDocs) && (
+            <div className="ev-lists" aria-label="Not attached">
+              <span className="ev-section-label">Not attached</span>
+              <ObjectiveLists
+                orgId={orgId}
+                assessmentId={assessmentId}
+                controlStateId={controlStateId}
+                canWrite={canWrite}
+                lists={lists}
+                onChange={listsChanged}
+                part="others"
+              />
+              <ObjectiveDocuments
+                orgId={orgId}
+                assessmentId={assessmentId}
+                controlStateId={controlStateId}
+                canWrite={canWrite}
+                docs={docs}
+                onChange={docsChanged}
+                part="others"
+              />
+            </div>
+          )}
+
+          {archivedItems.length > 0 && (
+            <div className="ev-archived">
+              <span className="ev-section-label">No longer attached</span>
+              <p className="field-hint">Shown for the record. None of these counts as evidence for this objective.</p>
+              <ul aria-label="No longer attached">
+                {archivedItems.map((a) => (
+                  <li key={a.link_id} className="ev-archived-item">
+                    <span className="ev-archived-title">{archivedName(a)}</span>{" "}
+                    <span className="ev-archived-reason">{archivedReason(a)}</span>
+                    {a.replaced_by_name && a.replaced_by_covers === false && (
+                      <span className="field-hint"> {a.replaced_by_name} does not contribute to this objective.</span>
+                    )}
+                    {a.replaced_by_name && a.replaced_by_covers === true && (
+                      <span className="field-hint"> {a.replaced_by_name} contributes to this objective.</span>
+                    )}
+                    {a.archive_cause === "deactivation" && (
+                      <span className="field-hint"> Reactivating {a.product_name} restores it.</span>
+                    )}
+                    {a.download_url && (
+                      <>
+                        {" "}
+                        <a href={assetUrl(a.download_url) ?? undefined} target="_blank" rel="noreferrer">
+                          Download
+                        </a>
+                      </>
+                    )}
+                    {canWrite && a.archive_cause === "deactivation" && a.source === "evidence" && (
+                      <button
+                        className="btn-ghost btn-sm"
+                        disabled={detaching}
+                        onClick={() => handleDetach(a.evidence_id)}
+                        title={`Detach so that reactivating ${a.product_name} does not bring it back.`}
+                      >
+                        Detach for good
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {showRefForm && (
             <div className="ev-add-loc-form">

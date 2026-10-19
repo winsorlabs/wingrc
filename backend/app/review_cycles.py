@@ -550,43 +550,27 @@ def unattested_links(session: Session, *, org_id: uuid.UUID) -> list[dict]:
 
 
 def detach_unattested(session: Session, *, org_id: uuid.UUID, actor: str) -> list[dict]:
-    """Archives each such link, with one audit row apiece saying why. The
-    link row stays (today's state never rewrites yesterday's record), set
-    archived with no product, so no reactivation restores it. The record
-    itself -- the Evidence row, its stored HTML, the cycle and its
+    """Detaches each such link through the one detach path
+    (evidence_links.detach): archived, never deleted, with no product, so
+    no reactivation restores it, and one audit row apiece saying why. The
+    record itself -- the Evidence row, its stored HTML, the cycle and its
     reviewers -- is not touched, and the bundle lists it among evidence
-    whose links were archived."""
-    from .audit import log_event
+    whose links were archived. The objective's ✕ does the same thing for
+    one link; this is that, for every link of this kind in an org."""
+    from .evidence_links import ATTESTATION_DETACH, detach
 
     found = unattested_links(session, org_id=org_id)
-    now = datetime.now(UTC)
     for f in found:
-        lk, ev, cy = f["link"], f["evidence"], f["cycle"]
-        log_event(
-            session, org_id=org_id, action="evidence.attestation_detach",
-            entity_type="evidence", entity_id=ev.id,
-            before_value={
-                "control_state_id": str(lk.control_state_id),
-                "objective_key": f["objective_key"],
-                "assessment_id": str(f["assessment_id"]),
-                "assessment_name": f["assessment_name"],
-                "was_archived": lk.is_archived,
-                "archived_by_product": (
-                    str(lk.archived_by_product) if lk.archived_by_product else None
-                ),
-            },
-            after_value={"is_archived": True, "archived_by_product": None},
+        cy = f["cycle"]
+        detach(
+            session, org_id=org_id, link=f["link"], by=actor, cause=ATTESTATION_DETACH,
+            action="evidence.attestation_detach",
             context={
                 "reason": DETACH_REASON, "review_cycle_id": str(cy.id),
-                "cycle_status": cy.status, "evidence_title": ev.title,
+                "cycle_status": cy.status,
             },
             actor=actor, actor_type="system",
         )
-        if not lk.is_archived:
-            lk.is_archived = True
-            lk.archived_at = now
-        lk.archived_by_product = None
-    session.flush()
     return found
 
 

@@ -698,6 +698,15 @@ class OrgProduct(Base):
     configuration_notes: Mapped[str | None] = mapped_column(Text)
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set at each deactivation (migration 0071): who did it, and the
+    # product they said replaces it, if they named one. Never inferred:
+    # "Replaced by X" is their statement, shown with their name and the
+    # date. Overwritten by the next deactivation; reactivation restores
+    # every link this one archived, so none is left to read a stale value.
+    deactivated_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    replaced_by_product_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("product.id"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -1047,8 +1056,7 @@ class Evidence(Base):
     # The review cycle whose closing wrote this record (migration 0070).
     # Every closed cycle writes one, attested or not; only a completed
     # cycle's is attached (review_cycles.close_cycle). This is how the
-    # cycle's page finds its record, and why removing the record's last
-    # link keeps it (routers/evidence.py).
+    # cycle's page finds its record.
     source_review_cycle_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("review_cycle.id", ondelete="RESTRICT"),
         nullable=True, index=True,
@@ -1060,12 +1068,30 @@ class Evidence(Base):
 
 
 class EvidenceStateLink(Base):
-    """Many-to-many join: one artifact can satisfy many objectives."""
+    """Many-to-many join: one artifact can satisfy many objectives.
+
+    A link is never deleted. One that stops counting is archived, and says
+    why (`archive_cause`, migration 0071; evidence_links.py)."""
 
     __tablename__ = "evidence_state_link"
     __table_args__ = (
         UniqueConstraint(
             "evidence_id", "control_state_id", name="uq_evidence_state_link"
+        ),
+        CheckConstraint(
+            "archive_cause IN ('deactivation', 'detached', 'moved_forward', "
+            "'attestation_detach')",
+            name="ck_evidence_state_link_archive_cause",
+        ),
+        CheckConstraint(
+            "is_archived = (archive_cause IS NOT NULL)",
+            name="ck_evidence_state_link_archived_has_cause",
+        ),
+        # Only a deactivation's archive names the product, because that is
+        # what its reactivation restores; a person's detach never comes back.
+        CheckConstraint(
+            "archived_by_product IS NULL OR archive_cause = 'deactivation'",
+            name="ck_evidence_state_link_product_is_deactivation",
         ),
     )
 
@@ -1086,6 +1112,12 @@ class EvidenceStateLink(Base):
     archived_by_product: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("product.id"), nullable=True
     )
+    archive_cause: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    # Who detached it and when: a person, or the CLI's actor label. Kept
+    # apart from archived_at, which a detach of a link a deactivation
+    # already archived leaves as it was.
+    detached_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    detached_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class EvidenceTask(Base):

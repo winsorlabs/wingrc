@@ -35,7 +35,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..audit import log_event
-from ..auth import require_org_access, require_write
+from ..auth import CurrentUser, require_org_access, require_write
 from ..db import get_session
 from ..engine import (
     activate_org_product,
@@ -232,6 +232,11 @@ class PatchEvidenceTaskOut(BaseModel):
     id: uuid.UUID
     status: str
     is_archived: bool
+
+
+class DeactivateIn(BaseModel):
+    # What replaces it, if the person names something (never inferred).
+    replaced_by_product_id: uuid.UUID | None = None
 
 
 class DeactivateOut(BaseModel):
@@ -745,7 +750,10 @@ def list_control_states(
 
     ev_count_sq = (
         select(func.count(EvidenceStateLink.id))
-        .where(EvidenceStateLink.control_state_id == ControlState.id)
+        .where(
+            EvidenceStateLink.control_state_id == ControlState.id,
+            EvidenceStateLink.is_archived.is_(False),
+        )
         .correlate(ControlState)
         .scalar_subquery()
     )
@@ -971,7 +979,9 @@ def deactivate_product(
     org_id: uuid.UUID,
     assessment_id: uuid.UUID,
     product_id: uuid.UUID,
+    body: DeactivateIn | None = None,
     session: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(require_org_access()),
 ) -> DeactivateOut:
     assessment = session.get(Assessment, assessment_id)
     if assessment is None or assessment.org_id != org_id:
@@ -986,12 +996,17 @@ def deactivate_product(
     if op is None or op.status != "active":
         raise HTTPException(status_code=404, detail="Active product not found")
 
-    result = deactivate_org_product(
-        session,
-        org_id=org_id,
-        product_id=product_id,
-        assessment_id=assessment_id,
-    )
+    try:
+        result = deactivate_org_product(
+            session,
+            org_id=org_id,
+            product_id=product_id,
+            assessment_id=assessment_id,
+            replaced_by_product_id=body.replaced_by_product_id if body else None,
+            deactivated_by=current_user.display_name or current_user.email,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     session.commit()
     return DeactivateOut(**result)
 

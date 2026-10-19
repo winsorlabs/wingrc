@@ -46,6 +46,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from . import evidence_links
 from .audit import log_event
 from .list_library import example_rows, is_populated
 from .models import (
@@ -71,8 +72,11 @@ def not_offered_reason(definition: ListDefinition, version: ListVersion | None) 
     decision is `is_populated`'s; this only says it in words, because an
     adopted copy starts unpopulated by design and "my list isn't in the
     picker" must not read as the feature being broken."""
+    # What to do about a template is said once beside the templates, not
+    # in each one's reason (ObjectiveLists.tsx), so three templates are not
+    # three copies of the same instruction.
     if definition.is_template:
-        return "a template: its rows are examples. Adopt it into an org and fill it in"
+        return "a template: its rows are examples"
     rows = version.rows if version is not None else []
     if is_populated(rows):
         return None
@@ -134,6 +138,7 @@ class Candidate:
     linked_version_id: uuid.UUID | None
     linked_version_number: int | None
     evidence_id: uuid.UUID | None
+    is_template: bool = False
 
     @property
     def drift(self) -> str | None:
@@ -166,6 +171,7 @@ def candidates(session: Session, org_id: uuid.UUID, cs: ControlState) -> list[Ca
             linked_version_id=lv.id if lv else None,
             linked_version_number=lv.version_number if lv else None,
             evidence_id=ev.id if ev else None,
+            is_template=d.is_template,
         ))
     return out
 
@@ -223,10 +229,10 @@ def live_link_row(session: Session, ev: Evidence, cs: ControlState) -> EvidenceS
         )
     )
     if existing is not None:
-        # Linked at this version before, moved off it, and now back: the
-        # same row returns to live (uq_evidence_state_link allows only one).
-        existing.is_archived = False
-        existing.archived_at = None
+        # Linked at this version before, moved off it or detached, and now
+        # back: the same row returns to live (uq_evidence_state_link allows
+        # only one). The audit log keeps the archive.
+        evidence_links.restore(existing)
         return existing
     link = EvidenceStateLink(evidence_id=ev.id, control_state_id=cs.id)
     session.add(link)
@@ -293,8 +299,7 @@ def move_forward(
         raise ListLinkRefused(f"already at version {v.version_number}")
     now = datetime.now(UTC)
     for lk, _ in old:
-        lk.is_archived = True
-        lk.archived_at = now
+        evidence_links.archive(lk, cause=evidence_links.MOVED_FORWARD, now=now)
     row = live_link_row(session, _evidence_for(session, org_id, v), cs)
     session.flush()
     _audit(
@@ -313,8 +318,9 @@ def unlink(
     session: Session, org_id: uuid.UUID, cs: ControlState, list_id: uuid.UUID,
     saved_by: str | None = None,
 ) -> None:
-    """Remove this list from this objective's evidence. The live link goes;
-    links archived by an earlier move forward stay as the record."""
+    """Detach this list from this objective's evidence. The live link is
+    archived (evidence_links.py), never deleted, and so is the Evidence row
+    naming the version: the objective shows it detached, by whom and when."""
     d = session.get(ListDefinition, list_id)
     if d is None or d.org_id != org_id:
         raise LookupError("list not found")
@@ -322,18 +328,11 @@ def unlink(
     if not live:
         raise LookupError("this list is not linked here")
     control_key, objective_key = control_key_for(session, cs)
+    now = datetime.now(UTC)
     for lk, lv in live:
-        ev_id = lk.evidence_id
-        session.delete(lk)
-        session.flush()
+        evidence_links.archive(lk, cause=evidence_links.DETACHED, now=now, by=saved_by)
         _audit(session, org_id, "evidence.list_unlink", cs, d, lv, control_key, objective_key)
         _record(session, org_id, "unlinked", cs, d, lv, control_key, objective_key, saved_by)
-        # As routers/evidence.py's unlink does: a row nothing links to goes.
-        # It holds no bytes, and the version it named is still in the list.
-        if session.scalar(
-            select(EvidenceStateLink.id).where(EvidenceStateLink.evidence_id == ev_id).limit(1)
-        ) is None:
-            session.delete(session.get(Evidence, ev_id))
     session.flush()
 
 

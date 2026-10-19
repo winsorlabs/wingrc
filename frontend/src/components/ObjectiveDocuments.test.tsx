@@ -4,18 +4,29 @@
 // person attaches one -- and says, in its own words, when the version
 // attached is superseded. These assert what the screen shows (item Z), from
 // the start: L.10 found an attached item and an unattached one sharing a
-// row, and this component must not repeat it.
+// row, and this component must not repeat it. Mounted through
+// EvidenceSection, which loads the rows (2026-10-19).
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api";
 import type { DocumentEvidenceCandidate } from "../types";
-import { ObjectiveDocuments } from "./ObjectiveDocuments";
+import { EvidenceSection } from "./EvidenceSection";
 
 vi.mock("../api", () => ({
   api: {
+    listEvidence: vi.fn(), archivedEvidence: vi.fn(), detachEvidence: vi.fn(),
+    stateLists: vi.fn(), linkList: vi.fn(), moveListForward: vi.fn(), unlinkList: vi.fn(),
     stateDocuments: vi.fn(), linkDocument: vi.fn(), moveDocumentForward: vi.fn(), unlinkDocument: vi.fn(),
   },
+  assetUrl: (u: string | null) => u,
 }));
+
+beforeEach(() => {
+  vi.mocked(api.listEvidence).mockResolvedValue([]);
+  vi.mocked(api.archivedEvidence).mockResolvedValue({ items: [], live_evidence: 0, covered_by: [] });
+  vi.mocked(api.stateLists).mockResolvedValue([]);
+  vi.mocked(api.stateDocuments).mockResolvedValue([]);
+});
 
 afterEach(() => {
   cleanup();
@@ -36,7 +47,7 @@ function cand(over: Partial<DocumentEvidenceCandidate>): DocumentEvidenceCandida
 function mount(rows: DocumentEvidenceCandidate[], canWrite = true) {
   vi.mocked(api.stateDocuments).mockResolvedValue(rows);
   const onCount = vi.fn();
-  render(<ObjectiveDocuments orgId="o" assessmentId="a" controlStateId="cs" canWrite={canWrite} onCountChange={onCount} />);
+  render(<EvidenceSection orgId="o" assessmentId="a" controlStateId="cs" canWrite={canWrite} onCountChange={onCount} />);
   return onCount;
 }
 
@@ -63,7 +74,9 @@ describe("ObjectiveDocuments", () => {
     await screen.findByText(
       "AC-POL-001 — Access Control Policy is tagged with this objective but is not attached, and cannot be: no version of it has been approved yet. Publish one first.",
     );
-    expect(screen.queryByRole("button")).toBeNull();
+    // Mounted in the section, a writer sees its footer's buttons; none of
+    // them, and nothing else, offers to attach this document.
+    expect(screen.queryByRole("button", { name: /Attach version/ })).toBeNull();
   });
 
   it("says a superseded version is superseded, and moves it forward only when asked", async () => {
@@ -112,7 +125,7 @@ describe("ObjectiveDocuments", () => {
     expect(within(attached).getByText("AC-POL-001 — Access Control Policy")).toBeTruthy();
     expect(within(attached).queryByText(/IR-PLAN-001|PE-PROC-001/)).toBeNull();
     expect(screen.getAllByText("Document")).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: /^Remove/ })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /^Detach/ })).toHaveLength(1);
 
     const others = screen.getByRole("list", { name: "Documents not attached" });
     for (const name of [/IR-PLAN-001/, /PE-PROC-001/]) {

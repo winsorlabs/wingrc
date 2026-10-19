@@ -264,6 +264,38 @@ export interface EvidenceRow {
   download_url: string | null;
 }
 
+/**
+ * A link that no longer counts on an objective (evidence_links.py), in
+ * fields; EvidenceSection writes the sentence. "Replaced by" exists only
+ * when a person named the replacement at deactivation.
+ */
+export interface ArchivedEvidence {
+  link_id: string;
+  evidence_id: string;
+  source: "evidence" | "list" | "document";
+  kind: string;
+  title: string;
+  artifact_type: string;
+  version_number: number | null;
+  download_url: string | null;
+  archive_cause: "deactivation" | "detached" | "attestation_detach";
+  archived_at: string | null;
+  detached_by: string | null;
+  detached_at: string | null;
+  product_name: string | null;
+  deactivated_by: string | null;
+  replaced_by_name: string | null;
+  replaced_by_covers: boolean | null;
+}
+
+export interface ArchivedEvidenceSection {
+  items: ArchivedEvidence[];
+  // Counted by the server: live links of every kind on this objective,
+  // and the products contributing to it now.
+  live_evidence: number;
+  covered_by: string[];
+}
+
 export interface OrgProfile {
   id: string;
   name: string;
@@ -1695,6 +1727,7 @@ export interface ListEvidenceCandidate {
   evidence_id: string | null;
   // "List version 4 is available. This evidence stays on version 2 until …"
   drift: string | null;
+  is_template: boolean;
 }
 
 /** One live list link, on a list's page or in an assessment. */
