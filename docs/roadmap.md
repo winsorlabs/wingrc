@@ -5442,7 +5442,7 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
-### Item X.1: documents get a tag editor, and a tag a link rests on cannot be removed ✅ DONE (2026-10-18, bench-verified; live walk pending, with X's)
+### Item X.1: documents get a tag editor, and a tag a link rests on cannot be removed ✅ DONE (2026-10-18, verified on live with X's walk)
 
 **Documents can be tagged from a screen for the first time.** Before
 this, no component called the document tag routes. Live had 0
@@ -5477,7 +5477,8 @@ in fields and the client writes the sentence.
   "Detach it first."
 - **L.10's item 3 is not touched.** That is the possible overlap of "Not
   attached" with the evidence buttons. It is still unconfirmed and still
-  needs a full-window screenshot before anything changes.
+  needs a full-window screenshot before anything changes. (Cleared on the
+  live walk: no overlap.)
 
 **Granularity: documents tag objectives and lists tag practices.** That
 stays, and a practice key now expands to its objectives. A policy
@@ -5570,18 +5571,37 @@ Mutation runs, each restored afterwards:
 - Expanding a practice key to its first objective only fails the
   expansion test.
 
-**Live walk (Jarrod), pending. It covers X and X.1 together, through the
-UI.** The count at X's deploy (2026-10-18, `d0d745c`) was 0 document tags
-and 0 document links.
-1. In Library › Policies, open a document and tag it under *Tagged
-   objectives*, either `AC.L2-3.1.1[a]` or the practice.
-2. Publish it. On the objective, confirm it is offered and not attached.
-3. Attach it.
-4. Edit and republish. Confirm the link stayed on the version he chose
-   and reads as superseded.
-5. Remove the tag. The dialog should refuse, naming the link, with no
-   "Yes".
-6. Then I verify the result by DB and audit log.
+**Live walk (Jarrod, 2026-10-19 UTC, `93ab780`): done, all six steps
+behaved. It covered X and X.1 together, through the UI.** At X's deploy
+(`d0d745c`) live had 0 document tags and 0 document links. Verified by DB
+and audit log, read-only:
+- **Tagging.** `3.1.1` on Winsorlabs' AC-POL-01 *Access Control Policy*
+  added six tags, AC.L2-3.1.1[a] through [f]: one
+  `document.objective_tag.add` row each, at 00:17:23, each naming its
+  key. The practice has six objectives. The expected text I gave said
+  [a] and [b]; that was my count, not a defect.
+- **Publishing attached nothing.** Versions 3 and 4 were published and
+  approved, each recording 6 published tags. The only link-making rows
+  are a person's: the attach (`evidence.document_link`, 00:19:19, version
+  3) and a move forward, below.
+- **Republishing left the link.** Version 4's publish (00:19:41)
+  archived nothing; version 3's link stayed live and read as superseded.
+- **A person moved it forward.** `evidence.document_move_forward` at
+  00:22:19, in the same session, archived version 3's link and wrote one
+  on version 4. The walk's steps did not ask for it, and it is correct: a
+  move is a person's act, with its own row. So step 6's refusal named
+  version 4.
+- **The removal was refused.** No `document.objective_tag.remove` row;
+  all six tags are present.
+- **L.10's item 3 is cleared.** The full-window screenshot shows no
+  overlap: the *Not attached* block sits above the attach buttons.
+- **New finding:** a doubled *Not attached* heading when a list and a
+  document are both unattached. See "Evidence section cosmetics" under
+  Planned.
+
+State after: 6 tags; one live document link (version 4,
+AC.L2-3.1.1[a], *CMMC L2 Assessment 2026-09-16*) and one archived
+(version 3).
 
 ---
 
@@ -5611,7 +5631,7 @@ then read for nothing.
 
 ---
 
-### Item X: a published document is offered, and a person attaches it ✅ DONE (2026-10-18; live walk pending, done with X.1's)
+### Item X: a published document is offered, and a person attaches it ✅ DONE (2026-10-18, verified on live with X.1's walk)
 
 **What changed.** `publish_document` writes the new version's Evidence row
 and links it to nothing. A document with an approved version is offered
@@ -5819,7 +5839,7 @@ A link made by publish before X has no attach event. Its record is the
   that and the document's History has the events.
 - The three L.10 tag-refusal cosmetics stay folded forward. They are in
   the list library's frontend and would widen this diff. Items 1 and 2
-  were closed by X.1; item 3 is still unconfirmed.
+  were closed by X.1; item 3 was cleared by the live walk (no overlap).
 
 **Verified on the bench** (wl-util-1, isolated `wingrc_verify_x1303`):
 - 1812 backend tests passed, none skipped;
@@ -5833,9 +5853,10 @@ Mutation runs, each restored afterwards:
 - Rendering an offered document inside the attached row's shape fails the
   shape test.
 
-**Live walk (Jarrod), pending.** It is done with X.1's walk, through
+**Live walk: done with X.1's (2026-10-19 UTC), all steps behaved; the
+results are in X.1's Done entry.** It was done with X.1's walk, through
 the UI, rather than with the tag made through the API (Jarrod,
-2026-10-18). X.1's Done entry has the combined steps. The original steps:
+2026-10-18). The original steps:
 1. Publish a tagged document, and confirm it is offered, not attached, on
    the objective.
 2. Attach it.
@@ -5983,7 +6004,9 @@ is still open; this run did not build a bundle.
 slice).** All three are on the tag-refusal screen or next to it. **Items 1
 and 2 were closed by X.1** (2026-10-18; see its Done entry), as decided
 here: fields from the server, one sentence written by the client, in one
-dialog shared with documents. Item 3 is still open:
+dialog shared with documents. **Item 3 was cleared by the live walk**
+(2026-10-19): Jarrod's full-window screenshot shows no overlap, the block
+sits above the attach buttons. Nothing from L.10 remains folded forward.
 1. **The refusal says one fact three times.** The client wraps the
    server's sentence ("PE.L2-3.10.6 cannot be removed from
    3-10-5a-access-devices-own: evidence rests on it (version 2 linked to
@@ -10013,7 +10036,12 @@ tagged with this objective". The record of why it is there goes.
 would not fit, and would be its own slice if wanted later. The typed key
 keeps it the size of what L.2.2 and L.10 already built.
 
-### Review cycles attach only what attests -- decided 2026-10-18, not built
+### Review cycles attach only what attests -- the next slice (decided 2026-10-18)
+
+**Next, ahead of the evidence section cosmetics** (Jarrod, 2026-10-19).
+Two records of reviews that never happened are attached as evidence on
+live assessments, against AC.L2-3.1.1[a] and [c], and the dashboard
+counts them as coverage.
 
 **The rule: attach only what attests.** A `completed` cycle attaches its
 attestation to AC.L2-3.1.1[a]/[c]. A deadline close (`closed_unattested`)
@@ -10047,7 +10075,62 @@ deadline close attaches. Other places that read it as an attestation:
 
 None of this moves control_state or SPRS.
 
-**The slice, when built:**
+**On live (counted 2026-10-19, read-only).** There are three cycles,
+each opened by the scheduler and each closed by it a day after `due_at`
+as `closed_unattested` (`review_cycle.closed_unattested`, actor
+`system`). Every reviewer was notified and none attested; each is
+`no_response`. No person completed any of them.
+
+| Record | Org | Linked to | Assessment | Other live evidence there | Status |
+| --- | --- | --- | --- | --- | --- |
+| *…-- 2026-09-13* | Acme MSP | [a], [c] | CMMC L2 Assessment 2026-09-09 | none, none | met, met |
+| *…-- 2026-09-14* | Test Customer A | nothing | (no in_progress assessment) | | |
+| *…-- 2026-09-15* | Winsorlabs | [a], [c] | CMMC L2 Assessment 2026-09-16 | [a]: AC-POL-01 v4 (the X walk); [c]: none | not_met, not_met |
+
+So three of the four links are the only evidence on their objective, and
+the blocked-objectives widget counts each as evidence present.
+
+Acme's two `met` statuses were set by hand on 2026-09-13 at 22:08
+(`control_state_history`), three weeks before the record was linked
+(2026-10-05). The attestation did not make them met, and detaching it
+moves no status. After the detach they are `met` with no evidence
+attached. That is the board's existing "mark met" behaviour, a separate
+question, recorded here so it is not read as a consequence of this
+slice.
+
+**The two existing links: detach them (Jarrod, 2026-10-19).** This
+departs from item X's precedent deliberately. Do not reach for X's rule
+by analogy:
+- **X's links were true evidence, unchosen.** X recommended leaving the
+  links publish had made, because removing them would be its own silent
+  move (live had none in the end). Those links pointed at real approved
+  documents that genuinely were evidence; only the choosing was wrong,
+  and a person could keep or move them.
+- **These links say something false.** Filed against [a] and [c], each
+  record asserts that a review happened, when its own outcome line says
+  it did not. Leaving them is leaving that statement on the assessment.
+  X's question was who chose a true piece of evidence; this one is
+  evidence that is untrue where it is attached.
+
+How the detach is done:
+- **Never silently.** Each link is removed with an audit row on the
+  Evidence that states the reason (the cycle closed at its deadline and
+  no reviewer attested; only what attests is attached), with the cycle,
+  the objective key and the assessment.
+- **The record stays.** The cycle, its reviewers, and the Evidence row
+  with its stored file all stay. The non-response record is preserved;
+  it stops claiming to satisfy an objective.
+- **Not through the evidence ✕.** `routers/evidence.py`'s unlink deletes
+  the Evidence row and its stored file when the last link goes, exempting
+  only a document version's row. Used on these, it would destroy the
+  non-response record. The slice gives an attestation the same
+  exemption. Until it ships, nobody clears these by hand.
+- **One command, per org.** Dry-run by default, listing each link it
+  would remove; `--org-id` explicit; run once for Acme MSP and once for
+  Winsorlabs. It removes only links from `closed_unattested` and
+  `closed_undeliverable` cycles, never a completed cycle's.
+
+**The slice:**
 - `close_cycle` links only when `status == "completed"`.
 - The no-response Evidence row is still written, still reachable from the
   cycle, and not linked.
@@ -10056,10 +10139,14 @@ None of this moves control_state or SPRS.
   why.
 - Item X's `test_closing_a_review_cycle_is_a_persons_act_and_moves_nothing`
   keeps covering the completed path.
-- Existing deadline-closed links on live are counted first, then left or
-  re-offered by decision. Nothing is removed silently.
+- The existing deadline-closed links on live are detached, as above.
+- New tests: removing the last link leaves an attestation's Evidence and
+  its file; the command removes only deadline and undeliverable closes'
+  links, writes one audit row per link with its reason, and leaves a
+  completed cycle's links and every Evidence row.
 
-Small: a few lines and the test updates.
+Small: the `close_cycle` condition, the unlink exemption, the command,
+and the tests.
 
 **Separately: the widget's "any link means covered" test is weak on its
 own.** `_blocked_objectives` asks whether *any* `evidence_state_link`
@@ -10075,6 +10162,28 @@ of it. The widget needs a stated definition of "has evidence". At least
 live links only, and probably the same set the bundle's per-objective
 evidence uses. That belongs with item Z: a screen's count says what it
 computed.
+
+### Evidence section cosmetics: one "Not attached" heading, one template sentence -- after the review-cycle slice
+
+**Found on X and X.1's live walk (Jarrod, 2026-10-19).** Frontend only,
+no migration. Small.
+1. **The heading is doubled.** On an objective where a list and a
+   document are both unattached, `ObjectiveLists` and
+   `ObjectiveDocuments` each render *Not attached*, one after the other.
+   It reads as a bug. The heading belongs to the objective's evidence
+   section, not to each source: move it into `EvidenceSection`, drawn
+   once when either has an unattached item, and have each component
+   render only its rows. The bench missed it because no test renders
+   both with unattached items. Add that test, and assert one heading
+   (item Z).
+2. **The template sentence repeats.** Each template list's not-attached
+   sentence ends with `list_evidence.py`'s reason, "a template: its rows
+   are examples. Adopt it into an org and fill it in", so three
+   templates give three near-identical paragraphs in a row. Say it once
+   for the templates together; the server's per-list reason stays as it
+   is.
+3. **L.10's remaining items: none.** Items 1 and 2 were closed by X.1,
+   and item 3 was cleared by the live walk.
 
 ### Y. A test that models.py's CHECK constraints are the database's
 
