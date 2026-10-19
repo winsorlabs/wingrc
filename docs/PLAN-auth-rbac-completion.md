@@ -1331,6 +1331,19 @@ either can be reverted independently.
   even for Entra users. Mapping Entra groups to WinGRC roles is a later slice and
   should not block I.1–I.9.
 
+## Beyond I.1–I.9: a kiosk role changes this model (planned, not built)
+
+`docs/roadmap.md`'s "Kiosk pages: visitor sign-in" entry (2026-10-19) adds a
+sixth role that fits neither of this plan's axes: rank (`_ROLE_RANK`) and the
+read-only set (`_READ_ONLY_ROLES`, by method in `require_write()`). A kiosk
+writes one thing and reads almost nothing, so it is authorised by an explicit
+endpoint allowlist enforced centrally, with every other route, every GET
+included, returning 403. It is also an MFA exception, has a daily session
+instead of the 3.1.11 idle timeout (I.4), and can never be granted another role,
+another org or an API token. Read that entry before touching `_ROLE_RANK`,
+`require_write()` or the I.1 harness for it: it is a change to this model, not a
+new row in the rank table.
+
 ---
 
 ## Standing constraints for every slice
