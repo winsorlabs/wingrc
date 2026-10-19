@@ -5442,6 +5442,212 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### The evidence section stops destroying things and stops hiding things ✅ DONE (2026-10-19, bench-verified, migration 0071; deploy pending)
+
+One idea in four parts. **An objective's evidence section tells the truth
+about what is attached, what used to be, and what happened to it.** The
+four parts: the ✕ (it destroyed), archived evidence staying visible (it
+hid), the section's two cosmetic faults, and item Y, which is an
+independent test.
+
+**The ✕, and the tell.** `routers/evidence.py`'s `delete_evidence`
+hard-deleted the link. On the artifact's last link it also deleted the
+Evidence row and its stored file. It wrote no audit row. Two exemptions
+had been carved out of that, each by the slice that needed to protect
+its own thing: a published document's record (item X) and a review
+cycle's record (2026-10-19). **That was the tell.** The rule was never
+"these two are special"; it is that the product does not delete records,
+and the exemptions were the places someone noticed in time. Both are
+removed, because they became unnecessary, not because they were wrong.
+
+**One path: `backend/app/evidence_links.py`.**
+- `archive()` is the state change of every archive.
+- `restore()` is the state change of every restore.
+- `detach()` archives a link and writes one audit row naming the
+  artifact, the objective and the assessment.
+- The ✕ (now `POST …/evidence/{id}/detach`) and
+  `review-cycles-detach-unattested` both call `detach()`. One test
+  holds both to the same assertion and spies that both reach it.
+- The CLI is still needed, for scripted and bulk use: it finds every
+  unattested record's link in an org. It no longer has its own
+  implementation.
+- The list and document unlinks archive through `archive()` and keep
+  their own audit actions, because the document's History reads them.
+  The list unlink no longer deletes its Evidence row.
+- Deactivation, reactivation, moving forward and re-linking
+  (`live_link_row`) use the same two state changes.
+- **Nothing in the app deletes an `evidence_state_link` row any more.**
+  `cli.py`'s reset command still does; it is a whole-tenant wipe.
+
+**Every archive says why** (migration 0071):
+- `evidence_state_link.archive_cause` is one of `deactivation`,
+  `detached`, `moved_forward` or `attestation_detach`.
+- `detached_by` / `detached_at` say who detached it and when.
+- Three CHECKs hold the rule in the database: the cause is set exactly
+  when the link is archived, and only a deactivation's archive names a
+  product.
+- **Backfill** from the rows. A link naming a product is a deactivation's.
+  One on a review cycle's record is the CLI's (actor read from its audit
+  row). A list or document link was moved forward, since their unlink
+  deleted until now. Any other archived link refuses the migration rather
+  than be given a guessed cause.
+- **Previewed on live, read-only:** 4 links → `attestation_detach`,
+  1 → `moved_forward` (AC-POL-01 v3), none unknown.
+
+**The reactivation rule, generalised.** Deactivation archives with the
+product and reactivation restores by it, so a person's detach names no
+product. That includes a detach of a link a deactivation had already
+archived: the objective's greyed item offers *Detach for good*, which
+clears the product. Reactivation restores only links its own
+deactivation archived. It never restores one a person detached, whether
+that was before the deactivation or after it. A negative test
+(`test_reactivation_restores_only_what_its_deactivation_archived`)
+covers both.
+
+**Jarrod's decision (§2), in his terms:**
+- "Replaced by X" exists only when a person names the replacement at
+  deactivation. The product never infers it.
+- The question is optional, not required. Leaving it blank is a real
+  answer, and the common one.
+- A tool taken away with nothing put in its place should be evident
+  rather than silent.
+
+So:
+- Deactivate (`ProductCard.tsx`) now asks first, with an optional
+  *Replaced by*. Before this, deactivation was one click with no
+  confirmation.
+- `org_product.deactivated_by` and `replaced_by_product_id` are set at
+  each deactivation.
+- Where a replacement is named, the archived evidence reads *Replaced by
+  Defender — stated by {name} when Heimdal was deactivated, {date}*, and
+  the bundle says the same with who stated it.
+- Where none is named, it reads *(Archived {date} — Heimdal was
+  deactivated)*. On an objective the server counts as having no live
+  evidence, a loud alert says nothing was named to replace it, and which
+  active tools, if any, still contribute.
+- A person's detach reads *(Detached {date} by {name})*.
+
+**Decided: a replacement need not cover the same objective to be
+nameable.** The person states a fact about their estate, not a coverage
+claim. Refusing their statement because the mapping disagrees would be
+the product arguing with the operator. The archived item says whether
+the named replacement contributes to this objective, computed from
+`control_state_contributor`. Only its own product, or a product that
+does not exist, is refused (422).
+
+**Display.** Archived items sit greyed beneath the live evidence, under
+*No longer attached*. Each is a sentence, never an `.ev-item` row, and
+has no chip, per the L.10 rule. A test asserts this on rendered output.
+Moved-forward links are left out, because their newer link is live and
+the drift notice covers them.
+
+**Found while building: four readers counted archived links as live.**
+- `list_evidence`, the objective's evidence list, had no `is_archived`
+  filter.
+- So did the evidence manifest endpoint, the control-state
+  `evidence_count`, and the dashboard's blocked-objectives widget.
+
+All four now read live links only. This was latent while only a
+deactivation archived generic evidence. It became live when the
+unattested detach ran this morning: on live, Acme's and Winsorlabs'
+AC.L2-3.1.1[a]/[c] still list the detached records as current evidence,
+until this deploys. **The planned entry below ("Archived evidence stays
+visible") said such evidence "vanishes from its objective". That was
+wrong**, and it was written without reading the query.
+
+**What the ✕ defect was worth on live, counted read-only before deploy:
+nothing yet.** No org has a generic Evidence row with a live link, and
+none has a linked list version. Every artifact live today is a published
+document's record or a review cycle's record, the two the exemptions
+protected. The defect was waiting for the first uploaded file.
+
+**The section's cosmetics.** `EvidenceSection` now loads the lists and
+documents. It draws *Not attached* once, for both, and `ObjectiveLists`
+and `ObjectiveDocuments` render only their rows. The template
+instruction is said once after the rows. `not_offered` for a template is
+now "a template: its rows are examples", and candidates carry
+`is_template`. Tested with a list and a document both unattached, the
+case the bench never rendered.
+
+**Item Y: `tests/test_model_check_constraints.py`.**
+- It builds the models into a scratch schema (`create_all` through
+  `schema_translate_map`).
+- It compares `pg_get_constraintdef` both ways, keyed by (table, name),
+  then drops the schema.
+- A unit test requires every model CHECK to be named.
+- **Mutation-checked both ways.** One value was removed from
+  `ck_org_product_status`: it fails, naming the table, the constraint
+  and both definitions. A model CHECK was deleted: it fails, "in the
+  database only".
+- **First-run findings: none.** There are 54 CHECK constraints in the
+  migrated schema, and every one matches its model. The one drift Y was
+  written for (attestation, L.4) had already been fixed. Unique
+  constraints, indexes and FK `ondelete` remain the follow-on.
+
+**Verified on the bench (`wingrc_verify_evt`):**
+- 0071 applied on stack start.
+- Full suite: 1838 passed, 0 failed (8m18s, with the count floor).
+- Ruff clean.
+- No-DB local: 595 passed.
+- Frontend: vitest 463/463; `npm run build` (`tsc -b`) clean.
+
+Asserted along the way:
+- The detach archives and never deletes: the link row, the Evidence row
+  and the stored object all survive, with the object read back.
+- One audit row per detach.
+- Status and SPRS are unchanged.
+- `c3pao_assessor` gets 403 on detach (`test_assessor_readonly`'s
+  harness).
+- RLS holds through real HTTP.
+- No test compares stamps across moments.
+
+**Live-copy rehearsal (`pg_dump` of live, restored into the bench as
+`livecopy`, dropped and the dump deleted afterwards):**
+- 0071 applied, and its causes matched the read-only preview.
+- Each assessment's [a]/[c] lists no live evidence except Winsorlabs [a]'s
+  AC-POL-01 v4. Each shows its detached record under *No longer
+  attached*, with the CLI's actor and time.
+- SPRS recomputed equal to stored (Acme −199, Winsorlabs −204), and the
+  statuses are unchanged.
+- The bundles still carry each record under *Links archived*.
+
+**Mutations, all caught:**
+- Backend, against 144 passing tests in the slice's six files:
+  - the detach deletes instead of archiving: 7 failed;
+  - no audit row: 5;
+  - reactivation restores a person's detach: 1 (the negative test);
+  - *Replaced by* inferred from what still contributes: 1;
+  - the bundle silent on a product left unreplaced: 1;
+  - the blocked-objectives widget counting archived links: 1;
+  - the objective's list showing archived links as live: 4;
+  - a list's unlink deleting its link again: 1;
+  - a detach re-stamping a deactivation's archive date: 1.
+- Frontend, each failing one test against an unmutated baseline of
+  30/30:
+  - an archived item drawn as a live row;
+  - the alarm ignoring the server's live count;
+  - *Not attached* drawn by each source;
+  - the template sentence repeated per row;
+  - *Replaced by* inferred on the screen.
+
+**Not done, recorded:**
+- **Bundle: a person-detached list or document version is not in the
+  bundle's *Links archived*.** That group excludes list and document
+  evidence by design: a list version is evidence only through a link,
+  and the approved document is in `06_documents`. The artifact itself
+  does not vanish.
+- **Bundle: a detach from one objective, of evidence still live on
+  another, is not shown.** The artifact appears under the other
+  objective; the detach from this one does not appear. A per-objective
+  "no longer attached" line in the manifest would close both.
+- **No UI re-attaches a detached file or location.** Re-attaching a list
+  or document is the ordinary Attach, and restores the same row.
+
+**Live, after deploy (pending):** Jarrod walks it.
+- Detach a real attachment. Confirm that the artifact survives, read
+  back from storage, and that it reads as archived.
+- Deactivate a tool naming a replacement, and one without.
+
 ### Review cycles attach only what attests ✅ DONE (2026-10-19, migration 0070; deployed and detached on live, read back)
 
 **Changed before merge (Jarrod, 2026-10-19): the detach archives; it
@@ -10449,7 +10655,11 @@ live links only, and probably the same set the bundle's per-objective
 evidence uses. That belongs with item Z: a screen's count says what it
 computed.
 
-### Evidence section cosmetics: one "Not attached" heading, one template sentence -- after the review-cycle slice
+### Evidence section cosmetics: one "Not attached" heading, one template sentence ✅ DONE (2026-10-19)
+
+**Built in the Done entry "The evidence section stops destroying things and stops hiding things".** Item 2's "the server's per-list
+reason stays as it is" did not hold: the reason itself carried the
+instruction, so it now says only "a template: its rows are examples".
 
 **Found on X and X.1's live walk (Jarrod, 2026-10-19).** Frontend only,
 no migration. Small.
@@ -10471,7 +10681,14 @@ no migration. Small.
 3. **L.10's remaining items: none.** Items 1 and 2 were closed by X.1,
    and item 3 was cleared by the live walk.
 
-### Archived evidence stays visible on its objective -- not built
+### Archived evidence stays visible on its objective ✅ DONE (2026-10-19, design (2))
+
+**Built in the Done entry "The evidence section stops destroying things and stops hiding things", as design (2):** Jarrod settled it.
+"Replaced by X" exists only when a person names it at deactivation. **This
+entry's first claim was wrong:** archived evidence did not vanish. The
+objective's list (`routers/evidence.py:list_evidence`) had no `is_archived`
+filter, so it showed archived links as live -- and so did three other
+readers. The text below is the plan as written.
 
 **Jarrod, 2026-10-19. Written up only; nothing here is built.** Today,
 evidence archived by a product's deactivation vanishes from its
@@ -10551,7 +10768,11 @@ The display then:
 (deactivation already sets `needs_review`); inferring replacement in any
 form.
 
-### The evidence ✕ deletes the artifact, unaudited, and says "Remove" -- not fixed
+### The evidence ✕ deletes the artifact, unaudited, and says "Remove" ✅ DONE (2026-10-19)
+
+**Fixed in the Done entry "The evidence section stops destroying things and stops hiding things":** it is a detach that archives the
+link, keeps the artifact and audits, through one path shared with the CLI.
+Counted on live before the deploy, it had destroyed nothing yet.
 
 **Recorded 2026-10-19, while building "Review cycles attach only what
 attests", which fixed one narrow case of it.** The objective's evidence
@@ -10570,7 +10791,11 @@ The fix decides what *Remove* means (detach only, with the artifact kept
 until someone deletes it deliberately, or a delete that says so), and
 gives every path an audit row.
 
-### Y. A test that models.py's CHECK constraints are the database's
+### Y. A test that models.py's CHECK constraints are the database's ✅ DONE (2026-10-19)
+
+**Built in the Done entry "The evidence section stops destroying things and stops hiding things"**
+(`tests/test_model_check_constraints.py`). First run: no drift across the
+54 CHECKs. Mutation-checked both ways.
 
 **Found in L.4 (2026-10-17).** `models.py`'s `ck_evidence_artifact_type`
 had been missing `attestation` since migration 0045, five weeks, and

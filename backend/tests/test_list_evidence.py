@@ -450,9 +450,19 @@ def test_a_tag_a_live_link_rests_on_cannot_be_removed_by_a_person(db_session):
     assert client.delete(f"{base}/tags/PE.L2-3.10.3").status_code == 200, (
         "unlinked, the tag may go"
     )
+    # This asserted the opposite until 2026-10-19 ("an unlinked list version
+    # leaves no evidence row behind"): unlink deleted the link and the row.
+    # A detach deletes nothing now (evidence_links.py); the tag may still go,
+    # because an archived link is not one it rests on.
     assert db_session.scalar(
         select(func.count()).select_from(Evidence).where(Evidence.org_id == w["org"])
-    ) == 0, "an unlinked list version leaves no evidence row behind"
+    ) == 1, "a detached list version keeps its evidence row"
+    link = db_session.scalars(
+        select(EvidenceStateLink).join(Evidence, Evidence.id == EvidenceStateLink.evidence_id)
+        .where(Evidence.org_id == w["org"])
+    ).one()
+    assert (link.is_archived, link.archive_cause) == (True, "detached")
+    assert link.detached_by, "says who detached it"
 
 
 @pytest.mark.integration

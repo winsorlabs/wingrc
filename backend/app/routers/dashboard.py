@@ -354,9 +354,14 @@ def _blocked_objectives(
     duplicate rows that then need de-duplicating, and it's easy to forget
     that step -- exactly the "easiest of the nine to get subtly wrong"
     case the plan flags this widget as."""
+    # Live links only: archived evidence is shown on the objective and
+    # never counted (2026-10-19, evidence_links.py).
     has_evidence = (
         select(EvidenceStateLink.id)
-        .where(EvidenceStateLink.control_state_id == ControlState.id)
+        .where(
+            EvidenceStateLink.control_state_id == ControlState.id,
+            EvidenceStateLink.is_archived.is_(False),
+        )
     )
     rows = session.execute(
         select(

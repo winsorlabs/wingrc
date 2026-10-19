@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .. import document_evidence
-from ..auth import require_org_access, require_write
+from ..auth import CurrentUser, require_org_access, require_write
 from ..db import get_session
 from ..models import Assessment, ControlState
 
@@ -91,10 +91,12 @@ def state_documents(
     return _out(session, org_id, _state(session, org_id, assessment_id, cs_id))
 
 
-def _act(fn, org_id, assessment_id, cs_id, document_id, session) -> list[DocumentCandidateOut]:
+def _act(
+    fn, org_id, assessment_id, cs_id, document_id, session, **kw
+) -> list[DocumentCandidateOut]:
     cs = _state(session, org_id, assessment_id, cs_id)
     try:
-        fn(session, org_id, cs, document_id)
+        fn(session, org_id, cs, document_id, **kw)
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except document_evidence.DocumentLinkRefused as e:
@@ -134,5 +136,9 @@ def move_document_forward(
 def unlink_document(
     org_id: uuid.UUID, assessment_id: uuid.UUID, cs_id: uuid.UUID, document_id: uuid.UUID,
     session: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(require_org_access()),
 ) -> list[DocumentCandidateOut]:
-    return _act(document_evidence.unlink, org_id, assessment_id, cs_id, document_id, session)
+    return _act(
+        document_evidence.unlink, org_id, assessment_id, cs_id, document_id, session,
+        saved_by=current_user.display_name or current_user.email,
+    )

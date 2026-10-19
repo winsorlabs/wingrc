@@ -7,15 +7,30 @@
 // L.10: these assert what the screen shows, not what the API returned. The
 // L.4 tests passed while the screen drew an unfilled list exactly like an
 // attached one, and on live that read as attached.
+//
+// Mounted through EvidenceSection, which loads the rows and draws the one
+// "Not attached" heading (2026-10-19), because that is how a person sees it.
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api";
 import type { ListEvidenceCandidate } from "../types";
-import { ObjectiveLists } from "./ObjectiveLists";
+import { EvidenceSection } from "./EvidenceSection";
 
 vi.mock("../api", () => ({
-  api: { stateLists: vi.fn(), linkList: vi.fn(), moveListForward: vi.fn(), unlinkList: vi.fn() },
+  api: {
+    listEvidence: vi.fn(), archivedEvidence: vi.fn(), detachEvidence: vi.fn(),
+    stateLists: vi.fn(), linkList: vi.fn(), moveListForward: vi.fn(), unlinkList: vi.fn(),
+    stateDocuments: vi.fn(), linkDocument: vi.fn(), moveDocumentForward: vi.fn(), unlinkDocument: vi.fn(),
+  },
+  assetUrl: (u: string | null) => u,
 }));
+
+beforeEach(() => {
+  vi.mocked(api.listEvidence).mockResolvedValue([]);
+  vi.mocked(api.archivedEvidence).mockResolvedValue({ items: [], live_evidence: 0, covered_by: [] });
+  vi.mocked(api.stateLists).mockResolvedValue([]);
+  vi.mocked(api.stateDocuments).mockResolvedValue([]);
+});
 
 afterEach(() => {
   cleanup();
@@ -26,14 +41,14 @@ function cand(over: Partial<ListEvidenceCandidate>): ListEvidenceCandidate {
   return {
     list_id: "l", list_key: "visitor-log", title: "Visitor Log", current_version_id: "v3",
     current_version_number: 3, offered: true, not_offered: null, linked_version_id: null,
-    linked_version_number: null, evidence_id: null, drift: null, ...over,
+    linked_version_number: null, evidence_id: null, drift: null, is_template: false, ...over,
   };
 }
 
 function mount(rows: ListEvidenceCandidate[], canWrite = true) {
   vi.mocked(api.stateLists).mockResolvedValue(rows);
   const onCount = vi.fn();
-  render(<ObjectiveLists orgId="o" assessmentId="a" controlStateId="cs" canWrite={canWrite} onCountChange={onCount} />);
+  render(<EvidenceSection orgId="o" assessmentId="a" controlStateId="cs" canWrite={canWrite} onCountChange={onCount} />);
   return onCount;
 }
 
@@ -55,7 +70,9 @@ describe("ObjectiveLists", () => {
     await screen.findByText(
       "Visitor Log (version 3) is tagged with this practice but is not attached, and cannot be: still showing template examples (2 of 2 rows).",
     );
-    expect(screen.queryByRole("button", { name: /Attach/ })).toBeNull();
+    // Mounted in the section, a writer sees its footer's "+ Attach file";
+    // nothing offers to attach this list.
+    expect(screen.queryByRole("button", { name: /Attach version/ })).toBeNull();
   });
 
   it("says the list moved on, and moves the link forward only when asked", async () => {

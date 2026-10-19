@@ -60,6 +60,7 @@ from .models import (
     ListDefinition,
     ListVersion,
     Organization,
+    OrgProduct,
     Product,
     RaciAssignment,
     ScopeEntity,
@@ -1186,18 +1187,30 @@ def snapshot_bundle(
     archived_by_ev: dict[uuid.UUID, list] = {}
     unlinked_ids = [er.ev_id for er in unlinked_rows]
     if unlinked_ids:
+        Replacement = Product.__table__.alias("replacement")
         for ar in session.execute(
             select(
                 EvidenceStateLink.evidence_id,
                 EvidenceStateLink.archived_at,
+                EvidenceStateLink.archive_cause,
+                EvidenceStateLink.detached_by,
+                EvidenceStateLink.detached_at,
                 Control.control_id,
                 AssessmentObjective.objective_key,
                 Product.name.label("product_name"),
+                Replacement.c.name.label("replaced_by_name"),
+                OrgProduct.deactivated_by,
             )
             .join(ControlState, EvidenceStateLink.control_state_id == ControlState.id)
             .join(AssessmentObjective, AssessmentObjective.id == ControlState.objective_id)
             .join(Control, Control.id == AssessmentObjective.control_id)
             .outerjoin(Product, Product.id == EvidenceStateLink.archived_by_product)
+            .outerjoin(
+                OrgProduct,
+                (OrgProduct.org_id == org_id)
+                & (OrgProduct.product_id == EvidenceStateLink.archived_by_product),
+            )
+            .outerjoin(Replacement, Replacement.c.id == OrgProduct.replaced_by_product_id)
             .where(
                 ControlState.assessment_id == assessment_id,
                 EvidenceStateLink.is_archived.is_(True),
@@ -1218,15 +1231,7 @@ def snapshot_bundle(
         archived = archived_by_ev.get(ev_id, [])
         reasons: list[str] = []
         for ar in archived:
-            if ar.product_name:
-                why = f"{ar.product_name} was deactivated"
-            elif er.source_review_cycle_id is not None:
-                why = (
-                    "detached: the record of a review cycle that closed "
-                    "without attestation"
-                )
-            else:
-                why = "archived"
+            why = _archive_reason(ar)
             if why not in reasons:
                 reasons.append(why)
         stamps = [ar.archived_at for ar in archived if ar.archived_at is not None]
@@ -2536,6 +2541,28 @@ def _render_evidence_li(ev: EvidenceSnap, manifest_dir: str) -> str:
         f"&nbsp;<span style='color:#9ca3af;font-style:italic'>"
         f"not applicable &mdash; reference only</span></li>"
     )
+
+
+def _archive_reason(ar) -> str:
+    """Why a link was archived, as its row records it (archive_cause,
+    migration 0071). "Replaced by" is said only where a person named the
+    replacement at deactivation, and says who; never inferred. A product
+    taken away with nothing named is said as that, not left silent."""
+    if ar.archive_cause == "deactivation":
+        if ar.replaced_by_name:
+            named = f" by {ar.deactivated_by}" if ar.deactivated_by else ""
+            return (
+                f"{ar.product_name} was deactivated and replaced by "
+                f"{ar.replaced_by_name}, as stated{named} at deactivation"
+            )
+        return f"{ar.product_name} was deactivated, with nothing named to replace it"
+    if ar.archive_cause == "attestation_detach":
+        return "detached: the record of a review cycle that closed without attestation"
+    if ar.archive_cause == "detached":
+        who = f" by {ar.detached_by}" if ar.detached_by else ""
+        when = f" on {ar.detached_at.astimezone(UTC):%Y-%m-%d}" if ar.detached_at else ""
+        return f"detached{who}{when}"
+    return "archived"
 
 
 def _render_manifest(snapshot: BundleSnapshot) -> str:

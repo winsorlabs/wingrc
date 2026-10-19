@@ -57,6 +57,7 @@ class ListCandidateOut(BaseModel):
     linked_version_number: int | None
     evidence_id: uuid.UUID | None
     drift: str | None
+    is_template: bool = False
 
 
 class ListLinkOut(BaseModel):
@@ -111,7 +112,7 @@ def _candidate_out(c: list_evidence.Candidate) -> ListCandidateOut:
         current_version_id=c.current_version_id, current_version_number=c.current_version_number,
         offered=c.not_offered is None, not_offered=c.not_offered,
         linked_version_id=c.linked_version_id, linked_version_number=c.linked_version_number,
-        evidence_id=c.evidence_id, drift=c.drift,
+        evidence_id=c.evidence_id, drift=c.drift, is_template=c.is_template,
     )
 
 

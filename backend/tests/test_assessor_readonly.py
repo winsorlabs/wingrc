@@ -314,7 +314,7 @@ _CASE_IDS = [
     "put_statements",
     "post_evidence_file",
     "post_evidence_references",
-    "delete_evidence",
+    "post_detach_evidence",
     "patch_evidence_task",
     "post_collect_task_file",
     "post_collect_task_reference",
@@ -385,9 +385,10 @@ def _build_cases(d: dict) -> dict[str, dict]:
                 {"title": "Ref", "location": "https://example.com/ref", "artifact_type": "document"}
             ],
         ),
-        "delete_evidence": dict(
-            method="DELETE",
-            url=f"{a_base}/control-states/{cs}/evidence/{ev}",
+        # Was delete_evidence: the ✕ is a detach since 2026-10-19.
+        "post_detach_evidence": dict(
+            method="POST",
+            url=f"{a_base}/control-states/{cs}/evidence/{ev}/detach",
             kind="none",
         ),
         "patch_evidence_task": dict(

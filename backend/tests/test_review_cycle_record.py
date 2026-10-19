@@ -25,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import func, select, text
 
-from app import review_cycles, scheduler
+from app import evidence_links, review_cycles, scheduler
 from app.bundle_service import snapshot_bundle
 from app.models import (
     Assessment,
@@ -133,7 +133,7 @@ def test_a_completed_cycle_attaches_its_record_and_its_page_says_where(
             ControlState.objective_id == d["obj_a"].id,
         ))
     ))
-    c_link.is_archived = True
+    evidence_links.archive(c_link, cause=evidence_links.DETACHED, now=datetime.now(UTC))
     db_session.commit()
     record = poc_client.get(f"{_open_url(d['org'].id)}/{cycle_id}").json()["record"]
     assert record["attached_to"] == [
@@ -203,6 +203,9 @@ def test_another_org_cannot_read_a_cycles_record(
 def test_the_evidence_x_never_deletes_a_cycles_record(
     client, db_session, storage, fake_msp_admin  # noqa: F811
 ):
+    """This rested on routers/evidence.py's exemption for a cycle's record.
+    The exemption is gone (2026-10-19) because the ✕ is now a detach that
+    deletes nothing for any artifact; the assertion is unchanged."""
     d = _seed_org_with_catalog(db_session, fake_msp_admin)
     cycle = _overdue_cycle(db_session, d, notified=True)
     ev = review_cycles.close_cycle(db_session, storage, cycle=cycle, status="completed")
@@ -211,8 +214,8 @@ def test_the_evidence_x_never_deletes_a_cycles_record(
     assert len(links) == 2, "fixture: a completed record attached to [a] and [c]"
     for lk in links:
         url = (f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/control-states/"
-               f"{lk.control_state_id}/evidence/{ev.id}")
-        assert client.delete(url).status_code == 204
+               f"{lk.control_state_id}/evidence/{ev.id}/detach")
+        assert client.post(url).status_code == 204
     db_session.expire_all()
     assert db_session.get(Evidence, ev.id) is not None, "the last unlink keeps the record"
     assert ev.storage_key in storage.files, "and its bytes"
@@ -253,8 +256,10 @@ def test_the_detach_archives_only_unattested_links_and_keeps_every_record(
     db_session.add(tool)
     db_session.flush()
     by_tool = sorted(_links(db_session, unattested), key=lambda lk: str(lk.id))[0]
-    by_tool.is_archived, by_tool.archived_by_product = True, tool.id
-    tool_archived_at = by_tool.archived_at = datetime.now(UTC) - timedelta(days=2)
+    tool_archived_at = datetime.now(UTC) - timedelta(days=2)
+    evidence_links.archive(
+        by_tool, cause=evidence_links.DEACTIVATION, now=tool_archived_at, product_id=tool.id
+    )
     db_session.commit()
 
     planned = [(f["evidence"].id, f["objective_key"])
@@ -273,6 +278,7 @@ def test_the_detach_archives_only_unattested_links_and_keeps_every_record(
     assert all(lk.archived_by_product is None for lk in archived), (
         "no product's reactivation may restore a detached link"
     )
+    assert {lk.archive_cause for lk in archived} == {"attestation_detach"}
     assert next(lk for lk in archived if lk.id == by_tool.id).archived_at == tool_archived_at, (
         "already archived: its date stays the deactivation's"
     )
@@ -343,3 +349,133 @@ def test_the_migration_backfill_names_each_records_cycle(
     assert db_session.get(Evidence, ev.id).source_review_cycle_id == cycle.id
     assert db_session.get(Evidence, other.id).source_review_cycle_id is not None
     assert db_session.get(Evidence, other.id).source_review_cycle_id != cycle.id
+
+
+@pytest.mark.parametrize("via", ["ui", "cli"])
+def test_the_detach_control_and_the_cli_are_one_path(
+    via, client, db_session, storage, fake_msp_admin, monkeypatch  # noqa: F811
+):
+    """The objective's Detach and `review-cycles-detach-unattested` both
+    call evidence_links.detach, and are held to one assertion: the links
+    archived with no product, the record and its bytes kept, one audit row
+    per link naming the artifact, objective and assessment, and no status
+    or SPRS moved."""
+    d = _seed_org_with_catalog(db_session, fake_msp_admin)
+    _, ev = _legacy_attached(db_session, storage, d)
+    stored = storage.files[ev.storage_key]
+    before = _states(db_session, d)
+    links = _links(db_session, ev)
+    assert len(links) == 2, "fixture: the record attached to [a] and [c]"
+
+    calls: list = []
+    real = evidence_links.detach
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs["link"].id)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(evidence_links, "detach", spy)
+    if via == "ui":
+        for lk in links:
+            url = (f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/control-states/"
+                   f"{lk.control_state_id}/evidence/{ev.id}/detach")
+            assert client.post(url).status_code == 204
+        action, cause = "evidence.detach", "detached"
+    else:
+        review_cycles.detach_unattested(db_session, org_id=d["org"].id, actor="cli:test")
+        db_session.commit()
+        action, cause = "evidence.attestation_detach", "attestation_detach"
+    assert sorted(calls) == sorted(lk.id for lk in links), "both through evidence_links.detach"
+
+    db_session.expire_all()
+    after = _links(db_session, ev)
+    assert len(after) == 2, "archived, not deleted"
+    assert all(
+        lk.is_archived and lk.archived_by_product is None and lk.archive_cause == cause
+        and lk.detached_by and lk.detached_at is not None
+        for lk in after
+    )
+    kept = db_session.get(Evidence, ev.id)
+    assert kept is not None and storage.files[kept.storage_key] == stored
+    audit = db_session.execute(
+        select(AuditLog.before_value, AuditLog.context)
+        .where(AuditLog.entity_id == ev.id, AuditLog.action == action)
+    ).all()
+    assert sorted(b["objective_key"] for b, _ in audit) == ["AC.L2-3.1.1[a]", "AC.L2-3.1.1[c]"]
+    assert {b["assessment_id"] for b, _ in audit} == {str(d["assessment"].id)}
+    assert {c["evidence_title"] for _, c in audit} == {ev.title}
+    assert _states(db_session, d) == before, "no status and no SPRS moved"
+
+
+def test_0071_backfill_derives_each_archived_links_cause(
+    db_session, storage, fake_msp_admin  # noqa: F811
+):
+    """0071's backfill, run against links as they were before its columns:
+    a deactivation's, the CLI's detach (its actor from the audit row), and
+    one with neither, which refuses the migration rather than be guessed."""
+    from importlib import import_module
+
+    mig = import_module("app.migrations.versions.0071_evidence_archive_cause")
+    d = _seed_org_with_catalog(db_session, fake_msp_admin)
+    _, record = _legacy_attached(db_session, storage, d)
+    review_cycles.detach_unattested(
+        db_session, org_id=d["org"].id, actor="cli:review-cycles-detach-unattested"
+    )
+    tool = Product(
+        framework_id=d["fw"].id, key=f"prod-{uuid.uuid4().hex[:6]}", name="Tool",
+        provider="Vendor", category="ESP", asset_type="SPA", role="test",
+    )
+    db_session.add(tool)
+    cs_a = db_session.scalar(select(ControlState.id).where(
+        ControlState.assessment_id == d["assessment"].id,
+        ControlState.objective_id == d["obj_a"].id,
+    ))
+    by_tool, orphan = (
+        Evidence(org_id=d["org"].id, kind="reference", title=t, artifact_type="link",
+                 reference_location="https://example.com/x", collected_at=datetime.now(UTC))
+        for t in ("by tool", "orphan")
+    )
+    db_session.add_all([by_tool, orphan])
+    db_session.flush()
+    tool_link = EvidenceStateLink(evidence_id=by_tool.id, control_state_id=cs_a)
+    orphan_link = EvidenceStateLink(evidence_id=orphan.id, control_state_id=cs_a)
+    db_session.add_all([tool_link, orphan_link])
+    db_session.flush()
+    evidence_links.archive(
+        tool_link, cause="deactivation", now=datetime.now(UTC), product_id=tool.id
+    )
+    db_session.flush()
+
+    # Back to the shape before 0071: archived, no cause, no detach stamp.
+    for name in ("ck_evidence_state_link_archive_cause",
+                 "ck_evidence_state_link_archived_has_cause",
+                 "ck_evidence_state_link_product_is_deactivation"):
+        db_session.execute(text(f"ALTER TABLE evidence_state_link DROP CONSTRAINT {name}"))
+    ids = [lk.id for lk in _links(db_session, record)] + [tool_link.id, orphan_link.id]
+    db_session.execute(text(
+        "UPDATE evidence_state_link SET archive_cause = NULL, detached_by = NULL, "
+        "detached_at = NULL WHERE id = ANY(:ids)"
+    ), {"ids": ids})
+    db_session.execute(text(
+        "UPDATE evidence_state_link SET is_archived = true, archived_at = now() WHERE id = :i"
+    ), {"i": orphan_link.id})
+    assert db_session.scalar(text(
+        "SELECT count(*) FROM evidence_state_link WHERE id = ANY(:ids) AND archive_cause IS NULL"
+    ), {"ids": ids}) == 4, "fixture: four links with no cause, or the backfill proves nothing"
+
+    for statement in mig.BACKFILL:
+        db_session.execute(text(statement))
+    db_session.expire_all()
+    got = {
+        lk.id: (lk.archive_cause, lk.detached_by)
+        for lk in db_session.scalars(
+            select(EvidenceStateLink).where(EvidenceStateLink.id.in_(ids))
+        )
+    }
+    for lk_id in ids[:2]:
+        assert got[lk_id] == ("attestation_detach", "cli:review-cycles-detach-unattested")
+    assert got[tool_link.id] == ("deactivation", None)
+    assert got[orphan_link.id] == (None, None)
+    assert orphan_link.id in db_session.scalars(text(mig.UNKNOWN)).all(), (
+        "a cause it cannot derive refuses the migration"
+    )

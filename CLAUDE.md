@@ -250,10 +250,11 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
 | `backend/app/list_evidence.py` | A populated list linked as evidence (L.4): the link names a `list_version` (`evidence.source_list_version_id`, `kind='reference'`, `artifact_type='list'`), never the list, and stays there when the list moves on -- the drift is said, and moving forward writes a new link and archives the old. Offered, never attached; confined to the list's tags; no control_state or SPRS change. A product's deactivation does not archive these links (`engine.deactivate_org_product`), or the tag they rest on would become removable. Every link, move forward and unlink is a `list_link_event` (L.10), shown in the list's History beside versions and tags, because the audit log is not where a person looks and not every role can read it |
 | `backend/app/document_evidence.py` | A published document attached as evidence (item X), L.4's shape for documents: publish writes the version's Evidence row and links nothing; the document is offered on its tagged objectives and a person attaches it. A link stays on its version, and a republish never archives it. A superseded version says *superseded* and "may no longer be in force" (not a list's "version N is available"), in the UI and the bundle. The bundle carries the text of every superseded version a live link in the assessment names (`ssp/06_documents.html`'s second section), as `lists/` does for list versions. Each attach, move and removal is an audit row on the version, in the document's History. A version records the tags it was published under (`published_objective_ids`, migration 0069); no link is read as coverage. Its module docstring has the two-question rule for any path that links evidence. Tags (X.1) are per objective; a typed practice key expands to its objectives, each its own removable tag (`resolve_tag_key`), and removing one is refused while a live link from any version rests on it (`tag_removal_links`), by the same people who define lists |
 | `frontend/src/components/ListLibraryPanel.tsx` / `lib/listLibrary.ts` | Library › Lists (L.2), the one Lists screen: library lists and the four scope-drawn ones together, in separate sections by kind (live from scope, the org's own, templates -- L.2.1; `kindOf`). A list's page puts its rows first: what to act on, then the table, then reference, then History collapsed (L.8); its table styling is `.list-rows`, not the shared `.contacts-table` header. `rebase()` is how a stale save is re-applied for the second editor -- rows are tracked by origin, never guessed |
+| `backend/app/evidence_links.py` | The one path that archives and restores an evidence link (2026-10-19). **Nothing deletes a link, an Evidence row or its bytes**: the objective's Detach (it was a ✕ that deleted the artifact, unaudited), the list and document unlinks, a deactivation and the `review-cycles-detach-unattested` CLI all archive, and every archive says why (`archive_cause`, migration 0071). Only a deactivation's archive names a product, so reactivation restores what it archived and never what a person detached. A reader of `evidence_state_link` that means "evidence present" filters `is_archived` -- four did not, and counted archived links as live |
 | `backend/app/storage.py` | `StorageClient` ABC + `MinIOClient` + `NullStorageClient` |
 | `backend/app/audit.py` | `log_event()` — writes `AuditLog` rows; also the actor-resolution helpers both audit views share |
 | `backend/app/rls.py` | The only place `app.current_org` is written, plus the `after_begin` hook that makes it survive a commit — read before touching anything org-scoped |
-| `backend/app/migrations/` | Alembic migrations (currently 0001–0070) |
+| `backend/app/migrations/` | Alembic migrations (currently 0001–0071) |
 | `backend/baselines/` | YAML product baselines (`rocketcyber.yaml`, …) — not repo-root `baselines/`; `seeds/baselines.py:_BASELINES_DIR` resolves here, and a stale repo-root duplicate that drifted out of sync with a real coverage_basis reclassification was removed 2026-09-19 (see `docs/roadmap.md`'s tenant lifecycle consolidation pass entry) |
 | `docs/fips.md` | FIPS 140-2/140-3 crypto boundary documentation |
 | `docs/architecture.md` | Authoritative architecture description (the five layers) — companion to this file's terse session version |
@@ -351,7 +352,13 @@ and a new version excludes it.
 **Deactivation/archive lifecycle** (`engine.py:deactivate_org_product`):
 - All control states sourced from the deactivated product → `needs_review`
 - Evidence-state links attributed to the product → archived (`is_archived=True`,
-  `archived_by_product` FK set for provenance-based reversal on re-activation)
+  `archive_cause='deactivation'`, `archived_by_product` FK set for provenance-based
+  reversal on re-activation; `evidence_links.py`). Reactivation restores only
+  those: a link a person detached names no product
+- The person may name what replaces it (`org_product.replaced_by_product_id`,
+  `deactivated_by`, migration 0071). Optional, never inferred, need not cover the
+  same objectives; the objective's archived evidence then reads "Replaced by X",
+  with who said so, and so does the bundle
 - Evidence tasks seeded by this product → archived + closed (`na`)
 - `OrgProduct.status → decommissioned`, timestamp set
 - SPRS recomputed — `needs_review` does not satisfy, score drops
@@ -367,7 +374,8 @@ change_reason)` transition with FK to `control_state`.
 
 ### Evidence collection (migrations 0007–0010)
 `Evidence` (file / reference), `EvidenceStateLink` (many-to-many, with
-`is_archived` + `archived_by_product` for deactivation reversal),
+`is_archived` + `archived_by_product` for deactivation reversal, and
+`archive_cause` saying why; never deleted -- `evidence_links.py`),
 `EvidenceTask`, `EvidenceTaskStateLink`.
 
 **Upload**: magic-byte validation + extension allowlist + 50 MB cap. Storage key:

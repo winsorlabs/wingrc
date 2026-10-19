@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
+from . import evidence_links
 from .assessment import (
     ControlStatus,
     OrgProductStatus,
@@ -608,11 +609,12 @@ def activate_org_product(
         )
     ).all()
 
+    # Only what this product's deactivation archived. A link a person
+    # detached names no product, even one a deactivation archived first
+    # (evidence_links.detach clears it), so it is never found here.
     restored_cs_ids: set[uuid.UUID] = set()
     for lnk in archived_links:
-        lnk.is_archived = False
-        lnk.archived_at = None
-        lnk.archived_by_product = None
+        evidence_links.restore(lnk)
         restored_cs_ids.add(lnk.control_state_id)
         log_event(
             session,
@@ -1010,8 +1012,17 @@ def deactivate_org_product(
     org_id: uuid.UUID,
     product_id: uuid.UUID,
     assessment_id: uuid.UUID,
+    *,
+    replaced_by_product_id: uuid.UUID | None = None,
+    deactivated_by: str | None = None,
 ) -> dict:
     """Decommission a product and revert/archive all its contributions.
+
+    `replaced_by_product_id` is the person's own statement of what replaces
+    it, optional and never inferred (Jarrod, 2026-10-19). It need not cover
+    the same objectives: the person states a fact about their estate, not a
+    coverage claim, so the mapping disagreeing is no reason to refuse it.
+    The objective's archived evidence shows whether it does.
 
     Implements provenance-based reversal:
       - ALL control states this product is a control_state_contributor for →
@@ -1059,6 +1070,13 @@ def deactivate_org_product(
     ).first()
     if op is None:
         raise ValueError("OrgProduct not found")
+    replacement = None
+    if replaced_by_product_id is not None:
+        if replaced_by_product_id == product_id:
+            raise ValueError("a product cannot be named as its own replacement")
+        replacement = session.get(Product, replaced_by_product_id)
+        if replacement is None:
+            raise ValueError(f"Replacement product {replaced_by_product_id} not found")
 
     now = datetime.now(UTC)
     deactivation_ctx: dict = {
@@ -1071,6 +1089,8 @@ def deactivate_org_product(
     # 1. Decommission OrgProduct
     op.status = OrgProductStatus.DECOMMISSIONED
     op.deactivated_at = now
+    op.deactivated_by = deactivated_by
+    op.replaced_by_product_id = replaced_by_product_id
     session.flush()
 
     log_event(
@@ -1080,7 +1100,11 @@ def deactivate_org_product(
         entity_type="org_product",
         entity_id=op.id,
         before_value={"status": "active"},
-        after_value={"status": "decommissioned"},
+        after_value={
+            "status": "decommissioned",
+            "replaced_by_product_id": str(replacement.id) if replacement else None,
+            "replaced_by_product_name": replacement.name if replacement else None,
+        },
         context=deactivation_ctx,
     )
 
@@ -1198,9 +1222,9 @@ def deactivate_org_product(
         ).all()
 
         for lnk in link_rows:
-            lnk.is_archived = True
-            lnk.archived_at = now
-            lnk.archived_by_product = product_id
+            evidence_links.archive(
+                lnk, cause=evidence_links.DEACTIVATION, now=now, product_id=product_id
+            )
 
             log_event(
                 session,

@@ -1,4 +1,4 @@
-import type { ApiTokenRow, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, TlsExpiry, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent, AdoptResult, TakeTemplateResult, ListEvidenceCandidate, ListEvidenceLink, ListEvidenceStatus, ListLinkEvent, TagRemovalCheck, DocumentEvidenceCandidate, DocumentTagsAdded } from "./types";
+import type { ApiTokenRow, ArchivedEvidenceSection, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, TlsExpiry, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent, AdoptResult, TakeTemplateResult, ListEvidenceCandidate, ListEvidenceLink, ListEvidenceStatus, ListLinkEvent, TagRemovalCheck, DocumentEvidenceCandidate, DocumentTagsAdded } from "./types";
 
 const BASE = "/api";
 
@@ -322,10 +322,11 @@ export const api = {
       { method: "POST", body: JSON.stringify({}) }
     ),
 
-  deactivateProduct: (orgId: string, assessmentId: string, productId: string) =>
+  // replacedBy: what the person says replaces it, or null. Never inferred.
+  deactivateProduct: (orgId: string, assessmentId: string, productId: string, replacedBy: string | null = null) =>
     req<{ controls_flagged: number; tasks_archived: number; evidence_links_archived: number }>(
       `/orgs/${orgId}/assessments/${assessmentId}/products/${productId}/deactivate`,
-      { method: "POST", body: JSON.stringify({}) }
+      { method: "POST", body: JSON.stringify({ replaced_by_product_id: replacedBy }) }
     ),
 
   // Baseline versioning (roadmap item P): move an already-active product
@@ -380,18 +381,25 @@ export const api = {
     return r.json() as Promise<EvidenceRow>;
   },
 
-  deleteEvidence: async (
+  // Archives the link; the artifact and its bytes stay (evidence_links.py).
+  detachEvidence: async (
     orgId: string,
     assessmentId: string,
     controlStateId: string,
     evidenceId: string
   ): Promise<void> => {
     const r = await fetch(
-      `/api/orgs/${orgId}/assessments/${assessmentId}/control-states/${controlStateId}/evidence/${evidenceId}`,
-      { method: "DELETE" }
+      `/api/orgs/${orgId}/assessments/${assessmentId}/control-states/${controlStateId}/evidence/${evidenceId}/detach`,
+      { method: "POST" }
     );
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   },
+
+  archivedEvidence: (orgId: string, assessmentId: string, controlStateId: string) =>
+    send<ArchivedEvidenceSection>(
+      `/orgs/${orgId}/assessments/${assessmentId}/control-states/${controlStateId}/evidence/archived`,
+      "GET"
+    ),
 
   // ── L.4: lists as evidence. Offered, never attached: a person links one.
   stateLists: (orgId: string, assessmentId: string, controlStateId: string) =>

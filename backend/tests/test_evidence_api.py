@@ -35,6 +35,7 @@ from app.models import (
     Control,
     ControlState,
     Evidence,
+    EvidenceStateLink,
     EvidenceTask,
     EvidenceTaskStateLink,
     Framework,
@@ -601,26 +602,64 @@ def test_list_and_upload_do_not_write_download_audit_log(client, db_session, fak
 
 
 @pytest.mark.integration
-def test_delete_removes_evidence_and_does_not_change_status(
+def test_detach_archives_the_link_and_keeps_the_artifact_and_its_bytes(
     client, db_session, storage, fake_msp_admin
 ):
+    """Was test_delete_removes_evidence_and_does_not_change_status, which
+    asserted the ✕ deleted the artifact and called storage.delete_file. It
+    was a DELETE that destroyed the artifact for every objective and every
+    assessment, unaudited; now it is a detach (2026-10-19,
+    evidence_links.py). The scenario is the same; its outcome changed."""
     d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     up = client.post(
         _upload_url(d),
-        files={"file": ("doc.pdf", b"%PDF-1.4", "application/pdf")},
+        files={"file": ("doc.pdf", b"%PDF-1.4 kept", "application/pdf")},
         data={"artifact_type": "document"},
     )
-    ev_id = up.json()["id"]
+    ev_id = uuid.UUID(up.json()["id"])
+    status_before = d["cs"].status
 
-    r = client.delete(f"{_upload_url(d)}/{ev_id}")
+    r = client.post(f"{_upload_url(d)}/{ev_id}/detach")
     assert r.status_code == 204
 
+    # Gone from the objective's live evidence, shown as no longer attached.
     assert client.get(_upload_url(d)).json() == []
-    assert len(storage.files) == 0
-    assert len(storage.deleted) == 1   # storage.delete_file was called
+    archived = client.get(f"{_upload_url(d)}/archived").json()
+    assert [(i["evidence_id"], i["archive_cause"]) for i in archived["items"]] == [
+        (str(ev_id), "detached")
+    ]
+    assert archived["items"][0]["detached_by"]
+    assert archived["live_evidence"] == 0
+
+    # The link row survives, archived with no product; so do the Evidence
+    # row and the stored object, read back rather than trusted.
+    db_session.expire_all()
+    link = db_session.scalars(
+        select(EvidenceStateLink).where(EvidenceStateLink.evidence_id == ev_id)
+    ).one()
+    assert (link.is_archived, link.archive_cause, link.archived_by_product) == (
+        True, "detached", None
+    )
+    assert link.archived_at is not None and link.detached_at is not None
+    ev = db_session.get(Evidence, ev_id)
+    assert ev is not None
+    assert storage.get_bytes(ev.storage_key) == b"%PDF-1.4 kept"
+    assert storage.deleted == []
+
+    # One audit row, naming the artifact, the objective and the assessment.
+    rows = db_session.scalars(
+        select(AuditLog).where(AuditLog.action == "evidence.detach", AuditLog.entity_id == ev_id)
+    ).all()
+    assert len(rows) == 1
+    assert rows[0].before_value["objective_key"].endswith(f"[{d['obj'].objective_key}]")
+    assert rows[0].before_value["assessment_id"] == str(d["assessment"].id)
+    assert rows[0].context["evidence_title"] == ev.title
 
     db_session.refresh(d["cs"])
-    assert d["cs"].status == "not_met"
+    assert d["cs"].status == status_before
+
+    # A second detach has nothing to do, and says so.
+    assert client.post(f"{_upload_url(d)}/{ev_id}/detach").status_code == 409
 
 
 # ---------------------------------------------------------------------------
@@ -709,9 +748,9 @@ def test_upload_wrong_org_returns_404(client, db_session, fake_msp_admin):
 
 
 @pytest.mark.integration
-def test_delete_nonexistent_returns_404(client, db_session, fake_msp_admin):
+def test_detach_nonexistent_returns_404(client, db_session, fake_msp_admin):
     d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
-    r = client.delete(f"{_upload_url(d)}/{uuid.uuid4()}")
+    r = client.post(f"{_upload_url(d)}/{uuid.uuid4()}/detach")
     assert r.status_code == 404
 
 
@@ -822,18 +861,23 @@ def test_download_reference_returns_404(client, db_session, fake_msp_admin):
 
 
 @pytest.mark.integration
-def test_delete_reference_does_not_call_storage(client, db_session, storage, fake_msp_admin):
-    """Deleting a reference only removes the DB row — no storage.delete_file call."""
+def test_detach_reference_keeps_the_row_and_calls_no_storage(
+    client, db_session, storage, fake_msp_admin
+):
+    """Was test_delete_reference_does_not_call_storage: a reference's last
+    unlink deleted its row. Now nothing is deleted (2026-10-19)."""
     d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     ref = client.post(_refs_url(d), json=[
         {"title": "Ref", "location": "https://example.com/f.pdf", "artifact_type": "document"}
     ])
     ev_id = ref.json()[0]["id"]
 
-    r = client.delete(f"{_upload_url(d)}/{ev_id}")
+    r = client.post(f"{_upload_url(d)}/{ev_id}/detach")
     assert r.status_code == 204
     assert client.get(_upload_url(d)).json() == []
     assert len(storage.deleted) == 0  # no storage operation
+    db_session.expire_all()
+    assert db_session.get(Evidence, uuid.UUID(ev_id)) is not None
 
 
 @pytest.mark.integration
@@ -892,7 +936,7 @@ def test_evidence_never_changes_control_state_status(client, db_session, fake_ms
     db_session.refresh(d["cs"])
     assert d["cs"].status == initial_status
 
-    client.delete(f"{_upload_url(d)}/{ev_id}")
+    client.post(f"{_upload_url(d)}/{ev_id}/detach")
     db_session.refresh(d["cs"])
     assert d["cs"].status == initial_status
 
