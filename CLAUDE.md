@@ -695,7 +695,10 @@ attached** to AC.L2-3.1.1[a]/[c] (2026-10-19, migration 0070): a deadline
 or undeliverable close writes and keeps its record, names its cycle
 (`evidence.source_review_cycle_id`), shows it on the cycle's page and in
 the bundle's unlinked evidence, and attaches nothing -- and is never
-offered, since it says nobody reviewed. Second half — daily Liongard sync +
+offered, since it says nobody reviewed. **The bundle lists evidence whose
+links were all archived** (a deactivation, or such a record detached),
+as archived with where from, when and why, never as current evidence
+(ADR 0007's amendment). Second half — daily Liongard sync +
 asset/user onboarding approval — shipped 2026-09-18:
 `backend/app/liongard_sync.py` + `routers/liongard_sync.py` +
 `scheduler.py:_liongard_daily_sync`, migration 0056. A brand-new

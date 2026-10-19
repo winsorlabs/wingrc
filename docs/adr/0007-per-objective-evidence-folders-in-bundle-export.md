@@ -5,7 +5,8 @@ Status: Accepted — implemented 2026-08-06, see `backend/app/bundle_service.py`
 (`_objective_evidence_folder`, `_assign_evidence_path`,
 `snapshot_bundle`'s unlinked-evidence query) and `backend/tests/test_bundle.py`
 (the "ADR 0007" test group). `docs/roadmap.md`'s bundle-export "Done" entry
-is amended to point here.
+is amended to point here. **The third decision (evidence whose links were
+all archived) was reversed 2026-10-19; see the amendment at the end.**
 
 ## Context
 
@@ -186,3 +187,24 @@ case, to anyone reading the bundle later.
 - Not part of the I.1–I.9 auth/RBAC slice numbering — this amends the
   already-"Done" bundle-export roadmap item. `docs/roadmap.md`'s entry for
   it now points here rather than reading as untouched since that session.
+
+## Amendment (2026-10-19): archived-link evidence is listed, as archived
+
+The third decision is reversed. Leaving evidence out because its links
+were archived made a tool removed with nothing in its place silent to an
+assessor, and it hid the record of an unattested review cycle once that
+record was detached (`docs/roadmap.md`, "Review cycles attach only what
+attests" and "The bundle left out evidence whose links were all
+archived"). The silence was not neutral: it was the omission an
+assessor most needs to see.
+
+The concern behind the decision stands, and is met by how the evidence
+is listed instead of by leaving it out. The unlinked query now excludes
+only evidence with a **live** link into the assessment. The manifest
+section lists two groups: *Never linked*, and *Links archived*, where
+each item names the objectives it was on, the date the last link was
+archived, and why (a named product's deactivation, or a review cycle's
+detach). The section says none of it is current evidence, and nothing
+archived is placed in an objective's folder. The test that pinned the
+exclusion keeps its scenario, now driven through
+`engine.deactivate_org_product`, with its assertion inverted.

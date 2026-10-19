@@ -835,7 +835,7 @@ def review_cycles_detach_unattested_cmd(
     org_id: str = typer.Option(
         ..., help="Target org id. Required: there is deliberately no default."
     ),
-    apply: bool = typer.Option(False, help="Remove the links (default: dry-run only)"),
+    apply: bool = typer.Option(False, help="Archive the links (default: dry-run only)"),
 ) -> None:
     """Detach the record of a review cycle that closed without attestation
     from the objectives it was attached to. Dry-run by default.
@@ -843,9 +843,11 @@ def review_cycles_detach_unattested_cmd(
     Until 2026-10-19 a deadline close attached its record, which says
     nobody reviewed, to AC.L2-3.1.1[a]/[c] (docs/roadmap.md, "Review
     cycles attach only what attests"). Each link found is listed, then
-    removed with an audit row giving the reason. The record -- the
-    Evidence row, its stored file, the cycle -- stays. It finds whatever
-    is there when it runs, and a second run has nothing to do.
+    archived with an audit row giving the reason; the link row stays. A
+    link a product's deactivation archived is included, so that
+    product's reactivation cannot restore it. The record -- the Evidence
+    row, its stored file, the cycle -- stays. It finds whatever is there
+    when it runs, and a second run has nothing to do.
     """
     import uuid as _uuid
 
@@ -877,13 +879,15 @@ def review_cycles_detach_unattested_cmd(
             typer.echo(
                 f"  {f['evidence'].title} ({f['cycle'].status}, evidence {f['evidence'].id}) "
                 f"-> {f['objective_key']} in {f['assessment_name']!r}"
-                f"{' [archived]' if f['link'].is_archived else ''}"
+                f"{' [archived by a deactivation]' if f['was_archived_by_product'] else ''}"
             )
         if apply:
             session.commit()
-            typer.echo(f"Detached {len(found)} link(s), one audit row each. Records kept.")
+            typer.echo(
+                f"Archived {len(found)} link(s), one audit row each. Link rows and records kept."
+            )
         else:
-            typer.echo(f"{len(found)} link(s). Dry-run only. Re-run with --apply to remove.")
+            typer.echo(f"{len(found)} link(s). Dry-run only. Re-run with --apply to archive.")
     finally:
         session.close()
 

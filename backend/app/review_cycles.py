@@ -37,7 +37,7 @@ import html
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
 from .models import (
@@ -526,7 +526,14 @@ def unattested_links(session: Session, *, org_id: uuid.UUID) -> list[dict]:
         .join(AssessmentObjective, AssessmentObjective.id == ControlState.objective_id)
         .join(Control, Control.id == AssessmentObjective.control_id)
         .join(Assessment, Assessment.id == ControlState.assessment_id)
-        .where(Evidence.org_id == org_id, ReviewCycle.status != ATTESTS)
+        .where(
+            Evidence.org_id == org_id, ReviewCycle.status != ATTESTS,
+            # Live, or archived by a product's deactivation, which that
+            # product's reactivation would restore. One this detach archived
+            # has neither, so a second run finds nothing.
+            or_(EvidenceStateLink.is_archived.is_(False),
+                EvidenceStateLink.archived_by_product.is_not(None)),
+        )
         .order_by(ReviewCycle.opened_at, Assessment.name, AssessmentObjective.objective_key,
                   EvidenceStateLink.id)
     ).all()
@@ -535,20 +542,24 @@ def unattested_links(session: Session, *, org_id: uuid.UUID) -> list[dict]:
             "link": lk, "evidence": ev, "cycle": cy,
             "objective_key": f"{control}[{key}]", "assessment_name": a_name,
             "assessment_id": a_id,
+            # Read before any change, so a run reports what it found.
+            "was_archived_by_product": lk.is_archived,
         }
         for lk, ev, cy, control, key, a_name, a_id in rows
     ]
 
 
 def detach_unattested(session: Session, *, org_id: uuid.UUID, actor: str) -> list[dict]:
-    """Removes each such link, with one audit row apiece saying why. The
-    link row is deleted, not archived: an archived link still reads as
-    evidence to the dashboard and keeps the record out of the bundle's
-    unlinked section. The record itself -- the Evidence row, its stored
-    HTML, the cycle and its reviewers -- is not touched."""
+    """Archives each such link, with one audit row apiece saying why. The
+    link row stays (today's state never rewrites yesterday's record), set
+    archived with no product, so no reactivation restores it. The record
+    itself -- the Evidence row, its stored HTML, the cycle and its
+    reviewers -- is not touched, and the bundle lists it among evidence
+    whose links were archived."""
     from .audit import log_event
 
     found = unattested_links(session, org_id=org_id)
+    now = datetime.now(UTC)
     for f in found:
         lk, ev, cy = f["link"], f["evidence"], f["cycle"]
         log_event(
@@ -560,14 +571,21 @@ def detach_unattested(session: Session, *, org_id: uuid.UUID, actor: str) -> lis
                 "assessment_id": str(f["assessment_id"]),
                 "assessment_name": f["assessment_name"],
                 "was_archived": lk.is_archived,
+                "archived_by_product": (
+                    str(lk.archived_by_product) if lk.archived_by_product else None
+                ),
             },
+            after_value={"is_archived": True, "archived_by_product": None},
             context={
                 "reason": DETACH_REASON, "review_cycle_id": str(cy.id),
                 "cycle_status": cy.status, "evidence_title": ev.title,
             },
             actor=actor, actor_type="system",
         )
-        session.delete(lk)
+        if not lk.is_archived:
+            lk.is_archived = True
+            lk.archived_at = now
+        lk.archived_by_product = None
     session.flush()
     return found
 

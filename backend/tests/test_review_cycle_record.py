@@ -9,8 +9,11 @@ What these pin:
   HTTP, and in the bundle's unlinked evidence. It is not offered.
 - The evidence ✕ never deletes a cycle's record.
 - The detach of records attached before this: dry-run matches what it
-  does, one audit row per link with the reason, the record and its bytes
-  survive, a second run has nothing to do, a completed cycle's links stay.
+  does; each link is archived, not deleted, with one audit row and the
+  reason; one a product's deactivation archived is taken too, so no
+  reactivation brings it back; the record and its bytes survive; a second
+  run has nothing to do and re-archives nothing; a completed cycle's links
+  stay; the bundle carries the record as archived.
 - None of it moves control_state or SPRS.
 """
 
@@ -20,7 +23,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 from app import review_cycles, scheduler
 from app.bundle_service import snapshot_bundle
@@ -30,6 +33,7 @@ from app.models import (
     ControlState,
     Evidence,
     EvidenceStateLink,
+    Product,
     ReviewCycle,
     ReviewCycleReviewer,
 )
@@ -225,7 +229,7 @@ def _legacy_attached(db_session, storage, d, *, status="closed_unattested"):  # 
     return cycle, ev
 
 
-def test_the_detach_removes_only_unattested_links_and_keeps_every_record(
+def test_the_detach_archives_only_unattested_links_and_keeps_every_record(
     client, db_session, storage, fake_msp_admin  # noqa: F811
 ):
     d = _seed_org_with_catalog(db_session, fake_msp_admin)
@@ -240,6 +244,18 @@ def test_the_detach_removes_only_unattested_links_and_keeps_every_record(
     assert len(_links(db_session, unattested)) == 2 and len(_links(db_session, done)) == 2, (
         "fixture: one record of each kind attached, or the detach proves nothing"
     )
+    # One of the two as a deactivation left it: archived, with the product
+    # whose reactivation would restore it.
+    tool = Product(
+        framework_id=d["fw"].id, key=f"prod-{uuid.uuid4().hex[:6]}", name="Tool",
+        provider="Vendor", category="ESP", asset_type="SPA", role="test",
+    )
+    db_session.add(tool)
+    db_session.flush()
+    by_tool = sorted(_links(db_session, unattested), key=lambda lk: str(lk.id))[0]
+    by_tool.is_archived, by_tool.archived_by_product = True, tool.id
+    tool_archived_at = by_tool.archived_at = datetime.now(UTC) - timedelta(days=2)
+    db_session.commit()
 
     planned = [(f["evidence"].id, f["objective_key"])
                for f in review_cycles.unattested_links(db_session, org_id=org_id)]
@@ -251,8 +267,20 @@ def test_the_detach_removes_only_unattested_links_and_keeps_every_record(
     db_session.commit()
 
     db_session.expire_all()
-    assert _links(db_session, unattested) == []
-    assert len(_links(db_session, done)) == 2, "a completed cycle's links stay"
+    archived = _links(db_session, unattested)
+    assert len(archived) == 2, "archived, not deleted: the link rows stay"
+    assert all(lk.is_archived and lk.archived_at is not None for lk in archived)
+    assert all(lk.archived_by_product is None for lk in archived), (
+        "no product's reactivation may restore a detached link"
+    )
+    assert next(lk for lk in archived if lk.id == by_tool.id).archived_at == tool_archived_at, (
+        "already archived: its date stays the deactivation's"
+    )
+    stamps = {lk.id: lk.archived_at for lk in archived}
+    assert len(_links(db_session, done)) == 2
+    assert not any(lk.is_archived for lk in _links(db_session, done)), (
+        "a completed cycle's links stay live"
+    )
     kept = db_session.get(Evidence, unattested.id)
     assert kept is not None and kept.source_review_cycle_id == unattested_cycle.id
     assert storage.files[kept.storage_key] == stored, "the record's bytes, read back, unchanged"
@@ -268,13 +296,30 @@ def test_the_detach_removes_only_unattested_links_and_keeps_every_record(
     assert {c["reason"] for _, c in audit} == {review_cycles.DETACH_REASON}
     assert {c["review_cycle_id"] for _, c in audit} == {str(unattested_cycle.id)}
 
+    assert {b["archived_by_product"] for b, _ in audit} == {None, str(tool.id)}
+
     assert review_cycles.unattested_links(db_session, org_id=org_id) == [], "a second run: none"
     assert review_cycles.detach_unattested(db_session, org_id=org_id, actor="test") == []
+    db_session.commit()
+    db_session.expire_all()
+    assert {lk.id: lk.archived_at for lk in _links(db_session, unattested)} == stamps, (
+        "a second run re-archives nothing"
+    )
+    assert db_session.scalar(
+        select(func.count()).select_from(AuditLog).where(
+            AuditLog.entity_id == unattested.id,
+            AuditLog.action == "evidence.attestation_detach",
+        )
+    ) == 2
 
     snap = snapshot_bundle(db_session, storage, org_id, d["assessment"].id)
-    assert unattested.id in [e.evidence_id for e in snap.unlinked_evidence], (
-        "detached by deleting the link, so the bundle carries it as unlinked"
+    [carried] = [e for e in snap.unlinked_evidence if e.evidence_id == unattested.id]
+    assert carried.archived_from == ("AC.L2-3.1.1[a]", "AC.L2-3.1.1[c]"), (
+        "after the detach the bundle carries the record, as archived, from where"
     )
+    assert any("review cycle that closed without attestation" in r
+               for r in carried.archived_reasons)
+    assert done.id not in [e.evidence_id for e in snap.unlinked_evidence]
 
 
 def test_the_migration_backfill_names_each_records_cycle(

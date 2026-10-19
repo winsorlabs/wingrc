@@ -286,6 +286,13 @@ class EvidenceSnap:
     document_approved_number: int | None = None
     # The anchor on ssp/06_documents.html that carries that version's text.
     document_anchor: str | None = None
+    # Unlinked evidence whose links into this assessment were all archived:
+    # the objectives they were on, when the last went, and why, as the rows
+    # say it (a product's deactivation, or an unattested review cycle's
+    # detach). Empty for evidence never linked here.
+    archived_from: tuple[str, ...] = ()
+    archived_at: datetime | None = None
+    archived_reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -592,10 +599,10 @@ def _html_page(title: str, body: str) -> str:
 
 # See ADR 0007 for the decision this implements: evidence linked to several
 # objectives is duplicated into each objective's own folder (not one canonical
-# file with pointers), and evidence with an archived link is excluded from the
-# bundle entirely rather than resurfaced as "unlinked" — see
-# _UNLINKED_EVIDENCE_FOLDER's docstring below and snapshot_bundle's unlinked
-# query for why that distinction matters.
+# file with pointers). Evidence with no live link into the assessment is
+# under "unlinked"; one whose links were archived says so, with the
+# objectives, date and reason (2026-10-19, amending ADR 0007's third
+# decision, which left it out) -- see snapshot_bundle's unlinked query.
 _UNLINKED_EVIDENCE_FOLDER = "evidence/unlinked"
 
 
@@ -1127,22 +1134,26 @@ def snapshot_bundle(
 
     # --- evidence linked to no objective in this assessment (ADR 0007) ---
     #
-    # Two cases both look like "not linked" but must NOT be treated the same:
-    #   1. Never linked at all (no evidence_state_link row into this
-    #      assessment, active or archived) — a silent gap today; this is the
-    #      case included below.
-    #   2. Every link into this assessment was archived (e.g.
-    #      engine.deactivate_org_product) — a deliberate, reversible
-    #      retirement of that evidence from current scope. Resurfacing it in
-    #      an "unlinked" section would show a C3PAO evidence the customer
-    #      intentionally took out of scope, which is worse than the current
-    #      silence. Excluded: the NOT IN subquery below has no is_archived
-    #      filter, so the mere existence of an archived link (not just an
-    #      active one) is enough to exclude an evidence row here.
+    # Two cases, both included, and kept apart in what the bundle says:
+    #   1. Never linked here (no evidence_state_link row into this
+    #      assessment, live or archived).
+    #   2. Every link into this assessment archived: a product's
+    #      deactivation (engine.deactivate_org_product), or an unattested
+    #      review cycle's record detached (review_cycles.detach_unattested).
+    #      ADR 0007 left these out, so that retired coverage would not read
+    #      as current; but leaving them out made a tool removed with nothing
+    #      in its place silent, and kept a record an assessor should see out
+    #      of the bundle. They are listed as archived -- from which
+    #      objectives, when, and why -- never as current evidence
+    #      (2026-10-19; docs/roadmap.md, "Review cycles attach only what
+    #      attests").
     _linked_ev_ids = (
         select(EvidenceStateLink.evidence_id)
         .join(ControlState, EvidenceStateLink.control_state_id == ControlState.id)
-        .where(ControlState.assessment_id == assessment_id)
+        .where(
+            ControlState.assessment_id == assessment_id,
+            EvidenceStateLink.is_archived.is_(False),
+        )
     )
     unlinked_rows = session.execute(
         select(
@@ -1156,6 +1167,7 @@ def snapshot_bundle(
             Evidence.reference_location,
             Evidence.collected_at,
             Evidence.sha256_hash,
+            Evidence.source_review_cycle_id,
         )
         .where(
             Evidence.org_id == org_id,
@@ -1171,9 +1183,53 @@ def snapshot_bundle(
         .order_by(Evidence.collected_at, Evidence.title, Evidence.id)
     ).all()
 
+    archived_by_ev: dict[uuid.UUID, list] = {}
+    unlinked_ids = [er.ev_id for er in unlinked_rows]
+    if unlinked_ids:
+        for ar in session.execute(
+            select(
+                EvidenceStateLink.evidence_id,
+                EvidenceStateLink.archived_at,
+                Control.control_id,
+                AssessmentObjective.objective_key,
+                Product.name.label("product_name"),
+            )
+            .join(ControlState, EvidenceStateLink.control_state_id == ControlState.id)
+            .join(AssessmentObjective, AssessmentObjective.id == ControlState.objective_id)
+            .join(Control, Control.id == AssessmentObjective.control_id)
+            .outerjoin(Product, Product.id == EvidenceStateLink.archived_by_product)
+            .where(
+                ControlState.assessment_id == assessment_id,
+                EvidenceStateLink.is_archived.is_(True),
+                EvidenceStateLink.evidence_id.in_(unlinked_ids),
+            )
+            .order_by(
+                EvidenceStateLink.evidence_id,
+                Control.control_id,
+                AssessmentObjective.objective_key,
+                EvidenceStateLink.id,
+            )
+        ).all():
+            archived_by_ev.setdefault(ar.evidence_id, []).append(ar)
+
     unlinked_evidence: list[EvidenceSnap] = []
     for er in unlinked_rows:
         ev_id = er.ev_id
+        archived = archived_by_ev.get(ev_id, [])
+        reasons: list[str] = []
+        for ar in archived:
+            if ar.product_name:
+                why = f"{ar.product_name} was deactivated"
+            elif er.source_review_cycle_id is not None:
+                why = (
+                    "detached: the record of a review cycle that closed "
+                    "without attestation"
+                )
+            else:
+                why = "archived"
+            if why not in reasons:
+                reasons.append(why)
+        stamps = [ar.archived_at for ar in archived if ar.archived_at is not None]
         zip_path_for_ev = None
         ev_hash = None
         if er.kind == "file" and er.storage_key:
@@ -1200,6 +1256,9 @@ def snapshot_bundle(
                 file_size_bytes=er.file_size_bytes,
                 collected_at=er.collected_at,
                 sha256_hash=ev_hash,
+                archived_from=tuple(f"{ar.control_id}[{ar.objective_key}]" for ar in archived),
+                archived_at=max(stamps) if stamps else None,
+                archived_reasons=tuple(reasons),
             )
         )
 
@@ -2524,26 +2583,45 @@ def _render_manifest(snapshot: BundleSnapshot) -> str:
                 f"</div>"
             )
 
-    # --- unlinked evidence (ADR 0007) ---
-    # Evidence that has never been linked to any objective in this
-    # assessment — deliberately excludes evidence whose only link(s) were
-    # archived (e.g. a deactivated product), since that's a retired-from-scope
-    # state, not a gap. See the unlinked_rows query in snapshot_bundle.
+    # --- unlinked evidence (ADR 0007, amended 2026-10-19) ---
+    # Evidence with no live link into this assessment: never linked, or
+    # every link archived. The second is said as archived, with where from,
+    # when and why, and never as current evidence. See the unlinked_rows
+    # query in snapshot_bundle.
     unlinked_html = ""
     if snapshot.unlinked_evidence:
         toc_links.append('<a href="#unlinked">Unlinked Evidence</a>')
-        items = "".join(
-            _render_evidence_li(ev, _MANIFEST_DIR) for ev in snapshot.unlinked_evidence
-        )
-        unlinked_html = (
+        never = [ev for ev in snapshot.unlinked_evidence if not ev.archived_from]
+        retired = [ev for ev in snapshot.unlinked_evidence if ev.archived_from]
+        parts = [
             '<h2 id="unlinked">Unlinked Evidence</h2>'
             '<p style="font-size:.85rem;color:#6b7280">'
-            "Not linked to any objective in this assessment. Evidence "
-            "retired via a deactivated product is intentionally omitted from "
-            "this section — see Outstanding Items for controls under "
-            "review.</p>"
-            f"<ul>{items}</ul>"
-        )
+            "Not current evidence for any objective in this assessment.</p>"
+        ]
+        if never:
+            parts.append(
+                "<h3>Never linked</h3><ul>"
+                + "".join(_render_evidence_li(ev, _MANIFEST_DIR) for ev in never)
+                + "</ul>"
+            )
+        if retired:
+            items = "".join(
+                _render_evidence_li(ev, _MANIFEST_DIR).removesuffix("</li>")
+                + "<br><span style='color:#6b7280'>Archived"
+                + (f" {ev.archived_at.astimezone(UTC):%Y-%m-%d}" if ev.archived_at else "")
+                + f" from {_esc(', '.join(ev.archived_from))}: "
+                + _esc("; ".join(ev.archived_reasons))
+                + ".</span></li>"
+                for ev in retired
+            )
+            parts.append(
+                "<h3>Links archived</h3>"
+                '<p style="font-size:.85rem;color:#6b7280">'
+                "Each was linked to an objective here and is no longer; "
+                "see Outstanding Items for controls under review.</p>"
+                f"<ul>{items}</ul>"
+            )
+        unlinked_html = "".join(parts)
 
     if not sections and not unlinked_html:
         body = (
