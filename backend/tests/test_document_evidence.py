@@ -16,7 +16,7 @@ What these pin:
 - A product's deactivation leaves an attached document alone.
 - The bundle says superseded in the manifest and on the implementation
   page, and an unattached published version is not stray evidence.
-- `review_cycles.close_cycle` passes the two-part rule and is unchanged.
+- `review_cycles.close_cycle` passes the two-part rule.
 - c3pao_assessor sees and changes nothing; RLS keeps orgs apart.
 """
 
@@ -478,11 +478,9 @@ def test_closing_a_review_cycle_is_a_persons_act_and_moves_nothing(db_session):
     person made on the same objective is live and unchanged after. A
     person's act: when the last reviewer attests (`attest` closes the
     cycle), the attestation is that act, for exactly these objectives.
-    This test covers that path only. The scheduler's deadline close
-    (status closed_unattested or closed_undeliverable) still attaches a
-    record that nobody attested. The decision is to attach only what
-    attests ("Review cycles attach only what attests" in docs/roadmap.md).
-    It is not built here: close_cycle is unchanged by X.
+    This test covers that path only. A deadline or undeliverable close
+    attaches nothing since 2026-10-19 ("Review cycles attach only what
+    attests" in docs/roadmap.md; tests/test_review_cycle_record.py).
     """
     w = _setup(db_session, "cycle")
     _publish(_as(db_session, w["blake"]), w)

@@ -33,7 +33,7 @@ from sqlalchemy import select
 
 from app.auth import get_current_user
 from app.db import get_session
-from app.engine import start_assessment
+from app.engine import activate_org_product, deactivate_org_product, start_assessment
 from app.main import app
 from app.models import (
     AssessmentObjective,
@@ -52,6 +52,7 @@ from app.models import (
     LiongardSyncResult,
     LiongardSyncResultChange,
     Organization,
+    OrgProduct,
     Product,
     ProductBaselineVersion,
     RaciAssignment,
@@ -875,59 +876,79 @@ def test_bundle_unlinked_evidence_appears_in_manifest(client, db_session, storag
 
 
 @pytest.mark.integration
-def test_bundle_archived_link_evidence_excluded_from_unlinked_section(
+def test_bundle_lists_evidence_a_deactivation_archived_as_archived(
     client, db_session, storage, fake_msp_admin
 ):
-    """Evidence whose only link into this assessment was archived (e.g. a
-    deactivated product) must NOT resurface in the "Unlinked Evidence"
-    section — that would show a C3PAO evidence the customer deliberately
-    took out of scope. Per ADR 0007, this is excluded entirely, not
-    relabeled."""
+    """Evidence whose only links into this assessment a product's
+    deactivation archived is in the bundle, as archived: which objective,
+    when, and which tool left -- never as current evidence.
+
+    This test used to assert the opposite (ADR 0007's third decision: left
+    out entirely, so retired coverage would not read as current). That
+    made a tool removed with nothing in its place silent to an assessor.
+    Amended 2026-10-19 (docs/roadmap.md, "Review cycles attach only what
+    attests"); the archive goes through engine.deactivate_org_product, not
+    a hand-set flag, so it is the real case."""
     d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    product = Product(
+        framework_id=d["fw"].id, key=f"prod-{uuid.uuid4().hex[:6]}", name="Heimdal Test",
+        provider="Vendor", category="ESP", asset_type="SPA", role="test", is_published=True,
+    )
+    db_session.add(product)
+    db_session.flush()
+    version = ProductBaselineVersion(product_id=product.id, version_number=1)
+    db_session.add(version)
+    db_session.flush()
+    product.current_version_id = version.id
+    db_session.add(BaselineControl(
+        product_id=product.id, baseline_version_id=version.id, control_id=d["ctrl"].id,
+        objectives=["b"], classification="shared", candidate_state="pending_evidence",
+    ))
+    db_session.add(OrgProduct(org_id=d["org"].id, product_id=product.id, status="candidate"))
+    db_session.flush()
+    activate_org_product(db_session, d["org"].id, product.id, d["assessment"].id)
+    db_session.flush()
 
     retired_bytes = b"%PDF-1.4 retired"
     retired_id = uuid.uuid4()
     retired_key = f"{d['org'].id}/evidence/{retired_id}/{retired_id}.pdf"
     storage.upload_file(retired_key, retired_bytes, "application/pdf")
-    retired = Evidence(
-        id=retired_id,
-        org_id=d["org"].id,
-        kind="file",
-        title="Retired Coverage Export",
-        artifact_type="export",
-        storage_key=retired_key,
-        mime_type="application/pdf",
-        file_size_bytes=len(retired_bytes),
-        collected_at=datetime.now(UTC),
-    )
-    db_session.add(retired)
+    db_session.add(Evidence(
+        id=retired_id, org_id=d["org"].id, kind="file", title="Retired Coverage Export",
+        artifact_type="export", storage_key=retired_key, mime_type="application/pdf",
+        file_size_bytes=len(retired_bytes), collected_at=datetime.now(UTC),
+    ))
     db_session.flush()
-    db_session.add(
-        EvidenceStateLink(
-            evidence_id=retired_id,
-            control_state_id=d["cs_b"].id,
-            is_archived=True,
-            archived_at=datetime.now(UTC),
-        )
-    )
+    db_session.add(EvidenceStateLink(evidence_id=retired_id, control_state_id=d["cs_b"].id))
     db_session.flush()
+
+    deactivate_org_product(db_session, d["org"].id, product.id, d["assessment"].id)
+    db_session.flush()
+    link = db_session.scalars(
+        select(EvidenceStateLink).where(EvidenceStateLink.evidence_id == retired_id)
+    ).one()
+    assert link.is_archived and link.archived_by_product == product.id, (
+        "fixture must have the deactivation archive the link, or this test proves nothing"
+    )
 
     r = client.get(_bundle_url(d))
     assert r.status_code == 200
-
     with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
         names = zf.namelist()
         manifest_html = zf.read(next(n for n in names if n.endswith("manifest.html"))).decode()
-        embedded_bytes = {
-            zf.read(n)
-            for n in names
-            if n.startswith(f"{names[0].split('/')[0]}/evidence/") and not n.endswith((".html",))
-        }
+        unlinked = [n for n in names if "/evidence/unlinked/" in n]
+        assert [zf.read(n) for n in unlinked] == [retired_bytes]
+        assert not any(
+            "/evidence/AC/AC.L2-3.1.1/b/" in n for n in names
+        ), "an archived link is not the objective's evidence"
 
-    # The retired file's bytes must not have been embedded anywhere in the ZIP.
-    assert retired_bytes not in embedded_bytes
-    assert "Retired Coverage Export" not in manifest_html
-    assert not any("/evidence/unlinked/" in n for n in names)
+    archived_part = manifest_html.split("<h3>Links archived</h3>", 1)[1]
+    assert "Retired Coverage Export" in archived_part
+    assert f"Archived {link.archived_at.astimezone(UTC):%Y-%m-%d} from AC.L2-3.1.1[b]" in (
+        archived_part
+    )
+    assert "Heimdal Test was deactivated" in archived_part
+    assert "<h3>Never linked</h3>" not in manifest_html
 
 
 @pytest.mark.integration

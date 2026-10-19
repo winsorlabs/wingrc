@@ -138,10 +138,21 @@ export interface ReviewCycleFlag {
   resolved_note: string | null;
 }
 
+// The record a closed cycle wrote, and where it is attached as evidence,
+// read from the live links. Only a completed cycle's is attached
+// (review_cycles.close_cycle); null while the cycle is open.
+export interface ReviewCycleRecord {
+  evidence_id: string;
+  title: string;
+  download_url: string | null;
+  attached_to: { assessment_name: string; objective_key: string }[];
+}
+
 export interface ReviewCycleDetail extends ReviewCycle {
   items: ReviewCycleItem[];
   reviewers: ReviewCycleReviewer[];
   flags: ReviewCycleFlag[];
+  record: ReviewCycleRecord | null;
 }
 
 export interface Contributor {

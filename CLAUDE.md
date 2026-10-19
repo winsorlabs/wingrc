@@ -253,7 +253,7 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
 | `backend/app/storage.py` | `StorageClient` ABC + `MinIOClient` + `NullStorageClient` |
 | `backend/app/audit.py` | `log_event()` — writes `AuditLog` rows; also the actor-resolution helpers both audit views share |
 | `backend/app/rls.py` | The only place `app.current_org` is written, plus the `after_begin` hook that makes it survive a commit — read before touching anything org-scoped |
-| `backend/app/migrations/` | Alembic migrations (currently 0001–0069) |
+| `backend/app/migrations/` | Alembic migrations (currently 0001–0070) |
 | `backend/baselines/` | YAML product baselines (`rocketcyber.yaml`, …) — not repo-root `baselines/`; `seeds/baselines.py:_BASELINES_DIR` resolves here, and a stale repo-root duplicate that drifted out of sync with a real coverage_basis reclassification was removed 2026-09-19 (see `docs/roadmap.md`'s tenant lifecycle consolidation pass entry) |
 | `docs/fips.md` | FIPS 140-2/140-3 crypto boundary documentation |
 | `docs/architecture.md` | Authoritative architecture description (the five layers) — companion to this file's terse session version |
@@ -690,7 +690,15 @@ reasoning and the open question D.4 tracks for a future *hosted* WinGRC.
 flow the workbook importer uses. See `docs/roadmap.md`'s Done entry for
 the full writeup. **D.3, both halves, ✅ DONE.** First half — periodic
 review & attestation — shipped 2026-09-13, `backend/app/review_cycles.py`
-+ `routers/review_cycles.py`. Second half — daily Liongard sync +
++ `routers/review_cycles.py`. **Only a completed cycle's record is
+attached** to AC.L2-3.1.1[a]/[c] (2026-10-19, migration 0070): a deadline
+or undeliverable close writes and keeps its record, names its cycle
+(`evidence.source_review_cycle_id`), shows it on the cycle's page and in
+the bundle's unlinked evidence, and attaches nothing -- and is never
+offered, since it says nobody reviewed. **The bundle lists evidence whose
+links were all archived** (a deactivation, or such a record detached),
+as archived with where from, when and why, never as current evidence
+(ADR 0007's amendment). Second half — daily Liongard sync +
 asset/user onboarding approval — shipped 2026-09-18:
 `backend/app/liongard_sync.py` + `routers/liongard_sync.py` +
 `scheduler.py:_liongard_daily_sync`, migration 0056. A brand-new

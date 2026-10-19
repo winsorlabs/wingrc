@@ -5442,6 +5442,231 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### Review cycles attach only what attests ✅ DONE (2026-10-19, bench-verified, migration 0070; live detach pending)
+
+**Changed before merge (Jarrod, 2026-10-19): the detach archives; it
+does not delete.** The first build deleted the link rows, so the bundle
+would still list the record. That left the audit row as the only trace
+the links had existed. The invariant is that today's state never
+rewrites yesterday's record, and a deleted link row is a rewritten
+record. So the detach archives, and the bundle's gap became this slice's
+work: see the Done entry "The bundle left out evidence whose links were
+all archived", recorded on its own because it was never about
+attestations.
+
+**The rule: a completed cycle attaches; an unattested or undeliverable
+close records and attaches nothing.** `close_cycle` writes, stores and
+keeps its record for every status, as before. It is the record of who
+was asked and who did not answer, which D.3 called the most valuable part
+of the feature. Only when `status == "completed"` does it link the
+record to AC.L2-3.1.1[a]/[c] on every in_progress assessment. The
+reviewer statuses that are the record's content (`no_response` against
+`not_notified`, and the 2026-09-13 fix behind them) are untouched.
+
+**The docstring said the old behaviour, so it was rewritten in the same
+commit.** It used to read "linked to AC.L2-3.1.1[a]/[c]'s control_state
+rows on every currently in_progress assessment", for every status. That
+is item X's lesson again: a docstring that states the old behaviour is
+how the next reader inherits the mistake. It now says the rule, why
+(attaching would file "nobody reviewed this" as evidence that someone
+did), and cites CLAUDE.md's product invariant that a screen must not
+state a result nothing computed. `_mapped_control_states`' docstring
+(which said the record waits "until a human links it") and item X's
+`document_evidence.py` note and test docstring were corrected with it.
+
+**Where an unattached record surfaces: checked, not assumed.**
+- **The bundle: already carried.** Evidence never linked into an
+  assessment is in `evidence/manifest.html`'s *Unlinked Evidence*, with
+  its file under `evidence/unlinked/`. Pinned by a test through
+  `snapshot_bundle`. That section used to leave out evidence whose links
+  were all *archived* (ADR 0007, on purpose), which would have hidden a
+  detached record. It now lists such evidence as archived, with where
+  from, when and why (its own Done entry, above).
+- **The cycle's page: did not show it, and could not.** Evidence is
+  listed per objective, and nothing on a cycle pointed at its record. The
+  only route to it was the objective it was attached to, which this
+  slice removes. This was the slice's real work:
+  - **`evidence.source_review_cycle_id`** (migration 0070), nullable,
+    RESTRICT, indexed, the pattern of `source_document_version_id` and
+    `source_list_version_id`. `close_cycle` sets it.
+  - **Backfilled from what `close_cycle` wrote.** It stamps the cycle's
+    `closed_at` and the record's `collected_at` with one value, so a
+    record is the attestation in the cycle's org collected at the
+    moment the cycle closed. A record two cycles would claim refuses the
+    migration rather than guess. On a copy of live (restored on the
+    bench, then dropped) it named all 3 records' cycles, 3 of 3, and
+    left their links as they were (2, 0, 2).
+  - **The cycle's page has a *Record* card**: the record's title,
+    linked to its download, then where it is attached, read from the
+    live links and never from the status. A completed cycle's says
+    "Attached as evidence to AC.L2-3.1.1[a] in …; AC.L2-3.1.1[c] in …".
+    Otherwise it says "Not attached as evidence. No reviewer attested,
+    so this record does not show that anyone reviewed the users and
+    devices. It is kept as the record of who was asked and who did not
+    respond." It has no button. `GET …/review-cycles/{id}` carries it as
+    `record`.
+
+**Offering it as a candidate: considered and rejected.** Offering would
+invite someone to attach "nobody reviewed this" as evidence for the
+thing nobody reviewed, which is the same harm with an extra click in
+front of it. The page says it is not attached and gives no way to attach
+it. Do not reopen this as a convenience.
+
+**The evidence ✕ no longer deletes a cycle's record.** The generic
+unlink deletes the Evidence row and its stored file when the last link
+goes; it exempted only a document version's row, and now a cycle's too.
+**This is the narrow fix only.** The general defect (the ✕ deletes the
+artifact and its bytes, writes no audit row, and is presented as
+*Remove*) is its own entry under Planned, "The evidence ✕ deletes the
+artifact", and is **not** fixed here.
+
+**The detach** (`wingrc review-cycles-detach-unattested --org-id …`).
+Dry-run by default; `--org-id` required, and the org's name printed
+before anything. It finds whatever links from records of unattested or
+undeliverable closes exist when it runs, so a cycle the scheduler closes
+before the deploy is included, and a second run reports nothing to do.
+Each link is **archived** (`is_archived`, `archived_at`; the row stays)
+with one `evidence.attestation_detach` audit row on the Evidence, naming
+the objective, the assessment, the cycle and the reason. A link a
+product's deactivation had already archived is taken too: its
+`archived_by_product` is cleared, so that product's reactivation cannot
+restore it, and its archive date is kept. A second run finds nothing and
+re-archives nothing. The record (the Evidence row, its stored HTML, the
+cycle and its reviewers) is not touched. It does not go through the ✕.
+- **Why detach, against item X's precedent.** See the decision in the
+  Planned entry: X's links were true evidence chosen by nobody; these
+  say something false where they are attached.
+- **Rehearsed on a fresh copy of live, with the archiving code**
+  (bench, 2026-10-19, then dropped; the first rehearsal ran the deleting
+  code and no longer counts). 0070 named 3 of 3 records. For Acme MSP,
+  then Winsorlabs: the dry run listed 2 links ([a], [c]), the run
+  archived exactly those 2 with 2 audit rows (actor
+  `cli:review-cycles-detach-unattested`), and a third run said "Nothing
+  to do". Afterwards all 4 link rows exist with `is_archived` true,
+  `archived_at` set and no product. The statuses are where they were
+  (Acme met/met, Winsorlabs not_met/not_met). Each assessment's bundle
+  snapshot lists its record under *Links archived*, from
+  AC.L2-3.1.1[a] and [c], with the detach reason. None was by a
+  product's deactivation.
+
+**Out of scope, and kept apart:**
+- **Acme's [a] and [c] read `met` with no evidence after the detach.**
+  They were marked met by hand on 2026-09-13, three weeks before the link
+  existed (2026-10-05). The detach neither caused that nor fixes it; it
+  is its own question.
+- The general ✕ defect (above).
+- The blocked-objectives widget's "any link means covered" test (with
+  item Z).
+- The evidence section cosmetics.
+
+**Tests.** New: `test_review_cycle_record.py`, 7 tests through the
+database and HTTP:
+- completed attaches, and the page names where (an archived link is not
+  attached);
+- unattested and undeliverable, parametrized: the record is written and
+  stored and says so, has no link, keeps its reviewer status, is on the
+  page and in the bundle's unlinked evidence; no status or SPRS change;
+- another org gets 404 on its own path and 403 on this org's, for the
+  cycle and the download;
+- the ✕ on a completed record's links keeps the record and its bytes;
+- the detach: the dry run is what the run does; the link rows stay,
+  archived, with no product, including one a deactivation had archived
+  (whose date is kept); a completed cycle's links stay live; the record
+  and its bytes are read back unchanged; one audit row per link with the
+  reason; a second run is empty and re-archives nothing; the bundle then
+  carries the record as archived, from [a] and [c]; no status or SPRS
+  change;
+- 0070's backfill run against records written before the column.
+
+`ReviewCyclesPanel.test.tsx`: 3 (unattested: not attached, linked, no
+button; completed: names where; open: no card). One existing assertion
+changed, deliberately: `test_bundle.py`'s ADR 0007 exclusion test (see
+the finding's entry). The scheduler's close tests seed no assessment, so they never
+asserted a link; `test_full_attestation_closes_cycle_and_creates_linked_
+evidence` still passes unchanged. The determinism guard still scans
+`close_cycle`; no query was added to it.
+
+**Verified on the bench** (wl-util-1, isolated `wingrc_verify_att1`,
+then `wingrc_verify_att2` for the archive change):
+- **Backend:** 1827 passed (1820 on main plus 7; the archive change
+  replaced a test rather than adding one), none failed or skipped, with
+  `WINGRC_MIN_TESTS_RUN=500`. Re-run in full after the change.
+- **Lint and types:** `ruff` clean; `tsc -b` clean.
+- **Frontend:** 446 vitest passed (443 plus 3), and the build
+  succeeded. The archive change touched no frontend file.
+
+Mutation runs, each restored afterwards:
+- Attaching for every status fails 4.
+- (First build) Archiving the link instead of deleting it failed the
+  detach test. After the change, each of these fails it: deleting the
+  link instead of archiving it; leaving `archived_by_product` set;
+  letting the query take links it already archived; re-stamping
+  `archived_at` on one already archived. Restoring ADR 0007's "any link
+  excludes" fails both bundle tests (the deactivation one and the
+  attestation one). Dropping the tool's name from the manifest's reason
+  fails the deactivation one.
+- Writing the detach's audit row under another action fails it.
+- Dropping the ✕ exemption fails the ✕ test.
+- Letting the page count archived links as attached passed at first.
+  The completed-cycle test then gained the archived-link assertion, and
+  it fails.
+
+**Live, after the deploy (pending).** The detach runs in this order,
+each confirmed by Jarrod before it writes: Acme MSP's dry run, shown,
+then the run; then the same for Winsorlabs. Afterwards both Evidence
+rows and both stored objects are read back, and the objectives'
+statuses checked against where they were.
+
+---
+
+### The bundle left out evidence whose links were all archived -- ADR 0007's third decision, reversed ✅ DONE (2026-10-19, with "Review cycles attach only what attests")
+
+**Found while making the detach archive rather than delete (Jarrod,
+2026-10-19).** `snapshot_bundle`'s *Unlinked Evidence* query excluded an
+Evidence row if *any* link into the assessment existed, archived or not.
+So evidence whose every link a product's deactivation archived was in
+storage, was in the database, and appeared nowhere in the bundle an
+assessor receives. It had nothing to do with attestations.
+
+**It was not an accident.** ADR 0007 (2026-08-06) decided it, as its
+third decision: listing retired coverage in a document built for a C3PAO
+would "misrepresent current scope", and silence was "at least neutral".
+The manifest said so in a line of grey text. Reversed, because the
+silence is the harm: a tool removed with nothing in its place is
+invisible to the one reader whose job is to notice it, and the same
+query hid the record of an unattested review cycle once it was detached.
+ADR 0007's real concern, that retired evidence must not read as current,
+is kept by how it is listed, not by leaving it out.
+
+**Now:** the section takes evidence with no **live** link into the
+assessment, in two groups:
+- *Never linked*, as before.
+- *Links archived*: each item says the objectives it was on, when the
+  last link was archived, and why, as the rows say it (*"Heimdal was
+  deactivated"*, or *"detached: the record of a review cycle that closed
+  without attestation"*). The section's header says none of it is
+  current evidence for any objective.
+
+It is never filed under the objective it left. List and document
+versions stay out of the section, as before: theirs is their own path
+(`lists/`, `ssp/06_documents.html`).
+
+**On live (read-only, on the copy, 2026-10-19):** no evidence was hidden
+this way. The only evidence with every link archived was AC-POL-01 v3,
+a document version, which the section never took. So the hole was
+latent, not live. The detach would have been its first live case.
+
+**Tests:** `test_bundle.py`'s ADR 0007 exclusion test asserted the
+opposite. Its scenario is kept and its assertion inverted, and it now
+archives through `engine.deactivate_org_product` instead of a hand-set
+flag: the file is embedded under `evidence/unlinked/`, listed under
+*Links archived* with the objective, date and tool, and not in the
+objective's folder. The attestation case is in
+`test_review_cycle_record.py`'s detach test. ADR 0007 has an amendment
+section.
+
+---
+
 ### Item X.1: documents get a tag editor, and a tag a link rests on cannot be removed ✅ DONE (2026-10-18, verified on live with X's walk)
 
 **Documents can be tagged from a screen for the first time.** Before
@@ -6151,7 +6376,8 @@ importer's layout. It does not reopen this one.
   its own item, X.
 - **The generic evidence unlink writes no audit row**
   (`routers/evidence.py`'s `delete_evidence`). List links have their own
-  unlink, which does.
+  unlink, which does. Now its own entry under Planned, "The evidence ✕
+  deletes the artifact" (2026-10-19).
 - **The generic per-objective evidence list shows archived links** (it
   has no `is_archived` filter), so a deactivated tool's evidence still
   appears on the objective. List links are listed separately and only
@@ -10036,7 +10262,15 @@ tagged with this objective". The record of why it is there goes.
 would not fit, and would be its own slice if wanted later. The typed key
 keeps it the size of what L.2.2 and L.10 already built.
 
-### Review cycles attach only what attests -- the next slice (decided 2026-10-18)
+### Review cycles attach only what attests ✅ BUILT (2026-10-19)
+
+**Built as the Done entry "Review cycles attach only what attests".** It
+records what the slice found and decided. The text below is the plan,
+kept as it was. Changes from it: the record had to be made findable
+(migration 0070 and the cycle page's *Record* card), and the bundle now
+lists evidence whose links were all archived. The detach archives the
+links (the plan said "removed"; the first build deleted them, and was
+changed before merge).
 
 **Next, ahead of the evidence section cosmetics** (Jarrod, 2026-10-19).
 Two records of reviews that never happened are attached as evidence on
@@ -10184,6 +10418,105 @@ no migration. Small.
    is.
 3. **L.10's remaining items: none.** Items 1 and 2 were closed by X.1,
    and item 3 was cleared by the live walk.
+
+### Archived evidence stays visible on its objective -- not built
+
+**Jarrod, 2026-10-19. Written up only; nothing here is built.** Today,
+evidence archived by a product's deactivation vanishes from its
+objective (`EvidenceSection.tsx` lists live links only). He wants it
+shown greyed and labelled, so that a tool removed with nothing put in
+its place is *evident* rather than silent. The bundle already does the
+minimum (2026-10-19): evidence whose links were all archived is listed
+under *Unlinked Evidence › Links archived*, with the objectives, the
+date and the reason. This item is the objective's own display.
+
+**Two forms, and only the first may be computed:**
+- **"(Archived)": the alarm case, unambiguous.** The objective's links
+  were archived and nothing live covers it. Show the artifact greyed
+  with its archive date and the reason the rows record, and the
+  objective reads as having no current evidence.
+- **"(Replaced by X)": not inferred, ever.** Heimdal out and Defender in,
+  both covering the objective, *looks* like a replacement and might not
+  be one: a different scope, a different configuration, an overlap
+  planned for months. The product does not assert an inference as fact
+  anywhere else, and a bundle an assessor reads is the worst place to
+  start.
+
+**Two honest designs; the trade:**
+1. **Show both, claim nothing.** "Heimdal (archived 12 Sep)" greyed
+   beneath "Defender (active)" on the same objective. A reader sees the
+   replacement; the product never says it. Cheap, and never wrong.
+2. **Make it a person's act.** Deactivating a product asks whether
+   something replaces it. "Replaced by Defender" then means someone said
+   so, with a name and a date, and a bundle can carry it as a statement
+   rather than a guess. More work, and it adds a step to deactivation.
+
+**Recommendation (the brief's): (2) if the phrase is ever to appear in an
+assessor bundle, (1) otherwise.** (1) is a prerequisite for (2) either
+way, since the greyed display is the same; build (1) first.
+
+**The reason a link was archived must be said, not assumed to be a
+deactivation.** Since 2026-10-19 there are two:
+- a product's deactivation (`archived_by_product` set);
+- the detach of an unattested review cycle's record (no product; the
+  audit row `evidence.attestation_detach` gives the reason). Acme's and
+  Winsorlabs' AC.L2-3.1.1[a]/[c] will show this.
+
+Moving a list or document link forward also archives the old one, but
+that objective has the newer link live, so the drift display (L.4, X)
+covers it, not this. Read the reason from the rows, as the bundle's
+manifest does (`bundle_service.py`), not by guessing.
+
+**Reactivation, designed with it rather than after it.**
+`engine.activate_org_product` restores links it archived (by
+`archived_by_product`) and sets the restored states to `needs_review`.
+The display then:
+- shows the restored artifact as live again, not greyed: its link is
+  live;
+- relies on the objective's `needs_review` badge for "re-confirm this is
+  still current"; the display adds no second warning for it;
+- does not restore a link the detach archived. That link has no
+  product, so no reactivation finds it (2026-10-19), and it stays
+  greyed.
+
+**What it touches:**
+- **The blocked-objectives widget**
+  (`routers/dashboard.py:_blocked_objectives`) counts any link, archived
+  included, as evidence present. An objective whose only evidence is
+  archived must read as having none. The widget's definition of "has
+  evidence" is recorded under "Review cycles attach only what attests"
+  (Planned) and goes with item Z: a screen's count says what it
+  computed.
+- **The readiness bars** (queued behind the attests slice, brief dated
+  2026-10-18; no entry in this file yet). An objective whose only
+  evidence is archived reads **red** on the Evidence segment, with the
+  archived artifact visible beneath it. That is the case the bars exist
+  to catch. When that entry is written, its red/yellow/green for
+  Evidence cites this entry's definition (live links only; archived
+  shown, never counted) rather than writing its own.
+
+**Not in this item:** any change to `control_state.status` or SPRS
+(deactivation already sets `needs_review`); inferring replacement in any
+form.
+
+### The evidence ✕ deletes the artifact, unaudited, and says "Remove" -- not fixed
+
+**Recorded 2026-10-19, while building "Review cycles attach only what
+attests", which fixed one narrow case of it.** The objective's evidence
+✕ (`EvidenceSection.tsx`, title *Remove*, no confirmation) calls
+`routers/evidence.py`'s `delete_evidence`:
+- It deletes the link, and when that was the artifact's last link it
+  deletes the Evidence row and the stored file too.
+- It writes no audit row (first noted, as one line, in L.4's "Found,
+  not fixed").
+- It reads as detaching evidence from one objective, and can destroy the
+  artifact for every objective and every assessment.
+
+Exempt so far: a published document version's record (item X) and a
+review cycle's record (2026-10-19). Those exemptions are not the fix.
+The fix decides what *Remove* means (detach only, with the artifact kept
+until someone deletes it deliberately, or a delete that says so), and
+gives every path an audit row.
 
 ### Y. A test that models.py's CHECK constraints are the database's
 
