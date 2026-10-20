@@ -5927,16 +5927,21 @@ audit log and storage.**
   archived.** The second link is live again, with an
   `evidence_state_link.restore` row. The person-detached link stayed
   detached. That is the rule this slice exists for, shown on live.
+- **Still unverified on live: a deactivation naming no replacement, with
+  evidence attached.** The bench covered it. On live, the one
+  no-replacement deactivation (16:14) had nothing attached, so it
+  archived nothing and the screen had nothing to show. The case to walk:
+  attach a file, deactivate naming nothing, and expect the archived row
+  to say the tool was deactivated, with no "Replaced by".
 
 **Found on the walk, recorded under Planned:**
-- **A replacement named for a tool with no archived evidence shows on
-  no screen.** It is stored and audited, and nothing draws it.
-- **Two state changes write no audit row of their own:**
-  - activating or reactivating a tool (only `org_product.deactivate`
-    exists; a reactivation shows up only as the restores it did);
-  - uploading or attaching evidence (`evidence.download` is audited,
-    `evidence.detach` is audited, and the upload that created the row
-    is not).
+- **The walk found two missing audit rows (upload, activation). The
+  sweep they prompted found the worse one: marking an objective *met*
+  is recorded nowhere.** Every unaudited route is in the assessment
+  core, the code written before the audit convention (the Planned entry
+  "Marking an objective met is recorded nowhere").
+- **A replacement named for a tool shows only on archived evidence.** It
+  is a fact about the tool, and the tool's own record does not show it.
 
 ### Review cycles attach only what attests ✅ DONE (2026-10-19, migration 0070; deployed and detached on live, read back)
 
@@ -10576,42 +10581,129 @@ on another. Check the literal `#6c757d` uses too: L.8's example cell is
 a placeholder needs, so it stays -- say so rather than sweeping it up.
 Frontend only; screenshots of three or four screens before and after.
 
-### Audit gaps found on the evidence walk: activation and upload write no row
+### Marking an objective met is recorded nowhere -- next backend item
 
-**Found on the evidence section's live walk (2026-10-20), confirmed in
-code.** CLAUDE.md says every state change writes an `AuditLog` row. Two
-do not:
-- **Activating a tool.** `engine.activate_org_product` logs the task,
-  link and control-state restores it does, but no
-  `org_product.activate` row. `deactivate_org_product` writes
-  `org_product.deactivate`. So "who turned this tool back on, and when"
-  is answerable only from `org_product.activated_at` (no who) or by
-  inferring it from the restores. A first activation restores nothing,
-  so it leaves no audit row at all: the magic loop's
-  `not_met` → `pending_evidence` flips are in `control_state_history`
-  only (`_run_loop`), which says what changed but not who did it.
-- **Uploading or attaching evidence.** `routers/evidence.py`'s
-  `upload_evidence` writes no audit row. A download is audited and a
-  detach is audited, but the act that put an artifact in front of an
-  assessor is not.
+**Found 2026-10-20, by the sweep that the evidence section's live walk
+prompted. Confirmed in code.** `PATCH .../control-states/{id}`
+(`patch_control_state`) sets an objective *met*, *not met* or any other
+status. It writes no audit row. The `control_state_history` row it does
+write has no actor column. So nothing records who asserted that a
+control is met.
 
-The slice: one `org_product.activate` row (before/after status, the
-pinned baseline version, whether it was a reactivation) and one
-`evidence.upload` row (title, artifact type, objectives linked, never
-the bytes or a URL), each with a test that fails without it. Backend
-only. Check task collect (`…/collect`) too, which creates evidence by
-another path.
+This outranks everything else here. "Who said this is met?" is the
+first question an assessor asks. The SPRS score is computed from
+exactly those assertions (`recompute_sprs` over `control_state`), so
+today the score derives from claims nobody is recorded as making.
 
-### A replacement named for a tool shows where the tool is
+**How it was found.** The walk showed that detaching evidence is
+audited and uploading it is not, and that deactivating a tool is audited
+and activating it is not. A sweep of every mutating route (107
+POST/PUT/PATCH/DELETE) followed each into `app.*` for a `log_event`
+call. Each route it flagged was then read by hand, because the static
+pass misses calls made through a module attribute. List and document
+links, their move-forward and unlink, and MFA enrolment were flagged,
+and are in fact audited.
 
-**Found on the evidence section's live walk (2026-10-20).** A
-deactivation may name what replaces the tool (migration 0071). That is
-drawn only on archived evidence ("Replaced by X"), so a tool whose
-objectives had no evidence attached says it nowhere, although it is
-stored and audited. Draw it on the tool's own card or row once
-decommissioned: "Replaced by X, per <who>, <when>". Frontend only, from
-fields already returned. Still never inferred, and still never credits
-the replacement.
+| Operation | Route | Audited? |
+|---|---|---|
+| **Mark an objective's status (*met*, *not met*, ...)** | `PATCH .../control-states/{id}` (`patch_control_state`) | **No, and no actor anywhere** |
+| Upload evidence to an objective | `POST .../control-states/{id}/evidence` (`upload_evidence`) | **No** |
+| Attach evidence as a link/reference | `POST .../evidence/references` (`add_references`) | **No** |
+| Activate or reactivate a tool | `POST .../products/{id}/activate` | **No `org_product.activate`.** The restores it does are audited. A first activation restores nothing, so it leaves no audit row: the magic loop's flips are in `control_state_history` only |
+| Change an evidence task's status (e.g. to *n/a*) | `PATCH .../evidence-tasks/{id}` | **No** |
+| Write implementation statements | `PUT .../controls/{id}/statements` (`upsert_statements`) | **No.** The statement row keeps who edited it, but there is no audit row |
+| Start an assessment | `POST .../assessments` | **Only** its RACI copy-forward; no `assessment.create` |
+| Create an org | `POST /orgs` | **No** (nor the memberships it provisions) |
+| Set a password from an invite | `POST /auth/set-password` | **No** (the invite is audited) |
+| Collect a task's evidence (file or reference) | `.../evidence-tasks/{id}/collect` | Yes, `evidence_task.collect` |
+| Approve or reject an asset | `.../changes/{id}/approve`, `/reject` | Yes |
+| Create, version, publish or tag a document | `documents.*` | Yes |
+| Adopt a template; create, version or tag a list | `list_definitions.*` | Yes |
+| Link, move forward or unlink a list or document as evidence | `list_evidence.py`, `document_evidence.py` | Yes, plus their own event tables |
+| Create, edit or delete a contact; add or remove a role | `contacts.*` | Yes |
+| Scope create, edit, import apply | `scope.*` | Yes |
+| RACI assign, bulk assign, unassign | `raci.*` | Yes |
+| Users, memberships, tokens | `users.*` | Yes |
+
+**The pattern is old code against new, not destructive against
+constructive.**
+- No destructive route is unaudited. But not every constructive route
+  is unaudited either.
+- Every unaudited route is in the assessment core: control state,
+  evidence, tasks, statements, activation, assessment and org creation.
+  That is the code written first.
+- Every module built later (documents, lists, contacts, scope, RACI,
+  users) audits additions and removals alike.
+- The convention ("every state change writes an `AuditLog` row") was
+  set after the core was written, and never applied backwards. Removals
+  were audited later, one at a time, when someone worried about
+  destruction, as `delete_evidence`'s exemptions were.
+
+**That makes enforcement the fix, not the rows.** The rule exists and
+nothing enforces it. The rows are mechanical once the list is fixed. A
+route-table test that fails when a mutating route writes no
+`log_event` is what keeps the next module, or the next route in an old
+one, from drifting back. It follows the pattern of I.1's deny-by-default
+harness for authorization. The framing also says where else to look:
+any old-core write path outside the routers, such as the CLI and the
+scheduler.
+
+**The slice (backend only):**
+- The route-table test first. It names an explicit, reasoned exemption
+  list (dry runs, reads that happen to POST), so a new exemption is a
+  visible decision.
+- Then one audit row per unaudited route above: before and after
+  values, `via`, and for evidence the title, artifact type and
+  objectives linked, never the bytes or a URL. Each gets a test that
+  fails without its row.
+- `org_product.activate` says whether it was a reactivation, and the
+  baseline version pinned.
+- Not in this slice: an actor on `control_state_history` (the next
+  entry).
+
+### An objective's history says who changed it
+
+**Recorded 2026-10-20, split from the item above on purpose.** Once
+that slice lands, the audit log will answer who marked an objective
+*met*. The objective's own history will still not:
+`control_state_history` has no actor column, and that history is what a
+person actually reads. Two histories in two places is how the question
+goes unanswered. L.2.2 met this for lists: tag events went into the
+list's own History rather than leaving them to the audit log. L.10 made
+the same call for evidence links (`list_link_event`, migration 0068;
+see its Done entry).
+
+The fix has the same shape: an actor on `control_state_history` (a
+migration), written by every path that writes a history row, and shown
+in the objective's history. Existing rows stay actor-less and say so;
+they are not backfilled from guesses. The audit rows from the item above
+are the record from that slice on.
+
+### A replacement named for a tool shows on the tool's own record
+
+**Found on the evidence section's live walk (2026-10-20); framing
+Jarrod's.** A named replacement is a fact about the tool, not only about
+the evidence that moved. It belongs on the deactivated product's own
+record: "Datto RMM, deactivated 20 Oct, replaced by RocketCyber (stated
+by Jarrod)". The archived-evidence line becomes one place it surfaces,
+not the only one.
+
+**Sizing (2026-10-20): small, but not frontend only.**
+- `org_product` already stores `deactivated_at`, `deactivated_by` and
+  `replaced_by_product_id` (migration 0071).
+- Only the archived-evidence read (`routers/evidence.py`) returns them
+  today. The tools listing does not, so it needs those three fields and
+  the replacement's name: a small backend change, then the line on the
+  Tools screen.
+- **Found while sizing: a reactivation leaves the replacement in
+  place.** Live has one now: Acme MSP's Datto RMM is `active` again (the
+  walk's reactivation, 2026-10-20 16:20 UTC) with
+  `replaced_by_product_id` still RocketCyber. **Decided (Jarrod,
+  2026-10-20): show the replacement only while the tool is
+  `decommissioned`.** The column is left alone, and the deactivation's
+  audit row keeps the statement. Test a reactivated tool: it shows no
+  replacement.
+- Still never inferred, and still never credits the replacement.
 
 ### V.1. Links and ghost buttons pass AA contrast (`--primary`) -- next visual item
 
