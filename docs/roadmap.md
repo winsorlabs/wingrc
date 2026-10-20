@@ -10649,9 +10649,49 @@ any old-core write path outside the routers, such as the CLI and the
 scheduler.
 
 **The slice (backend only):**
-- The route-table test first. It names an explicit, reasoned exemption
-  list (dry runs, reads that happen to POST), so a new exemption is a
-  visible decision.
+- The enforcing test first. **Preferred: a behavioural check, which
+  tests what a route writes. The fallback is a method-based check, which
+  tests its HTTP verb.** This is not an even choice left to the slice.
+  If it were, the cheaper one would get built and its exemption list
+  would exist forever.
+  - **Why behaviour.** The verb is a proxy for behaviour, and the proxy
+    drifts. `require_write()` gates by HTTP method for the same reason,
+    and the kiosk role ran into it. All four of the likely exemptions
+    (the workbook import dry run, the baseline-import dry runs, research
+    URL suggestion, MFA enrolment's first step) are POSTs that write
+    nothing. A behavioural check never includes them, so there is
+    nothing to exempt. It also stays true when someone adds a fifth
+    dry-run POST without thinking about the test.
+  - **The shape.** In the test harness, a session `after_flush` listener
+    records which tables a request inserted into, updated or deleted
+    from. If any of them is not `audit_log`, the request must also have
+    written an `audit_log` row. Installed in `conftest.py`, it checks
+    every request the existing suite already makes, at no extra cost per
+    route.
+  - **What it costs, and what it does not cover.** A route is checked
+    only on the paths some test drives. So it needs a companion: every
+    mutating route has at least one test that reaches a write. That one
+    can be static (route table against test coverage).
+  - **Its exemption list moves to tables, and it does not vanish.** Some
+    writes are bookkeeping, not a state change a person makes: a login's
+    session row, a notification, an SPRS snapshot, a rate-limit
+    counter. Those tables are exempt, each with a written reason. That
+    list is shorter, and changes far less often, than a list of routes.
+  - **Every exemption carries its reason, and the test enforces it.**
+    Whichever check is built, its exemptions are a dict from name to a
+    written reason, and the test fails on an empty reason. An exemption
+    list is only as strong as the friction of adding to it. If one line
+    silences a new entry, the rule becomes a formality, which is how
+    `delete_evidence`'s exemptions accumulated, one sensible entry at a
+    time. Writing the reason is what makes someone ask whether they are
+    exempting or evading. The precedent is `test_list_builder.py`'s
+    `_SETTLED`, with one step further: there the reasons are a comment
+    above a set, so nothing requires one per entry.
+  - **The method-based fallback,** if the behavioural check proves
+    impractical, says why in the Done entry. Its exemption list (POSTs
+    that write nothing) must show each route writes nothing, not just
+    assert it. **If either list ends up empty, say so in the Done
+    entry:** an empty list is a stronger claim than a short one.
 - Then one audit row per unaudited route above: before and after
   values, `via`, and for evidence the title, artifact type and
   objectives linked, never the bytes or a URL. Each gets a test that
