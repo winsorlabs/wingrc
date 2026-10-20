@@ -5442,6 +5442,113 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### The visual batch: V, L.9 and U ✅ DONE (2026-10-20, bench-verified; frontend only)
+
+Three Planned items in one branch, three commits so a bisect can tell
+them apart, in this order: **V, then L.9, then U.** V changes `--muted`
+everywhere and L.9 measures contrast, so measuring L.9 first would have
+measured against a token about to change. U touches only `api.ts`.
+**Backend untouched**: no file under `backend/` changes.
+
+**Two of the three reach back into L.8's page,** which is the regression
+surface. V removes the `--muted` override L.8 added to
+`.list-library-detail`, and L.9 moves L.8's table CSS and its
+`useSideScroll` hook out of `ListLibraryPanel`. So L.8's own three
+acceptance checks were re-run on the bench rather than assumed (below).
+
+**How it was measured.** The bench served `main`'s build (`e6b38f0`) and
+this branch's side by side over one backend holding a restored copy of
+live, plus bench-only rows: 40 more devices in Acme's scope, and a copy of
+Winsorlabs' widest template (Authorized Devices & Hardware Inventory, 19
+columns) with 40 rows beyond its two examples, one a `[PLACEHOLDER -
+reason]`. The copy was dropped at teardown. Headless Chromium at
+1366×768 took 34 captures of screens and states on each build:
+- the Lists index, a scope-drawn list (top, scrolled, hovered), the
+  library list (top, scrolled, scrolled right);
+- the dashboard, the board (with a hovered family header and expanded
+  objectives), the control drawer with guidance;
+- an objective's archived evidence, Tasks, Tools, Assets, Contacts,
+  Periodic Review, Org Profile, Network Diagram;
+- Documents, a document, its History, a diff, and a refused tag removal
+  (the yellow panel);
+- Security, Audit Log, and the login form.
+
+On each, every text node was measured against the background it actually
+sits on: ancestors composited, opacity applied, and text behind a modal
+overlay skipped. Of the 82 `color: var(--muted)` rules, 55 were reached
+on screen. The other 27 (wizards, MFA enrolment, a file's size and remove
+control, the import report, and the like) are worked from the background
+their CSS puts them on.
+
+#### V: `--muted` is `#5c636a`
+
+The token changes, not its uses: `#6c757d` (4.45:1 on `--bg`) becomes
+`#5c636a`. L.8's per-page override is gone.
+
+| Where `--muted` sits | Background | Before (`#6c757d`) | After (`#5c636a`) |
+|---|---|---|---|
+| Page text: hints, sub-lines, table headers, form labels, board meta, document labels (43 contexts) | `--bg` `#f8f9fa` | 4.45 | 5.78 |
+| Cards, drawers, dialogs, the login card (38 contexts) | white | 4.69 | 6.09 |
+| **An objective's archived evidence** (*No longer attached*) | white, at opacity 0.85 | **3.52** | **6.09** (opacity removed; 4.32 with the token alone) |
+| Board family header | `#f1f3f5` | 4.22 | 5.48 |
+| Board family header, hovered | `#e9ecef` | 3.95 | 5.14 |
+| Control header, expanded or hovered | `#f5f6f7` | 4.33 | 5.63 |
+| Control header, resting | `#fafbfc` | 4.53 | 5.88 |
+| Completion dot on the active side-nav item | `#e0e7ff` | 3.81 | 4.94 |
+| Tool card's role line | `#f0f6ff` | 4.32 | 5.61 |
+| Wizard step number (CSS, not reached) | `--border` `#dee2e6` | 3.60 | 4.68 |
+| Side-nav item hovered (CSS) | `#dee2e6` | 3.60 | 4.68 |
+| Diff −/+ marker on a deletion (CSS) | `#f8d7da` | 3.51 | 4.56 |
+| Diff marker on an insertion (CSS) | `#d1e7dd` | 3.61 | 4.69 |
+| Diff marker on a replacement (CSS) | `#fff3cd` | 4.23 | 5.50 |
+| Dashboard row hovered (CSS) | `#eef2ff` | 4.19 | 5.45 |
+| A list tab's count on a hovered tab (CSS) | `#f0f4ff` | 4.26 | 5.54 |
+
+Every `--muted` context is now at or above 4.5:1; the lowest is 4.56.
+
+**Found by measuring: yesterday's archived evidence failed twice over.**
+`.ev-archived` drew its rows in `--muted` *and* at opacity 0.85. That was
+3.52:1 before this slice, and still 4.32:1 on the new token. It is
+already greyed by colour, struck through and written as a sentence (the
+L.10 rule), so the opacity went. Its *Download* link and buttons were
+being faded with it too.
+
+**The yellow refusal panel holds no `--muted` text.** Its sentence is the
+notice colour. What fails on it is the *Keep it* button's blue (below).
+
+**The literal `#6c757d` uses stay, both deliberately faint, both above
+the 3:1 a placeholder needs:**
+- **The example cell** (`[PLACEHOLDER]`): `#6c757d` on its `#f1f3f5`
+  tint, 4.22:1. It is meant to read fainter than real values (`#212529`,
+  15.4:1) so a template example is never mistaken for a record (L.8).
+- **The empty-cell dash** (—): `#6c757d`, 4.69:1 on white, 4.45:1 on a
+  hovered row. It marks absence beside near-black values. L.9 moved it
+  from L.8's page scope to the shared `.list-rows`, so the scope-drawn
+  lists now draw the dash the same way. Before, they drew it in
+  `--muted`.
+
+There are no other literal `#6c757d` uses in the CSS or in any component.
+
+**Found, not fixed (not `--muted`, so not this slice).** Text under
+4.5:1 on the branch:
+- **`--primary` `#0d6efd` on `--bg`: 4.27:1.** This is every ghost
+  button and text link on the page background: *← All lists*, *Adopt
+  templates*, the Lists index's titles, *Edit*. It is the largest
+  remaining contrast defect, and the same shape as V: one token.
+- `#0d6efd` on the refusal panel's `#fff3cd`: 4.06.
+- On the tool card's `#f0f6ff`: `#198754` (*Active*) and `#dc3545`
+  (*Deactivate*), 4.17.
+- The *Inactive* status badge, `#64748b` on `#f1f5f9`: 4.34.
+- The drawer textarea's placeholder, the browser default `#757575`:
+  4.37.
+- Seven inline `#6b7280` greys (Liongard sync, review cycles, SPRS
+  submissions, MFA re-enrol): 4.59 on `--bg`, 4.83 on white. These pass.
+- Disabled controls are under 3:1 (*Record review — still current*,
+  *No changes*). WCAG exempts inactive components.
+- The side nav's ✓ (`#16a34a`, 3.30) is a graphic, held to 3:1.
+
+---
+
 ### The evidence section stops destroying things and stops hiding things ✅ DONE (2026-10-19, bench-verified, migration 0071; deploy pending)
 
 One idea in four parts. **An objective's evidence section tells the truth
@@ -10256,7 +10363,12 @@ already turns both shapes into a sentence. The fix is to route the 28
 through it, with a test that a 422 on login shows the validator's
 message.
 
-### V. The app's secondary text passes AA contrast
+### V. The app's secondary text passes AA contrast ✅ DONE (2026-10-20)
+
+**Built in the Done entry "The visual batch: V, L.9 and U"**, with every
+`--muted` context measured. The objective's archived evidence was the one
+that failed even on the new token, because it was also drawn at opacity
+0.85.
 
 **Found in L.8 (2026-10-16).** The shared `--muted` token (`#6c757d`,
 `styles.css`) is **4.45:1** on the app's `--bg` (`#f8f9fa`) -- under

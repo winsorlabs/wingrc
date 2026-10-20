@@ -3,7 +3,8 @@
   --surface: #ffffff;
   --border: #dee2e6;
   --text: #212529;
-  --muted: #6c757d;
+  /* 6.1:1 on white, 5.8:1 on --bg, 4.7:1 on --border (V, 2026-10-20). */
+  --muted: #5c636a;
   --primary: #0d6efd;
   --primary-hover: #0b5ed7;
 
@@ -800,7 +801,9 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 /* Archived evidence (2026-10-19): greyed sentences beneath the live
    evidence, never .ev-item rows -- an archived artifact and a live one do
    not share a shape (L.10). */
-.ev-archived { margin-top: 0.5rem; opacity: 0.85; }
+/* Greyed by colour, struck through and written as a sentence, not by
+   opacity: 0.85 over --muted measured 4.3:1, under AA (V, 2026-10-20). */
+.ev-archived { margin-top: 0.5rem; }
 .ev-archived ul { margin: 0.15rem 0 0; padding: 0; list-style: none; font-size: 0.85rem; color: var(--muted); }
 .ev-archived-item { margin: 0.2rem 0; }
 .ev-archived-title { text-decoration: line-through; }
@@ -2242,11 +2245,9 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 
 /* ── List page readability (L.8): the rows are what this page is for ──
    Contrast, WCAG 2.x, measured: header and values #212529 on #fff 15.4:1;
-   muted text here #5c636a on the page's #f8f9fa 5.8:1 (the shared #6c757d
-   is 4.45:1 on that background, under AA); an example cell #6c757d on
-   #f1f3f5 4.2:1 (faint on purpose, above 3:1); a reason cell #7a5c00 on
-   #fff4cc 5.7:1; the header rule #868e96 3.3:1. */
-.list-library-detail { --muted: #5c636a; }
+   an example cell #6c757d on #f1f3f5 4.2:1 (faint on purpose, above 3:1);
+   a reason cell #7a5c00 on #fff4cc 5.7:1; the header rule #868e96 3.3:1.
+   This page's own --muted override went when the token became #5c636a (V). */
 .list-rows-scroll {
   overflow: auto;
   max-height: min(70vh, 44rem);
