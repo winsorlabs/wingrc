@@ -164,6 +164,20 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   wrote, an exit status. A check that cannot tell itself apart from what
   it is checking is not a check (`docs/roadmap.md`'s item W keeps the
   TLS-specific record).
+- **Every change a request makes is audited, and
+  `tests/audit_check.py` enforces it.** Each table a request commits a
+  write to needs an audit row in that request naming it, or a rule
+  there. A rule is keyed by table, operation and columns, and carries
+  its reason. It names the parent audit type that accounts for a
+  derived write, or marks bookkeeping. A failure names the table and how
+  it was written. Add the audit row; add a rule only for a write that is
+  derived or bookkeeping, and say why. A new `auth.` SECURITY DEFINER
+  function the app calls is classified there as a writer or a reader.
+  CI's `integration` job also sets `WINGRC_AUDIT_COVERAGE`, so a
+  mutating route no test drives to a write fails the run unless it is
+  listed with its reason. The check matches an audit row's entity, not
+  its action, so a test still asserts the action where it matters
+  (`docs/roadmap.md`'s "Every change a request makes is audited" entry).
 - **A slice that puts text on a new background measures it in that
   slice.** New means a background, tint or opacity not measured before. The
   slice measures it with WCAG 2.x and states the ratio as a number:
