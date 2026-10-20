@@ -88,6 +88,16 @@ describe("ListsPanel", () => {
     );
   });
 
+  it("draws its rows in the list table a library list uses, keeping what marks it a projection", async () => {
+    mockViews();
+    render(<ListsPanel orgId="org-1" canWrite={false} />);
+    const region = await screen.findByRole("region", { name: "Authorized Devices: 1 rows, 3 columns" });
+    expect(region.querySelector("table")?.className).toBe("contacts-table list-rows");
+    expect(screen.getByText(/projected from the live scope graph/)).toBeTruthy();
+    expect(screen.getByText(/1 entity excluded as out of the CUI boundary/)).toBeTruthy();
+    expect(screen.getByText(/cells are known\s+absent for the stated reason/)).toBeTruthy();
+  });
+
   it("states how many entities were excluded as out of boundary", async () => {
     mockViews();
     render(<ListsPanel orgId="org-1" canWrite={false} />);

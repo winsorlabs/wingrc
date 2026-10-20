@@ -363,11 +363,11 @@ the rule rather than checking it, and a History that could not say
 whether the list had ever been attached. Migration 0068
 (`list_link_event`). See the roadmap's L.10 entry.
 
-**L.9 — the scope-drawn lists look like the rest.** The four lists drawn
-from scope, on the same Lists index, still render in the old table style
-L.8 replaced on the library list page. Those four only, reusing L.8's
-styling and side-scroll hook rather than copying them. See the roadmap's
-L.9 entry under Planned.
+**L.9 — the scope-drawn lists look like the rest. ✅ DONE (2026-10-20).**
+The four lists drawn from scope now draw their rows in the library list
+page's table. `components/ListRows.tsx` (`ListRowsTable`, `useSideScroll`)
+and one `.list-rows` CSS block are imported by both panels, not copied.
+See the roadmap's Done entry "The visual batch: V, L.9 and U".
 
 **L.6 — the scope-graph join.** The ~10 projected lists draw rows from
 `scope_entity` — asset approval appearing in `3.1.1c`, and the rest. Last

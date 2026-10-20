@@ -5442,6 +5442,263 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### The visual batch: V, L.9 and U ✅ DONE (2026-10-20, bench-verified; frontend only)
+
+Three Planned items in one branch, three commits so a bisect can tell
+them apart, in this order: **V, then L.9, then U.** V changes `--muted`
+everywhere and L.9 measures contrast, so measuring L.9 first would have
+measured against a token about to change. U touches only `api.ts`.
+**Backend untouched**: no file under `backend/` changes.
+
+**Two of the three reach back into L.8's page,** which is the regression
+surface. V removes the `--muted` override L.8 added to
+`.list-library-detail`, and L.9 moves L.8's table CSS and its
+`useSideScroll` hook out of `ListLibraryPanel`. So L.8's own three
+acceptance checks were re-run on the bench rather than assumed (below).
+
+**How it was measured.** The bench served `main`'s build (`e6b38f0`) and
+this branch's side by side over one backend holding a restored copy of
+live, plus bench-only rows: 40 more devices in Acme's scope, and a copy of
+Winsorlabs' widest template (Authorized Devices & Hardware Inventory, 19
+columns) with 40 rows beyond its two examples, one a `[PLACEHOLDER -
+reason]`. The copy was dropped at teardown. Headless Chromium at
+1366×768 took 34 captures of screens and states on each build:
+- the Lists index, a scope-drawn list (top, scrolled, hovered), the
+  library list (top, scrolled, scrolled right);
+- the dashboard, the board (with a hovered family header and expanded
+  objectives), the control drawer with guidance;
+- an objective's archived evidence, Tasks, Tools, Assets, Contacts,
+  Periodic Review, Org Profile, Network Diagram;
+- Documents, a document, its History, a diff, and a refused tag removal
+  (the yellow panel);
+- Security, Audit Log, and the login form.
+
+On each, every text node was measured against the background it actually
+sits on: ancestors composited, opacity applied, and text behind a modal
+overlay skipped. Of the 82 `color: var(--muted)` rules, 55 were reached
+on screen. The other 27 (wizards, MFA enrolment, a file's size and remove
+control, the import report, and the like) are worked from the background
+their CSS puts them on.
+
+#### V: `--muted` is `#5c636a`
+
+The token changes, not its uses: `#6c757d` (4.45:1 on `--bg`) becomes
+`#5c636a`. L.8's per-page override is gone.
+
+| Where `--muted` sits | Background | Before (`#6c757d`) | After (`#5c636a`) |
+|---|---|---|---|
+| Page text: hints, sub-lines, table headers, form labels, board meta, document labels (43 contexts) | `--bg` `#f8f9fa` | 4.45 | 5.78 |
+| Cards, drawers, dialogs, the login card (38 contexts) | white | 4.69 | 6.09 |
+| **An objective's archived evidence** (*No longer attached*) | white, at opacity 0.85 | **3.52** | **6.09** (opacity removed; 4.32 with the token alone) |
+| Board family header | `#f1f3f5` | 4.22 | 5.48 |
+| Board family header, hovered | `#e9ecef` | 3.95 | 5.14 |
+| Control header, expanded or hovered | `#f5f6f7` | 4.33 | 5.63 |
+| Control header, resting | `#fafbfc` | 4.53 | 5.88 |
+| Completion dot on the active side-nav item | `#e0e7ff` | 3.81 | 4.94 |
+| Tool card's role line | `#f0f6ff` | 4.32 | 5.61 |
+| Wizard step number (CSS, not reached) | `--border` `#dee2e6` | 3.60 | 4.68 |
+| Side-nav item hovered (CSS) | `#dee2e6` | 3.60 | 4.68 |
+| Diff −/+ marker on a deletion (CSS) | `#f8d7da` | 3.51 | 4.56 |
+| Diff marker on an insertion (CSS) | `#d1e7dd` | 3.61 | 4.69 |
+| Diff marker on a replacement (CSS) | `#fff3cd` | 4.23 | 5.50 |
+| Dashboard row hovered (CSS) | `#eef2ff` | 4.19 | 5.45 |
+| A list tab's count on a hovered tab (CSS) | `#f0f4ff` | 4.26 | 5.54 |
+
+Every `--muted` context is now at or above 4.5:1; the lowest is 4.56.
+
+**Found by measuring: yesterday's archived evidence failed twice over.**
+`.ev-archived` drew its rows in `--muted` *and* at opacity 0.85. That was
+3.52:1 before this slice, and still 4.32:1 on the new token. It is
+already greyed by colour, struck through and written as a sentence (the
+L.10 rule), so the opacity went. Its *Download* link and buttons were
+being faded with it too.
+- **It shipped the day before, in the slice that added it** (the evidence
+  section entry below).
+- 3.52:1 is above the 3:1 a deliberately faint element is held to, but
+  these rows are not that. They are sentences a person reads, saying
+  when and why evidence left, so they are held to AA's 4.5:1, and they
+  were well under it.
+- Nobody measured them, because the slice that added them did not
+  measure, and the sweep that did came a day later.
+
+**Convention, from this (2026-10-20):** a slice that draws text on a
+background, or at an opacity, that has not been measured before
+measures it in that slice, and states the ratio as a number. It does not
+wait for a later sweep. This is now in CLAUDE.md's conventions.
+
+**The yellow refusal panel holds no `--muted` text.** Its sentence is the
+notice colour. What fails on it is the *Keep it* button's blue (below).
+
+**The literal `#6c757d` uses stay, both deliberately faint, both above
+the 3:1 a placeholder needs:**
+- **The example cell** (`[PLACEHOLDER]`): `#6c757d` on its `#f1f3f5`
+  tint, 4.22:1. It is meant to read fainter than real values (`#212529`,
+  15.4:1) so a template example is never mistaken for a record (L.8).
+- **The empty-cell dash** (—): `#6c757d`, 4.69:1 on white, 4.45:1 on a
+  hovered row. It marks absence beside near-black values. L.9 moved it
+  from L.8's page scope to the shared `.list-rows`, so the scope-drawn
+  lists now draw the dash the same way. Before, they drew it in
+  `--muted`.
+
+There are no other literal `#6c757d` uses in the CSS or in any component.
+
+**Found, not fixed (not `--muted`, so not this slice).**
+
+**`--primary` `#0d6efd` on `--bg` is 4.27:1, and it is the next visual
+item (V.1 under Planned), not a backlog line.** It is every ghost button
+and text link on the page background: *← All lists*, *Adopt templates*,
+the Lists index's titles, *Edit*. That is worse than V's defect. A link
+is the element a person is hunting for, whereas secondary text is what
+they skim past. It has the same one-token shape.
+
+Smaller ones, under 4.5:1 on the branch:
+- `#0d6efd` on the refusal panel's `#fff3cd`: 4.06.
+- On the tool card's `#f0f6ff`: `#198754` (*Active*) and `#dc3545`
+  (*Deactivate*), 4.17.
+- The *Inactive* status badge, `#64748b` on `#f1f5f9`: 4.34.
+- The drawer textarea's placeholder, the browser default `#757575`:
+  4.37.
+- Seven inline `#6b7280` greys (Liongard sync, review cycles, SPRS
+  submissions, MFA re-enrol): 4.59 on `--bg`, 4.83 on white. These pass.
+- Disabled controls are under 3:1 (*Record review — still current*,
+  *No changes*). WCAG exempts inactive components.
+- The side nav's ✓ (`#16a34a`, 3.30) is a graphic, held to 3:1.
+
+#### L.9: the scope-drawn lists draw their rows in the library list's table
+
+**One definition, imported by both panels:**
+- **The hook and the frame are in `frontend/src/components/ListRows.tsx`.**
+  `useSideScroll` moved there unchanged. `ListRowsTable` draws the
+  side-scroll cue, the scroll box (`role="region"`, labelled "{title}: N
+  rows, M columns") and the `<table className="contacts-table
+  list-rows">`. Each caller draws its own header and cells.
+- **The style is in one block in `styles.css`:** "The table a list's rows
+  are drawn in". This is L.8's `.list-rows*` rules and the scroll hint,
+  moved out of L.8's page block.
+- `ListLibraryPanel` (L.8's page) and `ListsPanel` (the four scope-drawn
+  pages) both import them. Nothing was copied.
+
+**Kept, because they are what makes a projection different from a kept
+list:** the "projected from the live scope graph" line, the
+excluded-entities note, the empty explanation, and the `[PLACEHOLDER -
+reason]` legend. A test asserts all four, plus the shared table.
+
+**Two small things the move needed:**
+- **The title row.** On the scope pages the title sat mid-right, pushed
+  by `.contacts-panel-header`'s `flex-end`. It now sits left as on the
+  library page (`.list-view-header`, those four pages only).
+- **The placeholder tint on hover.** A scope-drawn placeholder is the
+  `<td>` itself, so the shared hover background would have replaced its
+  amber tint. The tint is kept.
+
+**Narrowly those four pages.** None of the other 16 `.contacts-table`
+users changed, and neither did the Lists index's own table. A table
+component for all of them remains the follow-on L.8 named.
+
+**On the bench, the scope-drawn Authorized Devices (43 rows, 18
+columns):**
+
+| Check | `main` | Branch |
+|---|---|---|
+| First row visible at 1366×768 | yes, bottom at 326px | yes, bottom at 337px |
+| Sticky header | the table has no scroll box, so the header leaves with the page | pinned to the box top after scrolling 600px |
+| Side-scroll cue | none | "18 columns, wider than the screen. Scroll sideways for the rest →" |
+
+**L.8's page, re-verified against its own three checks** (it now renders
+from moved code):
+- **First data row visible at 1366×768:** yes, row bottom at 585px.
+- **Sticky header:** pinned to the box top after scrolling 600px, on both
+  builds.
+- **Placeholders distinct from real values:** yes.
+  - The example cell is italic `#6c757d` on `#f1f3f5`.
+  - The reason cell is italic `#7a5c00` on `#fff4cc`.
+  - A real value is upright `#212529`.
+
+  These are identical on `main` and the branch.
+
+Fresh screenshots were taken of the top, scrolled down, and scrolled
+right.
+
+**Mutation:** `main`'s `ListsPanel.tsx` against the new test fails it
+(the shared region is not there); restored, 6/6. The side-scroll cue's
+own test (`ListRows.test.tsx`) drives `clientWidth`/`scrollWidth` both
+ways: wider says so and which way, fitting says nothing.
+
+#### U: an error's detail reaches the screen as a sentence
+
+The 28 `api.ts` calls that threw `new Error(body.detail ?? ...)` now go
+through `detailText`, which turns FastAPI's 422 list and a `{message}`
+detail into the server's own words. A string detail passes through
+unchanged.
+
+**Callers that inspect the message: 0.** Each of the 28 changes the
+string its callers receive, so the callers were read before any change.
+The search covered every read of an error's `.message` in `frontend/src`: comparisons,
+`includes`/`startsWith`/`match`/`test`, a `switch`, anything assigned
+onward. Every read displays the message (`setError(e.message)` or `e
+instanceof Error ? e.message : "…"`), with one exception that is
+display too. `UsersPanel`'s blocked delete branches on `ApiError.status
+=== 409`, a `send()` error rather than one of the 28, and shows the
+message. No branch could change.
+
+**Pinned at the screen, not at the function.** `LoginPage.test.tsx` signs
+in with `someone@acme.test`. It runs against the backend's real 422 body,
+captured from the bench stack, and asserts the form shows the
+validator's sentence:
+
+> value is not a valid email address: The part after the @-sign is a
+> special-use or reserved name that cannot be used with email.
+
+It also asserts that no "[object Object]" appears anywhere. Run against
+`main`'s `api.ts`, the test fails, and the form renders "[object
+Object]". In the browser on the bench, the same address shows "[object
+Object]" on `main` and the sentence on the branch.
+
+**Two more sites, outside the 28, were left alone.** Both have the same
+flaw, and both are latent: no screen reaches them today.
+- **`downloadBundle`: same flaw, same fix.** It does `if (body.detail) msg
+  = body.detail`, so an object detail becomes "[object Object]". The
+  endpoint's own errors are strings (404s). But its `list_id` query
+  parameter is typed `list[UUID]`, so a malformed id gets FastAPI's 422
+  list. The bundle picker sends only real ids, so nothing reaches that
+  today. The fix is `detailText(body.detail, …)`.
+- **`applyBaselineImport`: same flaw, but not quite the same fix.** It
+  already handles the endpoint's own 422 shape, `{"problems": [...]}`,
+  by joining them, and its other errors are strings. What falls through
+  to `detail ?? …` unhandled is FastAPI's own 422 list, for a missing or
+  malformed `file` field, which the upload form never sends. The fix is
+  `detailText` for the fall-through, with the `problems` branch kept
+  first. `detailText` does not know `problems`, and routing it there
+  alone would turn the validation list into the fallback status line.
+- **Should `detailText` learn `{problems: [...]}` instead? Sized
+  (2026-10-20): no, it is a one-off.**
+  - Five backend routes raise an object `detail`.
+  - Four carry `message`, which `detailText` already reads:
+    `documents.py:664`, and `list_definitions.py:362`, `:498` and `:631`.
+  - Only `admin_products.py:667`'s baseline import apply raises
+    `{"problems": [...]}`, and `applyBaselineImport` is its only reader.
+  - The import wizard's `preview.problems` is a successful dry-run body,
+    not an error.
+
+  So the branch stays in that one caller, with a comment saying the shape
+  belongs to one endpoint. **If a second endpoint ever raises `problems`,
+  move the shape into `detailText`.** A helper that knows two of three
+  shapes makes every caller learn the third, and that is how 28 call
+  sites each reimplemented the same line.
+
+**Verified:** vitest 467/467 (463 before: two `ListRows`, one
+`ListsPanel`, one `LoginPage`), `tsc -b` clean, `npm run build` clean,
+all on the bench from source identical to the commits (checksummed). No
+existing frontend test asserted the old colour or the old table markup,
+so none needed updating.
+
+**Live, after deploy (pending):** Jarrod opens the Lists index, then one
+scope-drawn list and one library list, and checks they read as two
+screens of one product. Then he signs in with a bad address and reads the
+error.
+
+---
+
 ### The evidence section stops destroying things and stops hiding things ✅ DONE (2026-10-19, bench-verified, migration 0071; deploy pending)
 
 One idea in four parts. **An objective's evidence section tells the truth
@@ -10239,7 +10496,10 @@ is not a deferral. An export is a customer's records, and CLAUDE.md's
 product invariants say a customer's content never becomes template
 source.
 
-### U. The login form shows a validation error as "[object Object]"
+### U. The login form shows a validation error as "[object Object]" ✅ DONE (2026-10-20)
+
+**Built in the Done entry "The visual batch: V, L.9 and U".** No caller
+inspects the message, and the login test reads what the form shows.
 
 **Found on the L.2.2 bench (2026-10-15).** Signing in with an address
 the validator rejects (a reserved domain such as `.test`) returns
@@ -10256,7 +10516,12 @@ already turns both shapes into a sentence. The fix is to route the 28
 through it, with a test that a 422 on login shows the validator's
 message.
 
-### V. The app's secondary text passes AA contrast
+### V. The app's secondary text passes AA contrast ✅ DONE (2026-10-20)
+
+**Built in the Done entry "The visual batch: V, L.9 and U"**, with every
+`--muted` context measured. The objective's archived evidence was the one
+that failed even on the new token, because it was also drawn at opacity
+0.85.
 
 **Found in L.8 (2026-10-16).** The shared `--muted` token (`#6c757d`,
 `styles.css`) is **4.45:1** on the app's `--bg` (`#f8f9fa`) -- under
@@ -10278,7 +10543,84 @@ on another. Check the literal `#6c757d` uses too: L.8's example cell is
 a placeholder needs, so it stays -- say so rather than sweeping it up.
 Frontend only; screenshots of three or four screens before and after.
 
-### L.9. The scope-drawn lists look like the rest of the Lists index
+### V.1. Links and ghost buttons pass AA contrast (`--primary`) -- next visual item
+
+**Found in V (2026-10-20), measured.** `--primary` (`#0d6efd`) is
+**4.27:1** on the app's `--bg` (`#f8f9fa`), under AA's 4.5:1. That covers
+every ghost button and text link on the page background, among them *←
+All lists*, *Adopt templates*, the Lists index's list titles, *Edit*,
+*Generate Assessor Bundle* and *Add tag*. On the refusal panel's
+`#fff3cd` (*Keep it*) it is 4.06:1.
+
+**The before, so the after can be checked** (WCAG 2.x, `#0d6efd`):
+
+| Foreground on background | Where | Before |
+|---|---|---|
+| `#0d6efd` on `#f8f9fa` (`--bg`) | ghost buttons and links on the page | 4.27 |
+| `#0d6efd` on `#fff3cd` | *Keep it* on the refusal panel | 4.06 |
+| `#0d6efd` on `#ffffff` | links and ghost buttons in cards and drawers | 4.50 |
+| `#ffffff` on `#0d6efd` | primary buttons | 4.50 |
+| `#ffffff` on `#0b5ed7` (`--primary-hover`) | primary buttons, hovered | 5.84 |
+
+**Aim for margin, not 4.5:1.** Two of those sit at exactly 4.50:1. That
+passes on paper and fails on screen. The ratio assumes solid fills, but
+antialiased text draws its edge pixels at values between the text and
+the background. So the contrast a reader actually gets across a glyph is
+lower than the computed number, and most so for small and thin type,
+which ghost buttons are.
+- V landed at 5.78:1 on `--bg`, not 4.51, for this reason.
+- V.1 should land with similar headroom on `--bg` and on white, and keep
+  white-on-primary well clear of 4.5 too.
+- **Do not "fix" a later reading back down to 4.51.** The margin is the
+  point.
+
+**Trap: rest and hover move together (Jarrod, 2026-10-20).** Today the
+hover fill `--primary-hover` (`#0b5ed7`, white 5.84:1) is darker than the
+resting `--primary` (4.50:1). That gap is what makes hover read as a
+state change.
+
+Darken the resting token toward ~5.8 and leave `#0b5ed7` alone, and hover
+becomes the same as rest, or lighter. Hover then stops reading as a
+change of state, or reads backwards. For example, a resting `#0a58ca`
+(white 6.44:1, 6.11:1 on `--bg`) would sit *darker* than the untouched
+hover at 5.84.
+
+So:
+- **Pick the new resting value first.**
+- **Derive the hover from it:** darker by a step a person can see. For
+  scale, `#094db1` is white 7.75:1 against `#0a58ca`'s 6.44.
+- Never tune the two independently.
+
+Put both in the before/after table, rest and hover side by side. This
+looks fine in a contrast table and wrong on screen, so check it on the
+bench by hovering, not only by computing.
+
+**Why it comes before the backlog.** A link or a button is what a person
+is looking for. Secondary text, which is what V fixed, is what they read
+past. Failing contrast on the thing you hunt for is the worse defect.
+
+**The slice has V's shape:**
+- Change the token, not its uses.
+- Then measure every background a `--primary` foreground sits on. That
+  includes white, `--bg`, the tool card's `#f0f6ff`, the notice panels,
+  and hovered rows.
+- Measure the white text on `--primary` and `--primary-hover` fills too:
+  the primary buttons, since darkening the blue raises those.
+- State each ratio as a number, before and after, against the table above.
+
+The bench walk from V is in the Done entry "The visual batch: V, L.9 and
+U", and can be rerun as it stands. Frontend only.
+
+**Also in the found list, to fold in or leave by name:**
+- `#198754` and `#dc3545` on the tool card, 4.17;
+- the *Inactive* badge, 4.34;
+- the textarea placeholder, 4.37.
+
+### L.9. The scope-drawn lists look like the rest of the Lists index ✅ DONE (2026-10-20)
+
+**Built in the Done entry "The visual batch: V, L.9 and U".** The table
+frame and hook are in `components/ListRows.tsx`, its style in one
+`.list-rows` block, and both panels import them.
 
 **Found in L.8 (2026-10-16).** Library › Lists shows the four lists drawn
 from scope (`ListsPanel.tsx`) beside the library lists. L.8 restyled the

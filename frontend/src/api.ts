@@ -128,7 +128,7 @@ export const api = {
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<{ next: string }>;
   },
@@ -142,7 +142,7 @@ export const api = {
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
   },
 
@@ -155,7 +155,7 @@ export const api = {
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<{ next: string }>;
   },
@@ -167,7 +167,7 @@ export const api = {
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<MfaEnrollData>;
   },
@@ -181,7 +181,7 @@ export const api = {
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<{ backup_codes: string[] }>;
   },
@@ -197,7 +197,7 @@ export const api = {
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
   },
 
@@ -210,7 +210,7 @@ export const api = {
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<MfaEnrollData>;
   },
@@ -224,7 +224,7 @@ export const api = {
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<{ backup_codes: string[] }>;
   },
@@ -238,7 +238,7 @@ export const api = {
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<{ backup_codes: string[] }>;
   },
@@ -553,7 +553,7 @@ export const api = {
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<DiagramUpload>;
   },
@@ -567,7 +567,7 @@ export const api = {
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<DiagramUpload>;
   },
@@ -621,7 +621,7 @@ export const api = {
     const r = await fetch(`${BASE}/orgs/${orgId}/contacts/import/liongard`);
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<LiongardIdentityListResult>;
   },
@@ -638,7 +638,7 @@ export const api = {
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<LiongardImportResult>;
   },
@@ -778,7 +778,7 @@ export const api = {
     const r = await fetch(`${BASE}/orgs/${orgId}/memberships/${userId}`, { method: "DELETE" });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
   },
 
@@ -916,7 +916,7 @@ export const api = {
     const r = await fetch(`${BASE}/orgs/${orgId}/exports/${encodeURIComponent(viewId)}`);
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
@@ -969,7 +969,7 @@ export const api = {
       // DELETE RESTRICT) -- the detail message names that reason
       // specifically, so it must reach the caller, not just "409".
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
   },
 
@@ -987,7 +987,7 @@ export const api = {
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<DryRunResult>;
   },
@@ -1015,7 +1015,7 @@ export const api = {
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<LiongardUnmapResult>;
   },
@@ -1024,7 +1024,7 @@ export const api = {
     const r = await fetch(`${BASE}/orgs/${orgId}/integrations/liongard/environments`);
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<LiongardEnvironmentOption[]>;
   },
@@ -1040,7 +1040,7 @@ export const api = {
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<LiongardEnvironmentMapping>;
   },
@@ -1051,7 +1051,7 @@ export const api = {
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<DryRunResult>;
   },
@@ -1112,7 +1112,7 @@ export const api = {
     const r = await fetch(`${BASE}/admin/products/import/dry-run`, { method: "POST", body: form });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<BaselineImportPreview>;
   },
@@ -1148,7 +1148,7 @@ export const api = {
     const r = await fetch(`${BASE}/admin/products/import/from-documents`, { method: "POST", body: form });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<DocumentIngestResult>;
   },
@@ -1167,7 +1167,7 @@ export const api = {
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<DocumentIngestResult>;
   },
@@ -1182,7 +1182,7 @@ export const api = {
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     const data = (await r.json()) as { suggestions: UrlSuggestion[] };
     return data.suggestions;
@@ -1196,7 +1196,7 @@ export const api = {
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<FetchUrlsResult>;
   },
@@ -1218,7 +1218,7 @@ export const api = {
     );
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<DocumentIngestResult>;
   },
@@ -1239,7 +1239,7 @@ export const api = {
     const r = await fetch(`${BASE}/admin/products/${productId}/documents`, { method: "POST", body: form });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail ?? `${r.status} ${r.statusText}`);
+      throw new Error(detailText(body.detail, `${r.status} ${r.statusText}`));
     }
     return r.json() as Promise<ProductDocumentItem>;
   },
