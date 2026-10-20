@@ -10922,30 +10922,59 @@ the lobby can make the product send mail to the Security Officer.
   it. Reaching the ceiling is recorded on the kiosk, and its settings
   page says so. There is no generic notification table: each feature has
   its own, e.g. `document_review_notification`.
-- **Email is best-effort and optional.** The SMTP connector is
-  configured per deployment, and GCC High and air-gapped deployments may
-  have no relay. A check-in never depends on mail. A send that fails, or
-  was never attempted, is recorded on the check-in, the way
-  `review_cycles.record_notification_result` records a reviewer's.
+**Rule: email never gates a check-in.** The check-in row is written and
+the visitor is told they are checked in before any mail is attempted, and
+no failure, delay or absence of mail can block or undo it. This is a
+deployment-shape constraint, not a preference: the SMTP connector is
+optional, and GCC High and air-gapped installs may have no relay at all.
+On those the kiosk works exactly as it does elsewhere, minus the email. A
+visitor at a tablet is never stuck behind SMTP.
+- A send that fails, or was never attempted, is recorded on the check-in,
+  the way `review_cycles.record_notification_result` records a
+  reviewer's.
+- A test pins it: with no mail connector configured, and with one that
+  raises, a check-in succeeds and reads back from the log.
 
 **The pre-registration lookup is an enumeration oracle.** Type a name,
 learn whether that person is expected today. The kiosk role cannot
 *read* the expected-visitor list, but Next answers questions about it
 one name at a time. That is the same disclosure by a slower route,
-reachable by anyone standing in the lobby. The options:
-1. require more than a name to match (company plus surname);
-2. never answer "not found" differently from "found, but not today";
-3. **(recommended)** the kiosk always collects the full details, and the
-   server resolves the pre-registration without telling the visitor
-   which path they took.
+reachable by anyone standing in the lobby.
 
-Option 3 is the only one that discloses nothing.
-- **It changes his described flow.** A pre-registered visitor no longer
-  gets a one-tap *Check in*; everyone answers purpose and host.
-- That is a UX cost in exchange for the disclosure, and it is his to
-  accept.
-- The notification still differs behind the screen: the registrant is
-  told if there is one, otherwise the Security Officer.
+**Decided (Jarrod, 2026-10-20): the three-field match, and the one-tap
+check-in stays.** *Check in* is offered only when first name, last name
+and company all match a pre-registration for today. Screen one already
+collects all three, so the flow is unchanged.
+- **This reverses this entry's earlier recommendation** (always collect
+  the full details and never show which path was taken). That option
+  disclosed nothing, but it removed the one-tap check-in for every
+  pre-registered visitor. The cost to the flow was larger than the risk.
+- **The lookup is held to the per-kiosk ceiling** that §2 already builds
+  for email: the same database count, counting Next presses as well as
+  sends. At the ceiling the kiosk stops offering *Check in* and every
+  visitor goes to screen two. The check-in is still recorded and still
+  routed to the registrant behind the screen, so the visitor is never
+  refused.
+- **No match, and a match on another day, look the same:** both go to
+  screen two. Matching folds case and surrounding whitespace, and
+  nothing else, so a near miss is not a hint.
+
+**The residual disclosure, stated rather than designed away.** Someone
+who already knows a visitor's full name and company can stand at the
+tablet and learn whether that person is expected here today. They learn
+it when *Check in* appears; nothing else on the screen changes.
+- It needs physical presence in the lobby, which is itself logged
+  (the check-in row, and the lobby's cameras if it has them).
+- It confirms a guess the person could already make. It cannot list who
+  is expected, or find a name it was not given. The ceiling bounds how
+  many guesses fit in an hour.
+- What is learned is that someone from a named company is expected
+  today. For most orgs that is low-value. Where a visiting company is
+  itself sensitive, a per-registration *no one-tap* flag (that visitor
+  goes to screen two; the registrant is still notified) would close it.
+  Not decided, and not needed to build this.
+- The SSP's PE text should say this in one sentence, so an assessor
+  reads it from the org rather than finds it.
 
 #### 3. A check-in must not create a list version
 
@@ -10981,10 +11010,12 @@ records**, the way the four scope-drawn lists project the scope graph.
     not stored. Today `projection_view_id` is metadata only.
   - Whichever is built first designs that plumbing for both. Building
     this first is the smaller, cleaner instance of it.
-  - **One rule of L.6 does not carry over.** L.6 says a synced row is a
-    candidate a person accepts. A check-in is not a proposal about the
-    audit boundary; it is a record of an event. It lands directly, and
-    nobody accepts or rejects that a visitor came in.
+  - **One rule of L.6 does not carry over.** A synced row is an
+    observation about the world, which a person accepts. A check-in is
+    an event the product witnessed, so it lands directly; nobody accepts
+    or rejects that a visitor came in. The next projected list will need
+    sorting into one kind or the other, and that is the test that sorts
+    it.
 - **It is the pattern, not a one-off.** This is the first realisation of
   what Jarrod described when he asked for the list library: "some of
   these lists populated from activities in WinGRC (like asset approval
