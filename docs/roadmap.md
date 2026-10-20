@@ -10791,6 +10791,294 @@ The fix decides what *Remove* means (detach only, with the artifact kept
 until someone deletes it deliberately, or a delete that says so), and
 gives every path an audit row.
 
+### Kiosk pages: visitor sign-in -- not built; gated on three decisions
+
+**Jarrod, 2026-10-19. Written up only; nothing here is built.** It queues
+behind "The evidence section stops destroying things and stops hiding
+things".
+
+**Three things gate it, and each is Jarrod's:**
+1. the retention period for check-in rows (§5);
+2. who "the Security Officer" is, as a recipient (§7);
+3. whether it waits on L.6 (§4).
+
+Kiosk pages are simple screens for compliance tasks done by people who
+are not WinGRC users. The category has one member, visitor sign-in, and
+that is the one specified here.
+
+**What he described.** A tablet in a lobby. A visitor types their first
+name, last name and company, and presses Next.
+- **Pre-registered** (someone in the org registered them in advance):
+  they get a *Check in* option. Checking in emails the person who
+  registered them.
+- **Not pre-registered:** a second screen asks the purpose of the visit
+  and who they are here to see. Submitting emails the Security Officer.
+
+Either way, the check-in populates the visitor log list.
+
+#### 1. A kiosk is a role, not an anonymous page (Jarrod's decision)
+
+**The mechanism is his:** a generic kiosk user account. On login it
+lands on the kiosk screen, and it can reach nothing else.
+
+**Why that beats a URL token: it protects by scope rather than by
+secrecy.**
+- A lobby tablet is physically accessible and permanently signed in, so
+  any credential on it should be assumed known.
+- A token in a URL is worth something only while it stays secret.
+- A role that can do one thing is worth almost nothing when stolen,
+  which is the property actually wanted.
+- It needs no new credential type. Sessions, RLS and
+  `app.current_org` (through `rls.set_current_org`) work as they do
+  everywhere else.
+
+**The finding: it fits neither existing authorisation axis.** Today
+there are two:
+- **rank** (`auth._ROLE_RANK`: msp_admin 5 down to c3pao_assessor 1);
+- **a read-only set** (`_READ_ONLY_ROLES`, gated by HTTP method in
+  `require_write()`).
+
+A kiosk must **write one specific thing and read almost nothing**. That
+is the opposite shape from `c3pao_assessor`, which reads everything and
+writes nothing. Ranking it below c3pao_assessor would not express it:
+rank is a ladder, and this is a different axis.
+
+**So a kiosk role is authorised by an explicit allowlist of endpoints,
+not by rank and not by method.** Everything not on the list returns 403
+for it, including every GET.
+- The gate belongs where every route already passes: the
+  `get_current_user` / `require_org_access` chain, not each router. Then
+  a route added later is denied to the kiosk by default, rather than
+  allowed until someone remembers. That is the same reason
+  `require_write()` is applied at router level (I.2).
+- I.1's deny-by-default harness (`tests/test_route_guards.py`) walks
+  every registered route, but it checks only that each carries an auth
+  dependency. A kiosk case goes further: it requests every authenticated
+  route as a kiosk identity and asserts 403 for each one not on the
+  allowlist, so the list in the code and the routes that exist cannot
+  drift apart.
+- Adding a role is a schema change: the role CHECK constraints, which
+  item Y now holds to the model, and `roles.ts` on the frontend.
+- Getting this wrong is how a lobby tablet ends up able to read an
+  org's assessment. The allowlist is the security boundary of the whole
+  feature.
+
+**Four things cut against normal practice. Each is defensible only
+because of the allowlist, and each is written down rather than left
+silent:**
+- **The account is shared.** Several people use one identity, which the
+  product otherwise never encourages. That is acceptable here because
+  the identity is a device, not a person. The audit record should say
+  so: a check-in is attributed to the kiosk (e.g. `actor_type='kiosk'`),
+  never to a name that implies a human.
+- **MFA.** Every local login today enrols in or verifies TOTP
+  (`routers/auth.py`), and a shared lobby tablet cannot practically use
+  it. Kiosk accounts are therefore an MFA exception, which in a CMMC
+  product needs a written rationale. The rationale is the allowlist: the
+  account can do one thing. The exception is tied to the role. A user
+  given any other role is back under MFA, and a kiosk account cannot be
+  given another role (below).
+- **Session lifetime. Decided: a daily login by lobby staff, with no
+  idle timeout for the kiosk role.**
+  - The 3.1.11 idle timeout (`session_idle_minutes`, 15) would sign a
+    quiet lobby tablet out all day. The likeliest outcome is a password
+    written on a sticky note on the tablet, which is worse than either
+    option.
+  - The kiosk session instead ends at a fixed time each day, configured
+    per kiosk, and staff sign it in each morning. A stolen session is
+    then good for at most one day of doing one thing.
+  - 3.1.11 asks for a session ended "after a defined condition". For
+    this role the condition is the end of the day, written down here
+    and in the SSP text when this is built.
+- **No escalation path.** A kiosk account must never be grantable
+  another role, another org, or API-token creation. Assert each one
+  directly: the membership grant, the role change, and token creation,
+  all refused for a kiosk identity, by HTTP. This is the one property
+  that would turn a harmless credential into a serious one.
+
+#### 2. An anonymous stranger's typing reaches a compliance record
+
+**Formula injection, for real this time.**
+- The visitor's name lands in a list, and lists export to `.xlsx`.
+- The sweep that widened `render._FORMULA_PREFIXES` to `= + - @`, tab
+  and CR did so for template content written by an operator. This is
+  the first path where the input is genuinely hostile: a visitor can
+  type `=HYPERLINK(...)` as a surname.
+- `render._save()`, the single exit every workbook leaves through,
+  should already handle it. **Verify that; do not assume it.** Pin it
+  with a test that goes in through the kiosk endpoint and reads the
+  exported workbook back, not one that calls the renderer.
+
+**Outbound email triggered by whoever is standing at the tablet.** The
+session is authenticated, but the person typing is not vetted. Anyone in
+the lobby can make the product send mail to the Security Officer.
+- **The ceiling:** a per-kiosk count per hour, stored in the database.
+  The only rate limiter today (`auth.check_login_rate_limit`) is
+  in-process memory per worker, which several workers and a restart both
+  defeat.
+- **At the ceiling: record the check-in and stop emailing.** Do not
+  refuse it. Recording keeps the access log honest, which is the point
+  of the log; a refused check-in is a visitor who was there and isn't in
+  it. Reaching the ceiling is recorded on the kiosk, and its settings
+  page says so. There is no generic notification table: each feature has
+  its own, e.g. `document_review_notification`.
+- **Email is best-effort and optional.** The SMTP connector is
+  configured per deployment, and GCC High and air-gapped deployments may
+  have no relay. A check-in never depends on mail. A send that fails, or
+  was never attempted, is recorded on the check-in, the way
+  `review_cycles.record_notification_result` records a reviewer's.
+
+**The pre-registration lookup is an enumeration oracle.** Type a name,
+learn whether that person is expected today. The kiosk role cannot
+*read* the expected-visitor list, but Next answers questions about it
+one name at a time. That is the same disclosure by a slower route,
+reachable by anyone standing in the lobby. The options:
+1. require more than a name to match (company plus surname);
+2. never answer "not found" differently from "found, but not today";
+3. **(recommended)** the kiosk always collects the full details, and the
+   server resolves the pre-registration without telling the visitor
+   which path they took.
+
+Option 3 is the only one that discloses nothing.
+- **It changes his described flow.** A pre-registered visitor no longer
+  gets a one-tap *Check in*; everyone answers purpose and host.
+- That is a UX cost in exchange for the disclosure, and it is his to
+  accept.
+- The notification still differs behind the screen: the registrant is
+  told if there is one, otherwise the Security Officer.
+
+#### 3. A check-in must not create a list version
+
+`list_library.create_version` is how list content changes. Versions are
+append-only and a trigger enforces it. A busy lobby would write hundreds
+of versions a day, and make the list's history useless for the thing it
+is for.
+
+**So the visitor log is a sourced list: a projection over check-in
+records**, the way the four scope-drawn lists project the scope graph.
+- Check-ins are rows in their own table. They are append-only, and
+  written only by the kiosk endpoint. The list renders them.
+- **It is read-only as a list.** A visitor log cannot be hand-edited,
+  which is correct for an access record. A correction is a new row that
+  names the one it corrects.
+- **It exports and goes into a bundle through the same path as the
+  other lists, but what is pinned is a point in time, not a version
+  number.**
+  - It reads "Visitor log as of 2026-10-19 21:04 UTC, 412 check-ins",
+    never "version N".
+  - There is no precedent to match: the four scope-drawn lists are not
+    in the bundle at all today, and library lists pin a `list_version`
+    id.
+  - "As of" is reproducible only while no row before it has been
+    removed, so retention (§4) and the bundle's claim interact. A bundle
+    exported before rows expired stays correct, because it holds the
+    rows. A re-export afterwards says less, and must say so (*N rows
+    removed by retention before this date*) rather than read as complete.
+- **Does it wait on L.6? Recommendation: no.**
+  - L.6 is the scope-graph join (`scope_entity` into the ~10 projected
+    lists). This projection is over a new table, not scope.
+  - What they share is the plumbing for a list whose rows are drawn,
+    not stored. Today `projection_view_id` is metadata only.
+  - Whichever is built first designs that plumbing for both. Building
+    this first is the smaller, cleaner instance of it.
+  - **One rule of L.6 does not carry over.** L.6 says a synced row is a
+    candidate a person accepts. A check-in is not a proposal about the
+    audit boundary; it is a record of an event. It lands directly, and
+    nobody accepts or rejects that a visitor came in.
+- **It is the pattern, not a one-off.** This is the first realisation of
+  what Jarrod described when he asked for the list library: "some of
+  these lists populated from activities in WinGRC (like asset approval
+  → adds to 3.1.1 authorized devices list)". An activity writes records
+  of its own, and a list projects them.
+
+#### 4. Personal data
+
+Visitor names, employers, who they came to see, and why. That is PII,
+collected from people who are not customers and have agreed to nothing.
+- **Who can read the log:** the same roles that read any list, and
+  `c3pao_assessor` read-only. Not the kiosk: it writes check-ins and
+  reads nothing back, not even the one it just wrote.
+- **How long rows are kept, and what removes them: Jarrod's decision,
+  and gate 1.**
+  - Retention interacts with the control. An access log deleted too
+    soon fails the practice it exists to satisfy.
+  - Whatever the period, removal is a scheduled job that writes an audit
+    row with the count it removed, never a person deleting rows.
+- **Is a visitor's own row ever disclosed to them?** No, not through the
+  kiosk; it reads nothing. A request from a visitor goes to the org,
+  which reads the log like any other list.
+- **The screen clears completely after each check-in.** Every field,
+  any autocomplete, and anything in the browser's form history: the
+  inputs set `autocomplete="off"`, and the page resets its state rather
+  than navigating back. The next person in the queue sees nothing of the
+  last. Test it on rendered output (item Z): after a check-in, every
+  input is empty and nothing of the previous visitor is in the DOM.
+
+#### 5. Which practices it serves: it writes rows and claims nothing
+
+- The visitor log list exists on live. Acme MSP has
+  `3-10-4a-visitor-log-own`, a hand-kept list with one row, adopted from
+  Winsorlabs' template `3-10-4a-visitor-log`. Both are tagged
+  PE.L2-3.10.4 and PE.L2-3.10.5 (read-only query, 2026-10-19).
+- The kiosk feeds those practices' evidence, and **a check-in does not
+  mark anything met.**
+- The projected log is evidence a person may attach, under the same rule
+  as everything else (L.4: offered, never attached). It changes no
+  `control_state.status` and no SPRS score.
+- How the projected list relates to the existing hand-kept one, whether
+  it replaces it or sits beside it, is settled when it is built. Either
+  way, the hand-kept list's versions are left as they are.
+
+#### 6. "The Security Officer": open question, gate 2
+
+**The brief said the product has no Security Officer. It does, as a
+documentation role.**
+- `ContactDocumentationRole` includes `security_officer`.
+- Two notification paths already route to it:
+  `document_reviews.NOTIFY_ROLES` and `liongard_sync.NOTIFY_ROLES`, both
+  `("security_officer", "it_admin")`.
+
+What is open is whether the kiosk uses that or something narrower:
+1. **The documentation role:** the existing precedent, org-wide.
+2. **A RACI assignment on PE.L2-3.10.4.** RACI is per assessment, and a
+   lobby is not, so this would need a rule for which assessment.
+3. **A per-kiosk setting naming a contact.** This is the most direct,
+   and it also covers an org with two sites.
+
+**Whichever is chosen, nobody holding it must be handled, not dropped.**
+- On live today, neither Acme MSP nor Winsorlabs has a contact with
+  `security_officer`; only Test Customer A does. So the empty case will
+  occur on day one.
+- `document_reviews.notify_candidates_for_org`'s contract applies: an
+  empty recipient list is the caller's to handle explicitly. That exact
+  bug (a notification silently dropped because nobody held the role) has
+  been fixed twice in this codebase.
+- For the kiosk: the check-in is recorded, the missing recipient is
+  recorded on it, and the kiosk's settings page says it has nobody to
+  notify, before the first visitor arrives.
+
+#### 7. Do not build a kiosk framework (decision)
+
+He said "kiosk type pages", with visitor sign-in as the example.
+- **Build the visitor kiosk concretely.**
+- **Design the kiosk role and its endpoint allowlist generally.** That is
+  the part that would be painful to retrofit, and the part a second
+  kiosk would reuse unchanged.
+- **Leave page-building generality alone until a second real kiosk
+  exists.** One example is not enough to know what varies: the fields,
+  the branching, the notification and the record could each differ, or
+  none might.
+
+Recorded so the next person does not start with an abstraction.
+
+**Not in this entry:** checking a visitor out. A visitor log usually has
+a time out, and his description has none. It is the first thing a
+second iteration would want, and is not designed here.
+
+**Cross-reference.** `docs/PLAN-auth-rbac-completion.md`'s "Beyond
+I.1–I.9" note points here. A sixth role with a new authorisation axis is
+a change to that model, not a new row in `_ROLE_RANK`.
+
 ### Y. A test that models.py's CHECK constraints are the database's ✅ DONE (2026-10-19)
 
 **Built in the Done entry "The evidence section stops destroying things and stops hiding things"**
