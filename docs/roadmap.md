@@ -5512,6 +5512,19 @@ Every `--muted` context is now at or above 4.5:1; the lowest is 4.56.
 already greyed by colour, struck through and written as a sentence (the
 L.10 rule), so the opacity went. Its *Download* link and buttons were
 being faded with it too.
+- **It shipped the day before, in the slice that added it** (the evidence
+  section entry below).
+- 3.52:1 is above the 3:1 a deliberately faint element is held to, but
+  these rows are not that. They are sentences a person reads, saying
+  when and why evidence left, so they are held to AA's 4.5:1, and they
+  were well under it.
+- Nobody measured them, because the slice that added them did not
+  measure, and the sweep that did came a day later.
+
+**Convention, from this (2026-10-20):** a slice that draws text on a
+background, or at an opacity, that has not been measured before
+measures it in that slice, and states the ratio as a number. It does not
+wait for a later sweep. This is now in CLAUDE.md's conventions.
 
 **The yellow refusal panel holds no `--muted` text.** Its sentence is the
 notice colour. What fails on it is the *Keep it* button's blue (below).
@@ -5529,12 +5542,16 @@ the 3:1 a placeholder needs:**
 
 There are no other literal `#6c757d` uses in the CSS or in any component.
 
-**Found, not fixed (not `--muted`, so not this slice).** Text under
-4.5:1 on the branch:
-- **`--primary` `#0d6efd` on `--bg`: 4.27:1.** This is every ghost
-  button and text link on the page background: *← All lists*, *Adopt
-  templates*, the Lists index's titles, *Edit*. It is the largest
-  remaining contrast defect, and the same shape as V: one token.
+**Found, not fixed (not `--muted`, so not this slice).**
+
+**`--primary` `#0d6efd` on `--bg` is 4.27:1, and it is the next visual
+item (V.1 under Planned), not a backlog line.** It is every ghost button
+and text link on the page background: *← All lists*, *Adopt templates*,
+the Lists index's titles, *Edit*. That is worse than V's defect. A link
+is the element a person is hunting for, whereas secondary text is what
+they skim past. It has the same one-token shape.
+
+Smaller ones, under 4.5:1 on the branch:
 - `#0d6efd` on the refusal panel's `#fff3cd`: 4.06.
 - On the tool card's `#f0f6ff`: `#198754` (*Active*) and `#dc3545`
   (*Deactivate*), 4.17.
@@ -5637,13 +5654,22 @@ It also asserts that no "[object Object]" appears anywhere. Run against
 Object]". In the browser on the bench, the same address shows "[object
 Object]" on `main` and the sentence on the branch.
 
-**Two more sites have the same shape, outside the 28, and were left
-alone:**
-- `applyBaselineImport` falls back to `detail` when it is not a
-  `problems` list.
-- `downloadBundle` uses `body.detail` as-is.
-
-Either would show "[object Object]" for an object detail.
+**Two more sites, outside the 28, were left alone.** Both have the same
+flaw, and both are latent: no screen reaches them today.
+- **`downloadBundle`: same flaw, same fix.** It does `if (body.detail) msg
+  = body.detail`, so an object detail becomes "[object Object]". The
+  endpoint's own errors are strings (404s). But its `list_id` query
+  parameter is typed `list[UUID]`, so a malformed id gets FastAPI's 422
+  list. The bundle picker sends only real ids, so nothing reaches that
+  today. The fix is `detailText(body.detail, …)`.
+- **`applyBaselineImport`: same flaw, but not quite the same fix.** It
+  already handles the endpoint's own 422 shape, `{"problems": [...]}`,
+  by joining them, and its other errors are strings. What falls through
+  to `detail ?? …` unhandled is FastAPI's own 422 list, for a missing or
+  malformed `file` field, which the upload form never sends. The fix is
+  `detailText` for the fall-through, with the `problems` branch kept
+  first. `detailText` does not know `problems`, and routing it there
+  alone would turn the validation list into the fallback status line.
 
 **Verified:** vitest 467/467 (463 before: two `ListRows`, one
 `ListsPanel`, one `LoginPage`), `tsc -b` clean, `npm run build` clean,
@@ -10501,6 +10527,37 @@ on another. Check the literal `#6c757d` uses too: L.8's example cell is
 `#6c757d` on `#f1f3f5` at 4.2:1, deliberately faint and held to the 3:1
 a placeholder needs, so it stays -- say so rather than sweeping it up.
 Frontend only; screenshots of three or four screens before and after.
+
+### V.1. Links and ghost buttons pass AA contrast (`--primary`) -- next visual item
+
+**Found in V (2026-10-20), measured.** `--primary` (`#0d6efd`) is
+**4.27:1** on the app's `--bg` (`#f8f9fa`), under AA's 4.5:1. That covers
+every ghost button and text link on the page background, among them *←
+All lists*, *Adopt templates*, the Lists index's list titles, *Edit*,
+*Generate Assessor Bundle* and *Add tag*. On the refusal panel's
+`#fff3cd` (*Keep it*) it is 4.06:1. It passes on white (4.50:1, at the
+line).
+
+**Why it comes before the backlog.** A link or a button is what a person
+is looking for. Secondary text, which is what V fixed, is what they read
+past. Failing contrast on the thing you hunt for is the worse defect.
+
+**The slice has V's shape:**
+- Change the token, not its uses.
+- Then measure every background a `--primary` foreground sits on. That
+  includes white, `--bg`, the tool card's `#f0f6ff`, the notice panels,
+  and hovered rows.
+- Measure the white text on `--primary` and `--primary-hover` fills too:
+  the primary buttons, since darkening the blue raises those.
+- State each ratio as a number.
+
+The bench walk from V is in the Done entry "The visual batch: V, L.9 and
+U", and can be rerun as it stands. Frontend only.
+
+**Also in the found list, to fold in or leave by name:**
+- `#198754` and `#dc3545` on the tool card, 4.17;
+- the *Inactive* badge, 4.34;
+- the textarea placeholder, 4.37.
 
 ### L.9. The scope-drawn lists look like the rest of the Lists index ✅ DONE (2026-10-20)
 

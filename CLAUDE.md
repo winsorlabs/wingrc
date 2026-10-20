@@ -164,6 +164,13 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   wrote, an exit status. A check that cannot tell itself apart from what
   it is checking is not a check (`docs/roadmap.md`'s item W keeps the
   TLS-specific record).
+- **A slice that puts text on a new background measures it in that
+  slice.** New means a background, tint or opacity not measured before. The
+  slice measures it with WCAG 2.x and states the ratio as a number:
+  4.5:1 for anything read, and 3:1 only for an element faint on purpose.
+  It does not wait for a later sweep. The evidence section's archived rows
+  shipped at 3.52:1 one day and were found the next by V's sweep
+  (`docs/roadmap.md`'s visual batch entry).
 - **A test's time margin is taken from the clock the code under test
   reads.** A check made in SQL reads `now()`, fixed when the test's outer
   transaction began; a margin off `datetime.now()` is against the wrong
