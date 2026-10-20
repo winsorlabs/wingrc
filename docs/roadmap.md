@@ -10574,6 +10574,27 @@ which ghost buttons are.
 - **Do not "fix" a later reading back down to 4.51.** The margin is the
   point.
 
+**Trap: rest and hover move together (Jarrod, 2026-10-20).** Today the
+hover fill `--primary-hover` (`#0b5ed7`, white 5.84:1) is darker than the
+resting `--primary` (4.50:1). That gap is what makes hover read as a
+state change.
+
+Darken the resting token toward ~5.8 and leave `#0b5ed7` alone, and hover
+becomes the same as rest, or lighter. Hover then stops reading as a
+change of state, or reads backwards. For example, a resting `#0a58ca`
+(white 6.44:1, 6.11:1 on `--bg`) would sit *darker* than the untouched
+hover at 5.84.
+
+So:
+- **Pick the new resting value first.**
+- **Derive the hover from it:** darker by a step a person can see. For
+  scale, `#094db1` is white 7.75:1 against `#0a58ca`'s 6.44.
+- Never tune the two independently.
+
+Put both in the before/after table, rest and hover side by side. This
+looks fine in a contrast table and wrong on screen, so check it on the
+bench by hovering, not only by computing.
+
 **Why it comes before the backlog.** A link or a button is what a person
 is looking for. Secondary text, which is what V fixed, is what they read
 past. Failing contrast on the thing you hunt for is the worse defect.
