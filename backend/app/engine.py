@@ -550,6 +550,7 @@ def activate_org_product(
     else:
         target_version_id = op.baseline_version_id
 
+    previous_status = op.status if op is not None else None
     if op is None:
         op = OrgProduct(org_id=org_id, product_id=product_id)
         session.add(op)
@@ -562,6 +563,25 @@ def activate_org_product(
     session.flush()
 
     product = session.get(Product, product_id)
+    log_event(
+        session,
+        org_id=org_id,
+        action="org_product.activate",
+        entity_type="org_product",
+        entity_id=op.id,
+        before_value={"status": previous_status},
+        after_value={
+            "status": OrgProductStatus.ACTIVE,
+            "baseline_version_id": str(target_version_id),
+        },
+        context={
+            "via": "product_activation",
+            "reactivation": not is_first_activation,
+            "product_key": product.key if product else None,
+            "product_name": product.name if product else str(product_id),
+            "assessment_id": str(assessment_id),
+        },
+    )
     reactivation_ctx: dict = {
         "via": "product_reactivation",
         "product_name": product.name if product else str(product_id),

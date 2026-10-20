@@ -308,7 +308,18 @@ def create_org(body: OrgIn, session: Session = Depends(get_session)) -> OrgOut:
     # membership in the new org, at their own current role — see
     # org_membership.py's module docstring for why there's no special
     # case for the caller specifically.
-    provision_new_org_memberships(session, org.id)
+    granted = provision_new_org_memberships(session, org.id)
+    # Deployment-wide, like product administration: the request has no org
+    # yet, and audit_log's policy admits a NULL org (migration 0060).
+    log_event(
+        session,
+        org_id=None,
+        action="org.create",
+        entity_type="organization",
+        entity_id=org.id,
+        after_value={"name": org.name},
+        context={"via": "api", "memberships_granted": granted},
+    )
     session.commit()
     session.refresh(org)
     return OrgOut.model_validate(org)

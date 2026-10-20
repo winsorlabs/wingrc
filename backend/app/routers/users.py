@@ -479,6 +479,21 @@ def patch_user(
                 revoke_user_sessions(db, user.id)
         user.is_active = body.is_active
     if body.display_name is not None:
+        # detached_by / deactivated_by and similar columns keep a display name
+        # as text, so a rename is what ties those back to a person.
+        if body.display_name != user.display_name:
+            log_event(
+                db,
+                org_id=org_id,
+                action="user.rename",
+                entity_type="user",
+                entity_id=user.id,
+                before_value={"display_name": user.display_name},
+                after_value={"display_name": body.display_name},
+                context={"admin": str(current_user.id)},
+                actor=str(current_user.id),
+                actor_type=actor_type_for(current_user),
+            )
         user.display_name = body.display_name
 
     db.commit()
