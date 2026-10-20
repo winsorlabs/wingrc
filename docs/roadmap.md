@@ -5442,7 +5442,7 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
-### The visual batch: V, L.9 and U ✅ DONE (2026-10-20, bench-verified; frontend only)
+### The visual batch: V, L.9 and U ✅ DONE (2026-10-20, bench-verified; frontend only; deployed and walked on live)
 
 Three Planned items in one branch, three commits so a bisect can tell
 them apart, in this order: **V, then L.9, then U.** V changes `--muted`
@@ -5692,14 +5692,19 @@ all on the bench from source identical to the commits (checksummed). No
 existing frontend test asserted the old colour or the old table markup,
 so none needed updating.
 
-**Live, after deploy (pending):** Jarrod opens the Lists index, then one
-scope-drawn list and one library list, and checks they read as two
-screens of one product. Then he signs in with a bad address and reads the
-error.
+**Live (2026-10-20, `09aee13`): deployed and walked by Jarrod, all as
+expected.**
+- He opened the Lists index, then one scope-drawn list and one library
+  list. They read as two screens of one product.
+- He signed in with a bad address and read the sentence, not
+  "[object Object]".
+- Nothing on this walk writes, so there is nothing to read back. Before
+  the walk, the served stylesheet was checked for the new `--muted` and
+  `.list-view-header`.
 
 ---
 
-### The evidence section stops destroying things and stops hiding things ✅ DONE (2026-10-19, bench-verified, migration 0071; deploy pending)
+### The evidence section stops destroying things and stops hiding things ✅ DONE (2026-10-19, bench-verified, migration 0071; deployed and walked on live 2026-10-20)
 
 One idea in four parts. **An objective's evidence section tells the truth
 about what is attached, what used to be, and what happened to it.** The
@@ -5900,10 +5905,38 @@ Asserted along the way:
 - **No UI re-attaches a detached file or location.** Re-attaching a list
   or document is the ordinary Attach, and restores the same row.
 
-**Live, after deploy (pending):** Jarrod walks it.
-- Detach a real attachment. Confirm that the artifact survives, read
-  back from storage, and that it reads as archived.
-- Deactivate a tool naming a replacement, and one without.
+**Live walk (Jarrod, 2026-10-20 UTC, `09aee13`, Acme MSP, Datto RMM on
+MA.L2-3.7.1[a]): done, and it behaved. Read back from the database, the
+audit log and storage.**
+- **A first pass showed nothing archived, and that was correct.** Two
+  deactivations (16:11 naming RocketCyber Managed SIEM + SOC, 16:14
+  naming none) archived zero links. No evidence was attached to the
+  tool's objectives, so there was nothing to archive. "Replaced by" is
+  drawn only on archived evidence, so the screen had nowhere to say it.
+  Naming a replacement never moves a control, by design. This led to
+  the first gap below.
+- **Detach (16:18:44).** `blockedKey.png`'s link reads `detached`,
+  `detached_by` Jarrod, no product. One `evidence.detach` audit row. The
+  bytes are still in storage (85,541, a PNG header).
+- **Deactivation naming a replacement (16:19:30).** The second file's
+  link was archived with cause `deactivation` and Datto RMM's id. The
+  objective went `pending_evidence` → `needs_review`. The audit row
+  records RocketCyber as the replacement. The screen read "Replaced by
+  RocketCyber Managed SIEM + SOC".
+- **Reactivation (16:20:59) restored only what the deactivation
+  archived.** The second link is live again, with an
+  `evidence_state_link.restore` row. The person-detached link stayed
+  detached. That is the rule this slice exists for, shown on live.
+
+**Found on the walk, recorded under Planned:**
+- **A replacement named for a tool with no archived evidence shows on
+  no screen.** It is stored and audited, and nothing draws it.
+- **Two state changes write no audit row of their own:**
+  - activating or reactivating a tool (only `org_product.deactivate`
+    exists; a reactivation shows up only as the restores it did);
+  - uploading or attaching evidence (`evidence.download` is audited,
+    `evidence.detach` is audited, and the upload that created the row
+    is not).
 
 ### Review cycles attach only what attests ✅ DONE (2026-10-19, migration 0070; deployed and detached on live, read back)
 
@@ -10542,6 +10575,43 @@ on another. Check the literal `#6c757d` uses too: L.8's example cell is
 `#6c757d` on `#f1f3f5` at 4.2:1, deliberately faint and held to the 3:1
 a placeholder needs, so it stays -- say so rather than sweeping it up.
 Frontend only; screenshots of three or four screens before and after.
+
+### Audit gaps found on the evidence walk: activation and upload write no row
+
+**Found on the evidence section's live walk (2026-10-20), confirmed in
+code.** CLAUDE.md says every state change writes an `AuditLog` row. Two
+do not:
+- **Activating a tool.** `engine.activate_org_product` logs the task,
+  link and control-state restores it does, but no
+  `org_product.activate` row. `deactivate_org_product` writes
+  `org_product.deactivate`. So "who turned this tool back on, and when"
+  is answerable only from `org_product.activated_at` (no who) or by
+  inferring it from the restores. A first activation restores nothing,
+  so it leaves no audit row at all: the magic loop's
+  `not_met` → `pending_evidence` flips are in `control_state_history`
+  only (`_run_loop`), which says what changed but not who did it.
+- **Uploading or attaching evidence.** `routers/evidence.py`'s
+  `upload_evidence` writes no audit row. A download is audited and a
+  detach is audited, but the act that put an artifact in front of an
+  assessor is not.
+
+The slice: one `org_product.activate` row (before/after status, the
+pinned baseline version, whether it was a reactivation) and one
+`evidence.upload` row (title, artifact type, objectives linked, never
+the bytes or a URL), each with a test that fails without it. Backend
+only. Check task collect (`…/collect`) too, which creates evidence by
+another path.
+
+### A replacement named for a tool shows where the tool is
+
+**Found on the evidence section's live walk (2026-10-20).** A
+deactivation may name what replaces the tool (migration 0071). That is
+drawn only on archived evidence ("Replaced by X"), so a tool whose
+objectives had no evidence attached says it nowhere, although it is
+stored and audited. Draw it on the tool's own card or row once
+decommissioned: "Replaced by X, per <who>, <when>". Frontend only, from
+fields already returned. Still never inferred, and still never credits
+the replacement.
 
 ### V.1. Links and ghost buttons pass AA contrast (`--primary`) -- next visual item
 
