@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../api";
 import type { ListCell, ListViewData, ListViewSummary } from "../types";
+import { ListRowsTable } from "./ListRows";
 
 const PROCESS_VIEW_ID = "3.1.1b-auth-processes";
 
@@ -198,7 +199,7 @@ export function ListsPanel({
         <div className="loading">Loading list…</div>
       ) : (
         <>
-          <div className="contacts-panel-header">
+          <div className="contacts-panel-header list-view-header">
             <div>
               <h2>{data.title}</h2>
               <div className="contact-sub">
@@ -241,26 +242,24 @@ export function ListsPanel({
               {data.empty_explanation || `No entries in ${data.sheet_title} yet.`}
             </div>
           ) : (
-            <div className="table-scroll">
-              <table className="contacts-table">
-                <thead>
-                  <tr>
-                    {data.columns.map((c) => (
-                      <th key={c}>{c}</th>
+            <ListRowsTable title={data.title} rowCount={data.rows.length} columnCount={data.columns.length}>
+              <thead>
+                <tr>
+                  {data.columns.map((c) => (
+                    <th key={c}>{c}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((r) => (
+                  <tr key={r.natural_key}>
+                    {r.cells.map((cell, i) => (
+                      <Cell key={data.columns[i]} cell={cell} />
                     ))}
                   </tr>
-                </thead>
-                <tbody>
-                  {data.rows.map((r) => (
-                    <tr key={r.natural_key}>
-                      {r.cells.map((cell, i) => (
-                        <Cell key={data.columns[i]} cell={cell} />
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </ListRowsTable>
           )}
           <div className="contact-sub list-legend">
             <span className="list-cell-placeholder">[PLACEHOLDER - reason]</span> cells are known
