@@ -5547,6 +5547,66 @@ There are no other literal `#6c757d` uses in the CSS or in any component.
   *No changes*). WCAG exempts inactive components.
 - The side nav's ✓ (`#16a34a`, 3.30) is a graphic, held to 3:1.
 
+#### L.9: the scope-drawn lists draw their rows in the library list's table
+
+**One definition, imported by both panels:**
+- **The hook and the frame are in `frontend/src/components/ListRows.tsx`.**
+  `useSideScroll` moved there unchanged. `ListRowsTable` draws the
+  side-scroll cue, the scroll box (`role="region"`, labelled "{title}: N
+  rows, M columns") and the `<table className="contacts-table
+  list-rows">`. Each caller draws its own header and cells.
+- **The style is in one block in `styles.css`:** "The table a list's rows
+  are drawn in". This is L.8's `.list-rows*` rules and the scroll hint,
+  moved out of L.8's page block.
+- `ListLibraryPanel` (L.8's page) and `ListsPanel` (the four scope-drawn
+  pages) both import them. Nothing was copied.
+
+**Kept, because they are what makes a projection different from a kept
+list:** the "projected from the live scope graph" line, the
+excluded-entities note, the empty explanation, and the `[PLACEHOLDER -
+reason]` legend. A test asserts all four, plus the shared table.
+
+**Two small things the move needed:**
+- **The title row.** On the scope pages the title sat mid-right, pushed
+  by `.contacts-panel-header`'s `flex-end`. It now sits left as on the
+  library page (`.list-view-header`, those four pages only).
+- **The placeholder tint on hover.** A scope-drawn placeholder is the
+  `<td>` itself, so the shared hover background would have replaced its
+  amber tint. The tint is kept.
+
+**Narrowly those four pages.** None of the other 16 `.contacts-table`
+users changed, and neither did the Lists index's own table. A table
+component for all of them remains the follow-on L.8 named.
+
+**On the bench, the scope-drawn Authorized Devices (43 rows, 18
+columns):**
+
+| Check | `main` | Branch |
+|---|---|---|
+| First row visible at 1366×768 | yes, bottom at 326px | yes, bottom at 337px |
+| Sticky header | the table has no scroll box, so the header leaves with the page | pinned to the box top after scrolling 600px |
+| Side-scroll cue | none | "18 columns, wider than the screen. Scroll sideways for the rest →" |
+
+**L.8's page, re-verified against its own three checks** (it now renders
+from moved code):
+- **First data row visible at 1366×768:** yes, row bottom at 585px.
+- **Sticky header:** pinned to the box top after scrolling 600px, on both
+  builds.
+- **Placeholders distinct from real values:** yes.
+  - The example cell is italic `#6c757d` on `#f1f3f5`.
+  - The reason cell is italic `#7a5c00` on `#fff4cc`.
+  - A real value is upright `#212529`.
+
+  These are identical on `main` and the branch.
+
+Fresh screenshots were taken of the top, scrolled down, and scrolled
+right.
+
+**Mutation:** `main`'s `ListsPanel.tsx` against the new test fails it
+(the shared region is not there); restored, 6/6. The side-scroll cue's
+own test (`ListRows.test.tsx`) drives `clientWidth`/`scrollWidth` both
+ways: wider says so and which way, fitting says nothing.
+
 ---
 
 ### The evidence section stops destroying things and stops hiding things ✅ DONE (2026-10-19, bench-verified, migration 0071; deploy pending)
@@ -10390,7 +10450,11 @@ on another. Check the literal `#6c757d` uses too: L.8's example cell is
 a placeholder needs, so it stays -- say so rather than sweeping it up.
 Frontend only; screenshots of three or four screens before and after.
 
-### L.9. The scope-drawn lists look like the rest of the Lists index
+### L.9. The scope-drawn lists look like the rest of the Lists index ✅ DONE (2026-10-20)
+
+**Built in the Done entry "The visual batch: V, L.9 and U".** The table
+frame and hook are in `components/ListRows.tsx`, its style in one
+`.list-rows` block, and both panels import them.
 
 **Found in L.8 (2026-10-16).** Library › Lists shows the four lists drawn
 from scope (`ListsPanel.tsx`) beside the library lists. L.8 restyled the

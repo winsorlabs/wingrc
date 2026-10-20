@@ -90,6 +90,7 @@ import type {
   ListViewSummary,
 } from "../types";
 import { ListBuilder } from "./ListBuilder";
+import { ListRowsTable } from "./ListRows";
 import { ListsPanel } from "./ListsPanel";
 
 type Selection = { kind: "library"; id: string } | { kind: "scope"; id: string } | null;
@@ -158,31 +159,6 @@ function CellText({ value }: { value: string }) {
     );
   }
   return value ? <>{value}</> : <span className="list-cell-empty">—</span>;
-}
-
-/** Whether a wide table has columns off either side, so the page can say
- * so: a scrollbar alone hid the device list's last columns from everyone. */
-function useSideScroll() {
-  const [el, setEl] = useState<HTMLDivElement | null>(null);
-  const [edge, setEdge] = useState({ left: false, right: false });
-  useEffect(() => {
-    if (!el) return;
-    const update = () => {
-      const left = el.scrollLeft > 0;
-      const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
-      setEdge((e) => (e.left === left && e.right === right ? e : { left, right }));
-    };
-    update();
-    el.addEventListener("scroll", update, { passive: true });
-    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
-    ro?.observe(el);
-    if (el.firstElementChild) ro?.observe(el.firstElementChild);
-    return () => {
-      el.removeEventListener("scroll", update);
-      ro?.disconnect();
-    };
-  }, [el]);
-  return [setEl, edge] as const;
 }
 
 function PracticeChips({
@@ -391,7 +367,6 @@ function LibraryListView({
   const [takeBusy, setTakeBusy] = useState(false);
   const [takeError, setTakeError] = useState<string | null>(null);
   const [asEvidence, setAsEvidence] = useState<ListEvidenceStatus | null>(null);
-  const [setRowsScroller, sideways] = useSideScroll();
 
   const load = useCallback(async () => {
     try {
@@ -933,97 +908,83 @@ function LibraryListView({
       {notice && <p className="doc-notice doc-notice-warn">{notice}</p>}
       {error && <div className="form-error">{error}</div>}
 
-      {(sideways.left || sideways.right) && (
-        <p className="list-scroll-hint" role="note">
-          {columns.length} columns, wider than the screen.{" "}
-          {sideways.right ? "Scroll sideways for the rest →" : "← Scroll back for the first columns"}
-        </p>
-      )}
-      <div
-        ref={setRowsScroller}
-        className={`list-rows-scroll${sideways.left ? " is-cut-left" : ""}${sideways.right ? " is-cut-right" : ""}`}
-        tabIndex={0}
-        role="region"
-        aria-label={`${shown.title}: ${shown.rows.length} rows, ${columns.length} columns`}
-      >
-        <table className="contacts-table list-rows">
-          <thead>
-            <tr>
-              {editing && draftCols && canDefine
-                ? draftCols.map((c, i) => (
-                    <th key={i}>
-                      <input
-                        aria-label={`Column ${i + 1} name`}
-                        value={c.name}
-                        onChange={(e) =>
-                          setDraftCols((cols) => cols && cols.map((x, k) => (k === i ? { ...x, name: e.target.value } : x)))
-                        }
-                      />
-                      <button
-                        type="button"
-                        className="btn-ghost btn-sm"
-                        aria-label={`Remove column ${c.name || i + 1}`}
-                        disabled={draftCols.length === 1}
-                        onClick={() => removeColumn(i)}
-                      >
-                        Remove column
-                      </button>
-                    </th>
-                  ))
-                : columns.map((c) => (
-                <th key={c}>
-                  {c}
-                  {addedByMerge.has(c) && (
-                    <span
-                      className="list-merge-col"
-                      title={`Added by the merge with ${sheetOf(detail.merge!.absorbed_ref)}`}
+      <ListRowsTable title={shown.title} rowCount={shown.rows.length} columnCount={columns.length}>
+        <thead>
+          <tr>
+            {editing && draftCols && canDefine
+              ? draftCols.map((c, i) => (
+                  <th key={i}>
+                    <input
+                      aria-label={`Column ${i + 1} name`}
+                      value={c.name}
+                      onChange={(e) =>
+                        setDraftCols((cols) => cols && cols.map((x, k) => (k === i ? { ...x, name: e.target.value } : x)))
+                      }
+                    />
+                    <button
+                      type="button"
+                      className="btn-ghost btn-sm"
+                      aria-label={`Remove column ${c.name || i + 1}`}
+                      disabled={draftCols.length === 1}
+                      onClick={() => removeColumn(i)}
                     >
-                      {" "}
-                      (from {sheetOf(detail.merge!.absorbed_ref).split(" ")[0]})
-                    </span>
-                  )}
-                </th>
-              ))}
-              {editing && <th aria-label="Row actions" />}
-            </tr>
-          </thead>
-          <tbody>
-            {rows
-              ? rows.map((r, i) => (
-                  <tr key={i} className={r.origin === null ? "list-row-new" : undefined}>
-                    {r.cells.map((cell, c) => (
-                      <td key={c}>
-                        <input
-                          aria-label={`${columns[c]}, row ${i + 1}`}
-                          value={cell}
-                          onChange={(e) => setCell(i, c, e.target.value)}
-                        />
-                      </td>
-                    ))}
-                    <td>
-                      <button
-                        type="button"
-                        className="btn-ghost btn-sm"
-                        aria-label={`Remove row ${i + 1}`}
-                        onClick={() => setDraft((d) => d && d.filter((_, k) => k !== i))}
-                      >
-                        Remove
-                      </button>
-                    </td>
-                  </tr>
+                      Remove column
+                    </button>
+                  </th>
                 ))
-              : shown.rows.map((r, i) => (
-                  <tr key={i}>
-                    {r.map((cell, c) => (
-                      <td key={c}>
-                        <CellText value={cell} />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-          </tbody>
-        </table>
-      </div>
+              : columns.map((c) => (
+              <th key={c}>
+                {c}
+                {addedByMerge.has(c) && (
+                  <span
+                    className="list-merge-col"
+                    title={`Added by the merge with ${sheetOf(detail.merge!.absorbed_ref)}`}
+                  >
+                    {" "}
+                    (from {sheetOf(detail.merge!.absorbed_ref).split(" ")[0]})
+                  </span>
+                )}
+              </th>
+            ))}
+            {editing && <th aria-label="Row actions" />}
+          </tr>
+        </thead>
+        <tbody>
+          {rows
+            ? rows.map((r, i) => (
+                <tr key={i} className={r.origin === null ? "list-row-new" : undefined}>
+                  {r.cells.map((cell, c) => (
+                    <td key={c}>
+                      <input
+                        aria-label={`${columns[c]}, row ${i + 1}`}
+                        value={cell}
+                        onChange={(e) => setCell(i, c, e.target.value)}
+                      />
+                    </td>
+                  ))}
+                  <td>
+                    <button
+                      type="button"
+                      className="btn-ghost btn-sm"
+                      aria-label={`Remove row ${i + 1}`}
+                      onClick={() => setDraft((d) => d && d.filter((_, k) => k !== i))}
+                    >
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              ))
+            : shown.rows.map((r, i) => (
+                <tr key={i}>
+                  {r.map((cell, c) => (
+                    <td key={c}>
+                      <CellText value={cell} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+        </tbody>
+      </ListRowsTable>
       {!editing && shown.rows.length === 0 && <div className="contacts-empty">No rows in this version.</div>}
 
       {editing && (
