@@ -10969,10 +10969,13 @@ it when *Check in* appears; nothing else on the screen changes.
   is expected, or find a name it was not given. The ceiling bounds how
   many guesses fit in an hour.
 - What is learned is that someone from a named company is expected
-  today. For most orgs that is low-value. Where a visiting company is
-  itself sensitive, a per-registration *no one-tap* flag (that visitor
-  goes to screen two; the registrant is still notified) would close it.
-  Not decided, and not needed to build this.
+  today. For most orgs that is low-value.
+- **Considered and rejected (Jarrod, 2026-10-20): a per-registration *no
+  one-tap* flag** for a visiting company whose name is itself sensitive.
+  The mechanism already exists: the operator does not pre-register that
+  visitor. No *Check in* appears, they go to screen two, and nothing is
+  disclosed. A new field would buy nothing that leaving out the
+  pre-registration does not already buy.
 - The SSP's PE text should say this in one sentence, so an assessor
   reads it from the org rather than finds it.
 
