@@ -5607,6 +5607,55 @@ right.
 own test (`ListRows.test.tsx`) drives `clientWidth`/`scrollWidth` both
 ways: wider says so and which way, fitting says nothing.
 
+#### U: an error's detail reaches the screen as a sentence
+
+The 28 `api.ts` calls that threw `new Error(body.detail ?? ...)` now go
+through `detailText`, which turns FastAPI's 422 list and a `{message}`
+detail into the server's own words. A string detail passes through
+unchanged.
+
+**Callers that inspect the message: 0.** Each of the 28 changes the
+string its callers receive, so the callers were read before any change.
+The search covered every read of an error's `.message` in `frontend/src`: comparisons,
+`includes`/`startsWith`/`match`/`test`, a `switch`, anything assigned
+onward. Every read displays the message (`setError(e.message)` or `e
+instanceof Error ? e.message : "…"`), with one exception that is
+display too. `UsersPanel`'s blocked delete branches on `ApiError.status
+=== 409`, a `send()` error rather than one of the 28, and shows the
+message. No branch could change.
+
+**Pinned at the screen, not at the function.** `LoginPage.test.tsx` signs
+in with `someone@acme.test`. It runs against the backend's real 422 body,
+captured from the bench stack, and asserts the form shows the
+validator's sentence:
+
+> value is not a valid email address: The part after the @-sign is a
+> special-use or reserved name that cannot be used with email.
+
+It also asserts that no "[object Object]" appears anywhere. Run against
+`main`'s `api.ts`, the test fails, and the form renders "[object
+Object]". In the browser on the bench, the same address shows "[object
+Object]" on `main` and the sentence on the branch.
+
+**Two more sites have the same shape, outside the 28, and were left
+alone:**
+- `applyBaselineImport` falls back to `detail` when it is not a
+  `problems` list.
+- `downloadBundle` uses `body.detail` as-is.
+
+Either would show "[object Object]" for an object detail.
+
+**Verified:** vitest 467/467 (463 before: two `ListRows`, one
+`ListsPanel`, one `LoginPage`), `tsc -b` clean, `npm run build` clean,
+all on the bench from source identical to the commits (checksummed). No
+existing frontend test asserted the old colour or the old table markup,
+so none needed updating.
+
+**Live, after deploy (pending):** Jarrod opens the Lists index, then one
+scope-drawn list and one library list, and checks they read as two
+screens of one product. Then he signs in with a bad address and reads the
+error.
+
 ---
 
 ### The evidence section stops destroying things and stops hiding things ✅ DONE (2026-10-19, bench-verified, migration 0071; deploy pending)
@@ -10406,7 +10455,10 @@ is not a deferral. An export is a customer's records, and CLAUDE.md's
 product invariants say a customer's content never becomes template
 source.
 
-### U. The login form shows a validation error as "[object Object]"
+### U. The login form shows a validation error as "[object Object]" ✅ DONE (2026-10-20)
+
+**Built in the Done entry "The visual batch: V, L.9 and U".** No caller
+inspects the message, and the login test reads what the form shows.
 
 **Found on the L.2.2 bench (2026-10-15).** Signing in with an address
 the validator rejects (a reserved domain such as `.test`) returns
