@@ -5670,6 +5670,21 @@ flaw, and both are latent: no screen reaches them today.
   `detailText` for the fall-through, with the `problems` branch kept
   first. `detailText` does not know `problems`, and routing it there
   alone would turn the validation list into the fallback status line.
+- **Should `detailText` learn `{problems: [...]}` instead? Sized
+  (2026-10-20): no, it is a one-off.**
+  - Five backend routes raise an object `detail`.
+  - Four carry `message`, which `detailText` already reads:
+    `documents.py:664`, and `list_definitions.py:362`, `:498` and `:631`.
+  - Only `admin_products.py:667`'s baseline import apply raises
+    `{"problems": [...]}`, and `applyBaselineImport` is its only reader.
+  - The import wizard's `preview.problems` is a successful dry-run body,
+    not an error.
+
+  So the branch stays in that one caller, with a comment saying the shape
+  belongs to one endpoint. **If a second endpoint ever raises `problems`,
+  move the shape into `detailText`.** A helper that knows two of three
+  shapes makes every caller learn the third, and that is how 28 call
+  sites each reimplemented the same line.
 
 **Verified:** vitest 467/467 (463 before: two `ListRows`, one
 `ListsPanel`, one `LoginPage`), `tsc -b` clean, `npm run build` clean,
@@ -10535,8 +10550,29 @@ Frontend only; screenshots of three or four screens before and after.
 every ghost button and text link on the page background, among them *←
 All lists*, *Adopt templates*, the Lists index's list titles, *Edit*,
 *Generate Assessor Bundle* and *Add tag*. On the refusal panel's
-`#fff3cd` (*Keep it*) it is 4.06:1. It passes on white (4.50:1, at the
-line).
+`#fff3cd` (*Keep it*) it is 4.06:1.
+
+**The before, so the after can be checked** (WCAG 2.x, `#0d6efd`):
+
+| Foreground on background | Where | Before |
+|---|---|---|
+| `#0d6efd` on `#f8f9fa` (`--bg`) | ghost buttons and links on the page | 4.27 |
+| `#0d6efd` on `#fff3cd` | *Keep it* on the refusal panel | 4.06 |
+| `#0d6efd` on `#ffffff` | links and ghost buttons in cards and drawers | 4.50 |
+| `#ffffff` on `#0d6efd` | primary buttons | 4.50 |
+| `#ffffff` on `#0b5ed7` (`--primary-hover`) | primary buttons, hovered | 5.84 |
+
+**Aim for margin, not 4.5:1.** Two of those sit at exactly 4.50:1. That
+passes on paper and fails on screen. The ratio assumes solid fills, but
+antialiased text draws its edge pixels at values between the text and
+the background. So the contrast a reader actually gets across a glyph is
+lower than the computed number, and most so for small and thin type,
+which ghost buttons are.
+- V landed at 5.78:1 on `--bg`, not 4.51, for this reason.
+- V.1 should land with similar headroom on `--bg` and on white, and keep
+  white-on-primary well clear of 4.5 too.
+- **Do not "fix" a later reading back down to 4.51.** The margin is the
+  point.
 
 **Why it comes before the backlog.** A link or a button is what a person
 is looking for. Secondary text, which is what V fixed, is what they read
@@ -10549,7 +10585,7 @@ past. Failing contrast on the thing you hunt for is the worse defect.
   and hovered rows.
 - Measure the white text on `--primary` and `--primary-hover` fills too:
   the primary buttons, since darkening the blue raises those.
-- State each ratio as a number.
+- State each ratio as a number, before and after, against the table above.
 
 The bench walk from V is in the Done entry "The visual batch: V, L.9 and
 U", and can be rerun as it stands. Frontend only.
