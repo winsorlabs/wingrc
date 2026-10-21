@@ -10919,6 +10919,20 @@ entry is removed.
 only as a `customer_poc` refusal (403). A resolve that writes is not, so
 it too is listed until a test reaches it.
 
+### Docstrings' universal claims: measure first -- low priority
+
+**Recorded 2026-10-21.** CLAUDE.md's convention brings an existing claim
+under a test only when its code is touched. That leaves the claims in
+files nobody edits, and those are the kind a later change makes false
+without anyone noticing.
+
+**This item measures and changes nothing.** Grep docstrings and comments
+for universal claims: "never", "always", "only", "every", "none", "no
+production path", and closed lists of callers or cases. Report the count
+and the list. Five is an afternoon's work, done in place. Fifty means
+choosing the load-bearing ones, the claims a reader would act on. The
+count decides which, so nothing is fixed before it exists.
+
 ### An objective's history says who changed it
 
 **Recorded 2026-10-20, split from the item above on purpose.** Once

@@ -195,6 +195,14 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   - `clear_current_org` said "No production path calls this", until org
     creation did.
 
+  These are two kinds. `publish_document`'s claim was false when
+  written: an author's error, which review can catch. `close_cycle`'s
+  and `clear_current_org`'s were true when written and made false by a
+  later change, weeks later for one and the same slice for the other.
+  The second kind is the larger problem, because nobody re-reads a
+  docstring in a file they are not editing. That is why the test has to
+  keep running rather than the claim being checked once at review.
+
   Existing claims are brought under this when their code is touched
   (`tests/test_audit_check.py`'s definer classification and
   `test_rls_context.py`'s caller list are the pattern).
