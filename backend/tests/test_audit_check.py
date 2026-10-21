@@ -113,6 +113,36 @@ def test_a_derived_write_needs_its_parent_audit_row_in_the_same_request():
     assert unrelated.unaccounted() == {"sprs_snapshot": ["INSERT"]}
 
 
+def test_a_broad_parent_accounts_only_through_the_actions_measured_making_the_write():
+    """An evidence row beside a list link's `control_state` row is accounted
+    for; beside a mark-met row, which is a `control_state` row too, it is
+    not. POST /assessments once passed on a row that named the right entity
+    and described something else."""
+    ev = Write("INSERT", "evidence")
+    link = Write("INSERT", "evidence_state_link")
+    listed = RequestWrites("POST", "/lists", committed=[ev, link], audited={"control_state"},
+                           actions={"evidence.list_link"})
+    marked = RequestWrites("PATCH", "/cs", committed=[ev, link], audited={"control_state"},
+                           actions={"control_state.update"})
+    assert listed.unaccounted() == {}
+    assert marked.unaccounted() == {"evidence": ["INSERT"], "evidence_state_link": ["INSERT"]}
+
+
+def test_the_broad_parent_rules_pin_their_actions():
+    """The two rules whose parents include `control_state` keep an action
+    list: removing it reopens the gap the test above closes."""
+    pinned = {(r.table, r.op) for r in audit_check.RULES if r.actions}
+    assert {("evidence", "INSERT"), ("evidence_state_link", None)} <= pinned
+
+
+def test_it_reads_the_action_an_audit_row_names():
+    cur = _observe(
+        ("INSERT INTO audit_log (entity_type, action) VALUES (%(entity_type)s, %(action)s)",
+         {"entity_type": "control_state", "action": "evidence.list_link"}),
+    )
+    assert cur.actions == {"evidence.list_link"}
+
+
 def test_every_rule_says_why():
     """An exemption list is only as strong as the friction of adding to it."""
     empty = [(r.table, r.op) for r in audit_check.RULES if not r.reason.strip()]

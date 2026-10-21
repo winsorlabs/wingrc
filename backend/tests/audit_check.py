@@ -50,6 +50,12 @@ class Rule:
     bookkeeping: an observation the system records, not a change a person
     makes, so no audit row is owed.
 
+    `actions`, where set, are the audit actions that may account for it: a
+    parent type broad enough that one of its rows can stand beside the
+    write without describing it (a mark-met row is a `control_state` row
+    too) is held to the actions measured making that write. A new path
+    writing it fails until its action is added here.
+
     Every rule says why (tests/test_audit_check.py fails on an empty
     reason). An exemption list is only as strong as the friction of adding
     to it; writing the reason is what makes someone ask whether they are
@@ -61,11 +67,13 @@ class Rule:
     columns: frozenset[str] | None
     by: frozenset[str] | None
     reason: str
+    actions: frozenset[str] | None = None
 
 
-def _r(table, op, by, reason, columns=None):
+def _r(table, op, by, reason, columns=None, actions=None):
     return Rule(table, op, frozenset(columns) if columns else None,
-                frozenset(by) if by is not None else None, reason)
+                frozenset(by) if by is not None else None, reason,
+                frozenset(actions) if actions else None)
 
 
 RULES: list[Rule] = [
@@ -108,11 +116,24 @@ RULES: list[Rule] = [
     _r("evidence", "INSERT", {"evidence_task", "document_version", "review_cycle",
                               "system_description", "control_state"},
        reason="the artifact row a collect, a publish, an attestation, a diagram upload or a "
-              "list link creates, each audited on what it was created for"),
+              "list link creates, each audited on what it was created for",
+       # Measured over the suite 2026-10-20. A list link's row is on the
+       # objective, so without this a mark-met row would account for it.
+       actions={"evidence_task.collect", "document.publish", "review_cycle.attest",
+                "system_description.network_diagram.upload",
+                "system_description.data_flow_diagram.upload",
+                "evidence.list_link", "evidence.list_move_forward"}),
     _r("evidence_state_link", None, {"evidence", "evidence_task", "document_version",
                                      "review_cycle", "control_state"},
        reason="the link between an artifact and an objective, audited on the artifact, the "
-              "task, the document version or the objective it was made or archived for"),
+              "task, the document version or the objective it was made or archived for",
+       # Measured over the suite 2026-10-20; a deactivation's and a
+       # reactivation's links have audit rows of their own type.
+       actions={"evidence.upload", "evidence.add_reference", "evidence.detach",
+                "evidence_task.collect", "review_cycle.attest",
+                "evidence.document_link", "evidence.document_move_forward",
+                "evidence.document_unlink",
+                "evidence.list_link", "evidence.list_move_forward", "evidence.list_unlink"}),
     _r("list_link_event", "INSERT", {"control_state"},
        reason="a list version's link history (L.10), beside the link's own audit row"),
     _r("list_version", "INSERT", {"list_definition"},
@@ -204,15 +225,19 @@ def _update_columns(statement: str) -> frozenset[str]:
     return frozenset(c.split("=", 1)[0].strip().strip('"').lower() for c in cols if "=" in c)
 
 
-def _entity_types(parameters) -> set[str]:
+def _audit_params(parameters, name: str) -> set[str]:
     rows = parameters if isinstance(parameters, (list, tuple)) else [parameters]
     found = set()
     for row in rows:
         if isinstance(row, dict):
             for k, v in row.items():
-                if (k == "entity_type" or k.startswith("entity_type__")) and v:
+                if (k == name or k.startswith(name + "__")) and v:
                     found.add(str(v))
     return found
+
+
+def _entity_types(parameters) -> set[str]:
+    return _audit_params(parameters, "entity_type")
 
 
 @dataclass(frozen=True)
@@ -222,13 +247,15 @@ class Write:
     columns: frozenset[str] = frozenset()
 
 
-def accounted(w: Write, audited: set[str]) -> bool:
+def accounted(w: Write, audited: set[str], actions: set[str] = frozenset()) -> bool:
     if w.table == "audit_log" or w.table in audited:
         return True
     for r in RULES:
         if r.table != w.table or (r.op is not None and r.op != w.op):
             continue
         if r.columns is not None and not (w.columns and w.columns <= r.columns):
+            continue
+        if r.actions is not None and not actions & r.actions:
             continue
         if r.by is None or audited & r.by:
             return True
@@ -243,13 +270,15 @@ class RequestWrites:
     committed: list[Write] = field(default_factory=list)
     pending_audit: set[str] = field(default_factory=set)
     audited: set[str] = field(default_factory=set)
+    pending_actions: set[str] = field(default_factory=set)
+    actions: set[str] = field(default_factory=set)
 
     def unaccounted(self) -> dict[str, list[str]]:
         """Each committed table no audit row of this request accounts for,
         with how it was written; empty when the request kept the rule."""
         out: dict[str, list[str]] = {}
         for w in self.committed:
-            if accounted(w, self.audited):
+            if accounted(w, self.audited, self.actions):
                 continue
             how = w.op + (f"({','.join(sorted(w.columns))})" if w.columns else "")
             out.setdefault(w.table, [])
@@ -278,6 +307,7 @@ def before_cursor_execute(conn, cursor, statement, parameters, context, executem
     table = m.group(2).lower()
     if table == "audit_log" and op == "INSERT":
         cur.pending_audit |= _entity_types(parameters)
+        cur.pending_actions |= _audit_params(parameters, "action")
     cols = _update_columns(statement) if op == "UPDATE" else frozenset()
     cur.pending.append(Write(op, table, cols))
 
@@ -293,13 +323,14 @@ def committed() -> None:
     if cur is not None:
         cur.committed += cur.pending
         cur.audited |= cur.pending_audit
-        cur.pending, cur.pending_audit = [], set()
+        cur.actions |= cur.pending_actions
+        cur.pending, cur.pending_audit, cur.pending_actions = [], set(), set()
 
 
 def rolled_back() -> None:
     cur = _current
     if cur is not None:
-        cur.pending, cur.pending_audit = [], set()
+        cur.pending, cur.pending_audit, cur.pending_actions = [], set(), set()
 
 
 def end() -> None:
@@ -322,6 +353,7 @@ def end() -> None:
                     {(w.op, w.table, ",".join(sorted(w.columns))) for w in cur.committed}
                 ),
                 "audited": sorted(cur.audited),
+                "actions": sorted(cur.actions),
                 "unaccounted": bad or None,
             }) + "\n")
     elif bad:
