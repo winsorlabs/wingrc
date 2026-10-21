@@ -5518,15 +5518,20 @@ write also fails it, so the list cannot go stale. **The count was 11 of
   - activate a tool: `org_product.activate`, saying whether it was a
     reactivation, and the version pinned;
   - change a task's status: `evidence_task.update`;
-  - create an org: `org.create`. **This one is deployment-wide
-    (`org_id` NULL).** The request has no org yet, and `audit_log`'s
-    policy admits only the current org or none (migration 0060). Like
-    product administration, it is not in the per-org audit view;
+  - create an org: **two rows.** `org.create` is deployment-wide
+    (`org_id` NULL), like product administration: the request has no
+    org, and `audit_log`'s policy admits only the current org or none
+    (migration 0060). `org.created` is the first row of the new org's
+    own log, written under its context in the same transaction, so a
+    tenant's history has a beginning. "When was this org set up, and by
+    whom" is asked from inside the org. The context is then put back
+    (`test_create_org_writes_the_first_row_of_its_own_log` reads both
+    as `wingrc_app`);
   - set a password from an invite or reset token: `auth.password_set`;
   - **rename a user: `user.rename`, found only by the behavioural
     check.** `patch_user` audited role and activation and not
-    `display_name`. A rename matters because `detached_by` and
-    `deactivated_by` keep a display name as text;
+    `display_name`. See the lesson below this entry for why that was
+    not cosmetic;
   - start an assessment: `assessment.create`.
 - **Found only by the behavioural check:** three GETs that write
   (`/auth/me`, a review cycle's page, the users list). All three are
@@ -5537,19 +5542,48 @@ write also fails it, so the list cannot go stale. **The count was 11 of
 not its action. `POST /assessments` always wrote a `raci.copy_forward`
 row naming the new assessment, so it passed both before and after the
 fix: right entity, wrong action. Its `assessment.create` row is kept by
-a direct test (`test_raci_copy_forward.py`). Two rules also accept a
-broad parent:
+a direct test (`test_raci_copy_forward.py`).
+
+**Two rules accept a broad parent, and both are pinned to the actions
+measured making the write.** The same weakness applies to them: a row
+that does not describe the write could satisfy the check.
 - `evidence` INSERT accepts a `control_state` row, because a list link
-  audits on the objective;
+  audits on the objective. A mark-met row is a `control_state` row too.
 - `evidence_state_link` accepts any of the five things a link is made
   for.
+
+A report run over the suite listed every request writing either table
+and the audit actions beside it. The set is closed:
+- **evidence INSERT:** seven actions. The `control_state` parent is
+  used only by `evidence.list_link` and `evidence.list_move_forward`.
+- **evidence_state_link:** eleven actions. A deactivation's and a
+  reactivation's links have rows of their own type.
+- Mark-met never accompanies either.
+
+Each rule now carries its `actions` (`Rule.actions`). A request writing
+the table fails unless one of them is among its committed rows. A new
+path fails until its action is added, with friction.
+
+The dedicated tests:
+- `test_a_broad_parent_accounts_only_through_the_actions_measured_making_the_write`:
+  the evidence and its link beside a list link's row pass. Beside a
+  mark-met row they fail.
+- `test_the_broad_parent_rules_pin_their_actions`: removing either pin
+  fails.
+- `test_a_links_audit_row_names_the_objective_and_version_its_evidence_and_link_are_for`
+  (`test_list_evidence.py`): the row describes the write. Its entity is
+  the objective the link is on, and its `list_version_id` is the
+  version the evidence row was made from. This holds for the first link
+  and for a second link that reuses the evidence.
+
+The pin still matches action and entity separately, not as a pair on
+one row. That is enough while the action names imply their entity.
 
 The check sees request paths only. The CLI and the scheduler write
 outside a request and are not judged.
 
 **Checks:**
-- **Full suite, enforced, companion on:** 1,860 passed, exit 0, `ruff`
-  clean.
+- **Full suite, enforced, companion on:** 1,866 passed, `ruff` clean.
 - **Before the fixes, enforced:** 86 failures across 16 files, every one
   this check's.
 - **Mutation:** each new audit row removed in turn, against its route's
@@ -5560,11 +5594,51 @@ outside a request and are not judged.
   direct test.
 - **The companion fails a narrow run:** `test_orgs.py` alone reports 95
   routes, exit 1.
-- The check's own tests: 22, in `test_audit_check.py`.
+- **Mutation, the follow-ups:** each goes red.
+  - No `org.created` row: 1 failure.
+  - The context left on the new org: 1.
+  - Either action pin removed: 2 each.
+  - The list link's row naming another version: 1.
+  - The list link's action renamed: 1 failure and 14 errors. The
+    rename makes the pin fail every request the suite makes that links
+    a list, which shows it is enforced across the suite, not only in
+    its unit test.
+- The check's own tests: 25, in `test_audit_check.py`.
 
 **Not in this slice:** an actor on `control_state_history` (the Planned
 item "An objective's history says who changed it"), and tests for the
 three routes no test reaches a write.
+
+---
+
+### Lesson: a field that looks cosmetic was provenance (2026-10-20)
+
+Renaming a user wrote no audit row. A display name looks cosmetic, and a
+sweep of what each route writes would have passed it. It is not
+cosmetic. `detached_by` (evidence links), `deactivated_by` (a tool)
+and `saved_by` (a list's link and tag events) store a display name
+as text, not a user id. `detached_by` holds either a person or the CLI's
+actor label, so it cannot be a foreign key (its column comment). A
+rename therefore cuts a stored attribution off from the person it
+names. "Detached by Sam Lee" stops
+being findable as anyone, and nothing said that it was the name of an
+account now called something else. The `user.rename` row is now the
+only link back.
+
+It surfaced because the behavioural check flagged `PATCH /users/{id}`'s
+`display_name` write, and asking what reads that column found the two
+text fields. Neither the check nor the static sweep knows what a column
+means. The check only said a write was unaudited, and the question
+"what stores this value as a record?" did the rest. That is the same
+question as the side-effect lesson below, asked of a value instead of
+an action.
+
+**The shape will recur.** A field is provenance when another record
+copies its value rather than referencing its row: names, titles and
+labels stored as text at the moment of an act. Changing such a field
+needs an audit row even when the change looks like a typo fix. A new
+"`*_by` as text" column should name, in its docstring, the field it
+copies.
 
 ### The visual batch: V, L.9 and U ✅ DONE (2026-10-20, bench-verified; frontend only; deployed and walked on live)
 

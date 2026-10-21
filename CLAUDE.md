@@ -178,6 +178,26 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   listed with its reason. The check matches an audit row's entity, not
   its action, so a test still asserts the action where it matters
   (`docs/roadmap.md`'s "Every change a request makes is audited" entry).
+- **A docstring or comment that makes a universal claim about what the
+  code does carries a test that fails when the claim stops being true.**
+  Universal means "none", "never", "always", "only", "every", or a
+  closed list of callers or cases. The docstring names its test, so the
+  next reader can see the claim is held. A claim nobody can test is
+  worded as intent ("is meant to"), not as fact. Why: such a claim is
+  read as settled, and when the code moves the prose stays. Each of
+  these asserted the opposite of the code:
+  - `publish_document` said control_state was "NEVER touched" while it
+    attached evidence (item X);
+  - `close_cycle` said its record was linked on every assessment for
+    every status;
+  - the audit check's first draft said no SECURITY DEFINER function
+    writes on a request path, and `grant_org_membership` does;
+  - `clear_current_org` said "No production path calls this", until org
+    creation did.
+
+  Existing claims are brought under this when their code is touched
+  (`tests/test_audit_check.py`'s definer classification and
+  `test_rls_context.py`'s caller list are the pattern).
 - **A slice that puts text on a new background measures it in that
   slice.** New means a background, tint or opacity not measured before. The
   slice measures it with WCAG 2.x and states the ratio as a number:
