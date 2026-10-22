@@ -164,6 +164,48 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   wrote, an exit status. A check that cannot tell itself apart from what
   it is checking is not a check (`docs/roadmap.md`'s item W keeps the
   TLS-specific record).
+- **Every change a request makes is audited, and
+  `tests/audit_check.py` enforces it.** Each table a request commits a
+  write to needs an audit row in that request naming it, or a rule
+  there. A rule is keyed by table, operation and columns, and carries
+  its reason. It names the parent audit type that accounts for a
+  derived write, or marks bookkeeping. A failure names the table and how
+  it was written. Add the audit row; add a rule only for a write that is
+  derived or bookkeeping, and say why. A new `auth.` SECURITY DEFINER
+  function the app calls is classified there as a writer or a reader.
+  CI's `integration` job also sets `WINGRC_AUDIT_COVERAGE`, so a
+  mutating route no test drives to a write fails the run unless it is
+  listed with its reason. The check matches an audit row's entity, not
+  its action, so a test still asserts the action where it matters
+  (`docs/roadmap.md`'s "Every change a request makes is audited" entry).
+- **A docstring or comment that makes a universal claim about what the
+  code does carries a test that fails when the claim stops being true.**
+  Universal means "none", "never", "always", "only", "every", or a
+  closed list of callers or cases. The docstring names its test, so the
+  next reader can see the claim is held. A claim nobody can test is
+  worded as intent ("is meant to"), not as fact. Why: such a claim is
+  read as settled, and when the code moves the prose stays. Each of
+  these asserted the opposite of the code:
+  - `publish_document` said control_state was "NEVER touched" while it
+    attached evidence (item X);
+  - `close_cycle` said its record was linked on every assessment for
+    every status;
+  - the audit check's first draft said no SECURITY DEFINER function
+    writes on a request path, and `grant_org_membership` does;
+  - `clear_current_org` said "No production path calls this", until org
+    creation did.
+
+  These are two kinds. `publish_document`'s claim was false when
+  written: an author's error, which review can catch. `close_cycle`'s
+  and `clear_current_org`'s were true when written and made false by a
+  later change, weeks later for one and the same slice for the other.
+  The second kind is the larger problem, because nobody re-reads a
+  docstring in a file they are not editing. That is why the test has to
+  keep running rather than the claim being checked once at review.
+
+  Existing claims are brought under this when their code is touched
+  (`tests/test_audit_check.py`'s definer classification and
+  `test_rls_context.py`'s caller list are the pattern).
 - **A slice that puts text on a new background measures it in that
   slice.** New means a background, tint or opacity not measured before. The
   slice measures it with WCAG 2.x and states the ratio as a number:

@@ -254,6 +254,18 @@ def test_no_module_writes_app_current_org_outside_rls():
     )
 
 
+def test_only_org_creation_clears_the_org_context_outside_tests():
+    """`clear_current_org`'s docstring names its callers; this fails when
+    another one appears, so the claim cannot go stale unseen."""
+    call = re.compile(r"\bclear_current_org\(")
+    callers = sorted(
+        str(p.relative_to(_APP_DIR.parent)).replace("\\", "/")
+        for p in _source_files()
+        if call.search(p.read_text(encoding="utf-8"))
+    )
+    assert callers == ["app/routers/orgs.py"], callers
+
+
 def test_rls_module_registers_the_hook_on_the_session_class():
     """Registered on `Session` itself, not on `db.py:SessionLocal` — the
     test suite builds `Session(conn, ...)` directly and must be covered by

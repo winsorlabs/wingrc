@@ -5442,6 +5442,204 @@ When it lands, remove the 422 and the panel note together.
 
 ---
 
+### Every change a request makes is audited, and a check enforces it ✅ DONE (2026-10-20, bench-verified; backend and tests only)
+
+**Why.** Marking an objective *met* wrote no audit row and no actor. The
+SPRS score is computed from exactly those assertions, so it derived from
+claims nobody was recorded as making. The evidence section's live walk
+found two smaller gaps (upload, activation), and the sweep they prompted
+found this one (the Planned entry "Marking an objective met is recorded
+nowhere", kept below for its reasoning). Every gap was in the assessment
+core, the code written before the audit convention. So the fix is an
+enforcing check, not just the rows: the rule existed, and nothing
+enforced it.
+
+**The check (`backend/tests/audit_check.py`, wired in `conftest.py`).**
+It judges behaviour, not the HTTP verb.
+- `_app_session` brackets each request. A cursor-level listener records
+  every INSERT, UPDATE and DELETE the request commits (the table, and an
+  UPDATE's columns), and the `entity_type` of each `audit_log` row. A
+  request's writes are dropped on rollback.
+- **Each written table must be accounted for by an audit row of the same
+  request naming that table, or by a rule.** "Some audit row exists" is
+  not enough: it is satisfied by something irrelevant.
+- **Rules are keyed by table, operation and columns, and each carries its
+  reason.** A rule either names the parent audit types that account for
+  a derived write (a list's tags under `list_definition`, the score
+  snapshot under `control_state`), or marks bookkeeping. An UPDATE of any
+  column a rule does not name is not covered, so the login counter's rule
+  never hides a role change. A derived write that always accompanies an
+  audited change needs no exemption, because the check is per request:
+  `sprs_snapshot` beside a mark-met row is accounted for, and written
+  alone it is not.
+- **Five bookkeeping rules, each with its reason:**
+  - the session's sliding clock (`user_session.last_activity_at`);
+  - a token's `last_used_at`;
+  - the failure counter and expired lock a successful sign-in clears;
+  - a reviewer opening a cycle (`review_cycle_reviewer.status,
+    viewed_at`): Jarrod's call, because it is an observation, already
+    read by `close_cycle` and the attestation document;
+  - the hash the bundle export caches on `evidence`.
+- **SECURITY DEFINER writes are counted.** A function called by SELECT
+  writes where no statement shows it. Membership grants go that way on a
+  request path (`auth.grant_org_membership`). Each `auth.` function the
+  app calls is classified as a writer (what it writes) or a reader. A
+  test fails on one that is neither, so a new one is read before it is
+  trusted.
+- Enforced by default: a test fails if any request it made broke the
+  rule. `WINGRC_AUDIT_CHECK=report` writes one JSON line per request for
+  measuring, and `off` disables it.
+
+**The companion: every mutating route has a test that reaches a
+write.** The check judges only requests the suite makes. With
+`WINGRC_AUDIT_COVERAGE` set, which the CI `integration` job now sets as
+the only job that runs the whole suite against a database, the session
+fails when a POST/PUT/PATCH/DELETE route committed no write in any test
+and is not listed with its reason. A listed route that now reaches a
+write also fails it, so the list cannot go stale. **The count was 11 of
+107** (measured before any fix):
+- eight write nothing by design (four baseline-import dry runs and
+  drafts, research URL suggestion, the workbook dry run, MFA enrolment's
+  and re-enrolment's first steps);
+- three have no test reaching a write: logout, reset-MFA (neither has
+  any test at all, the Planned item "No test calls logout or reset-MFA"),
+  and resolving a review-cycle flag (only the refusal is tested).
+
+**What it found, by route.** Measured on the bench over the full suite
+(2,215 requests). The static sweep had listed nine.
+- **Fixed, each with a new audit row:**
+  - mark an objective's status: `control_state.update`, with the SPRS
+    score before and after and the objective key;
+  - upload evidence and add a reference: `evidence.upload` and
+    `evidence.add_reference`, with title, type, hash and objective, never
+    the bytes or a URL;
+  - write statements: `implementation_statement.create` and `.update`,
+    with status and whether the body changed, not the body;
+  - activate a tool: `org_product.activate`, saying whether it was a
+    reactivation, and the version pinned;
+  - change a task's status: `evidence_task.update`;
+  - create an org: **two rows.** `org.create` is deployment-wide
+    (`org_id` NULL), like product administration: the request has no
+    org, and `audit_log`'s policy admits only the current org or none
+    (migration 0060). `org.created` is the first row of the new org's
+    own log, written under its context in the same transaction, so a
+    tenant's history has a beginning. "When was this org set up, and by
+    whom" is asked from inside the org. The context is then put back
+    (`test_create_org_writes_the_first_row_of_its_own_log` reads both
+    as `wingrc_app`);
+  - set a password from an invite or reset token: `auth.password_set`;
+  - **rename a user: `user.rename`, found only by the behavioural
+    check.** `patch_user` audited role and activation and not
+    `display_name`. See the lesson below this entry for why that was
+    not cosmetic;
+  - start an assessment: `assessment.create`.
+- **Found only by the behavioural check:** three GETs that write
+  (`/auth/me`, a review cycle's page, the users list). All three are
+  bookkeeping under the rules above. A method-based check would never
+  have looked at them.
+
+**Its limit, kept in view.** The check matches an audit row's entity,
+not its action. `POST /assessments` always wrote a `raci.copy_forward`
+row naming the new assessment, so it passed both before and after the
+fix: right entity, wrong action. Its `assessment.create` row is kept by
+a direct test (`test_raci_copy_forward.py`).
+
+**Two rules accept a broad parent, and both are pinned to the actions
+measured making the write.** The same weakness applies to them: a row
+that does not describe the write could satisfy the check.
+- `evidence` INSERT accepts a `control_state` row, because a list link
+  audits on the objective. A mark-met row is a `control_state` row too.
+- `evidence_state_link` accepts any of the five things a link is made
+  for.
+
+A report run over the suite listed every request writing either table
+and the audit actions beside it. The set is closed:
+- **evidence INSERT:** seven actions. The `control_state` parent is
+  used only by `evidence.list_link` and `evidence.list_move_forward`.
+- **evidence_state_link:** eleven actions. A deactivation's and a
+  reactivation's links have rows of their own type.
+- Mark-met never accompanies either.
+
+Each rule now carries its `actions` (`Rule.actions`). A request writing
+the table fails unless one of them is among its committed rows. A new
+path fails until its action is added, with friction.
+
+The dedicated tests:
+- `test_a_broad_parent_accounts_only_through_the_actions_measured_making_the_write`:
+  the evidence and its link beside a list link's row pass. Beside a
+  mark-met row they fail.
+- `test_the_broad_parent_rules_pin_their_actions`: removing either pin
+  fails.
+- `test_a_links_audit_row_names_the_objective_and_version_its_evidence_and_link_are_for`
+  (`test_list_evidence.py`): the row describes the write. Its entity is
+  the objective the link is on, and its `list_version_id` is the
+  version the evidence row was made from. This holds for the first link
+  and for a second link that reuses the evidence.
+
+The pin still matches action and entity separately, not as a pair on
+one row. That is enough while the action names imply their entity.
+
+The check sees request paths only. The CLI and the scheduler write
+outside a request and are not judged.
+
+**Checks:**
+- **Full suite, enforced, companion on:** 1,866 passed, `ruff` clean.
+- **Before the fixes, enforced:** 86 failures across 16 files, every one
+  this check's.
+- **Mutation:** each new audit row removed in turn, against its route's
+  tests. Eight go red through the check (mark-met 34 failures,
+  upload/references 44, org 14, statements 12, activation 12,
+  set-password 10, task status 4, rename 2). `assessment.create` stays
+  green under the check, as its limit predicts, and goes red through its
+  direct test.
+- **The companion fails a narrow run:** `test_orgs.py` alone reports 95
+  routes, exit 1.
+- **Mutation, the follow-ups:** each goes red.
+  - No `org.created` row: 1 failure.
+  - The context left on the new org: 1.
+  - Either action pin removed: 2 each.
+  - The list link's row naming another version: 1.
+  - The list link's action renamed: 1 failure and 14 errors. The
+    rename makes the pin fail every request the suite makes that links
+    a list, which shows it is enforced across the suite, not only in
+    its unit test.
+- The check's own tests: 25, in `test_audit_check.py`.
+
+**Not in this slice:** an actor on `control_state_history` (the Planned
+item "An objective's history says who changed it"), and tests for the
+three routes no test reaches a write.
+
+---
+
+### Lesson: a field that looks cosmetic was provenance (2026-10-20)
+
+Renaming a user wrote no audit row. A display name looks cosmetic, and a
+sweep of what each route writes would have passed it. It is not
+cosmetic. `detached_by` (evidence links), `deactivated_by` (a tool)
+and `saved_by` (a list's link and tag events) store a display name
+as text, not a user id. `detached_by` holds either a person or the CLI's
+actor label, so it cannot be a foreign key (its column comment). A
+rename therefore cuts a stored attribution off from the person it
+names. "Detached by Sam Lee" stops
+being findable as anyone, and nothing said that it was the name of an
+account now called something else. The `user.rename` row is now the
+only link back.
+
+It surfaced because the behavioural check flagged `PATCH /users/{id}`'s
+`display_name` write, and asking what reads that column found the two
+text fields. Neither the check nor the static sweep knows what a column
+means. The check only said a write was unaudited, and the question
+"what stores this value as a record?" did the rest. That is the same
+question as the side-effect lesson below, asked of a value instead of
+an action.
+
+**The shape will recur.** A field is provenance when another record
+copies its value rather than referencing its row: names, titles and
+labels stored as text at the moment of an act. Changing such a field
+needs an audit row even when the change looks like a typo fix. A new
+"`*_by` as text" column should name, in its docstring, the field it
+copies.
+
 ### The visual batch: V, L.9 and U ✅ DONE (2026-10-20, bench-verified; frontend only; deployed and walked on live)
 
 Three Planned items in one branch, three commits so a bisect can tell
@@ -10581,7 +10779,7 @@ on another. Check the literal `#6c757d` uses too: L.8's example cell is
 a placeholder needs, so it stays -- say so rather than sweeping it up.
 Frontend only; screenshots of three or four screens before and after.
 
-### Marking an objective met is recorded nowhere -- next backend item
+### Marking an objective met is recorded nowhere ✅ DONE (2026-10-20; the Done entry "Every change a request makes is audited, and a check enforces it")
 
 **Found 2026-10-20, by the sweep that the evidence section's live walk
 prompted. Confirmed in code.** `PATCH .../control-states/{id}`
@@ -10700,6 +10898,40 @@ scheduler.
   baseline version pinned.
 - Not in this slice: an actor on `control_state_history` (the next
   entry).
+
+### No test calls logout or reset-MFA
+
+**Found 2026-10-20 by the audit check's companion.** Two
+security-relevant routes have no test at all:
+- `POST /auth/logout`: whether it revokes the session server-side, and
+  that the cookie is cleared, is asserted nowhere;
+- `POST /orgs/{org_id}/users/{user_id}/reset-mfa`: clearing an
+  enrolment, the backup codes and the account's activity, and its
+  `user.mfa_reset` audit row, is asserted nowhere.
+
+This is separate from the audit work. Zero coverage on routes a session
+and an MFA enrolment depend on is its own finding. Both are listed in
+`tests/audit_check.py`'s `NOT_REACHING_A_WRITE` with that reason. The
+companion fails the run once a test reaches their writes, until each
+entry is removed.
+
+**In the same item, smaller:** resolving a review-cycle flag is tested
+only as a `customer_poc` refusal (403). A resolve that writes is not, so
+it too is listed until a test reaches it.
+
+### Docstrings' universal claims: measure first -- low priority
+
+**Recorded 2026-10-21.** CLAUDE.md's convention brings an existing claim
+under a test only when its code is touched. That leaves the claims in
+files nobody edits, and those are the kind a later change makes false
+without anyone noticing.
+
+**This item measures and changes nothing.** Grep docstrings and comments
+for universal claims: "never", "always", "only", "every", "none", "no
+production path", and closed lists of callers or cases. Report the count
+and the list. Five is an afternoon's work, done in place. Fifty means
+choosing the load-bearing ones, the claims a reader would act on. The
+count decides which, so nothing is fixed before it exists.
 
 ### An objective's history says who changed it
 

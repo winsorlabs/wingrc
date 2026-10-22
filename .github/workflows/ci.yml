@@ -118,6 +118,11 @@ jobs:
       # makes forgetting it *fail* instead of reporting green having touched
       # no database. ~1027 tests run here today; floor is under half.
       WINGRC_MIN_TESTS_RUN: "500"
+      # The audit check (tests/audit_check.py) judges only the requests the
+      # suite makes; this fails the run when a mutating route no test drives
+      # to a write is not listed there with its reason. Only this job runs
+      # the whole suite against a database, so only it can tell.
+      WINGRC_AUDIT_COVERAGE: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

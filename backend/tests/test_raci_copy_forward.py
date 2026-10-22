@@ -520,3 +520,32 @@ def test_create_assessment_writes_raci_copy_forward_audit_entry(
     ).one()
     assert entry.after_value["source_assessment_id"] == str(old.id)
     assert entry.org_id == org.id
+
+
+def test_create_assessment_writes_its_own_audit_entry(
+    client: TestClient, db_session: Session, fake_msp_admin
+):
+    """The copy-forward row names the new assessment too, so the audit check
+    (tests/audit_check.py), which matches an audit row's entity and not its
+    action, is satisfied without this one. This test is what keeps it."""
+    org, fw = _org_and_fw(db_session)
+    _grant(db_session, fake_msp_admin, org_id=org.id)
+    _make_control(db_session, fw, control_id="AC.L2-3.1.1")
+    db_session.commit()
+
+    resp = client.post(
+        f"/orgs/{org.id}/assessments",
+        json={"framework_id": str(fw.id), "name": "New via API"},
+    )
+    assert resp.status_code == 201
+    new_id = uuid.UUID(resp.json()["id"])
+
+    entry = db_session.scalars(
+        select(AuditLog).where(
+            AuditLog.action == "assessment.create", AuditLog.entity_id == new_id
+        )
+    ).one()
+    assert entry.entity_type == "assessment"
+    assert entry.after_value["name"] == "New via API"
+    assert entry.org_id == org.id
+    assert entry.actor == str(fake_msp_admin.id)

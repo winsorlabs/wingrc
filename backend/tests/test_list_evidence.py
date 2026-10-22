@@ -333,6 +333,39 @@ def test_linking_changes_no_control_state_and_no_score(db_session):
 
 
 @pytest.mark.integration
+def test_a_links_audit_row_names_the_objective_and_version_its_evidence_and_link_are_for(
+    db_session,
+):
+    """The evidence row a list link creates is accounted for by a row on the
+    objective (tests/audit_check.py's broad parent). This pins that the row
+    describes that write: the objective the link is on and the version the
+    evidence row was made from, for the first link and for a second that
+    reuses the evidence."""
+    w = _world(db_session, "audited")
+    d = _list(db_session, w["org"], "visitor-log", REAL_ROWS)
+    client = _client(db_session, w["org"])
+    for key in ("PE.L2-3.10.3[a]", "PE.L2-3.10.3[b]"):
+        assert _link(client, w, key, d.id).status_code == 201
+
+    db_session.expire_all()
+    ev = db_session.scalars(
+        select(Evidence).where(Evidence.org_id == w["org"], Evidence.artifact_type == "list")
+    ).one()
+    rows = db_session.scalars(
+        select(AuditLog).where(AuditLog.org_id == w["org"], AuditLog.action == "evidence.list_link")
+    ).all()
+    assert sorted((r.entity_type, str(r.entity_id)) for r in rows) == sorted(
+        ("control_state", str(w["cs"][k])) for k in ("PE.L2-3.10.3[a]", "PE.L2-3.10.3[b]")
+    )
+    for r in rows:
+        assert r.after_value["list_version_id"] == str(ev.source_list_version_id)
+        link = db_session.scalars(
+            select(EvidenceStateLink).where(EvidenceStateLink.control_state_id == r.entity_id)
+        ).one()
+        assert (link.evidence_id, link.is_archived) == (ev.id, False)
+
+
+@pytest.mark.integration
 def test_a_link_stays_on_its_version_and_the_drift_shows_in_all_three_places(db_session):
     w = _world(db_session, "drift")
     d = _list(db_session, w["org"], "visitor-log", REAL_ROWS)

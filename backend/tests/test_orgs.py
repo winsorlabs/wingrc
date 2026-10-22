@@ -21,7 +21,8 @@ from sqlalchemy import select
 from app.auth import get_current_user
 from app.db import get_session
 from app.main import app
-from app.models import Organization, OrgMembership, User
+from app.models import AuditLog, Organization, OrgMembership, User
+from app.rls import current_org, set_current_org
 from tests.conftest import _app_session, _authed, _grant
 
 
@@ -59,6 +60,44 @@ def test_create_org_id_is_uuid(client, org_name):
     r = client.post("/orgs", json={"name": org_name})
     assert r.status_code == 201
     uuid.UUID(r.json()["id"])  # raises ValueError if not a valid UUID
+
+
+@pytest.mark.integration
+def test_create_org_writes_the_first_row_of_its_own_log(client, db_session, org_name):
+    """Two rows: the deployment-wide one, and one in the new org's own log,
+    so that log has a beginning. The request scopes itself to the new org
+    only for that row and puts the caller's context back."""
+    r = client.post("/orgs", json={"name": org_name})
+    assert r.status_code == 201
+    org_id = uuid.UUID(r.json()["id"])
+    assert current_org(db_session) not in (None, org_id), (
+        "the caller's own org context (_authed) must be back after the request"
+    )
+
+    def rows():
+        return [
+            (a.action, a.org_id, a.actor, a.after_value["name"])
+            for a in db_session.scalars(
+                select(AuditLog).where(
+                    AuditLog.entity_type == "organization", AuditLog.entity_id == org_id
+                ).order_by(AuditLog.action)
+            )
+        ]
+
+    # Read as the app reads, under RLS: the owner this session connects as
+    # sees every row whatever the context.
+    db_session.connection().exec_driver_sql("SET ROLE wingrc_app")
+    try:
+        caller = rows()
+        assert len(caller) == 1 and caller[0][2] not in (None, "system"), caller
+        actor = caller[0][2]
+        assert caller == [("org.create", None, actor, org_name)], "another org sees no org.created"
+        set_current_org(db_session, org_id)
+        assert rows() == [
+            ("org.create", None, actor, org_name), ("org.created", org_id, actor, org_name),
+        ]
+    finally:
+        db_session.connection().exec_driver_sql("RESET ROLE")
 
 
 @pytest.mark.integration

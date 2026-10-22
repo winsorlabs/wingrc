@@ -186,6 +186,33 @@ def _check_cs(
     return cs
 
 
+def _audit_attached(
+    session: Session, org_id: uuid.UUID, assessment_id: uuid.UUID, cs: ControlState, ev: Evidence
+) -> None:
+    """Who put this evidence in front of an assessor, and when. Detach was
+    audited and the attach that it undoes was not (2026-10-20)."""
+    objective = session.get(AssessmentObjective, cs.objective_id)
+    log_event(
+        session,
+        org_id=org_id,
+        action="evidence.upload" if ev.kind == "file" else "evidence.add_reference",
+        entity_type="evidence",
+        entity_id=ev.id,
+        after_value={
+            "kind": ev.kind,
+            "title": ev.title,
+            "artifact_type": ev.artifact_type,
+            "sha256_hash": ev.sha256_hash,
+        },
+        context={
+            "via": "api",
+            "assessment_id": str(assessment_id),
+            "control_state_id": str(cs.id),
+            "objective_key": objective.objective_key if objective else None,
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
@@ -409,6 +436,7 @@ async def upload_evidence(
     session.flush()
 
     session.add(EvidenceStateLink(evidence_id=ev.id, control_state_id=cs.id))
+    _audit_attached(session, org_id, assessment_id, cs, ev)
     session.commit()
 
     return EvidenceOut(
@@ -468,6 +496,7 @@ def add_references(
         session.add(ev)
         session.flush()
         session.add(EvidenceStateLink(evidence_id=ev.id, control_state_id=cs.id))
+        _audit_attached(session, org_id, assessment_id, cs, ev)
         result.append(EvidenceOut(
             id=ev.id,
             kind="reference",

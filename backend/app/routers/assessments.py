@@ -407,6 +407,20 @@ def create_assessment(
         name=body.name,
         assessment_type=body.assessment_type,
     )
+    log_event(
+        session,
+        org_id=org_id,
+        action="assessment.create",
+        entity_type="assessment",
+        entity_id=assessment.id,
+        after_value={
+            "name": assessment.name,
+            "assessment_type": assessment.assessment_type,
+            "framework_id": str(assessment.framework_id),
+            "sprs_score": assessment.sprs_score,
+        },
+        context={"via": "api"},
+    )
 
     # Same transaction as the assessment/control_state creation above —
     # see copy_forward_raci's own docstring for why this must not be a
@@ -966,6 +980,17 @@ def patch_evidence_task(
             detail="Cannot update an archived evidence task",
         )
 
+    if body.status != task.status:
+        log_event(
+            session,
+            org_id=org_id,
+            action="evidence_task.update",
+            entity_type="evidence_task",
+            entity_id=task.id,
+            before_value={"status": task.status},
+            after_value={"status": body.status},
+            context={"via": "api", "assessment_id": str(assessment_id), "title": task.title},
+        )
     task.status = body.status
     session.commit()
     return PatchEvidenceTaskOut(id=task.id, status=task.status, is_archived=task.is_archived)
@@ -1080,8 +1105,26 @@ def patch_control_state(
         new_responsibility=cs.responsibility,
     )
     session.add(history)
+    previous_status, previous_score = cs.status, assessment.sprs_score
     cs.status = body.status
     score = recompute_sprs(session, assessment_id)
+    objective = session.get(AssessmentObjective, cs.objective_id)
+    # The SPRS score is computed from exactly these assertions, so who made
+    # each one is recorded here; control_state_history has no actor.
+    log_event(
+        session,
+        org_id=org_id,
+        action="control_state.update",
+        entity_type="control_state",
+        entity_id=cs.id,
+        before_value={"status": previous_status, "sprs_score": previous_score},
+        after_value={"status": cs.status, "sprs_score": score},
+        context={
+            "via": "api",
+            "assessment_id": str(assessment_id),
+            "objective_key": objective.objective_key if objective else None,
+        },
+    )
     session.commit()
     return PatchControlStateOut(id=cs.id, status=cs.status, sprs_score=score)
 
@@ -1207,9 +1250,16 @@ def upsert_statements(
         existing = {r.objective_id: r for r in rows}
 
     saved: list[ImplementationStatement] = []
+    changes: list[tuple[ImplementationStatement, dict | None, dict]] = []
     for item in items:
         if item.objective_id in existing:
             stmt = existing[item.objective_id]
+            if stmt.body != item.body or stmt.status != item.status:
+                changes.append((
+                    stmt,
+                    {"status": stmt.status},
+                    {"status": item.status, "body_changed": stmt.body != item.body},
+                ))
             stmt.body = item.body
             stmt.status = item.status
         else:
@@ -1221,9 +1271,29 @@ def upsert_statements(
                 status=item.status,
             )
             session.add(stmt)
+            changes.append((stmt, None, {"status": item.status}))
         saved.append(stmt)
 
     session.flush()  # populate DB-generated UUIDs before building the response
+    for stmt, before, after in changes:
+        log_event(
+            session,
+            org_id=org_id,
+            action=(
+                "implementation_statement.create"
+                if before is None
+                else "implementation_statement.update"
+            ),
+            entity_type="implementation_statement",
+            entity_id=stmt.id,
+            before_value=before,
+            after_value=after,
+            context={
+                "via": "api",
+                "assessment_id": str(assessment_id),
+                "objective_key": objectives[stmt.objective_id].objective_key,
+            },
+        )
     session.commit()
 
     # This read runs AFTER the commit, which ends the transaction that

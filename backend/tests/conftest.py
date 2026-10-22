@@ -20,8 +20,9 @@ from urllib.parse import urlparse, urlunparse
 import pytest
 from alembic import command as alembic_cmd
 from alembic.config import Config as AlembicConfig
+from fastapi import Request
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session
 
 from app.audit import set_current_actor
@@ -29,6 +30,7 @@ from app.auth import CurrentUser, actor_type_for
 from app.db import get_session
 from app.models import OrgMembership, User
 from app.rls import reapply_current_org, set_current_org
+from tests import audit_check
 
 # Non-superuser, non-owner role Phase 3 introduces so RLS is an enforced
 # backstop rather than a no-op (superusers and table owners bypass RLS
@@ -246,6 +248,8 @@ def db_engine():
     _ensure_test_db(test_url)
 
     engine = create_engine(test_url, pool_pre_ping=True, future=True)
+    if audit_check.mode() != "off":
+        event.listen(engine, "before_cursor_execute", audit_check.before_cursor_execute)
     yield engine
     engine.dispose()
 
@@ -362,13 +366,21 @@ def _app_session(session: Session):
     makes a commit inside a request behave like a commit in production.
     """
 
-    def _override() -> Iterator[Session]:
+    def _override(request: Request) -> Iterator[Session]:
         conn = session.connection()
         conn.execute(text(f"SET ROLE {_APP_ROLE}"))
         real_commit = session.commit
+        real_rollback = session.rollback
+        route = request.scope.get("route")
+        audit_check.begin(request.method, getattr(route, "path", request.url.path))
+
+        def _rollback(*args, **kwargs):
+            real_rollback(*args, **kwargs)
+            audit_check.rolled_back()
 
         def _commit_and_clear_org(*args, **kwargs):
             real_commit(*args, **kwargs)
+            audit_check.committed()
             session.execute(text("RESET app.current_org"))
             # Production models BOTH halves of a commit boundary: the
             # transaction ends (the RESET above) AND the next statement
@@ -385,14 +397,31 @@ def _app_session(session: Session):
             reapply_current_org(session)
 
         session.commit = _commit_and_clear_org
+        session.rollback = _rollback
 
         try:
             yield session
         finally:
             session.commit = real_commit
+            session.rollback = real_rollback
+            audit_check.end()
             conn.execute(text("RESET ROLE"))
 
     return _override
+
+
+@pytest.fixture(autouse=True)
+def _requests_audit_their_writes():
+    """Fails a test any of whose requests committed a change no audit row
+    accounts for (tests/audit_check.py). Not a database fixture: with no
+    request made, there is nothing to check."""
+    audit_check.violations.clear()
+    yield
+    found, audit_check.violations[:] = list(audit_check.violations), []
+    assert not found, "requests whose changes no audit row accounts for:\n" + "\n".join(
+        f"  {m} {r}: wrote {t}; audit rows named {sorted(a) or 'nothing'}"
+        for m, r, t, a in found
+    )
 
 
 def _set_cookie_value(response, name: str) -> str | None:
@@ -478,7 +507,9 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
         _tests_actually_run += 1
 
 
-def _fail_session(session: pytest.Session, code: pytest.ExitCode, message: str) -> None:
+def _fail_session(
+    session: pytest.Session, code: pytest.ExitCode, message: str, title: str = "count floor not met"
+) -> None:
     """Set the exit status and say why, without depending on hook ordering.
 
     Reported straight from `pytest_sessionfinish` rather than through
@@ -492,11 +523,46 @@ def _fail_session(session: pytest.Session, code: pytest.ExitCode, message: str) 
     if reporter is None:  # -p no:terminal, or an embedding harness
         print(message)
         return
-    reporter.write_sep("=", "count floor not met", red=True, bold=True)
+    reporter.write_sep("=", title, red=True, bold=True)
     reporter.write_line(message)
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    _check_count_floor(session)
+    _check_route_coverage(session)
+
+
+def _check_route_coverage(session: pytest.Session) -> None:
+    """The audit check's companion (tests/audit_check.py): with
+    WINGRC_AUDIT_COVERAGE set, every mutating route has a test reaching a
+    write, or is listed with its reason. Off by default, like the count
+    floor, so a narrow run is unaffected by construction."""
+    if not os.environ.get("WINGRC_AUDIT_COVERAGE") or audit_check.mode() == "off":
+        return
+    if getattr(session.config.option, "collectonly", False):
+        return
+    from app.main import app as fastapi_app
+
+    mutating = {
+        (method.upper(), path)
+        for path, ops in fastapi_app.openapi()["paths"].items()
+        for method in ops
+        if method in ("post", "put", "patch", "delete")
+    }
+    problems = audit_check.coverage_problems(mutating)
+    if problems:
+        _fail_session(
+            session,
+            pytest.ExitCode.TESTS_FAILED,
+            "\n".join(problems)
+            + "\nA route no test drives to a write is never judged by the audit check. "
+            "Add a test, or list it in tests/audit_check.py's NOT_REACHING_A_WRITE "
+            "with its reason.",
+            title="mutating routes the audit check never judged",
+        )
+
+
+def _check_count_floor(session: pytest.Session) -> None:
     raw = os.environ.get(_MIN_TESTS_ENV)
     if not raw:
         return

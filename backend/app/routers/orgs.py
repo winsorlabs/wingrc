@@ -36,6 +36,7 @@ from ..models import (
     SystemDescription,
 )
 from ..org_membership import provision_new_org_memberships
+from ..rls import clear_current_org, current_org, set_current_org
 from ..storage import StorageClient, download_filename, evidence_download_path, get_storage_client
 from ..svg_sanitize import SvgSanitizeError, sanitize_svg
 from .evidence import _verify_magic_bytes
@@ -308,7 +309,28 @@ def create_org(body: OrgIn, session: Session = Depends(get_session)) -> OrgOut:
     # membership in the new org, at their own current role — see
     # org_membership.py's module docstring for why there's no special
     # case for the caller specifically.
-    provision_new_org_memberships(session, org.id)
+    granted = provision_new_org_memberships(session, org.id)
+    # Two rows. Deployment-wide, like product administration: the request
+    # has no org, and audit_log's policy admits a NULL org (migration 0060).
+    # And the first row of the new org's own log, written under its
+    # context, so its history has a beginning: who set it up, and when.
+    created = {"name": org.name}
+    context = {"via": "api", "memberships_granted": granted}
+    log_event(
+        session, org_id=None, action="org.create", entity_type="organization",
+        entity_id=org.id, after_value=created, context=context,
+    )
+    previous = current_org(session)
+    set_current_org(session, org.id)
+    log_event(
+        session, org_id=org.id, action="org.created", entity_type="organization",
+        entity_id=org.id, after_value=created, context=context,
+    )
+    session.flush()
+    if previous is None:
+        clear_current_org(session)
+    else:
+        set_current_org(session, previous)
     session.commit()
     session.refresh(org)
     return OrgOut.model_validate(org)

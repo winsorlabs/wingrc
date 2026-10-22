@@ -361,6 +361,16 @@ def set_password(
     user.invite_token_hash = None
     user.invite_expires_at = None
     record_password(db, user.id, user.password_hash)
+    log_event(
+        db,
+        org_id=user.home_org_id,
+        action="auth.password_set",
+        entity_type="user",
+        entity_id=user.id,
+        context={"via": "reset_token" if user.mfa_enrolled else "invite_token"},
+        actor=str(user.id),
+        actor_type="user",
+    )
     db.commit()
 
     phase = "enroll" if not user.mfa_enrolled else "verify"
