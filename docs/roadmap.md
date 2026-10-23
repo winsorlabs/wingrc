@@ -11143,8 +11143,9 @@ the guard has never been reachable through compose. This is the same
 pattern as the static `/health`, the silently-skipping `integration`
 job, the self-matching process check and the rest of W's list: a signal
 that reports fine because it checks nothing. A guard whose precondition
-is always satisfied upstream is not a guard. Live is not exposed: its backend's only key is ,
-and the dev key is absent (checked 2026-10-23 by label and substring,
+is always satisfied upstream is not a guard. Live is not exposed: its
+backend's only key is `prod-wl-util-1-2026-09-11`, and the dev key is
+absent (checked 2026-10-23 by label and substring,
 without printing either; W's Fernet row).
 
 **2. MinIO: the deployment guide instructs an override compose
