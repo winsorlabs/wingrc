@@ -11134,16 +11134,43 @@ credential, not WinGRC-the-vendor holding a customer's" (`ROADMAP.md`
 item D). A key committed to the product's own repo is a vendor key, and
 every deployment that does not override it shares it.
 
-**A guard that is correct, deliberate and unreachable.** `crypto.py`
-refuses to store or read a credential when the variable is unset ("fails
-closed", per the comment beside the default and D.1's design). Compose
-guarantees the variable is never unset. So the refusal cannot fire. The
-default arrived in the same commit as the guard (`c4f999e50b8`, D.1), so
-the guard has never been reachable through compose. This is the same
-pattern as the static `/health`, the silently-skipping `integration`
-job, the self-matching process check and the rest of W's list: a signal
-that reports fine because it checks nothing. A guard whose precondition
-is always satisfied upstream is not a guard. Live is not exposed: its
+This is part of the finding. Until 2026-10-23 the constraint behind
+D.1 existed only in conversation. It is now recorded in D.1 in Jarrod's
+words: "I never want this product to be at risk for shipping with any
+Winsorlabs keys to any products." Nothing could test against an unwritten
+rule. It was broken in the same commit as the guard meant to uphold it.
+
+**A guard that is correct, deliberate and unreachable, and it shipped
+that way.** `crypto.py` refuses to store or read a credential when the
+variable is unset ("fails closed", per the comment beside the default
+and D.1's design). Compose guarantees the variable is never unset, so
+the refusal cannot fire. A guard whose precondition is always satisfied
+upstream is not a guard.
+
+It belongs with the static `/health`, the silently-skipping
+`integration` job, the self-matching process check and the rest of W's
+list: a signal that reports fine because it checks nothing. But it
+failed differently from each of them, and the difference changes what
+review has to do:
+- **The `integration` job drifted.** It worked when written: on
+  2026-06-30 `conftest.py` read `WINGRC_DATABASE_URL`, which the job
+  set. A later change made `conftest.py` read only
+  `WINGRC_TEST_DATABASE_URL`, and the job silently stopped being able to
+  fail. Something upstream changed after the check was right.
+- **`/health` and the process grep were wrong in themselves.** `/health`
+  returned a static dict from the first scaffold. The grep matched its
+  own invocation. Either could be caught by reading the check alone.
+- **This guard is neither.** The default and the guard arrived together
+  in `c4f999e50b8`, each defensible read on its own. The guard is
+  correct code. The default is an ordinary dev convenience. Neither was
+  ever wrong alone, and the guard was never reachable through compose.
+
+So checking a guard in isolation cannot catch this, and neither can
+re-checking it after later changes, since nothing later changed. Review
+has to ask what supplies the guard's precondition, and whether anything
+always supplies it. For a fail-closed check on an unset variable, look
+at every place that sets the variable, a compose default included.
+Live is not exposed: its
 backend's only key is `prod-wl-util-1-2026-09-11`, and the dev key is
 absent (checked 2026-10-23 by label and substring,
 without printing either; W's Fernet row).
@@ -11221,7 +11248,43 @@ deployment that ran on the dev Fernet key must rotate onto its own with
 treat every credential entered under the dev key as exposed in any
 database copy made since, and reissue it at the provider.
 
+**Who else runs this, and how they would hear.** A roadmap entry reaches
+nobody outside this repo's readers. Anyone else running WinGRC on the dev
+key must be told to rotate and to reissue every credential entered under
+it. What could be known on 2026-10-23, from GitHub's public API:
+- 0 stars, 0 forks, 0 watchers, 0 releases. All 55 issues and PRs, and
+  every commit, are from `winsorlabs`.
+- No image is published. CI's `image` job builds and scans locally and
+  pushes nothing, so every deployment builds from a clone.
+- Clone and view counts (Insights › Traffic) need push access and cover
+  only the last 14 days. Even then a clone is not a deployment, and the
+  count names no one.
+- The product sends no telemetry, deliberately (air-gapped deployments).
+
+So the evidence is consistent with nobody else, and it cannot rule
+anyone out. A clone of a public repo leaves no trace that reaches us.
+That is why the channel has to be decided before it is needed.
+
+**Proposed channel (awaiting Jarrod's decision):**
+- a GitHub repository security advisory as the canonical notice. It is
+  public, linkable and permanent, and it can carry a CVE;
+- `SECURITY.md` saying advisories are where notices appear, how to
+  report a vulnerability, and that operators should watch the repo with
+  "Security alerts" on;
+- private vulnerability reporting turned on. It is off today (the API
+  reports `enabled: false`) and there is no `SECURITY.md`;
+- `docs/deployment.md` tells operators to subscribe to it;
+- for operators who update but never read GitHub, the product itself:
+  an `msp_admin` banner, the `tls_expiry_check` pattern, when any stored
+  credential's `credential_key_version` is `dev`. The banner says what
+  to rotate and what to reissue.
+
+Whether this item needs an advisory is the same decision. If nobody else
+runs it, publishing one costs little and establishes the channel.
+
 **Open:**
+- the channel above: an advisory for this item, `SECURITY.md`, private
+  vulnerability reporting (repo settings need an admin);
 - the deployment guide specifies `.env` as mode 600 or 640 (live's was
   664; W's `wingrc_app` row);
 - `chown wladmin .env` on live, which needs sudo -- Jarrod, as `wladmin`.
