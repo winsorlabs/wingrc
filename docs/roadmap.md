@@ -5544,6 +5544,23 @@ row naming the new assessment, so it passed both before and after the
 fix: right entity, wrong action. Its `assessment.create` row is kept by
 a direct test (`test_raci_copy_forward.py`).
 
+**A concrete case from before the rules (recorded 2026-10-23).** On
+2026-09-07 a verification on live made an "Actor Verify Bot" user, its
+membership and an API token (`.scratch/verify_actor_live.py`). It used
+the token to create a scope entity, then deleted all four rows
+(`cleanup_actor_verify.py`). The deletes were raw `DELETE`s on
+`api_token`, `org_membership`, `user` and `scope_entity`, with no audit
+row. Live's log holds no trace that the user or the token existed. The
+plaintext token sat in `.scratch/` until 2026-10-23, and a lookup by its
+hash was the only way to show it was dead. Today's rules forbid each
+part of that: an unaudited write, a delete where an archive belongs, and
+a credential minted outside the route that records it. **The check
+would not have caught it, though.** It brackets HTTP requests, and the
+cleanup ran on a direct `SessionLocal()` in a script. A write made on a
+session the app does not hand out is outside the check's reach. Only
+the convention and review cover it: one-off scripts against live go
+through a CLI command that audits, or are not run.
+
 **Two rules accept a broad parent, and both are pinned to the actions
 measured making the write.** The same weakness applies to them: a row
 that does not describe the write could satisfy the check.
@@ -9332,6 +9349,18 @@ cutover.
 - **Rollback, written down before starting:** comment out the one
   `WINGRC_DATABASE_URL` line in `.env` and restart. Pre-flight `pg_dump` at
   `/backups/pre-cutover-20260929T141914Z.dump`.
+  **Correction (2026-10-23): that rollback would have failed.** `.env`
+  held a second, older `WINGRC_DATABASE_URL` on line 2
+  (`wingrc@localhost`, copied from `.env.example`). Commenting out the
+  cutover line made compose fall back to it, and no container can reach
+  `localhost:5432`. "Restart" also does not reread `.env`. The stale
+  line was removed from live on 2026-10-23, and the effective config was
+  unchanged by it. The rollback now reads: set `WINGRC_DATABASE_URL` to
+  `WINGRC_MIGRATION_DATABASE_URL`'s value (the owner), then
+  `docker compose up -d backend worker`. It names the owner URL
+  explicitly rather than relying on a fallback, so it survives the owner
+  password changing (the item "The compose file ships default
+  credentials").
 
 #### What "verified" meant
 
@@ -11076,6 +11105,58 @@ explanation, and the `[PLACEHOLDER - reason]` legend. The first row
 visible at 1366×768, and contrast measured as in L.8. Frontend only; if
 it needs an API change, stop.
 
+### The compose file ships default credentials for its most privileged roles -- a product defect, first
+
+**Found 2026-10-23.** `docker-compose.yml` hardcodes the database owner's
+password: `POSTGRES_PASSWORD: wingrc`, a literal, not even
+`${…}`-interpolated. That role owns every table and bypasses RLS. The
+repo is public, so every operator who deploys WinGRC inherits a known
+credential for its most privileged role. This is the first thing an
+assessor greps a compose file for. It is a product defect, not a
+deployment one: wl-util-1 has it because the product gave it. W's
+credentials rows depend on this item and come after it.
+
+**The same class, in the same file:**
+- `WINGRC_DATABASE_URL`'s fallback and `WINGRC_TEST_DATABASE_URL` embed
+  `wingrc:wingrc`;
+- MinIO's `MINIO_ROOT_PASSWORD: wingrc-dev-secret` and the backend's
+  `WINGRC_STORAGE_ACCESS_KEY`/`WINGRC_STORAGE_SECRET_KEY` are literals
+  too. `docs/deployment.md` §1 tells the operator to "set real values"
+  for the storage keys, but a literal in compose cannot be overridden
+  from `.env`. So the instruction cannot be followed as written;
+- `.env.example` line 2 is an owner URL at `localhost`. Copied into
+  live's `.env`, it became the stale line that broke the cutover's
+  rollback (the correction under that Done entry).
+
+The cutover entry's own sentence applies here: "there is no shippable
+default for a credential". The `wingrc_app` URL followed it; the owner
+never did.
+
+**The fix: compose refuses to start without an operator-supplied value,
+rather than defaulting one.** Each of these becomes
+`${WINGRC_DB_OWNER_PASSWORD:?set it in .env -- see docs/deployment.md}`
+(names to be settled), so `docker compose up` fails with a message that
+says what to set, and the URLs are built from the same variables.
+`docs/deployment.md` says this is required and why. `.env.example`
+carries empty values and no `localhost` URL. CI's jobs use their own
+service containers, not compose, so they are unaffected. The bench
+procedure (`docs/bench-stack-verification.md`) uses compose and gains a
+step to generate its values.
+
+**An existing deployment needs more than the compose change.**
+`POSTGRES_PASSWORD` is read only when the volume is initialised, so
+changing it does nothing to a running database's owner. The procedure,
+written once here and run on wl-util-1 as this item's verification:
+1. `ALTER ROLE wingrc PASSWORD` through psql's stdin;
+2. update `WINGRC_MIGRATION_DATABASE_URL` and the new variable in `.env`;
+3. `docker compose up -d backend worker`, since a restart does not
+   reread `.env`;
+4. `alembic upgrade head` on boot is the proof the owner URL works.
+
+MinIO's root credential has its own change procedure, which needs
+reading before it is written. This is the decision recorded in W for
+wl-util-1's owner password: changed here, not as a separate exercise.
+
 ### W. What on this deployment expires or rotates, and what says so first
 
 **Found 2026-10-17**, when dev.wingrc.us's certificate had been expired
@@ -11093,7 +11174,9 @@ monitoring build-out.
 | `wingrc.us` domain registration (DNSimple) | yearly | nothing in WinGRC; DNSimple's own renewal mail | unchecked -- confirm auto-renew is on |
 | Integrations credentials: `ai`, `liongard`, `smtp` | whatever the issuer sets (an API key's expiry is set at the provider, not here) | a failing test-connection, or a failed job -- after the fact | unchecked; record each issuer's expiry date beside the connection |
 | Fernet key (`WINGRC_CREDENTIAL_ENCRYPTION_KEYS`, label `prod-wl-util-1-2026-09-11`) | never expires; rotation is a deliberate act (key versions exist) | n/a | no expiry; rotation procedure undocumented |
-| `wingrc_app` / owner database passwords | never expire | n/a | no expiry |
+| `wingrc_app` database password | never expires | n/a | **Decided 2026-10-23: not rotating.** No known exposure: generated on the host, applied through stdin, never printed (the cutover's Done entry; a 2026-10-23 audit printed only its length). Its copies are only where they belong: `.env`, the mode-600 `.wingrc_app_pw`, `pg_authid`, and the backend and worker environments. A search of `/home/claude` and `/home/wladmin` found no others. Rotating would be housekeeping with a short connection-error window, not a fix |
+| Owner (`wingrc`) database password | never expires | n/a | **Decided 2026-10-23: change it, as part of the item "The compose file ships default credentials", not separately.** Its value is the compose default, which is public in the repo, so it is known to anyone who reads it. Exposure is limited (the db port is unpublished and `pg_hba` wants `scram-sha-256` off-host), but the role bypasses RLS. Changing `POSTGRES_PASSWORD` does nothing to an initialised volume, so the change is an `ALTER ROLE wingrc` plus `WINGRC_MIGRATION_DATABASE_URL` and a recreate of backend and worker. That procedure is the item's to write once |
+| API token in `.scratch/hit_live_endpoint.py` (wl-dt26) | n/a | n/a | **Closed 2026-10-23.** Dead: no `api_token` row on live matches its hash. The row was deleted on 2026-09-07 with its user, unaudited (the audit Done entry's concrete case). The file was deleted 2026-10-23 |
 | Entra SSO client secret | up to 24 months, set in Entra | nothing | not configured on live; becomes a row the day it is |
 | API tokens (`wingrc_…`) | per token, `expires_at` | the token itself stops working | none live |
 
