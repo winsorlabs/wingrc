@@ -11193,8 +11193,10 @@ next fetch and the next commit both still failed. Git 2.54 runs
 `geometric-repack` as a `git maintenance` task, which `gc.auto` does
 not gate. It was named without checking which mechanism runs the task.
 `maintenance.auto false` (set 2026-10-23) is the knob for
-`git maintenance run --auto` after commands. The commit that wrote this
-paragraph is its first test. Both settings stay in place: neither
+`git maintenance run --auto` after commands. It works, read from the
+output: the commit that first wrote this paragraph (`3781fe1`), its
+push and the next fetch printed no repack error, and the count stayed
+at 347 through all three. Both settings stay in place: neither
 consolidates anything, so packs keep accumulating, silently. A manual
 `git gc` still works once the permission problem is fixed.
 
