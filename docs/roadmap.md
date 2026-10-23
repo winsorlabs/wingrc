@@ -11150,6 +11150,48 @@ expiry date per credential, checked the same way the certificate is, by
 the same banner -- and a rotation procedure for the Fernet key. A DNS
 credential, if one is ever taken, is a row here the day it is.
 
+### W.1. wl-dt26's checkout: a repack that fails on every git operation
+
+**Not the deployment, the dev machine** (`C:\dev\wingrc`), but the same
+shape as W: it said so on every commit, and was called benign for weeks.
+Background maintenance's `geometric-repack` fails at the same step every
+time: `renaming pack to '…/pack-<hash>.idx' failed: Permission denied`.
+`git fsck` is clean, which shows nothing is corrupted. It does not show
+the repack finished, and it never has.
+
+| Date | Packs | Packed |
+|---|---|---|
+| 2026-10-21 | 327 | 620 MB |
+| 2026-10-22 | 345 | 659.5 MiB |
+| 2026-10-23 08:51 | 346 | 663 MiB |
+
+Git's auto-gc threshold is 50. The rate follows git activity, not the
+calendar: 18 packs on a day of commits, fetches and a merge, 1 on a day
+with almost none. So a per-day figure would mislead. A fresh clone
+starts at 1 pack, and how soon it reaches 50 depends on how much work is
+done in it. That gap is what the next measurement should pin down, per
+fetch/commit.
+
+**`gc.auto 0` does not stop it (2026-10-23).** Set in `.git/config`, and
+the very next `git fetch` attempted the repack and failed the same way.
+Git 2.54 runs `geometric-repack` as a `git maintenance` task, which
+`gc.auto` does not gate. The setting is left in place, since it does no
+harm.
+
+**What the failure leaves:** the repack wrote a pack whose name matches
+an existing one (`pack-c7187bd4…`). It rewrote that pack's `.pack` and
+`.rev` (08:51 today) and could not replace its read-only `.idx` (08:44
+yesterday). The `unknown object type 0 at offset …` lines come from that
+window. Afterwards `git verify-pack` on that `.idx` passed and `fsck`
+was clean. That shows the rewritten data still matches the old index. It
+does not show the next attempt will be equally lucky.
+
+**Open:** what holds `.git/objects/pack` (the `.idx` files are
+read-only; AV or indexing is the usual suspect, and
+`backend/.pytest_cache` also refuses reads). Whether to clone, and
+whether to switch off automatic maintenance until that is found, are
+Jarrod's to decide on these numbers.
+
 ### X. Publishing a document attaches it as evidence unchosen -- a hard-rule violation, live ✅ BUILT (2026-10-18)
 
 **Built as the Done entry "Item X: a published document is offered, and a
