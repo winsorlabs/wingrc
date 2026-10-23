@@ -178,6 +178,18 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   listed with its reason. The check matches an audit row's entity, not
   its action, so a test still asserts the action where it matters
   (`docs/roadmap.md`'s "Every change a request makes is audited" entry).
+- **A write to a live database goes through an audited CLI command, or
+  it does not run.** `audit_check.py` only sees HTTP requests. A script
+  that opens its own `SessionLocal()` is outside its reach, so nothing
+  but this rule covers it. A one-off fix is written as a command in
+  `app/cli.py`: dry-run by default, `--apply` to write, an audit row per
+  change saying why, archiving rather than deleting
+  (`review-cycles-detach-unattested` is the pattern). Reads may be ad
+  hoc. A credential is minted only through the route that records it,
+  never by a script. On 2026-09-07 a verification script on live made a
+  user, membership and API token, then raw-`DELETE`d them with no audit
+  row, so live's log holds no trace any of them existed
+  (`docs/roadmap.md`'s "A concrete case from before the rules").
 - **A docstring or comment that makes a universal claim about what the
   code does carries a test that fails when the claim stops being true.**
   Universal means "none", "never", "always", "only", "every", or a

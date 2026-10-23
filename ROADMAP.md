@@ -291,6 +291,18 @@ approval workflow below (D.2, D.3) are still not built — this section's
 scope was deliberately just the screen, credential storage, and
 test-connection.
 
+**Constraint, recorded 2026-10-23 (Jarrod):** "I never want this product
+to be at risk for shipping with any Winsorlabs keys to any products."
+It held from the start but lived only in conversation until this date,
+so nothing could be tested against it. It was violated in the commit
+that shipped D.1 (`c4f999e50b8`), which added a committed `dev:` Fernet
+key as compose's default for `WINGRC_CREDENTIAL_ENCRYPTION_KEYS`. The
+key and the guard meant to uphold the constraint arrived together. See
+`docs/roadmap.md`'s item "The compose file ships default credentials".
+A key, password or token in the repo that a deployment can run on
+without replacing it breaks this constraint. A fixture's key is fine
+only where no deployment can reach it (CI's `ci:` key).
+
 **Amended 2026-09-11: the "What" section below (a new top-level
 Integrations section in the per-org side nav, "per-org connection
 state") was wrong from the start.** `IntegrationConnection` is and always

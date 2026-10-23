@@ -5544,6 +5544,24 @@ row naming the new assessment, so it passed both before and after the
 fix: right entity, wrong action. Its `assessment.create` row is kept by
 a direct test (`test_raci_copy_forward.py`).
 
+**A concrete case from before the rules (recorded 2026-10-23).** On
+2026-09-07 a verification on live made an "Actor Verify Bot" user, its
+membership and an API token (`.scratch/verify_actor_live.py`). It used
+the token to create a scope entity, then deleted all four rows
+(`cleanup_actor_verify.py`). The deletes were raw `DELETE`s on
+`api_token`, `org_membership`, `user` and `scope_entity`, with no audit
+row. Live's log holds no trace that the user or the token existed. The
+plaintext token sat in `.scratch/` until 2026-10-23, and a lookup by its
+hash was the only way to show it was dead. Today's rules forbid each
+part of that: an unaudited write, a delete where an archive belongs, and
+a credential minted outside the route that records it. **The check
+would not have caught it, though.** It brackets HTTP requests, and the
+cleanup ran on a direct `SessionLocal()` in a script. A write made on a
+session the app does not hand out is outside the check's reach. Only
+a rule covers it, and it is in CLAUDE.md's Stack & conventions because it
+governs what is done, not what was found: a write to a live database
+goes through an audited CLI command, or it does not run.
+
 **Two rules accept a broad parent, and both are pinned to the actions
 measured making the write.** The same weakness applies to them: a row
 that does not describe the write could satisfy the check.
@@ -9332,6 +9350,18 @@ cutover.
 - **Rollback, written down before starting:** comment out the one
   `WINGRC_DATABASE_URL` line in `.env` and restart. Pre-flight `pg_dump` at
   `/backups/pre-cutover-20260929T141914Z.dump`.
+  **Correction (2026-10-23): that rollback would have failed.** `.env`
+  held a second, older `WINGRC_DATABASE_URL` on line 2
+  (`wingrc@localhost`, copied from `.env.example`). Commenting out the
+  cutover line made compose fall back to it, and no container can reach
+  `localhost:5432`. "Restart" also does not reread `.env`. The stale
+  line was removed from live on 2026-10-23, and the effective config was
+  unchanged by it. The rollback now reads: set `WINGRC_DATABASE_URL` to
+  `WINGRC_MIGRATION_DATABASE_URL`'s value (the owner), then
+  `docker compose up -d backend worker`. It names the owner URL
+  explicitly rather than relying on a fallback, so it survives the owner
+  password changing (the item "The compose file ships default
+  credentials").
 
 #### What "verified" meant
 
@@ -11076,6 +11106,192 @@ explanation, and the `[PLACEHOLDER - reason]` legend. The first row
 visible at 1366×768, and contrast measured as in L.8. Frontend only; if
 it needs an API change, stop.
 
+### The compose file ships default credentials, one of which makes credential encryption decorative -- a product defect, first
+
+**Found 2026-10-23.** Three defaults, in order of consequence. The order
+is by where each one travels. The MinIO and Postgres defaults let in an
+attacker who already has network access to the deployment. The Fernet
+default goes further, because it decrypts data that leaves the
+deployment.
+
+**1. The default Fernet key: integration-credential encryption is
+decorative.** `docker-compose.yml` sets
+`WINGRC_CREDENTIAL_ENCRYPTION_KEYS: ${WINGRC_CREDENTIAL_ENCRYPTION_KEYS:-dev:DFKu…}`,
+a key committed to a public repo. A deployment that does not set its own
+encrypts every integration credential an operator enters (Liongard, the
+AI provider, SMTP) under a key anyone can read. Whoever holds a copy of
+the database can then decrypt all of them. Database copies move
+routinely: backups, `pg_dump`s, restore tests, cloud storage. MinIO's
+and the owner's defaults stay inside the compose network; this one
+leaves with every backup.
+
+`docs/deployment.md` does not mention the key at all. Only a
+commented-out line in `.env.example` does. So an operator who follows
+the guide never sets it, and gets encryption that is decorative. That
+defeats a constraint D.1 set when it chose encryption at rest: a
+deploy-time key held by the MSP, so this is "the MSP holding its own
+credential, not WinGRC-the-vendor holding a customer's" (`ROADMAP.md`
+item D). A key committed to the product's own repo is a vendor key, and
+every deployment that does not override it shares it.
+
+This is part of the finding. Until 2026-10-23 the constraint behind
+D.1 existed only in conversation. It is now recorded in D.1 in Jarrod's
+words: "I never want this product to be at risk for shipping with any
+Winsorlabs keys to any products." Nothing could test against an unwritten
+rule. It was broken in the same commit as the guard meant to uphold it.
+
+**A guard that is correct, deliberate and unreachable, and it shipped
+that way.** `crypto.py` refuses to store or read a credential when the
+variable is unset ("fails closed", per the comment beside the default
+and D.1's design). Compose guarantees the variable is never unset, so
+the refusal cannot fire. A guard whose precondition is always satisfied
+upstream is not a guard.
+
+It belongs with the static `/health`, the silently-skipping
+`integration` job, the self-matching process check and the rest of W's
+list: a signal that reports fine because it checks nothing. But it
+failed differently from each of them, and the difference changes what
+review has to do:
+- **The `integration` job drifted.** It worked when written: on
+  2026-06-30 `conftest.py` read `WINGRC_DATABASE_URL`, which the job
+  set. A later change made `conftest.py` read only
+  `WINGRC_TEST_DATABASE_URL`, and the job silently stopped being able to
+  fail. Something upstream changed after the check was right.
+- **`/health` and the process grep were wrong in themselves.** `/health`
+  returned a static dict from the first scaffold. The grep matched its
+  own invocation. Either could be caught by reading the check alone.
+- **This guard is neither.** The default and the guard arrived together
+  in `c4f999e50b8`, each defensible read on its own. The guard is
+  correct code. The default is an ordinary dev convenience. Neither was
+  ever wrong alone, and the guard was never reachable through compose.
+
+So checking a guard in isolation cannot catch this, and neither can
+re-checking it after later changes, since nothing later changed. Review
+has to ask what supplies the guard's precondition, and whether anything
+always supplies it. For a fail-closed check on an unset variable, look
+at every place that sets the variable, a compose default included.
+Live is not exposed: its
+backend's only key is `prod-wl-util-1-2026-09-11`, and the dev key is
+absent (checked 2026-10-23 by label and substring,
+without printing either; W's Fernet row).
+
+**2. MinIO: the deployment guide instructs an override compose
+prevents.** `docs/deployment.md` §1 tells the operator to "Set real
+values for `WINGRC_STORAGE_ACCESS_KEY` / `WINGRC_STORAGE_SECRET_KEY`
+(don't ship with the `wingrc` / `wingrc-dev-secret` defaults)".
+`docker-compose.yml` writes both as literals in the shared environment
+block, and MinIO's `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` the same way.
+A literal is not `${…}`-interpolated, so nothing in `.env` reaches it.
+An operator who follows the guide sets the values, sees no error, and
+runs on the public defaults. A default credential is a weak setting.
+This is worse: a false claim about the product's security posture, in
+the guide a customer reads first, which ignores the operator who did the
+right thing without saying so.
+
+**3. The database owner.** `POSTGRES_PASSWORD: wingrc` is also a
+literal. That role owns every table and bypasses RLS. The repo is
+public, so every deployment inherits a known credential for its most
+privileged role, and a default password in a compose file is the first
+thing an assessor greps for. Nothing in the guide claims otherwise, so it
+is a weak setting rather than a false statement. It is still a product
+defect, not a deployment one: wl-util-1 has it because the product gave
+it. W's credentials rows depend on this item and come after it.
+
+**The same class, in the same file:**
+- `WINGRC_DATABASE_URL`'s fallback and `WINGRC_TEST_DATABASE_URL` embed
+  `wingrc:wingrc`;
+- `.env.example` line 2 is an owner URL at `localhost`. Copied into
+  live's `.env`, it became the stale line that broke the cutover's
+  rollback (the correction under that Done entry).
+
+The cutover entry's own sentence applies here: "there is no shippable
+default for a credential". The `wingrc_app` URL followed it; nothing
+else did.
+
+**The fix.**
+1. **Compose refuses to start without each credential, and names it.**
+   `WINGRC_CREDENTIAL_ENCRYPTION_KEYS`, `MINIO_ROOT_USER`/
+   `MINIO_ROOT_PASSWORD`, `WINGRC_STORAGE_ACCESS_KEY`/
+   `WINGRC_STORAGE_SECRET_KEY` and `POSTGRES_PASSWORD` each become
+   `${NAME:?NAME is required -- set it in .env, see docs/deployment.md}`.
+   They get no default, and none is a literal. The database URLs are built
+   from the same variables, so `wingrc:wingrc` leaves the
+   `WINGRC_DATABASE_URL` fallback and `WINGRC_TEST_DATABASE_URL` too.
+   With no default, `crypto.py`'s refusal is reachable again. It stays as
+   the second line, for a deployment that does not use compose. CI's jobs
+   use their own service containers, not compose, so they are unaffected.
+   The bench procedure (`docs/bench-stack-verification.md`) uses compose
+   and gains a step to generate its values.
+2. **`docs/deployment.md` §1 stops instructing something the code
+   prevents.** It says these values are required, not suggested. It names
+   each one, says how to generate it (the Fernet key included, which the
+   guide has never mentioned), and says that compose will not start
+   without them. It also specifies `.env` as mode 600 or 640 (live's was
+   664; W's `wingrc_app` row).
+3. **The procedure for an existing deployment to move off a default.**
+   `POSTGRES_PASSWORD` and `MINIO_ROOT_*` are read only when the volume is
+   initialised, so changing them does nothing to a running service. The
+   owner's procedure, written once and run on wl-util-1 (the decision
+   recorded in W: changed here, not as a separate exercise):
+   1. `ALTER ROLE wingrc PASSWORD` through psql's stdin;
+   2. update `POSTGRES_PASSWORD` and `WINGRC_MIGRATION_DATABASE_URL` in
+      `.env`;
+   3. `docker compose up -d backend worker`, since a restart does not
+      reread `.env`;
+   4. `alembic upgrade head` on boot is the proof the owner URL works.
+
+   MinIO's root credential and storage keys have their own procedure,
+   which needs reading before it is written. A deployment that ran on the
+   dev Fernet key rotates onto its own with `wingrc rotate-credential-keys`,
+   which already exists. It treats every credential entered under the dev
+   key as exposed in any database copy made since, and reissues it at the
+   provider. wl-util-1 never ran on it.
+4. **`.env.example` tidied.** Empty values for every required variable,
+   with a comment on how to generate each. Line 2's owner URL at
+   `localhost`, which became live's duplicate and broke the cutover's
+   rollback, is removed.
+
+**Verification: a deployment missing each value refuses to start and
+names it.** On a bench stack, run `docker compose up` once per required
+variable with that one unset, and record the error naming it. Start with
+`WINGRC_CREDENTIAL_ENCRYPTION_KEYS`. Starting cleanly with everything set
+proves nothing, because that was already true before the fix.
+
+**Considered and declined (2026-10-23), so they are not re-proposed:**
+- **A security advisory, `SECURITY.md`, a security contact.** Declined.
+  Nobody has ever deployed WinGRC except Jarrod on wl-util-1, so there is
+  no one to notify. GitHub's public data agreed: 0 stars, forks and
+  watchers, no releases, no published image, every issue, PR and commit
+  from `winsorlabs`. And Jarrod does not want an inbox. A general contact
+  channel is a future item ("A contact channel for bugs and feature
+  requests").
+- **An in-product `msp_admin` banner when a stored credential's
+  `credential_key_version` is `dev`.** Declined. Once compose refuses to
+  start without a key, a deployment can barely reach that state, so the
+  banner would have almost nothing left to warn about.
+
+**Open:**
+- `chown wladmin .env` on live, which needs sudo -- Jarrod, as `wladmin`.
+
+**Editing live config: check the file afterwards.** Removing the stale
+`.env` line on 2026-10-23 used `sed -i` as `claude`. `sed -i` writes a
+new file and renames it over the old one, so a file you do not own
+becomes yours, silently, while the mode is copied. Live's `.env` is now
+`claude:wladmin`. After any in-place edit of live config, `stat` it and
+compare owner and mode with what was there before. The prior owner was
+not recorded, which is how this went unseen.
+
+### A contact channel for bugs and feature requests -- future, not now
+
+**Recorded 2026-10-23.** WinGRC has no channel for anyone outside
+WinsorLabs to report a bug or ask for a feature, and none is wanted
+while nobody else runs it. Decide the channel when that changes, and
+make the decision without publishing an address or creating an inbox
+Jarrod does not want. GitHub's private vulnerability reporting is one
+candidate for security reports: an in-repo form, and it publishes no
+address. A security advisory and `SECURITY.md` were declined for now
+(the item "The compose file ships default credentials").
+
 ### W. What on this deployment expires or rotates, and what says so first
 
 **Found 2026-10-17**, when dev.wingrc.us's certificate had been expired
@@ -11093,7 +11309,9 @@ monitoring build-out.
 | `wingrc.us` domain registration (DNSimple) | yearly | nothing in WinGRC; DNSimple's own renewal mail | unchecked -- confirm auto-renew is on |
 | Integrations credentials: `ai`, `liongard`, `smtp` | whatever the issuer sets (an API key's expiry is set at the provider, not here) | a failing test-connection, or a failed job -- after the fact | unchecked; record each issuer's expiry date beside the connection |
 | Fernet key (`WINGRC_CREDENTIAL_ENCRYPTION_KEYS`, label `prod-wl-util-1-2026-09-11`) | never expires; rotation is a deliberate act (key versions exist) | n/a | no expiry; rotation procedure undocumented |
-| `wingrc_app` / owner database passwords | never expire | n/a | no expiry |
+| `wingrc_app` database password | never expires | n/a | **Finding 2026-10-23: its copy in live's `.env` was world-readable.** The password was generated into a mode-600 file, applied through stdin and never printed (the cutover's Done entry; a 2026-10-23 audit printed only its length). But `.env`, which carries it in `WINGRC_DATABASE_URL`, sat at mode 664 in the same directory. For how long is not recorded; `sed -i` keeps the mode, so the 664 predates the 2026-10-23 edit. What actually kept other accounts out was `/home/wladmin` at 750, a parent directory's mode nobody set for this. The host has no accounts besides `wladmin` and `claude`, and both are in group `wladmin`, so no other login account could have read it (root aside). Mode set to 640 on 2026-10-23. The owner is still `claude` (the `sed -i` lesson under the item "The compose file ships default credentials"), and returning it to `wladmin` needs sudo, which `claude` lacks. **Not rotating:** no reader outside the two accounts that already hold it was possible, and its other copies are where they belong (`.wingrc_app_pw` at 600, `pg_authid`, the backend and worker environments; a search of `/home/claude` and `/home/wladmin` found no others). Rotating would be housekeeping with a short connection-error window, not a fix. Open: `chown wladmin .env` on live, Jarrod as `wladmin`. The guide specifying `.env` as 600 or 640 is part of the fix in the item "The compose file ships default credentials" |
+| Owner (`wingrc`) database password | never expires | n/a | **Decided 2026-10-23: change it, as part of the item "The compose file ships default credentials", not separately.** Its value is the compose default, which is public in the repo, so it is known to anyone who reads it. Exposure is limited (the db port is unpublished and `pg_hba` wants `scram-sha-256` off-host), but the role bypasses RLS. Changing `POSTGRES_PASSWORD` does nothing to an initialised volume, so the change is an `ALTER ROLE wingrc` plus `WINGRC_MIGRATION_DATABASE_URL` and a recreate of backend and worker. That procedure is the item's to write once |
+| API token in `.scratch/hit_live_endpoint.py` (wl-dt26) | n/a | n/a | **Closed 2026-10-23.** Dead: no `api_token` row on live matches its hash. The row was deleted on 2026-09-07 with its user, unaudited (the audit Done entry's concrete case). The file was deleted 2026-10-23 |
 | Entra SSO client secret | up to 24 months, set in Entra | nothing | not configured on live; becomes a row the day it is |
 | API tokens (`wingrc_…`) | per token, `expires_at` | the token itself stops working | none live |
 

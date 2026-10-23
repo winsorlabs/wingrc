@@ -131,3 +131,7 @@ AGPL-3.0-or-later. WinGRC is free to self-host; managed hosting of your own
 dedicated instance and vendor-sponsored stack-library mappings fund ongoing
 development. See
 [`LICENSE`](LICENSE).
+
+WinGRC is provided as is, with no warranty, and its authors accept no
+liability for its use. See sections 15 (Disclaimer of Warranty) and 16
+(Limitation of Liability) of the [`LICENSE`](LICENSE).
