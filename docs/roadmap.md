@@ -8846,6 +8846,11 @@ satisfied. The merge path is a PR rather than a fast-forward push, so
 branches-not-direct-pushes is enforced rather than conventional and
 "watch CI go green" is a precondition for merging rather than a courtesy.
 Recorded in `CLAUDE.md`'s land-it routine.
+**Correction (2026-10-24): `image` is required today, and stays so.** The
+ruleset requires all three. The reasoning above holds only if `image`
+replaced the other two: required beside them, a skipped `image` passes
+nothing, because the job it skipped for is required and still blocks.
+CLAUDE.md's "`main` is protected" bullet has the full history.
 
 ---
 
@@ -9084,6 +9089,9 @@ first move is structural rather than procedural:
    thing that makes the protection real rather than decorative: requiring
    the job that skips on failure would wave through exactly the runs it was
    added to stop.
+   *Corrected 2026-10-24: true only if `image` replaced the other two
+   checks. `image` is required beside them today and stays so (the
+   correction under "Branch protection is now on").*
 
 #### Verification
 
@@ -11265,6 +11273,27 @@ proves nothing, because that was already true before the fix.
   from `winsorlabs`. And Jarrod does not want an inbox. A general contact
   channel is a future item ("A contact channel for bugs and feature
   requests").
+- **GitHub's private vulnerability reporting: turned on 2026-10-24.** The
+  "no inbox" decision above does not cover this, and should not be read
+  as if it did. With reporting off there is still a channel. GitHub
+  tells a reporter with no private route to open an issue asking for a
+  security contact, so the vulnerability surfaces in public first. The
+  real choice is a private draft or a public disclosure, not a channel
+  or none. On, it publishes no address. It is a form under the Security
+  tab, a report becomes a draft advisory visible only to the reporter
+  and admins, and the reporter needs a GitHub account. With no
+  notifications configured it is a page to check when needed, not an
+  inbox. Enabled through the API with the repo's admin
+  credential: `PUT …/private-vulnerability-reporting` returned 204, and
+  an unauthenticated `GET` then read `enabled: true`.
+  **Known property: nobody is watching this channel.** Notifications are
+  off by Jarrod's choice. The admin account does not watch the repo
+  (`GET …/subscription` returns 404), so a report raises nothing. It sits
+  as a draft advisory until someone opens the Security tab. That is
+  acceptable at zero deployments, and it is written here so a report
+  found sitting there later is not a surprise. When anyone else deploys
+  WinGRC, revisit it alongside the future item "A contact channel for
+  bugs and feature requests".
 - **An in-product `msp_admin` banner when a stored credential's
   `credential_key_version` is `dev`.** Declined. Once compose refuses to
   start without a key, a deployment can barely reach that state, so the
@@ -11281,16 +11310,32 @@ becomes yours, silently, while the mode is copied. Live's `.env` is now
 compare owner and mode with what was there before. The prior owner was
 not recorded, which is how this went unseen.
 
+### A machine account for Claude -- future, if a second person ever touches this repo
+
+**Recorded 2026-10-24.** Claude opens PRs with the `winsorlabs` OAuth
+token held by Git Credential Manager on wl-dt26 (CLAUDE.md, "Claude opens
+PRs; Jarrod merges them"). That token can also merge. "Jarrod merges"
+is therefore a convention, not an enforcement, and it cannot be enforced
+as things stand. Branch protection sees one account for both Claude and
+Jarrod. A required approving review would leave nobody able to approve,
+because GitHub blocks approving your own PR. The fix is a separate
+machine account with push but not merge rights, whose token is the one
+Claude holds. Then the ruleset can require a review from `winsorlabs`,
+or restrict merging to it. Not work for now. Do it when a second person
+gets access, because then a convention one person keeps is no longer
+enough.
+
 ### A contact channel for bugs and feature requests -- future, not now
 
 **Recorded 2026-10-23.** WinGRC has no channel for anyone outside
 WinsorLabs to report a bug or ask for a feature, and none is wanted
 while nobody else runs it. Decide the channel when that changes, and
 make the decision without publishing an address or creating an inbox
-Jarrod does not want. GitHub's private vulnerability reporting is one
-candidate for security reports: an in-repo form, and it publishes no
-address. A security advisory and `SECURITY.md` were declined for now
-(the item "The compose file ships default credentials").
+Jarrod does not want. Security reports already have a private route:
+GitHub's private vulnerability reporting, on since 2026-10-24. It is an
+in-repo form, publishes no address and raises no notifications. A
+security advisory and `SECURITY.md` were declined for now (both are in
+the item "The compose file ships default credentials").
 
 ### W. What on this deployment expires or rotates, and what says so first
 
