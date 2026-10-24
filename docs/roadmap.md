@@ -11277,9 +11277,15 @@ proves nothing, because that was already true before the fix.
   notifications configured it is a page to check when needed, not an
   inbox. Enabled through the API with the repo's admin
   credential: `PUT …/private-vulnerability-reporting` returned 204, and
-  an unauthenticated `GET` then read `enabled: true`. The admin account
-  does not watch the repo, so reports raise no notifications. Turning
-  that on is a separate decision.
+  an unauthenticated `GET` then read `enabled: true`.
+  **Known property: nobody is watching this channel.** Notifications are
+  off by Jarrod's choice. The admin account does not watch the repo
+  (`GET …/subscription` returns 404), so a report raises nothing. It sits
+  as a draft advisory until someone opens the Security tab. That is
+  acceptable at zero deployments, and it is written here so a report
+  found sitting there later is not a surprise. When anyone else deploys
+  WinGRC, revisit it alongside the future item "A contact channel for
+  bugs and feature requests".
 - **An in-product `msp_admin` banner when a stored credential's
   `credential_key_version` is `dev`.** Declined. Once compose refuses to
   start without a key, a deployment can barely reach that state, so the
