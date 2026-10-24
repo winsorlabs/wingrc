@@ -8846,6 +8846,11 @@ satisfied. The merge path is a PR rather than a fast-forward push, so
 branches-not-direct-pushes is enforced rather than conventional and
 "watch CI go green" is a precondition for merging rather than a courtesy.
 Recorded in `CLAUDE.md`'s land-it routine.
+**Correction (2026-10-24): `image` is required today, and stays so.** The
+ruleset requires all three. The reasoning above holds only if `image`
+replaced the other two: required beside them, a skipped `image` passes
+nothing, because the job it skipped for is required and still blocks.
+CLAUDE.md's "`main` is protected" bullet has the full history.
 
 ---
 
@@ -9084,6 +9089,9 @@ first move is structural rather than procedural:
    thing that makes the protection real rather than decorative: requiring
    the job that skips on failure would wave through exactly the runs it was
    added to stop.
+   *Corrected 2026-10-24: true only if `image` replaced the other two
+   checks. `image` is required beside them today and stays so (the
+   correction under "Branch protection is now on").*
 
 #### Verification
 
@@ -11301,6 +11309,21 @@ becomes yours, silently, while the mode is copied. Live's `.env` is now
 `claude:wladmin`. After any in-place edit of live config, `stat` it and
 compare owner and mode with what was there before. The prior owner was
 not recorded, which is how this went unseen.
+
+### A machine account for Claude -- future, if a second person ever touches this repo
+
+**Recorded 2026-10-24.** Claude opens PRs with the `winsorlabs` OAuth
+token held by Git Credential Manager on wl-dt26 (CLAUDE.md, "Claude opens
+PRs; Jarrod merges them"). That token can also merge. "Jarrod merges"
+is therefore a convention, not an enforcement, and it cannot be enforced
+as things stand. Branch protection sees one account for both Claude and
+Jarrod. A required approving review would leave nobody able to approve,
+because GitHub blocks approving your own PR. The fix is a separate
+machine account with push but not merge rights, whose token is the one
+Claude holds. Then the ruleset can require a review from `winsorlabs`,
+or restrict merging to it. Not work for now. Do it when a second person
+gets access, because then a convention one person keeps is no longer
+enough.
 
 ### A contact channel for bugs and feature requests -- future, not now
 

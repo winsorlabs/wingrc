@@ -260,14 +260,25 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   whole time. A slice is not done until `backend` and `integration` have
   both actually **run** and passed — a skipped job is not a passed job.
 - **`main` is protected (since 2026-09-29): the merge path is a PR, not a
-  fast-forward push.** "Require status checks to pass" is on, with
-  `backend` and `integration` required and **`image` deliberately not** —
-  `image` keeps `needs: [backend, integration]`, so it legitimately skips
-  when either fails, and a skipped required check counts as *satisfied*.
-  Requiring it would wave through exactly the runs protection exists to
-  stop. So branches-not-direct-pushes is now enforced rather than
-  conventional, and "watch CI go green" is a precondition for merging
-  rather than a courtesy.
+  fast-forward push.** The repository ruleset "Branch Protection" requires
+  **`backend`, `integration` and `image`** (read from the API on
+  2026-10-24), and blocks deletion and non-fast-forward pushes. So
+  branches-not-direct-pushes is enforced rather than conventional, and
+  "watch CI go green" is a precondition for merging rather than a
+  courtesy. `image` stays required: a broken Dockerfile merged to `main`
+  would otherwise first show as a deploy failure, at the worst moment. Do
+  not loosen the ruleset to match older prose.
+  *History:* until 2026-10-24 this bullet said `image` was "deliberately
+  not" required, as did the 2026-09-29 entries in `docs/roadmap.md`. The
+  reason given was that `image` has `needs: [backend, integration]`, so it
+  skips when either fails, a skipped required check counts as satisfied,
+  and so requiring it "would wave through exactly the runs protection
+  exists to stop". That holds only if `image` replaced the other two.
+  Required beside them, a skipped `image` passes nothing, because the
+  failed job it skipped for is itself required and still blocks. The
+  only effect of requiring it is to stop a merge where the tests pass
+  and the image build fails. When `image` became required is not
+  recorded; the ruleset was last edited 2026-10-13.
 - **Reading CI status needs no credential.** The repo is public, so run
   conclusions and per-job/per-step results come back from
   `api.github.com/repos/winsorlabs/wingrc/actions/runs` unauthenticated
@@ -285,8 +296,16 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   on the wrong assumption that no credential existed. The same token
   could merge, and the ruleset requires status checks but no approving
   review. So merging is Jarrod's by convention, not by enforcement:
-  Claude never calls the merge endpoint. An authenticated poll also
-  lifts the CI-status rate limit to 5000 an hour.
+  Claude never calls the merge endpoint. **It cannot be enforced as
+  things stand, so do not spend an afternoon trying.** The token is the
+  `winsorlabs` account, the same one Jarrod merges with, so branch
+  protection cannot tell the two apart. Requiring an approving review
+  would leave nobody able to approve, because GitHub blocks approving
+  your own PR. The real fix is a separate machine account with push but
+  not merge rights. That is the roadmap's item "A machine account for
+  Claude", to do if a second person ever touches this repo, not before.
+  An authenticated poll also lifts the CI-status rate limit to 5000 an
+  hour.
 - The no-database suite is the cheap local gate: `pytest -q` in `backend/`
   with no `WINGRC_*DATABASE_URL` set runs ~458 tests in **~10s**. Use it
   before every push. It is exactly the configuration CI's `backend` job
