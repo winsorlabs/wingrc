@@ -276,6 +276,17 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   below exists: it fails the run in-process instead of relying on someone
   with `Actions: read` noticing a wall of skips. A token is needed only to
   *open or merge* a PR, never to watch one.
+- **Claude opens PRs; Jarrod merges them.** `gh` is not installed on
+  wl-dt26, and it does not need to be. Git Credential Manager holds an
+  OAuth token for `winsorlabs` (scopes `repo`, `workflow`, `gist`; admin
+  on the repo). Read it with `git credential fill` and send it to
+  `POST /repos/winsorlabs/wingrc/pulls` without printing it. This first
+  worked with #57 (2026-10-24); before that, every PR was opened by hand
+  on the wrong assumption that no credential existed. The same token
+  could merge, and the ruleset requires status checks but no approving
+  review. So merging is Jarrod's by convention, not by enforcement:
+  Claude never calls the merge endpoint. An authenticated poll also
+  lifts the CI-status rate limit to 5000 an hour.
 - The no-database suite is the cheap local gate: `pytest -q` in `backend/`
   with no `WINGRC_*DATABASE_URL` set runs ~458 tests in **~10s**. Use it
   before every push. It is exactly the configuration CI's `backend` job
