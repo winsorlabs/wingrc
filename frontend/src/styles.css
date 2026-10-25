@@ -113,6 +113,13 @@ button { cursor: pointer; border: none; border-radius: 5px; font-size: 0.875rem;
 .btn-ghost { background: transparent; color: var(--primary); border: 1px solid var(--border); padding: 0.35rem 0.75rem; }
 .btn-ghost:hover { background: #f0f4ff; }
 .btn-sm { padding: 0.2rem 0.55rem; font-size: 0.775rem; }
+/* The browser's focus ring is a 2px #101010 drawn flush against the
+   element; on a --primary fill that is 2.96:1. The offset puts the page
+   background between ring and fill (V.1). */
+.btn-primary:focus-visible,
+.filter-chip--active:focus-visible,
+.doc-tbtn.active:focus-visible,
+.doc-list-item.active:focus-visible { outline-offset: 2px; }
 
 /* ── Form row ── */
 .form-row { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
@@ -1705,7 +1712,7 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 
 /* ── ContactDrawer footer delete ─────────────────────────────────────────── */
 .delete-confirm { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
-.btn-destructive { color: #dc3545; }
+.btn-destructive { color: #b02a37; }
 .btn-danger { background: #dc3545; color: #fff; border-color: #dc3545; }
 .btn-danger:hover { background: #bb2d3b; }
 
