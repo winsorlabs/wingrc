@@ -5761,7 +5761,7 @@ There are no other literal `#6c757d` uses in the CSS or in any component.
 **Found, not fixed (not `--muted`, so not this slice).**
 
 **`--primary` `#0d6efd` on `--bg` is 4.27:1, and it is the next visual
-item (V.1 under Planned), not a backlog line.** It is every ghost button
+item (V.1 under Planned; done 2026-10-25), not a backlog line.** It is every ghost button
 and text link on the page background: *← All lists*, *Adopt templates*,
 the Lists index's titles, *Edit*. That is worse than V's defect. A link
 is the element a person is hunting for, whereas secondary text is what
@@ -5919,6 +5919,204 @@ expected.**
   `.list-view-header`.
 
 ---
+
+### V.1: `--primary` has headroom, its hover derived from it ✅ DONE (2026-10-25, bench-verified; frontend only)
+
+**Branch `v1-primary`, two commits.** `97246f9` changes the tokens and
+the four small items. `d1bf60f` fixes the focus ring regression the
+bench found, and folds in `.btn-destructive`. **Backend untouched**: no
+file under `backend/` changes. `tsc -b`, the build and vitest (467 of
+467) pass on the bench. No frontend test asserted on a colour, so none
+changed.
+
+**How it was measured.** V's scripts were not kept, so they were
+rewritten, and they are worth keeping this time (below). The bench
+(project `wingrc_verify_v1`) ran `backend` and `minio` only, with no
+worker, so no scheduled job ran against the copy. Its database was a
+restored copy of live. `main`'s build (`04d0dca`) and this branch's were
+served side by side by two nginx containers on the bench network, with
+no host ports published. Login was a session minted on the bench copy
+for an existing `msp_admin`, never a live credential. Headless Chromium
+1.56 at 1366×768 walked 20 screens on each build:
+- the org picker, the dashboard, the board, the control drawer, Tools;
+- the Lists index, a list, Documents, a document, and the refused tag
+  removal (the yellow panel, on Winsorlabs' *Access Control Policy*,
+  AC.L2-3.1.1[a]);
+- Assets, Org Profile, Periodic Review, Roles, Users, Audit Log;
+- Administration, Integrations, Administration › Users, and the login
+  form.
+
+On each screen the page was scrolled through, and every visible text
+node was measured against the background it sits on: ancestors
+composited, opacity applied, and text under an overlay skipped. Every
+element whose border, outline, fill or stroke is the blue was recorded
+as a non-text use. Up to three of each button and link class were
+hovered and measured, and a Tab walk recorded what each focused element
+draws. The focus ring and the hover were then checked in pixels, from
+screenshots, not only computed.
+
+**Where `--primary` is used.** 46 rules in `styles.css` and none in a
+component:
+- as text: ghost buttons, `.link-button`, breadcrumbs, the header
+  wordmark, the guidance toggle, `.ev-download`, document links, the
+  TOTP summary, the login card's ghost link;
+- as a fill under white text: `.btn-primary`, the active filter chip
+  (which held literal copies of the old pair, now the tokens), the
+  active editor toolbar button, count badges, the login mark, the active
+  wizard step number;
+- as non-text: input and select focus borders (with a 15% halo), the
+  `.list-rows-scroll` focus outline, active tab underlines, the selected
+  document's border, list section rules, and the radar and donut
+  graphics.
+
+#### The tokens
+
+`--primary` `#0d6efd` → **`#0a58ca`**; `--primary-hover` `#0b5ed7` →
+**`#0846a2`**. The entry's before table, with the after:
+
+| Foreground on background | Where | Before | After |
+|---|---|---|---|
+| blue on `#f8f9fa` (`--bg`) | ghost buttons and links on the page (17 ghost buttons, 49 list titles, 2 summaries reached) | 4.27 | **6.11** |
+| blue on `#fff3cd` | *Keep it* on the refusal panel | 4.06 | **5.81** |
+| blue on `#ffffff` | links, ghost buttons, the wordmark, breadcrumbs, *Show guidance*, *Test connection* | 4.50 | **6.44** |
+| `#ffffff` on `--primary` | primary buttons, the active chip, *H1* toolbar button, login mark | 4.50 | **6.44** |
+| `#ffffff` on `--primary-hover` | primary buttons, hovered | 5.84 | **8.72** |
+
+And the backgrounds the entry asked for beyond those:
+
+| Blue on | Where | Before | After |
+|---|---|---|---|
+| `#f0f4ff` | a ghost button, hovered | 4.09 | 5.85 |
+| `#f0f6ff` | the active tool card | 4.14 | 5.93 |
+| `#eef2ff` | a hovered item row | 4.03 | 5.76 |
+| `#e8f0fe` | the selected item row's border | 3.93 | 5.62 |
+| `#dee2e6` | a focused input's border against its unfocused colour | 3.46 | 4.94 |
+
+**The lowest blue-text ratio is now 5.81:1**, on the refusal panel, and
+nothing sits near 4.5. Disabled primary buttons (*No changes*, 3.03,
+was 2.36) are exempt as inactive components.
+
+**The hover: `#0846a2` is the new rest × 0.80, chosen so the step keeps
+the old pair's visible size.** "Darker by a ratio" alone does not say
+whether a person sees it. The step was matched in two measures:
+- **Perceptual difference (CIEDE2000):** old pair 7.22, new pair
+  **7.34**. A ΔE around 2 is a just-noticeable difference, so about 7 is
+  plainly a different colour.
+- **Luminance step (white's contrast, hover over rest):** old 1.30, new
+  **1.35**.
+
+The entry's suggested `#094db1` gives ΔE 4.56 and a 1.20 step, smaller
+than the change people already read as hover. The old multiplier (×0.85)
+would also come out smaller here: the same proportional darkening gives
+a smaller visible step on a darker base. So the step was matched in
+perceptual difference, not by reusing the factor. On the bench, the
+branch's hovered *Sign in* is a distinct step darker than its rest, and
+`main`'s hover is nearly the branch's rest. That is the convergence the
+entry predicted, which is why the hover had to be derived from the new
+rest.
+- **There is no `:active` (pressed) style anywhere in `styles.css`**, so
+  pressed shows hover. Nothing else needed checking.
+- Links and `.link-button` signal hover with an underline, not a colour.
+  Ghost buttons signal it with the `#f0f4ff` tint, on which the blue is
+  5.85.
+- `.ev-download:hover`'s text is `--primary-hover`: 8.72 on white.
+
+#### Focus indicators: one uses the token, one was made worse by it
+
+**Inputs and selects use `--primary` as their focus indicator.** Their
+CSS sets `outline: none` and draws the indicator as a blue border with a
+15% halo. Held to WCAG 2.2 non-text contrast, 3:1 against adjacent
+colours, the 1px border sits between the input's inside and the surface
+outside it:
+- vs a white field or card: 4.50 → **6.44**;
+- vs `--bg` (the drawer textarea, a field on the page): 4.27 → **6.11**;
+- vs the unfocused `#dee2e6` border (the change a person sees): 3.46 →
+  **4.94**.
+
+The halo is decorative and was moved to the new blue. The
+`.list-rows-scroll` outline (2px, offset 2px, against `--bg`) goes
+4.27 → 6.11.
+
+**Buttons and links do not use `--primary` for focus, but the darker
+token made their focus ring worse.** They draw Chrome's default ring,
+which reports as `outline: auto 1px rgb(16, 16, 16)`. Sampled from
+screenshots, it is a solid 2px `#101010` drawn flush against the
+element's edge, with nothing between. Against the page outside it, it
+is 19.03:1. Against the button inside it, it was:
+
+| Focus ring `#101010` against | `main` | Token change alone | Shipped (`d1bf60f`) |
+|---|---|---|---|
+| a primary button's fill | 4.23 | **2.96** | 19.03 (page background between) |
+| the same, hovered | 3.26 | **2.18** | 19.03 |
+| the page or card outside the ring | 19.03 | 19.03 | 19.03 |
+
+A ring that disappears against the button it surrounds is a keyboard
+user's problem specifically, and no text audit sees it. **Fix:
+`outline-offset: 2px` on the blue-filled controls** (`.btn-primary`,
+the active filter chip, the active toolbar button, the selected
+document). This keeps the browser's own ring and puts the page
+background between ring and fill. It is checked in pixels: ring, gap,
+fill.
+
+The same ring against the other dark fills, `#dc3545` and `#198754`, is
+4.20, unchanged by this slice.
+
+#### The four smaller items: all four ride along, plus one found by measuring
+
+Each was one colour, measured and moved, with no restructuring.
+
+| Item | Before | After |
+|---|---|---|
+| *Active — pending evidence · v1* on the tool card (`#f0f6ff`) | `#198754` 4.17 | `#146c43` **5.94** |
+| *Deactivate* on the tool card | `#dc3545` 4.17 | `#b02a37` **5.98** |
+| *Deactivate*, hovered (white on its fill) | 4.53 | **6.50** |
+| *Inactive* badge (`#f1f5f9`), and the missing-entity change badge with the same pair | `#64748b` 4.34 | `#475569` **6.92** |
+| Control drawer textarea placeholder, on `--bg` (the browser default) | `#757575` 4.37 | `--muted` **5.78** |
+| **Found:** `.btn-destructive` (*Remove* on Integrations), on white | `#dc3545` 4.53 | `#b02a37` **6.50** |
+| the same, hovered (`#f0f4ff`) | 4.12 | **5.91** |
+
+The tool card's error text (`.product-card-error`) took the same red,
+since it sits on the same card. **After this, no text measured on any of
+the 20 screens is under 4.5:1**, apart from:
+- the ✓ completion dot, a graphic held to 3:1 (3.30, unchanged);
+- a ⚙ settings button at opacity 0, revealed on row hover, which a scan
+  reads as 1:1.
+
+**Found, not fixed (V.2 under Planned):** the other `#dc3545` and
+`#198754` literals. None was on screen in the walk, so these are worked
+from their CSS:
+- `.error-msg` on `--bg`, 4.30;
+- `.ev-remove:hover` on `#fee2e2`, 3.71;
+- `.raci-drawer-error`, `.ev-error`, `.drawer-saved-msg` and
+  `.filter-chip--clear` on white, 4.53;
+- `.btn-danger` and `.filter-chip--clear:hover`, white on `#dc3545`,
+  4.53.
+
+They are a dozen literals, not one token, so fixing them properly means
+introducing a danger and a success token. That is restructuring, not a
+retone, and stays out of a token slice.
+
+#### The bench scripts are kept
+
+`measure.mjs` (the walk and measurement), `ring.mjs` and `hover.mjs`
+(the pixel checks), `contrast.py` (WCAG ratio and CIEDE2000) and
+`analyse.py` (the before/after grouping) are in `docs/contrast-bench/`,
+with how to run them. V's were lost with its bench, and this slice
+spent most of its time rewriting them.
+
+#### Before and after
+
+Side-by-side captures, `main` left and branch right: the tool card, a
+list page (ghost *← All lists*, primary *Export .xlsx*), the refusal
+panel, a document, the control drawer, Users, and the login form. Plus
+the hover crop and the focus ring crops. They were reviewed on the
+bench and are not committed.
+
+**Not yet deployed.** The walk on live is Jarrod's:
+- open a list page (ghost *← All lists*, primary *Export .xlsx*);
+- open Tools (the card's green and red);
+- on the login page, Tab to *Sign in*: the dark ring should stand off
+  the blue with a white gap.
 
 ### The evidence section stops destroying things and stops hiding things ✅ DONE (2026-10-19, bench-verified, migration 0071; deployed and walked on live 2026-10-20)
 
@@ -11015,7 +11213,13 @@ not the only one.
   replacement.
 - Still never inferred, and still never credits the replacement.
 
-### V.1. Links and ghost buttons pass AA contrast (`--primary`) -- next visual item
+### V.1. Links and ghost buttons pass AA contrast (`--primary`) ✅ DONE (2026-10-25)
+
+**Built in the Done entry "V.1: `--primary` has headroom, its hover derived from it".**
+`--primary` is `#0a58ca` (6.11 on `--bg`, 5.81 on the refusal panel) and
+`--primary-hover` is `#0846a2`. The four smaller items rode along. The
+browser's focus ring against a primary button was found at 2.96:1 and
+fixed with an offset. The planning text below is kept as written.
 
 **Found in V (2026-10-20), measured.** `--primary` (`#0d6efd`) is
 **4.27:1** on the app's `--bg` (`#f8f9fa`), under AA's 4.5:1. That covers
@@ -11087,6 +11291,25 @@ U", and can be rerun as it stands. Frontend only.
 - `#198754` and `#dc3545` on the tool card, 4.17;
 - the *Inactive* badge, 4.34;
 - the textarea placeholder, 4.37.
+
+### V.2. Red and green text and fills pass AA contrast -- found in V.1
+
+**Found in V.1 (2026-10-25), worked from CSS.** None of these was on
+screen in V.1's walk, so each needs measuring where it actually appears:
+- `.error-msg` on `--bg`: 4.30;
+- `.ev-remove:hover` on `#fee2e2`: 3.71;
+- `.raci-drawer-error`, `.ev-error`, `.drawer-saved-msg` and
+  `.filter-chip--clear` on white: 4.53;
+- `.btn-danger` and `.filter-chip--clear:hover`, white on `#dc3545`:
+  4.53.
+
+**Why it is not a retone.** These are about a dozen literal `#dc3545`
+and `#198754` uses, not one token. V.1 moved the two it measured failing
+on screen (the tool card, and `.btn-destructive`) to `#b02a37` and
+`#146c43` by hand. The slice is to introduce danger and success tokens
+(foreground, and a fill with its hover derived as V.1 did), move every
+literal onto them, and measure each context, including the focus ring
+against the fills.
 
 ### L.9. The scope-drawn lists look like the rest of the Lists index ✅ DONE (2026-10-20)
 
