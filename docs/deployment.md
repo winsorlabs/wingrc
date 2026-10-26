@@ -241,6 +241,37 @@ live down on 2026-10-07 — code moved to N.3, the schema stayed at 0061,
 `docker-compose.override.yml` on a deployed host; the script refuses to run
 if one exists.
 
+**What a `git pull` on the live host does, and how it looks.** Do not run
+one there; run `deploy/deploy.sh`. This is why:
+
+- `deploy.sh` leaves the checkout on a **detached HEAD** at the deployed
+  commit. `git pull` fetches, so `origin/main` moves, and then refuses to
+  merge, because there is no branch to merge into. It exits 1 and prints:
+
+  ```
+  You are not currently on a branch.
+  Please specify which branch you want to merge with.
+  See git-pull(1) for details.
+
+      git pull <remote> <branch>
+  ```
+
+  Through a pipe such as `| tail -3`, only the last, indented line shows,
+  which reads like a usage hint, and the pipeline exits 0, because it
+  reports `tail`. Nothing on screen says the working tree did not move.
+  A `docker compose build` run next succeeds, on the old commit, with
+  `WINGRC_BUILD_SHA` unset, so the image says `unknown`. On 2026-10-26 that
+  rebuilt nginx at #52 and then, once the checkout was moved by hand,
+  deployed nginx alone at V.1 beside a backend on #52, with no deploy
+  record and no scan.
+- Before 2026-10-08 the checkout was on `main` and the backend ran it
+  bind-mounted under `--reload`. A pull succeeded with an ordinary
+  fast-forward message, and that alone changed the running code, without
+  migrations (2026-10-07, above).
+
+`/health` names each component's commit (above), so after any step,
+reading it says what is actually running.
+
 **When these commands run inside a docker-CLI helper container (`claude`'s
 setup on wl-util-1: no direct filesystem access to `~wladmin/dev/wingrc`,
 only docker-group access), mount the real host path at the identical
