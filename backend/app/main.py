@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from . import health as component_health
 from .audit import set_current_ip
 from .auth import CurrentUser, get_client_ip, get_current_user
 from .catalog import ALL_VIEWS
@@ -119,7 +120,7 @@ def _expected_migration_head() -> str | None:
 
 
 @app.get("/health")
-def health(response: Response, db: Session = Depends(get_session)) -> dict:
+def health(request: Request, response: Response, db: Session = Depends(get_session)) -> dict:
     """Liveness AND readiness, because this is the instrument a deploy is
     judged by and it used to prove nothing.
 
@@ -154,20 +155,63 @@ def health(response: Response, db: Session = Depends(get_session)) -> dict:
 
     `alembic_version` carries no RLS policy and is readable by
     `wingrc_app`, so this works identically before and after the cutover.
+
+    **Which code is running is reported per component** (`health.py`):
+    `components` holds the backend's, nginx's and the worker's commits,
+    and `status` is `ok` only when all three are known and equal. It used
+    to be one `build` field, the backend's, which during a split deploy
+    said `ok` with one commit in it. That was this endpoint's second time
+    stating more than it checked, after the static dict above. A split
+    reads `split` and an unreported component reads `incomplete`, each
+    with a `detail` naming every component's commit. Both stay HTTP 200:
+    the status code is this backend's readiness, which the container's
+    healthcheck acts on by restarting it, and a restart fixes neither. The
+    container's healthcheck calls `backend:8000` directly, so it always
+    sees `incomplete` (no nginx). A deploy is judged through nginx
+    (deploy/deploy.sh).
     """
-    detail: dict = {
-        "status": "ok",
-        "app": settings.app_name,
-        "version": "0.1.0",
-        # The commit the running image was built from (deploy/deploy.sh).
-        "build": os.environ.get("WINGRC_BUILD_SHA", "unknown"),
+    observed = {
+        "backend": [os.environ.get("WINGRC_BUILD_SHA", component_health.UNKNOWN)],
+        "nginx": [h] if (h := request.headers.get(component_health.NGINX_BUILD_HEADER)) else [],
+        "worker": [],
     }
+    why_unknown = {
+        "backend": "image built without WINGRC_BUILD_SHA",
+        "nginx": (
+            "nginx image built without WINGRC_BUILD_SHA"
+            if observed["nginx"]
+            else "this request did not come through nginx"
+        ),
+        "worker": (
+            "no database connection is named as a worker: none is running, "
+            "or it predates the naming"
+        ),
+    }
+    detail: dict = {"status": "ok", "app": settings.app_name, "version": "0.1.0"}
+
+    def _components() -> dict:
+        return {
+            c: component_health.render_component(observed[c]) for c in component_health.COMPONENTS
+        }
 
     try:
         db.execute(text("SELECT 1"))
     except Exception as exc:  # noqa: BLE001 -- surfaced to the caller below
         response.status_code = 503
-        return {**detail, "status": "error", "database": f"unreachable: {type(exc).__name__}"}
+        return {
+            **detail,
+            "status": "error",
+            "components": _components(),
+            "database": f"unreachable: {type(exc).__name__}",
+        }
+
+    db.execute(text(component_health.CLEAR_SNAPSHOT_SQL))
+    observed["worker"] = component_health.worker_builds(
+        list(db.execute(text(component_health.WORKER_BUILDS_SQL)).scalars().all())
+    )
+    if observed["worker"]:
+        why_unknown["worker"] = "worker image built without WINGRC_BUILD_SHA"
+    detail["components"] = _components()
 
     expected = _expected_migration_head()
     if expected is not None:
@@ -183,6 +227,10 @@ def health(response: Response, db: Session = Depends(get_session)) -> dict:
             }
 
     detail["database"] = "ok"
+    status, why = component_health.deployment_verdict(observed, why_unknown)
+    detail["status"] = status
+    if why is not None:
+        detail["detail"] = why
     return detail
 
 

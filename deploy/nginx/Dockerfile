@@ -18,6 +18,11 @@ RUN npm run build
 # worse: 2 CRITICAL, OpenSSL 3.5.5. Re-check with deploy.sh's per-deploy scan.
 FROM nginx:1.29-alpine
 COPY --from=frontend-build /app/dist /usr/share/nginx/html
-COPY deploy/nginx/nginx.conf /etc/nginx/conf.d/default.conf
+# A template, not a plain config: the image's entrypoint substitutes
+# environment variables into it at start (only ones that are set, so
+# nginx's own $host etc. are untouched). That is how this image's commit
+# reaches the backend's /health on every /api/ request (backend/app/health.py).
+COPY deploy/nginx/nginx.conf /etc/nginx/templates/default.conf.template
 ARG WINGRC_BUILD_SHA=unknown
+ENV WINGRC_BUILD_SHA=${WINGRC_BUILD_SHA}
 LABEL org.opencontainers.image.revision=${WINGRC_BUILD_SHA}
