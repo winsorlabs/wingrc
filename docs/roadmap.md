@@ -6112,12 +6112,33 @@ panel, a document, the control drawer, Users, and the login form. Plus
 the hover crop and the focus ring crops. They were reviewed on the
 bench and are not committed.
 
-**Deployed 2026-10-26, nginx only.** Live's checkout is at `d802851`
-(#58's merge), and the stylesheet it serves carries `--primary: #0a58ca`,
-`--primary-hover: #0846a2` and the ring offset. The backend and worker
-were not rebuilt, so they still run the image built at `09aee13` (#52).
-Of the merges between, only #54 (the audit check's additions) has code,
-backend only and with no migration; deploying it is a separate decision.
+**Deployed 2026-10-26, in two steps, the first one wrong.** At 13:36
+UTC nginx alone was rebuilt at `d802851` (#58's merge) with a plain
+`docker compose build`/`up`, not `deploy/deploy.sh`. That stamped the
+image `unknown`, wrote no deploy record and ran no scan, and it left a
+split: the frontend at V.1, the backend and worker on the image built
+at `09aee13` (#52). Live had not been deployed since 2026-10-20, so #54
+(the audit check's additions, backend only, no migration) had been
+merged four days without running. Until it did, live's SPRS score was
+computed from mark-met assertions nothing recorded. At 15:27 UTC
+`deploy/deploy.sh` deployed `d802851` whole: all three containers carry
+that revision label, `/health` reports `build: d802851…` and migration
+0071, and the record is
+`~claude/wingrc-deploys/20261026T152749Z-d80285198800`. That
+image's scan reports 308 backend findings and 231 nginx (296 and 181 on
+2026-10-20's), report-only.
+
+**What `/health` said during the split.** It said `build: 09aee13…`,
+which was true of the backend: `WINGRC_BUILD_SHA` is baked into the
+image, and the backend and worker containers' revision labels agreed.
+It was neither the checkout (`d802851`) nor the last deploy's intent.
+It said nothing about nginx, whose label read `unknown`. So `build` is
+the backend image's commit, not the deployment's. It reads as the
+deployment's only because `deploy.sh` always builds all three images
+at one SHA. A split exists only when that script is bypassed, as it was
+here. The fix is sized under Planned ("`/health` names only the
+backend's build").
+
 The walk on live is Jarrod's:
 - open a list page (ghost *← All lists*, primary *Export .xlsx*);
 - open Tools (the card's green and red);
@@ -11313,6 +11334,29 @@ U", and can be rerun as it stands. Frontend only.
 - `#198754` and `#dc3545` on the tool card, 4.17;
 - the *Inactive* badge, 4.34;
 - the textarea placeholder, 4.37.
+
+### `/health` names only the backend's build -- found deploying V.1
+
+**Found 2026-10-26** (V.1's Done entry, "What `/health` said during the
+split"). `/health`'s `build` is `WINGRC_BUILD_SHA` as baked into the
+backend image. Nothing reports the nginx image's commit, though its
+revision label holds it, so a split deploy reads as one build. The
+split happened because nginx was deployed by hand, outside
+`deploy/deploy.sh`, which builds all three at one SHA.
+
+**Sized, not built (about ten lines, no backend logic):**
+- `deploy/nginx/Dockerfile` writes `build.json` (`{"build": "<sha>"}`)
+  into the web root from the `WINGRC_BUILD_SHA` arg it already takes,
+  served `no-store`.
+- `deploy.sh`'s wait loop requires that file's `build` to match as
+  well as `/health`'s, so a deploy that is not whole does not report
+  "deployed".
+- `/health`'s comment and `docs/deployment.md` say `build` is the
+  backend image's commit, and where the frontend's is read.
+
+**Not the fix:** making compose refuse an unset `WINGRC_BUILD_SHA`
+(`${WINGRC_BUILD_SHA:?}`). Compose interpolates the whole file for
+every command, so `docker compose ps` and `logs` would refuse too.
 
 ### V.2. Red and green text and fills pass AA contrast -- found in V.1
 
