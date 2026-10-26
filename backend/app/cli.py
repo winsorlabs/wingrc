@@ -1068,10 +1068,17 @@ def worker(
     a job itself is never interrupted by this signal handling; only the
     sleep between polls is cut short.
     """
+    import os
     import signal
     import time
 
+    from .health import worker_application_name
     from .scheduler import run_due_jobs
+
+    # libpq reads PGAPPNAME at connect time, so every connection this
+    # process opens carries the worker's own commit, and /health reads it
+    # from pg_stat_activity (health.py). Set before the first connection.
+    os.environ["PGAPPNAME"] = worker_application_name(os.environ.get("WINGRC_BUILD_SHA", "unknown"))
 
     stopping = False
 

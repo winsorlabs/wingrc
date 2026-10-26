@@ -145,11 +145,160 @@ def test_engine_sets_a_connect_timeout():
     assert timeout == get_settings().db_connect_timeout
 
 
-def test_health_reports_the_commit_the_image_was_built_from(health_probe_client, monkeypatch):
-    """docker-compose.yml no longer bind-mounts a checkout under the live
-    backend, so the running code is the image's -- and /health says which
-    commit that image was built from (deploy/deploy.sh waits for it)."""
-    monkeypatch.setenv("WINGRC_BUILD_SHA", "0123abcd")
-    assert health_probe_client.get("/health").json()["build"] == "0123abcd"
-    monkeypatch.delenv("WINGRC_BUILD_SHA")
-    assert health_probe_client.get("/health").json()["build"] == "unknown"
+# --- Which code is running, per component (app/health.py) -----------------
+#
+# A single `build` field (the backend's) said `ok` through a split deploy on
+# 2026-10-26. Three matching commits reading `ok` proves nothing -- the old
+# field passed that too -- so these pin the cases where they do not match.
+
+A = "a" * 40
+B = "b" * 40
+
+
+def _probe(client, monkeypatch, *, backend=A, nginx=A, workers=(A,)):
+    from tests.conftest import HealthProbeSession
+
+    if backend is None:
+        monkeypatch.delenv("WINGRC_BUILD_SHA", raising=False)
+    else:
+        monkeypatch.setenv("WINGRC_BUILD_SHA", backend)
+    monkeypatch.setattr(
+        HealthProbeSession,
+        "worker_application_names",
+        [f"wingrc-worker@{w}" for w in workers],
+    )
+    headers = {"X-WinGRC-Nginx-Build": nginx} if nginx is not None else {}
+    r = client.get("/health", headers=headers)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_three_matching_commits_read_ok(health_probe_client, monkeypatch):
+    body = _probe(health_probe_client, monkeypatch)
+    assert body["status"] == "ok"
+    assert body["components"] == {"backend": A, "nginx": A, "worker": A}
+    assert "detail" not in body
+    assert "build" not in body, "one field cannot describe three components; it was removed"
+
+
+@pytest.mark.parametrize("odd", ["backend", "nginx", "worker"])
+def test_one_component_on_another_commit_is_not_ok_and_names_both(
+    health_probe_client, monkeypatch, odd
+):
+    """The disagreement case, for each component in turn. Mutation-checked
+    2026-10-26: with the verdict's loop narrowed to backend and nginx, the
+    `worker` case went red."""
+    kwargs = {"backend": A, "nginx": A, "workers": (A,)}
+    kwargs["workers" if odd == "worker" else odd] = (B,) if odd == "worker" else B
+    body = _probe(health_probe_client, monkeypatch, **kwargs)
+    assert body["status"] == "split", body
+    assert body["components"][odd] == B
+    assert A in body["detail"] and B in body["detail"], body["detail"]
+    assert f"{odd} {B}" in body["detail"], body["detail"]
+
+
+def test_two_workers_on_different_commits_is_split(health_probe_client, monkeypatch):
+    body = _probe(health_probe_client, monkeypatch, workers=(A, B))
+    assert body["status"] == "split"
+    assert body["components"]["worker"] == f"{A}, {B}"
+
+
+def test_a_component_nobody_reported_is_unknown_never_the_backends(
+    health_probe_client, monkeypatch
+):
+    """No nginx header and no worker connection: both read `unknown`, with
+    why, and the backend's commit appears nowhere but the backend's."""
+    body = _probe(health_probe_client, monkeypatch, nginx=None, workers=())
+    assert body["status"] == "incomplete"
+    assert body["components"] == {"backend": A, "nginx": "unknown", "worker": "unknown"}
+    assert "did not come through nginx" in body["detail"]
+    assert "no worker is connected" in body["detail"]
+
+
+def test_the_containers_own_healthcheck_sees_incomplete_not_ok(
+    health_probe_client, monkeypatch
+):
+    """`/health`'s docstring says a direct call to backend:8000 -- the
+    container's healthcheck -- always sees `incomplete`, and stays 200 so
+    the container is not restarted over something a restart cannot fix."""
+    body = _probe(health_probe_client, monkeypatch, nginx=None)
+    assert body["status"] == "incomplete"
+    assert body["components"]["nginx"] == "unknown"
+
+
+def test_an_unstamped_image_is_unknown_with_its_own_reason(health_probe_client, monkeypatch):
+    body = _probe(health_probe_client, monkeypatch, backend=None, nginx="unknown")
+    assert body["status"] == "incomplete"
+    assert body["components"]["backend"] == "unknown"
+    assert "nginx image built without WINGRC_BUILD_SHA" in body["detail"]
+
+
+def test_the_verdict_counts_a_component_left_out_of_its_input_as_unknown():
+    """The verdict iterates the deployment's components, not whatever it
+    was handed, so it cannot be computed from fewer of them."""
+    from app.health import deployment_verdict
+
+    status, detail = deployment_verdict({"backend": [A], "nginx": [A]}, {})
+    assert status == "incomplete"
+    assert "worker unknown" in detail
+
+
+def test_the_worker_lookup_cannot_find_the_backends_own_connection():
+    """No check that matches its own invocation: /health's connection is
+    not named `wingrc-worker@`, and only names with that prefix count."""
+    from app.health import WORKER_APP_NAME_PREFIX, WORKER_BUILDS_SQL, worker_builds
+
+    assert f"LIKE '{WORKER_APP_NAME_PREFIX}%'" in WORKER_BUILDS_SQL
+    assert worker_builds(["", "psql", "wingrc-backend@x", f"{WORKER_APP_NAME_PREFIX}{A}"]) == [A]
+
+
+def test_the_worker_names_its_connections_with_its_own_commit(monkeypatch):
+    """`cli.worker` sets PGAPPNAME before its first connection; stopped at
+    its first call to run_due_jobs, before any database work."""
+    import os
+
+    from typer.testing import CliRunner
+
+    import app.scheduler
+    from app.cli import app as cli_app
+
+    seen = {}
+
+    def _stop():
+        seen["name"] = os.environ.get("PGAPPNAME")
+        raise SystemExit(0)
+
+    monkeypatch.setenv("WINGRC_BUILD_SHA", B)
+    monkeypatch.delenv("PGAPPNAME", raising=False)
+    monkeypatch.setattr(app.scheduler, "run_due_jobs", _stop)
+    try:
+        CliRunner().invoke(cli_app, ["worker"])
+    finally:
+        os.environ.pop("PGAPPNAME", None)
+    assert seen["name"] == f"wingrc-worker@{B}"
+
+
+@pytest.mark.integration
+def test_health_sees_a_worker_connected_to_the_real_database(client, monkeypatch):
+    """Against a real pg_stat_activity: a connection named as a worker is
+    reported with its commit, and gone once it closes."""
+    import os
+
+    from sqlalchemy import create_engine
+
+    monkeypatch.setenv("WINGRC_BUILD_SHA", A)
+    headers = {"X-WinGRC-Nginx-Build": A}
+    engine = create_engine(
+        os.environ["WINGRC_TEST_DATABASE_URL"],
+        connect_args={"application_name": f"wingrc-worker@{B}"},
+    )
+    conn = engine.connect()
+    try:
+        body = client.get("/health", headers=headers).json()
+        assert body["components"]["worker"] == B, body
+        assert body["status"] == "split"
+    finally:
+        conn.close()
+        engine.dispose()
+    body = client.get("/health", headers=headers).json()
+    assert body["components"]["worker"] == "unknown", body

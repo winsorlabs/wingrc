@@ -7,7 +7,7 @@
 # Replaces `git pull && docker compose build && up`. The stack runs the code
 # baked into its images (docker-compose.yml no longer bind-mounts the
 # checkout), so the checkout is build context only and the deployed commit
-# is whatever /health reports as `build`. See docs/deployment.md.
+# is what /health reports for each component. See docs/deployment.md.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -68,14 +68,15 @@ record_deploy() {
   echo "deploy record: $dir"
 }
 
-echo "waiting for /health to report $sha ..."
+# Asked through nginx, not backend:8000: nginx is one of the three components
+# /health reports, and it is visible only on a request that came through it.
+# "ok" means backend, nginx and worker are all known and on one commit
+# (backend/app/health.py); the backend match makes it this commit.
+echo "waiting for /health to report $sha for backend, nginx and worker ..."
 for _ in $(seq 60); do
-  body="$(docker compose exec -T backend python -c \
-    'import urllib.request
-try: print(urllib.request.urlopen("http://localhost:8000/health", timeout=3).read().decode())
-except Exception as e: print(getattr(e, "read", lambda: str(e).encode())().decode())' 2>/dev/null || true)"
+  body="$(docker compose exec -T nginx curl -sk --max-time 3 https://localhost/api/health 2>/dev/null || true)"
   if printf '%s' "$body" | grep -q '"status":"ok"' \
-     && printf '%s' "$body" | grep -q "\"build\":\"$sha\""; then
+     && printf '%s' "$body" | grep -q "\"backend\":\"$sha\""; then
     echo "$body"
     echo "deployed $sha"
     record_deploy "$body"

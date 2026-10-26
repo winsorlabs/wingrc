@@ -197,9 +197,28 @@ deploy/deploy.sh            # deploys origin/main; or: deploy/deploy.sh <commit-
 sequence. It refuses a dirty working tree or a `docker-compose.override.yml`
 on the host, checks out the exact commit detached, builds `backend worker
 nginx` with that commit stamped in as `WINGRC_BUILD_SHA`, recreates them with
-`--no-deps`, then waits for `/health` to report `status: ok` **and** that
-same commit as `build`. A deploy is done when `/health` names the commit you
-meant to ship, not when the commands exit.
+`--no-deps`, then waits for `/health`, asked through nginx, to report
+`status: ok` **and** that commit for the backend. A deploy is done when
+`/health` names the commit you meant to ship, not when the commands exit.
+
+**`/health` reports a commit per component** (`backend/app/health.py`), because
+the three images are built separately and can run three commits at once:
+
+```json
+"status": "ok",
+"components": {"backend": "<sha>", "nginx": "<sha>", "worker": "<sha>"}
+```
+
+`status` is `ok` only when all three are known and equal. Otherwise it is
+`split` (they differ) or `incomplete` (one is unknown), with a `detail`
+naming every component's commit, still HTTP 200. Where each comes from:
+the backend's own `WINGRC_BUILD_SHA`; nginx's, sent as a request header on
+`/api/` (so it is `unknown` on a direct call to `backend:8000`, which is
+what the container's own healthcheck makes); and the worker's, from the
+name its database connections carry. So a deployment without the `worker`
+service (host cron instead) reads `incomplete`, truthfully: no worker is
+running. HTTP 503 still means the database is unreachable or the schema
+does not match.
 
 Then it writes a deploy record to `~/wingrc-deploys/<UTC>-<sha>/`
 (`WINGRC_DEPLOY_RECORD_DIR` overrides): `deploy.txt` (commit, time, user,

@@ -104,7 +104,7 @@ def _ensure_test_db(test_url: str) -> None:
 
 
 class HealthProbeSession:
-    """Answers exactly the two statements `/health` issues, and nothing else.
+    """Answers exactly the statements `/health` issues, and nothing else.
 
     `/health` became a readiness probe during the `wingrc_app` cutover: it
     runs `SELECT 1` as the app's own role and compares `alembic_version`
@@ -121,6 +121,11 @@ class HealthProbeSession:
     belong.
     """
 
+    # The connection names a worker would hold, which `/health` reads from
+    # pg_stat_activity. Empty by default: no worker connected. A test that
+    # needs one sets this with monkeypatch.
+    worker_application_names: list[str] = []
+
     class _Result:
         def __init__(self, value):
             self._value = value
@@ -128,8 +133,16 @@ class HealthProbeSession:
         def scalar(self):
             return self._value
 
+        def scalars(self):
+            return self
+
+        def all(self):
+            return list(self._value)
+
     def execute(self, statement, *_args, **_kwargs):
         sql = str(statement)
+        if "pg_stat_activity" in sql:
+            return self._Result(self.worker_application_names)
         if "alembic_version" in sql:
             from app.main import _expected_migration_head
 
