@@ -252,7 +252,19 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
 - `ruff check` must be clean before merge. B008 is suppressed per-file for
   FastAPI router files (see `backend/pyproject.toml`).
 - Work on branches, small commits. Push after every commit — dev server is a
-  separate Linux box that must `git pull` first.
+  separate Linux box, deployed from what is pushed.
+- **Live is deployed by `deploy/deploy.sh`, never by `git pull`.** Why a
+  pull is wrong there: the script leaves the live checkout on a detached
+  HEAD at the deployed commit. So a bare `git pull` fails ("You are not
+  currently on a branch"), its error is easy to miss in output, and it
+  changes nothing. A `docker compose build` after it rebuilds the old
+  commit and stamps it `unknown`, with no record and no scan. That was
+  2026-10-26: nginx alone at V.1, the backend on #52. Until 2026-10-08
+  a pull did the opposite: the checkout was on `main` and bind-mounted
+  under `uvicorn --reload`, so a pull *was* a deploy, without
+  migrations. That was 2026-10-07's three-hour outage. Both came from
+  notes that said "`git pull` first". A bench clone is a branch checkout,
+  where a pull is fine (`docs/bench-stack-verification.md`).
 - **Landing a slice, in order: bench-verify → open a PR → *watch CI go
   green* → merge → deploy → report.** The CI step is not optional and not
   "check later". Six consecutive red runs on `main` went unnoticed

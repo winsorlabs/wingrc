@@ -6125,8 +6125,9 @@ computed from mark-met assertions nothing recorded. At 15:27 UTC
 that revision label, `/health` reports `build: d802851…` and migration
 0071, and the record is
 `~claude/wingrc-deploys/20261026T152749Z-d80285198800`. That
-image's scan reports 308 backend findings and 231 nginx (296 and 181 on
-2026-10-20's), report-only.
+deploy's scans report 308 backend rows and 231 nginx (296 and 181 on
+2026-10-20), report-only and read by nobody (Planned, "The deploy scans
+are read by nobody").
 
 **What `/health` said during the split.** It said `build: 09aee13…`,
 which was true of the backend: `WINGRC_BUILD_SHA` is baked into the
@@ -6136,8 +6137,8 @@ It said nothing about nginx, whose label read `unknown`. So `build` is
 the backend image's commit, not the deployment's. It reads as the
 deployment's only because `deploy.sh` always builds all three images
 at one SHA. A split exists only when that script is bypassed, as it was
-here. The fix is sized under Planned ("`/health` names only the
-backend's build").
+here. The fix is sized under Planned ("`/health` reports one build
+for a deployment that can be split").
 
 The walk on live is Jarrod's:
 - open a list page (ghost *← All lists*, primary *Export .xlsx*);
@@ -11335,7 +11336,7 @@ U", and can be rerun as it stands. Frontend only.
 - the *Inactive* badge, 4.34;
 - the textarea placeholder, 4.37.
 
-### `/health` names only the backend's build -- found deploying V.1
+### `/health` reports one build for a deployment that can be split -- found deploying V.1
 
 **Found 2026-10-26** (V.1's Done entry, "What `/health` said during the
 split"). `/health`'s `build` is `WINGRC_BUILD_SHA` as baked into the
@@ -11344,19 +11345,83 @@ revision label holds it, so a split deploy reads as one build. The
 split happened because nginx was deployed by hand, outside
 `deploy/deploy.sh`, which builds all three at one SHA.
 
-**Sized, not built (about ten lines, no backend logic):**
-- `deploy/nginx/Dockerfile` writes `build.json` (`{"build": "<sha>"}`)
-  into the web root from the `WINGRC_BUILD_SHA` arg it already takes,
-  served `no-store`.
-- `deploy.sh`'s wait loop requires that file's `build` to match as
-  well as `/health`'s, so a deploy that is not whole does not report
-  "deployed".
-- `/health`'s comment and `docs/deployment.md` say `build` is the
-  backend image's commit, and where the frontend's is read.
+**This is `/health`'s second time in this family.** It first returned a
+static dict, reporting healthy without checking anything, through an
+`alembic upgrade head` that rolled back and left an empty database (its
+docstring keeps the incident). Now it names one build for a deployment
+of three images that can each be built at a different commit. Both are
+a screen stating a result it never computed (the fourth product
+invariant).
+
+**The fix: a commit per component, not a gate.** Gating `deploy.sh` on
+both commits only stops a deploy from declaring success during a split.
+`/health` would still misreport afterwards, which is when someone reads
+it. A single `build` field cannot describe a deployment that can be
+split, so `/health` stops having one:
+- `components: {backend, nginx, worker}`, each that image's own commit.
+- `build` is that commit only when all three agree. Otherwise it is
+  `null`, with `split: true`. A split is reported, not marked unhealthy:
+  a 503 would fail the container's own healthcheck over something a
+  restart cannot fix.
+- `deploy.sh` waits for all three to equal the target commit.
+
+**Sized, not built.** `nginx` and `backend` are about ten lines:
+- The nginx image sets `ENV WINGRC_BUILD_SHA` from the arg it already
+  takes. `nginx.conf` moves to the image's `templates/` directory, so
+  it is substituted at start, and adds
+  `proxy_set_header X-WinGRC-Nginx-Build ${WINGRC_BUILD_SHA}` on
+  `/api/`.
+- `/health` reports that header as `components.nginx`, or `not via
+  nginx` when it is absent (a direct call to `backend:8000`, as
+  `deploy.sh` makes). So `deploy.sh`'s check moves to `https://localhost/api/health`.
+- `proxy_set_header` replaces any value a client sends, so the header
+  cannot be spoofed through nginx. It is a report, not an
+  authorisation.
+
+`worker` is the larger part. It serves nothing and has no
+healthcheck, so nothing can ask it. It would record its build on each
+`job_run` row it writes (a column, so a migration, about twenty lines
+with the test), and `/health` would report the last run's build and its
+time. A stopped worker would then show a stale commit with an old
+timestamp. That is honest, and better than the absence today.
 
 **Not the fix:** making compose refuse an unset `WINGRC_BUILD_SHA`
 (`${WINGRC_BUILD_SHA:?}`). Compose interpolates the whole file for
 every command, so `docker compose ps` and `logs` would refuse too.
+
+### The deploy scans are read by nobody -- found deploying V.1
+
+**Recorded 2026-10-26, nothing built.** `deploy/deploy.sh` runs Trivy
+over the backend and nginx images after every deploy and writes the
+output beside the deploy record. It is report-only by design. Nothing
+reads it, nothing compares one record with the previous, and nothing
+surfaces a rise. The nginx Dockerfile's base-image comment
+(2026-10-10) says to "re-check with deploy.sh's per-deploy scan";
+nothing did until today.
+
+The counts from every record in `~claude/wingrc-deploys/`. *Rows* are
+package × advisory lines; *unique* counts distinct advisories; C and H
+are CRITICAL and HIGH rows.
+
+| Deploy record | backend rows / unique / C / H | nginx rows / unique / C / H |
+|---|---|---|
+| 2026-10-09 `b781f2b` | 289 / 151 / 1 / 28 | 161 / 108 / 2 / 11 |
+| 2026-10-10 `b27e8a6` (nginx base 1.29) | 297 / 153 / 1 / 28 | 179 / 111 / 0 / 8 |
+| 2026-10-14 to 2026-10-18, nine deploys | 296 / 152 / 1 / 28 | 179 / 111 / 0 / 8 |
+| 2026-10-18 `d0d745c` to 2026-10-20 `09aee13`, five deploys | 296 / 152 / 1 / 28 | 181 / 113 / 0 / 8 |
+| **2026-10-26 `d802851`** | **308 / 161 / 2 / 29** | **231 / 139 / 0 / 8** |
+
+In six days the nginx image went 181 → 231 rows (113 → 139 advisories),
+and the backend 296 → 308, with a **second CRITICAL**. Nobody has looked
+at which. A count also mixes two causes the record does not separate:
+new advisories published against the same packages, and a changed image
+(a rebuilt base layer). The record keeps image IDs, so the second can be
+answered after the fact.
+
+**The question, Jarrod's:** either there is a cadence for reading these
+(per deploy, or weekly, and by whom), or the scan is ceremony and
+should say so. A count that only rises unseen is a check nobody can
+tell from no check.
 
 ### V.2. Red and green text and fills pass AA contrast -- found in V.1
 
