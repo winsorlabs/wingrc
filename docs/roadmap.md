@@ -5920,7 +5920,7 @@ expected.**
 
 ---
 
-### V.1: `--primary` has headroom, its hover derived from it ✅ DONE (2026-10-25, bench-verified; frontend only)
+### V.1: `--primary` has headroom, its hover derived from it ✅ DONE (2026-10-25, bench-verified; frontend only; deployed 2026-10-26)
 
 **Branch `v1-primary`, two commits.** `97246f9` changes the tokens and
 the four small items. `d1bf60f` fixes the focus ring regression the
@@ -6112,11 +6112,33 @@ panel, a document, the control drawer, Users, and the login form. Plus
 the hover crop and the focus ring crops. They were reviewed on the
 bench and are not committed.
 
-**Not yet deployed.** The walk on live is Jarrod's:
+**Deployed 2026-10-26, nginx only.** Live's checkout is at `d802851`
+(#58's merge), and the stylesheet it serves carries `--primary: #0a58ca`,
+`--primary-hover: #0846a2` and the ring offset. The backend and worker
+were not rebuilt, so they still run the image built at `09aee13` (#52).
+Of the merges between, only #54 (the audit check's additions) has code,
+backend only and with no migration; deploying it is a separate decision.
+The walk on live is Jarrod's:
 - open a list page (ghost *← All lists*, primary *Export .xlsx*);
 - open Tools (the card's green and red);
 - on the login page, Tab to *Sign in*: the dark ring should stand off
   the blue with a white gap.
+
+**Does anything but colour tell the tool card's green and red apart?
+Yes; checked in `ProductCard.tsx` after the merge (2026-10-26).** They
+are not two states of one thing. The green is the words *Active —
+pending evidence*. The red is a bordered button labelled *Deactivate*,
+and the card's error sentence. An inactive card shows an *Activate*
+button instead, and the active card's blue tint only repeats what the
+words say. The coverage chips say *N provider*, *N shared* and *N
+customer*. So nothing on the card is colour alone, and there is nothing
+to fix for that. Two things found while reading it, neither colour:
+- A person without write access sees nothing in an inactive card's
+  footer, so the state is shown by an absence. Showing *Not active* is
+  one line.
+- *Active — pending evidence* is a fixed string, shown whatever the
+  objectives' states are, so it states a result it never computed (the
+  fourth product invariant). Either compute it or say only *Active*.
 
 ### The evidence section stops destroying things and stops hiding things ✅ DONE (2026-10-19, bench-verified, migration 0071; deployed and walked on live 2026-10-20)
 
