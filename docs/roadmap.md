@@ -5920,6 +5920,121 @@ expected.**
 
 ---
 
+### `/health` reports a commit per component, and `ok` only when they agree ✅ DONE (2026-10-26, bench-verified; backend, nginx config and deploy.sh; no migration)
+
+**The defect, structurally: one field cannot describe three containers.**
+A deployment is three images built separately (`backend`, `worker`,
+`nginx`), so it can run three commits at once. `/health` had one `build`
+field, the backend's own `WINGRC_BUILD_SHA`. When the commits differed it
+reported one and implied all three. On 2026-10-26, from 13:36 to 15:27
+UTC, live ran nginx at `d802851` and the backend and worker at `09aee13`,
+and `/health` said `ok` with `09aee13` in it the whole time (V.1's Done
+entry). The field was not wrong about the backend. It was structurally
+unable to say anything about the other two.
+
+**`/health`'s second time in the confident-signal family.** The family is
+a signal that reports confidently and verifies less than it implies. The
+first was `/health`'s static dict, which said healthy through an
+`alembic upgrade head` that rolled back and left an empty database. The
+second is this. The pattern is the finding: each time, the signal's
+shape (a constant, then a single field) could not represent the failure
+it was read to rule out. So the fix changes the shape, rather than
+gating a deploy on more checks while `/health` keeps misreporting
+afterwards, which is when someone reads it.
+
+**What it reports now** (`backend/app/health.py`):
+`components: {backend, nginx, worker}`, each that component's own commit,
+plus `migration` as before. `status` is `ok` only when all three are
+known and equal. Otherwise it is `split`, with `detail` naming each
+component's commit, or `incomplete`, naming which is unknown and why. A
+commit nobody reported reads `unknown`, never the backend's value. The
+verdict iterates the deployment's component list, not the dict it is
+handed, so it cannot be computed from fewer components (one layer up is
+how this would recur). `split` and `incomplete` stay HTTP 200: the
+status code is this backend's readiness, which the container's
+healthcheck acts on by restarting it, and a restart fixes neither. 503
+still means the database is unreachable or the schema does not match.
+
+**Where each commit comes from.** Each is the component's own build arg,
+baked into its image, observed in a way only that component can produce:
+- **backend:** `WINGRC_BUILD_SHA` in its own environment.
+- **nginx:** the nginx image now sets `ENV WINGRC_BUILD_SHA`, and its
+  config is a template the image's entrypoint fills at start. It sends
+  the value on every `/api/` request as `X-WinGRC-Nginx-Build`, and
+  `proxy_set_header` replaces any value a client sends (bench: a forged
+  header came back as the real commit). So nginx is known only on a
+  request that came through it. A direct call to `backend:8000` reads
+  nginx `unknown`, and the container's own healthcheck makes exactly that
+  call.
+- **worker:** `cli.worker` sets `PGAPPNAME=wingrc-worker@<its commit>`
+  before its first connection. `/health` reads the names of the
+  connections open now from `pg_stat_activity`, after
+  `pg_stat_clear_snapshot()`. That observes a worker connected at this
+  moment, not a record that one ran. `/health`'s own connection carries
+  no such name, so the check cannot find itself.
+
+A cheaper route was not taken: anything the backend reads from its own
+filesystem or environment describes the backend only.
+
+**The old `build` field is removed in the same commit.** Its readers were
+`deploy/deploy.sh` and its own test. (`list_library.py` reads the
+environment variable, not the field.) The frontend does not read
+`/health`, so `tsc -b` was not needed. `deploy.sh` now asks through
+nginx (`docker compose exec nginx curl https://localhost/api/health`),
+and waits for `status: ok` with the backend on the target commit.
+
+**Verified on the bench** (project `wingrc_verify_hc`, a clone at the
+branch). nginx ran as a separate container on the bench network with a
+throwaway self-signed certificate in a bench-only volume and no
+published ports. Every case was run on real containers, not described,
+and all of them again at `404fdff`, whose tree is the merged commit's:
+
+| Case | `status` | What `components` showed |
+|---|---|---|
+| all three built at the branch head, through nginx | `ok` | three equal commits, still seen 70s later, past a worker poll |
+| the same, called directly on `backend:8000` | `incomplete` | nginx `unknown` ("did not come through nginx"); container `healthy` |
+| worker image stamped `d802851` | `split` | worker `d802851`; `detail` names all three |
+| worker built from the real pre-change code at `d802851` | `incomplete` | worker `unknown`: running and connected, but it predates the naming |
+| worker stopped | `incomplete` | worker `unknown` |
+| nginx image stamped `d802851`, the rest at head | `split` via that nginx; `ok` via the other at the same moment | nginx `d802851` |
+| client sends `X-WinGRC-Nginx-Build: forged` | `ok` | nginx is the real commit |
+
+**Two defects the bench found that the unit tests did not:**
+- **A false reason.** The old-code worker case said "no worker is
+  connected to the database", but a worker was connected. It just does
+  not name itself. The check can see only that no connection is *named*
+  as a worker, and that is now what it says.
+- **A stale view.** Within one transaction, Postgres reads
+  `pg_stat_activity` once and holds it (shown in `psql`: a connection
+  opened mid-transaction stayed invisible until
+  `pg_stat_clear_snapshot()`). Live was not affected, because each
+  request gets a fresh transaction. But the integration test, which
+  reuses one, saw a closed connection still listed. `/health` now clears
+  the snapshot first. Negative control on the bench: with that line
+  removed, the integration test fails; restored, it passes.
+
+**Tests (`backend/tests/test_health.py`).** The disagreement case is
+pinned for each component in turn, and asserts `status` is `split` and
+`detail` names both commits. Also pinned: two workers on different
+commits, unknown-never-the-backend's, the direct call, an unstamped
+image, a component left out of the verdict's input, the self-match
+exclusion, the worker naming its connections, and a real
+`pg_stat_activity` connection appearing and then going. **Mutation
+check:** with the verdict narrowed to backend and nginx, four tests went
+red, including the worker disagreement case; restored, all pass. Full
+suite on the bench in one process: 1878 passed, ruff clean. The
+no-database suite locally: 631 passed.
+
+**A deployment without the `worker` service (host cron) reads
+`incomplete`, truthfully: no worker is running.** `deploy.sh` would
+never report it deployed. That is the honest reading for this deployment
+shape, which runs the worker. A way to declare "no worker here by
+design" is not built.
+
+**Not yet deployed.** Jarrod's walk, after deploy: open
+`https://dev.wingrc.us/api/health` and confirm it names three commits,
+all the deployed one, with `status: ok`.
+
 ### V.1: `--primary` has headroom, its hover derived from it ✅ DONE (2026-10-25, bench-verified; frontend only; deployed 2026-10-26)
 
 **Branch `v1-primary`, two commits.** `97246f9` changes the tokens and
@@ -10936,7 +11051,8 @@ as a conflict, never overwritten by a workbook).
 **State (2026-10-09):**
 
 - Live runs images built on the host from one pinned commit
-  (`deploy/deploy.sh`; `/health` reports `build`). Since the
+  (`deploy/deploy.sh`; `/health` reported `build`, and since 2026-10-26
+  reports a commit per component). Since the
   deploy-scan-record change, those exact images are also Trivy-scanned at
   deploy time, with a per-deploy record kept on the host.
 - CI's `image` job builds and scans the backend image *and discards it*.
@@ -11336,7 +11452,12 @@ U", and can be rerun as it stands. Frontend only.
 - the *Inactive* badge, 4.34;
 - the textarea placeholder, 4.37.
 
-### `/health` reports one build for a deployment that can be split -- found deploying V.1
+### `/health` reports one build for a deployment that can be split -- found deploying V.1 ✅ DONE (2026-10-26)
+
+**Built in the Done entry "`/health` reports a commit per component, and `ok` only when
+they agree".** The worker part used its connection name in `pg_stat_activity`,
+not a `job_run` column, so it needed no migration. The sizing below is kept as
+written.
 
 **Found 2026-10-26** (V.1's Done entry, "What `/health` said during the
 split"). `/health`'s `build` is `WINGRC_BUILD_SHA` as baked into the
@@ -11418,10 +11539,29 @@ new advisories published against the same packages, and a changed image
 (a rebuilt base layer). The record keeps image IDs, so the second can be
 answered after the fact.
 
-**The question, Jarrod's:** either there is a cadence for reading these
-(per deploy, or weekly, and by whom), or the scan is ceremony and
-should say so. A count that only rises unseen is a check nobody can
-tell from no check.
+**What the item has to settle (Jarrod, 2026-10-26). Unbuilt; no
+finding is fixed here.**
+- **Does a scan ever block anything? Today, no.** Not a deploy, not a
+  merge, not a release. `deploy.sh` writes the scan after the deploy has
+  already succeeded, and CI's own Trivy step is report-only too. Read
+  without this line, "we scan every deploy" sounds like "we're covered".
+  It is not that.
+- **A baseline, so drift is measurable.** 231 on its own means nothing;
+  +50 in six days is a fact. The record would need the previous deploy's
+  counts beside its own, by severity and as distinct advisories, and the
+  difference stated.
+- **Who looks, and when.** If the answer is "nobody, deliberately, until
+  the product has users", write that here. A deliberate no is a decision;
+  the silent no that exists today is a gap.
+- **Is base-image currency the lever?** If so, this would be a sibling
+  of item R, not a dependent. R is about deploying the identical image CI
+  scanned, by digest from a registry. Pinning by digest *freezes* the
+  base layer, so after R a count could only rise from new advisories,
+  and moving to a newer base would become a deliberate act. Today
+  `nginx:1.29-alpine` and the backend's base are floating tags, re-pulled
+  whenever a build misses the cache. Which of the 10-20 to 10-26 rise
+  came from a changed base and which from new advisories is the first
+  thing to answer. The records' image IDs make that answerable.
 
 ### V.2. Red and green text and fills pass AA contrast -- found in V.1
 
