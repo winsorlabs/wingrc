@@ -39,6 +39,11 @@ UNKNOWN = "unknown"
 NGINX_BUILD_HEADER = "X-WinGRC-Nginx-Build"
 WORKER_APP_NAME_PREFIX = "wingrc-worker@"
 
+# pg_stat_activity is read once per transaction and then held: a second read
+# in the same transaction sees the first one's connections (measured on the
+# bench, 2026-10-26). Cleared first, so /health reports the connections open
+# now even if its session is already inside a transaction.
+CLEAR_SNAPSHOT_SQL = "SELECT pg_stat_clear_snapshot()"
 WORKER_BUILDS_SQL = (
     "SELECT DISTINCT application_name FROM pg_stat_activity "
     "WHERE datname = current_database() AND application_name LIKE 'wingrc-worker@%'"

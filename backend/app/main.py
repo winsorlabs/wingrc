@@ -205,6 +205,7 @@ def health(request: Request, response: Response, db: Session = Depends(get_sessi
             "database": f"unreachable: {type(exc).__name__}",
         }
 
+    db.execute(text(component_health.CLEAR_SNAPSHOT_SQL))
     observed["worker"] = component_health.worker_builds(
         list(db.execute(text(component_health.WORKER_BUILDS_SQL)).scalars().all())
     )

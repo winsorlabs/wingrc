@@ -39,7 +39,10 @@ def test_health_reports_ok_with_a_live_database(client):
     r = client.get("/health")
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["status"] == "ok"
+    # Not "ok": a direct call has no nginx and the test database no worker,
+    # so the deployment verdict is "incomplete". Readiness is the 200 and
+    # `database`.
+    assert body["status"] != "error", body
     assert body["database"] == "ok"
 
 
@@ -300,5 +303,15 @@ def test_health_sees_a_worker_connected_to_the_real_database(client, monkeypatch
     finally:
         conn.close()
         engine.dispose()
-    body = client.get("/health", headers=headers).json()
+    # The server process exits after the client closes, not before close()
+    # returns; wait for that. The same transaction (db_session) is reused,
+    # so this also holds /health to clearing pg_stat_activity's snapshot:
+    # without it the closed connection stays listed (bench, 2026-10-26).
+    import time
+
+    for _ in range(50):
+        body = client.get("/health", headers=headers).json()
+        if body["components"]["worker"] == "unknown":
+            break
+        time.sleep(0.1)
     assert body["components"]["worker"] == "unknown", body

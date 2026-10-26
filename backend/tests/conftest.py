@@ -141,6 +141,8 @@ class HealthProbeSession:
 
     def execute(self, statement, *_args, **_kwargs):
         sql = str(statement)
+        if "pg_stat_clear_snapshot" in sql:
+            return self._Result(None)
         if "pg_stat_activity" in sql:
             return self._Result(self.worker_application_names)
         if "alembic_version" in sql:
