@@ -5920,7 +5920,7 @@ expected.**
 
 ---
 
-### V.1: `--primary` has headroom, its hover derived from it ✅ DONE (2026-10-25, bench-verified; frontend only)
+### V.1: `--primary` has headroom, its hover derived from it ✅ DONE (2026-10-25, bench-verified; frontend only; deployed 2026-10-26)
 
 **Branch `v1-primary`, two commits.** `97246f9` changes the tokens and
 the four small items. `d1bf60f` fixes the focus ring regression the
@@ -6112,11 +6112,55 @@ panel, a document, the control drawer, Users, and the login form. Plus
 the hover crop and the focus ring crops. They were reviewed on the
 bench and are not committed.
 
-**Not yet deployed.** The walk on live is Jarrod's:
+**Deployed 2026-10-26, in two steps, the first one wrong.** At 13:36
+UTC nginx alone was rebuilt at `d802851` (#58's merge) with a plain
+`docker compose build`/`up`, not `deploy/deploy.sh`. That stamped the
+image `unknown`, wrote no deploy record and ran no scan, and it left a
+split: the frontend at V.1, the backend and worker on the image built
+at `09aee13` (#52). Live had not been deployed since 2026-10-20, so #54
+(the audit check's additions, backend only, no migration) had been
+merged four days without running. Until it did, live's SPRS score was
+computed from mark-met assertions nothing recorded. At 15:27 UTC
+`deploy/deploy.sh` deployed `d802851` whole: all three containers carry
+that revision label, `/health` reports `build: d802851…` and migration
+0071, and the record is
+`~claude/wingrc-deploys/20261026T152749Z-d80285198800`. That
+deploy's scans report 308 backend rows and 231 nginx (296 and 181 on
+2026-10-20), report-only and read by nobody (Planned, "The deploy scans
+are read by nobody").
+
+**What `/health` said during the split.** It said `build: 09aee13…`,
+which was true of the backend: `WINGRC_BUILD_SHA` is baked into the
+image, and the backend and worker containers' revision labels agreed.
+It was neither the checkout (`d802851`) nor the last deploy's intent.
+It said nothing about nginx, whose label read `unknown`. So `build` is
+the backend image's commit, not the deployment's. It reads as the
+deployment's only because `deploy.sh` always builds all three images
+at one SHA. A split exists only when that script is bypassed, as it was
+here. The fix is sized under Planned ("`/health` reports one build
+for a deployment that can be split").
+
+The walk on live is Jarrod's:
 - open a list page (ghost *← All lists*, primary *Export .xlsx*);
 - open Tools (the card's green and red);
 - on the login page, Tab to *Sign in*: the dark ring should stand off
   the blue with a white gap.
+
+**Does anything but colour tell the tool card's green and red apart?
+Yes; checked in `ProductCard.tsx` after the merge (2026-10-26).** They
+are not two states of one thing. The green is the words *Active —
+pending evidence*. The red is a bordered button labelled *Deactivate*,
+and the card's error sentence. An inactive card shows an *Activate*
+button instead, and the active card's blue tint only repeats what the
+words say. The coverage chips say *N provider*, *N shared* and *N
+customer*. So nothing on the card is colour alone, and there is nothing
+to fix for that. Two things found while reading it, neither colour:
+- A person without write access sees nothing in an inactive card's
+  footer, so the state is shown by an absence. Showing *Not active* is
+  one line.
+- *Active — pending evidence* is a fixed string, shown whatever the
+  objectives' states are, so it states a result it never computed (the
+  fourth product invariant). Either compute it or say only *Active*.
 
 ### The evidence section stops destroying things and stops hiding things ✅ DONE (2026-10-19, bench-verified, migration 0071; deployed and walked on live 2026-10-20)
 
@@ -11291,6 +11335,93 @@ U", and can be rerun as it stands. Frontend only.
 - `#198754` and `#dc3545` on the tool card, 4.17;
 - the *Inactive* badge, 4.34;
 - the textarea placeholder, 4.37.
+
+### `/health` reports one build for a deployment that can be split -- found deploying V.1
+
+**Found 2026-10-26** (V.1's Done entry, "What `/health` said during the
+split"). `/health`'s `build` is `WINGRC_BUILD_SHA` as baked into the
+backend image. Nothing reports the nginx image's commit, though its
+revision label holds it, so a split deploy reads as one build. The
+split happened because nginx was deployed by hand, outside
+`deploy/deploy.sh`, which builds all three at one SHA.
+
+**This is `/health`'s second time in this family.** It first returned a
+static dict, reporting healthy without checking anything, through an
+`alembic upgrade head` that rolled back and left an empty database (its
+docstring keeps the incident). Now it names one build for a deployment
+of three images that can each be built at a different commit. Both are
+a screen stating a result it never computed (the fourth product
+invariant).
+
+**The fix: a commit per component, not a gate.** Gating `deploy.sh` on
+both commits only stops a deploy from declaring success during a split.
+`/health` would still misreport afterwards, which is when someone reads
+it. A single `build` field cannot describe a deployment that can be
+split, so `/health` stops having one:
+- `components: {backend, nginx, worker}`, each that image's own commit.
+- `build` is that commit only when all three agree. Otherwise it is
+  `null`, with `split: true`. A split is reported, not marked unhealthy:
+  a 503 would fail the container's own healthcheck over something a
+  restart cannot fix.
+- `deploy.sh` waits for all three to equal the target commit.
+
+**Sized, not built.** `nginx` and `backend` are about ten lines:
+- The nginx image sets `ENV WINGRC_BUILD_SHA` from the arg it already
+  takes. `nginx.conf` moves to the image's `templates/` directory, so
+  it is substituted at start, and adds
+  `proxy_set_header X-WinGRC-Nginx-Build ${WINGRC_BUILD_SHA}` on
+  `/api/`.
+- `/health` reports that header as `components.nginx`, or `not via
+  nginx` when it is absent (a direct call to `backend:8000`, as
+  `deploy.sh` makes). So `deploy.sh`'s check moves to `https://localhost/api/health`.
+- `proxy_set_header` replaces any value a client sends, so the header
+  cannot be spoofed through nginx. It is a report, not an
+  authorisation.
+
+`worker` is the larger part. It serves nothing and has no
+healthcheck, so nothing can ask it. It would record its build on each
+`job_run` row it writes (a column, so a migration, about twenty lines
+with the test), and `/health` would report the last run's build and its
+time. A stopped worker would then show a stale commit with an old
+timestamp. That is honest, and better than the absence today.
+
+**Not the fix:** making compose refuse an unset `WINGRC_BUILD_SHA`
+(`${WINGRC_BUILD_SHA:?}`). Compose interpolates the whole file for
+every command, so `docker compose ps` and `logs` would refuse too.
+
+### The deploy scans are read by nobody -- found deploying V.1
+
+**Recorded 2026-10-26, nothing built.** `deploy/deploy.sh` runs Trivy
+over the backend and nginx images after every deploy and writes the
+output beside the deploy record. It is report-only by design. Nothing
+reads it, nothing compares one record with the previous, and nothing
+surfaces a rise. The nginx Dockerfile's base-image comment
+(2026-10-10) says to "re-check with deploy.sh's per-deploy scan";
+nothing did until today.
+
+The counts from every record in `~claude/wingrc-deploys/`. *Rows* are
+package × advisory lines; *unique* counts distinct advisories; C and H
+are CRITICAL and HIGH rows.
+
+| Deploy record | backend rows / unique / C / H | nginx rows / unique / C / H |
+|---|---|---|
+| 2026-10-09 `b781f2b` | 289 / 151 / 1 / 28 | 161 / 108 / 2 / 11 |
+| 2026-10-10 `b27e8a6` (nginx base 1.29) | 297 / 153 / 1 / 28 | 179 / 111 / 0 / 8 |
+| 2026-10-14 to 2026-10-18, nine deploys | 296 / 152 / 1 / 28 | 179 / 111 / 0 / 8 |
+| 2026-10-18 `d0d745c` to 2026-10-20 `09aee13`, five deploys | 296 / 152 / 1 / 28 | 181 / 113 / 0 / 8 |
+| **2026-10-26 `d802851`** | **308 / 161 / 2 / 29** | **231 / 139 / 0 / 8** |
+
+In six days the nginx image went 181 → 231 rows (113 → 139 advisories),
+and the backend 296 → 308, with a **second CRITICAL**. Nobody has looked
+at which. A count also mixes two causes the record does not separate:
+new advisories published against the same packages, and a changed image
+(a rebuilt base layer). The record keeps image IDs, so the second can be
+answered after the fact.
+
+**The question, Jarrod's:** either there is a cadence for reading these
+(per deploy, or weekly, and by whom), or the scan is ceremony and
+should say so. A count that only rises unseen is a check nobody can
+tell from no check.
 
 ### V.2. Red and green text and fills pass AA contrast -- found in V.1
 
