@@ -24,7 +24,10 @@ another's:
   the names of the connections open now from `pg_stat_activity`. That
   observes a worker that is connected at this moment, not a record of one
   that once ran. `/health`'s own connection carries no such name, so the
-  check cannot find itself.
+  check cannot find itself. Its absence means no connection is *named* as
+  a worker: a worker built before this naming is running and connected,
+  and reads `unknown` too (seen on the bench, 2026-10-26), so the reason
+  given says only what was observed.
 
 A commit nobody reported reads `unknown`, never the backend's value.
 """

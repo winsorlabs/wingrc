@@ -217,7 +217,9 @@ the backend's own `WINGRC_BUILD_SHA`; nginx's, sent as a request header on
 what the container's own healthcheck makes); and the worker's, from the
 name its database connections carry. So a deployment without the `worker`
 service (host cron instead) reads `incomplete`, truthfully: no worker is
-running. HTTP 503 still means the database is unreachable or the schema
+running. So does a worker built before 2026-10-26, which is running but
+does not name its connections; `/health` says only that no connection is
+named as a worker, which is what it can see. HTTP 503 still means the database is unreachable or the schema
 does not match.
 
 Then it writes a deploy record to `~/wingrc-deploys/<UTC>-<sha>/`

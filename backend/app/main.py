@@ -182,7 +182,10 @@ def health(request: Request, response: Response, db: Session = Depends(get_sessi
             if observed["nginx"]
             else "this request did not come through nginx"
         ),
-        "worker": "no worker is connected to the database",
+        "worker": (
+            "no database connection is named as a worker: none is running, "
+            "or it predates the naming"
+        ),
     }
     detail: dict = {"status": "ok", "app": settings.app_name, "version": "0.1.0"}
 

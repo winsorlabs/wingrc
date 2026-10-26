@@ -212,7 +212,7 @@ def test_a_component_nobody_reported_is_unknown_never_the_backends(
     assert body["status"] == "incomplete"
     assert body["components"] == {"backend": A, "nginx": "unknown", "worker": "unknown"}
     assert "did not come through nginx" in body["detail"]
-    assert "no worker is connected" in body["detail"]
+    assert "no database connection is named as a worker" in body["detail"]
 
 
 def test_the_containers_own_healthcheck_sees_incomplete_not_ok(
