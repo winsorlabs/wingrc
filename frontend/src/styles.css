@@ -5,8 +5,10 @@
   --text: #212529;
   /* 6.1:1 on white, 5.8:1 on --bg, 4.7:1 on --border (V, 2026-10-20). */
   --muted: #5c636a;
-  --primary: #0d6efd;
-  --primary-hover: #0b5ed7;
+  /* 6.1:1 on --bg, 5.8:1 on the refusal panel, white on it 6.4:1 (V.1, 2026-10-25). */
+  --primary: #0a58ca;
+  /* --primary x 0.80, so hover stays a visible step darker (V.1). */
+  --primary-hover: #0846a2;
 
   --met-bg: #d1e7dd; --met-fg: #0a3622;
   --not-met-bg: #f8d7da; --not-met-fg: #58151c;
@@ -111,6 +113,13 @@ button { cursor: pointer; border: none; border-radius: 5px; font-size: 0.875rem;
 .btn-ghost { background: transparent; color: var(--primary); border: 1px solid var(--border); padding: 0.35rem 0.75rem; }
 .btn-ghost:hover { background: #f0f4ff; }
 .btn-sm { padding: 0.2rem 0.55rem; font-size: 0.775rem; }
+/* The browser's focus ring is a 2px #101010 drawn flush against the
+   element; on a --primary fill that is 2.96:1. The offset puts the page
+   background between ring and fill (V.1). */
+.btn-primary:focus-visible,
+.filter-chip--active:focus-visible,
+.doc-tbtn.active:focus-visible,
+.doc-list-item.active:focus-visible { outline-offset: 2px; }
 
 /* ── Form row ── */
 .form-row { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
@@ -118,7 +127,7 @@ input[type="text"] {
   flex: 1; padding: 0.4rem 0.625rem;
   border: 1px solid var(--border); border-radius: 5px; font-size: 0.875rem; outline: none;
 }
-input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(13,110,253,0.15); }
+input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(10,88,202,0.15); }
 
 /* ── Divider ── */
 .divider { height: 1px; background: var(--border); margin: 0.875rem 0; }
@@ -343,7 +352,8 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
   background: var(--bg);
   min-height: 0;
 }
-.drawer-textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(13,110,253,0.15); }
+.drawer-textarea::placeholder { color: var(--muted); }
+.drawer-textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(10,88,202,0.15); }
 
 .drawer-footer {
   display: flex;
@@ -729,13 +739,13 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 
 .product-active-label {
   font-size: 0.75rem;
-  color: #198754;
+  color: #146c43;
   font-weight: 500;
 }
 
 .product-card-error {
   font-size: 0.72rem;
-  color: #dc3545;
+  color: #b02a37;
 }
 
 /* ── Evidence section (inside control drawer, per objective) ── */
@@ -1168,14 +1178,14 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 }
 
 .filter-chip--active {
-  background: #0d6efd;
-  border-color: #0d6efd;
+  background: var(--primary);
+  border-color: var(--primary);
   color: #fff;
 }
 
 .filter-chip--active:hover {
-  background: #0b5ed7;
-  border-color: #0b5ed7;
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
 }
 
 .filter-chip--sort {
@@ -1198,8 +1208,8 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .badge-needs-review { background: var(--needs-review-bg); color: var(--needs-review-fg); }
 
 /* ── Product card: deactivate button ── */
-.product-deactivate-btn { color: #dc3545; border-color: #dc3545; }
-.product-deactivate-btn:hover:not(:disabled) { background: #dc3545; color: #fff; }
+.product-deactivate-btn { color: #b02a37; border-color: #b02a37; }
+.product-deactivate-btn:hover:not(:disabled) { background: #b02a37; color: #fff; }
 
 /* ── Evidence tasks panel ── */
 .tasks-panel { max-width: 520px; }
@@ -1460,7 +1470,7 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .role-change-confirm { margin-top: 0.35rem; flex-wrap: wrap; }
 .status-badge { display: inline-block; font-size: 0.72rem; font-weight: 600; padding: 0.15rem 0.4rem; border-radius: 4px; }
 .status-active { background: #dcfce7; color: #166534; }
-.status-inactive { background: #f1f5f9; color: #64748b; }
+.status-inactive { background: #f1f5f9; color: #475569; }
 .status-warning { background: #fee2e2; color: #991b1b; }
 
 /* ── Integrations panel (D.1) ─────────────────────────────────────────── */
@@ -1702,7 +1712,7 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 
 /* ── ContactDrawer footer delete ─────────────────────────────────────────── */
 .delete-confirm { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
-.btn-destructive { color: #dc3545; }
+.btn-destructive { color: #b02a37; }
 .btn-danger { background: #dc3545; color: #fff; border-color: #dc3545; }
 .btn-danger:hover { background: #bb2d3b; }
 
@@ -1864,7 +1874,7 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 }
 .login-form input:focus {
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.15);
+  box-shadow: 0 0 0 3px rgba(10, 88, 202, 0.15);
 }
 .login-form .field-hint {
   background: var(--bg);
@@ -1979,7 +1989,7 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 }
 .change-badge-new { background: #dcfce7; color: #16a34a; }
 .change-badge-changed { background: #fef9c3; color: #a16207; }
-.change-badge-missing { background: #f1f5f9; color: #64748b; }
+.change-badge-missing { background: #f1f5f9; color: #475569; }
 
 
 /* ==========================================================================
