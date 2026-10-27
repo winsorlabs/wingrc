@@ -34,6 +34,7 @@ from .routers import (
     dashboard,
     document_evidence,
     documents,
+    environment,
     evidence,
     frameworks,
     integrations,
@@ -84,6 +85,7 @@ app.include_router(bundle.router)
 app.include_router(users_router.router)
 app.include_router(audit_log.router)
 app.include_router(dashboard.router)
+app.include_router(environment.router)
 app.include_router(raci.router)
 app.include_router(integrations.router)
 app.include_router(objectives.router)

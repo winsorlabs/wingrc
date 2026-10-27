@@ -451,6 +451,34 @@ def test_poam_summary(dashboard_json: dict):
     }
 
 
+def test_open_evidence_tasks_lists_open_unarchived(dashboard_json: dict):
+    titles = [t["title"] for t in dashboard_json["open_evidence_tasks"]]
+    assert sorted(titles) == [
+        "Firewall export (not expiring soon)",
+        "IdP export (expiring)",
+        "No expiry set",
+    ]
+    assert dashboard_json["open_evidence_tasks_count"] == 3
+
+
+def test_open_evidence_tasks_count_is_not_the_capped_list(
+    client: TestClient, db_session: Session, ref: dict, fake_msp_admin, monkeypatch
+):
+    """Q.0: the engineer view shows this count beside a capped list; with
+    the cap below the population the count must still be the real one."""
+    from app.routers import dashboard as dashboard_module
+
+    monkeypatch.setattr(dashboard_module, "_LIST_WIDGET_CAP", 2)
+    _grant(db_session, fake_msp_admin, org_id=ref["org"].id)
+    body = client.get(
+        f"/orgs/{ref['org'].id}/assessments/{ref['assessment'].id}/dashboard"
+    ).json()
+    assert len(body["open_evidence_tasks"]) == 2, (
+        "fixture must exceed the cap or this test proves nothing"
+    )
+    assert body["open_evidence_tasks_count"] == 3
+
+
 def test_dashboard_404_on_org_assessment_mismatch(
     client: TestClient, db_session: Session, fake_msp_admin
 ):
