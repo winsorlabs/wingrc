@@ -276,6 +276,11 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   after the pull said which commit was running; `/health` now does, per
   component. A bench clone is a branch checkout, where a pull is fine
   (`docs/bench-stack-verification.md`).
+  - **A deploy that changes `deploy.sh` runs the old one.** Bash keeps
+    reading the file it opened, and the checkout writes a new one. When
+    `deploy/deploy.sh` differs between `HEAD` and the target, run
+    `git checkout --detach origin/main` first, then `deploy.sh`
+    (`docs/deployment.md`, 7c; 2026-10-27).
 - **Landing a slice, in order: bench-verify → open a PR → *watch CI go
   green* → merge → deploy → report.** The CI step is not optional and not
   "check later". Six consecutive red runs on `main` went unnoticed

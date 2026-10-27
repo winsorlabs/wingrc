@@ -201,6 +201,23 @@ nginx` with that commit stamped in as `WINGRC_BUILD_SHA`, recreates them with
 `status: ok` **and** that commit for the backend. A deploy is done when
 `/health` names the commit you meant to ship, not when the commands exit.
 
+**When the merge being deployed changes `deploy.sh` itself, check it out
+first.** Bash reads a script while it runs, from the file it opened. Git
+writes a new file at the checkout, so the run that does the checkout
+finishes with the *old* script's steps. On 2026-10-27 that would have been
+a wait loop checking a `/health` field the new code had removed: "did not
+become healthy" after five minutes, exit 1 and no record, after a deploy
+that had succeeded. So, after `git fetch origin`, when `git diff HEAD origin/main -- deploy/deploy.sh`
+is not empty:
+
+```bash
+git checkout --detach origin/main   # the checkout deploy.sh would make
+deploy/deploy.sh
+```
+
+This is a checkout, not a pull: it moves the working tree to exactly that
+commit, and `deploy.sh` then finds it already there.
+
 **`/health` reports a commit per component** (`backend/app/health.py`), because
 the three images are built separately and can run three commits at once:
 
@@ -221,6 +238,16 @@ running. So does a worker built before 2026-10-26, which is running but
 does not name its connections; `/health` says only that no connection is
 named as a worker, which is what it can see. HTTP 503 still means the database is unreachable or the schema
 does not match.
+
+These commits are self-declared. On a direct call to `backend:8000` a
+client-sent `X-WinGRC-Nginx-Build` is believed, since nothing replaces it,
+and anyone with the database credentials can name a connection
+`wingrc-worker@<anything>`. Neither is reachable from outside: port 8000
+is not published. It is a report, not a control. Read it through nginx,
+as `deploy.sh` does. While the worker restarts, `/health` reads
+`incomplete` until the new worker's first query, about 33 seconds in the
+2026-10-27 deploy. `deploy.sh` keeps polling through that window (see
+`docs/roadmap.md`'s `/health` per component entry, Known limitations).
 
 Then it writes a deploy record to `~/wingrc-deploys/<UTC>-<sha>/`
 (`WINGRC_DEPLOY_RECORD_DIR` overrides): `deploy.txt` (commit, time, user,
