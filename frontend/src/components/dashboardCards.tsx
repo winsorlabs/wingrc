@@ -1,4 +1,4 @@
-import { familyRadarPoints } from "../lib/radarChart";
+import { familyRadarPoints, radarHasData } from "../lib/radarChart";
 import type { FamilyHeatmapEntry, SprsWidgetData } from "../types";
 
 // Cards both dashboard views draw (Q.0): the SPRS score and the family
@@ -17,7 +17,7 @@ const RADAR_RINGS = [25, 50, 75, 100];
 
 export function FamilyRadarCard({
   entries,
-  emptyText = "No controls in this assessment yet.",
+  emptyText,
 }: {
   entries: FamilyHeatmapEntry[];
   emptyText?: string;
@@ -34,7 +34,14 @@ export function FamilyRadarCard({
   return (
     <div className="card">
       <h2>Family Completion (Radar)</h2>
-      {entries.length === 0 && <div className="empty">{emptyText}</div>}
+      {!radarHasData(entries) ? (
+        <p className="field-hint radar-empty">
+          {emptyText ??
+            (entries.length === 0
+              ? "No controls in this assessment yet."
+              : "No family has a satisfied control yet. The radar draws once one does.")}
+        </p>
+      ) : (
       <svg
         viewBox={`0 0 ${RADAR_CENTER * 2} ${RADAR_CENTER * 2}`}
         className="radar-chart"
@@ -82,6 +89,7 @@ export function FamilyRadarCard({
           );
         })}
       </svg>
+      )}
     </div>
   );
 }
