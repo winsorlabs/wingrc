@@ -461,20 +461,75 @@ def _get_scope_entity(session: Session, org_id: uuid.UUID, entity_id: uuid.UUID)
 # ---------------------------------------------------------------------------
 
 
-@router.get("/{org_id}/scope", response_model=list[ScopeEntityOut])
-def get_scope(
-    org_id: uuid.UUID,
-    entity_type: str | None = Query(default=None),
-    session: Session = Depends(get_session),
-) -> list[ScopeEntityOut]:
+def validate_scope_filters(entity_type: str | None, status: str | None) -> None:
+    """422 on an unknown entity_type or status, the same shape for both."""
     if entity_type is not None and entity_type not in _ENTITY_TYPES:
         raise HTTPException(
             status_code=422, detail=f"entity_type must be one of: {sorted(_ENTITY_TYPES)}"
         )
-    stmt = select(ScopeEntity).where(ScopeEntity.org_id == org_id)
+    if status is not None and status not in _ENTITY_STATUSES:
+        raise HTTPException(
+            status_code=422, detail=f"status must be one of: {sorted(_ENTITY_STATUSES)}"
+        )
+
+
+def scope_filter(
+    org_id: uuid.UUID,
+    *,
+    entity_type: str | None = None,
+    status: str | None = None,
+    in_boundary: bool | None = None,
+) -> list:
+    """The WHERE clauses for a scope read, shared by `get_scope` and the
+    environment dashboard (routers/environment.py), so a widget's rows and
+    its COUNT(*) are filtered by the same expression.
+
+    `status` and `in_boundary` are separate questions. A rejected entity is
+    `status=active, in_boundary=False` (domain.EntityStatus), so "active"
+    alone includes what a person excluded from the boundary.
+    """
+    clauses = [ScopeEntity.org_id == org_id]
     if entity_type is not None:
-        stmt = stmt.where(ScopeEntity.entity_type == entity_type)
-    stmt = stmt.order_by(ScopeEntity.natural_key)
+        clauses.append(ScopeEntity.entity_type == entity_type)
+    if status is not None:
+        clauses.append(ScopeEntity.status == status)
+    if in_boundary is not None:
+        clauses.append(ScopeEntity.in_boundary.is_(in_boundary))
+    return clauses
+
+
+@router.get("/{org_id}/scope", response_model=list[ScopeEntityOut])
+def get_scope(
+    org_id: uuid.UUID,
+    entity_type: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    in_boundary: bool | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+) -> list[ScopeEntityOut]:
+    """Scope entities, filtered. With no `limit` this returns every
+    matching row, as it always has (the Assets page reads it that way).
+    A caller that caps the rows takes a total from its own COUNT(*), never
+    from len() of what came back.
+
+    A GET, so every role with access to the org reads it, c3pao_assessor
+    included: the boundary inventory is evidence an assessor examines
+    (test_environment_dashboard.py holds this).
+    """
+    validate_scope_filters(entity_type, status)
+    stmt = (
+        select(ScopeEntity)
+        .where(
+            *scope_filter(
+                org_id, entity_type=entity_type, status=status, in_boundary=in_boundary
+            )
+        )
+        .order_by(ScopeEntity.natural_key, ScopeEntity.id)
+        .offset(offset)
+    )
+    if limit is not None:
+        stmt = stmt.limit(limit)
     rows = session.scalars(stmt).all()
     return [ScopeEntityOut.model_validate(r) for r in rows]
 

@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -195,6 +195,14 @@ class DocumentReviewWidget(BaseModel):
     items: list[DocumentReviewItem]
 
 
+class OpenEvidenceTaskItem(BaseModel):
+    task_id: uuid.UUID
+    title: str
+    artifact_type: str
+    collection_session: str | None
+    due_date: date | None
+
+
 class DashboardOut(BaseModel):
     family_heatmap: list[FamilyHeatmapEntry]
     sprs: SprsWidget
@@ -208,6 +216,10 @@ class DashboardOut(BaseModel):
     poam_summary: PoamSummary
     raci_load: RaciLoadWidget
     document_reviews: DocumentReviewWidget
+    # Q.0: the engineer view's task list reads these beside document
+    # reviews. The count is its own COUNT(*), not len() of the capped list.
+    open_evidence_tasks: list[OpenEvidenceTaskItem]
+    open_evidence_tasks_count: int
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +327,40 @@ def _evidence_expiring(session: Session, assessment_id: uuid.UUID) -> list[Evide
         for t in rows
         if t.expires_at is not None
     ]
+
+
+def _open_evidence_tasks(
+    session: Session, assessment_id: uuid.UUID
+) -> tuple[list[OpenEvidenceTaskItem], int]:
+    """Open, unarchived evidence tasks: the same set _raci_open_tasks
+    buckets, listed. Ordered as the Tasks screen orders them, by
+    collection session, then creation, then id."""
+    clauses = (
+        EvidenceTask.assessment_id == assessment_id,
+        EvidenceTask.status == "open",
+        EvidenceTask.is_archived.is_(False),
+    )
+    rows = session.scalars(
+        select(EvidenceTask)
+        .where(*clauses)
+        .order_by(
+            EvidenceTask.collection_session.asc().nulls_last(),
+            EvidenceTask.created_at,
+            EvidenceTask.id,
+        )
+        .limit(_LIST_WIDGET_CAP)
+    ).all()
+    total = session.scalar(select(func.count()).select_from(EvidenceTask).where(*clauses)) or 0
+    return [
+        OpenEvidenceTaskItem(
+            task_id=t.id,
+            title=t.title,
+            artifact_type=t.artifact_type,
+            collection_session=t.collection_session,
+            due_date=t.due_date,
+        )
+        for t in rows
+    ], total
 
 
 def _review_queue_rows(session: Session, assessment_id: uuid.UUID, status: str):
@@ -567,6 +613,7 @@ def get_dashboard(
 
     needs_review, needs_review_count = _needs_review(session, assessment_id)
     blocked, blocked_count = _blocked_objectives(session, assessment_id)
+    open_tasks, open_tasks_count = _open_evidence_tasks(session, assessment_id)
 
     return DashboardOut(
         family_heatmap=_family_heatmap(session, assessment_id),
@@ -581,4 +628,6 @@ def get_dashboard(
         poam_summary=_poam_summary(session, assessment_id),
         raci_load=_raci_load(session, assessment_id),
         document_reviews=_document_reviews(session, org_id),
+        open_evidence_tasks=open_tasks,
+        open_evidence_tasks_count=open_tasks_count,
     )

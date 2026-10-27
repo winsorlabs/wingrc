@@ -437,7 +437,9 @@ activate/deactivate to try to retrigger the original race.
 **Family radar chart addition** (not in the original plan; small
 follow-on request, same 2026-08-19 batch): per-family completion % for
 all 14 CMMC domains as radar spokes, added alongside (not replacing) the
-existing Family Completion bar list. Hand-rolled SVG — `frontend/package.json`
+existing Family Completion bar list. *(Q.0, 2026-10-27, reversed this on
+purpose: the radar is on the environment view and the bar list on the
+assessment view; see `docs/roadmap.md`'s Q.0 entry.)* Hand-rolled SVG — `frontend/package.json`
 had no charting library, and a fixed 14-axis non-interactive chart didn't
 justify adding one. New `lib/radarChart.ts` (pure coordinate-mapping
 function, no DOM) and `lib/families.ts` (extracted the 14-family order
