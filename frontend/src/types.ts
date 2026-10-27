@@ -516,6 +516,76 @@ export interface DashboardData {
   poam_summary: PoamSummary;
   raci_load: RaciLoadWidgetData;
   document_reviews: DocumentReviewWidgetData;
+  // Q.0: listed in the environment view beside document reviews; the
+  // count is the server's COUNT(*), not the length of the capped list.
+  open_evidence_tasks: OpenEvidenceTaskItem[];
+  open_evidence_tasks_count: number;
+}
+
+export interface OpenEvidenceTaskItem {
+  task_id: string;
+  title: string;
+  artifact_type: string;
+  collection_session: string | null;
+  due_date: string | null;
+}
+
+// GET /orgs/{org_id}/environment (Q.0). Org-scoped: see
+// backend/app/routers/environment.py for why it is not part of
+// DashboardData.
+export interface ScopeListRow {
+  id: string;
+  entity_type: string;
+  natural_key: string;
+  display_name: string;
+  sub_label: string | null;
+  scope_category: string | null;
+  source: string;
+}
+
+export interface ScopeListWidgetData {
+  entity_type: string | null;
+  status: string;
+  in_boundary: boolean | null;
+  // COUNT(*) under the same filter as `rows`. Show this, never rows.length.
+  total: number;
+  cap: number;
+  rows: ScopeListRow[];
+}
+
+export interface EnvironmentOrgInfo {
+  name: string;
+  cage_code: string | null;
+  uei: string | null;
+  address_line1: string | null;
+  address_line2: string | null;
+  city: string | null;
+  state_or_province: string | null;
+  postal_code: string | null;
+  country: string | null;
+  phone_primary: string | null;
+  website: string | null;
+  missing_ssp_fields: string[];
+}
+
+export interface EnvironmentAssessmentRef {
+  id: string;
+  name: string;
+  assessment_type: string;
+  status: string;
+  framework_name: string;
+  framework_version: string;
+}
+
+export interface EnvironmentData {
+  org: EnvironmentOrgInfo;
+  assessments: EnvironmentAssessmentRef[];
+  devices_in_boundary: ScopeListWidgetData;
+  people_in_boundary: ScopeListWidgetData;
+  pending_approval: ScopeListWidgetData;
+  devices_out_of_boundary: number;
+  people_out_of_boundary: number;
+  document_reviews: DocumentReviewWidgetData;
 }
 
 export interface AuthUser {

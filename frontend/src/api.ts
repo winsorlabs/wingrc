@@ -1,4 +1,4 @@
-import type { ApiTokenRow, ArchivedEvidenceSection, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, TlsExpiry, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent, AdoptResult, TakeTemplateResult, ListEvidenceCandidate, ListEvidenceLink, ListEvidenceStatus, ListLinkEvent, TagRemovalCheck, DocumentEvidenceCandidate, DocumentTagsAdded } from "./types";
+import type { ApiTokenRow, ArchivedEvidenceSection, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, EnvironmentData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, TlsExpiry, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent, AdoptResult, TakeTemplateResult, ListEvidenceCandidate, ListEvidenceLink, ListEvidenceStatus, ListLinkEvent, TagRemovalCheck, DocumentEvidenceCandidate, DocumentTagsAdded } from "./types";
 
 const BASE = "/api";
 
@@ -580,6 +580,9 @@ export const api = {
   getDashboard: (orgId: string, assessmentId: string) =>
     req<DashboardData>(`/orgs/${orgId}/assessments/${assessmentId}/dashboard`),
 
+  getEnvironment: (orgId: string) =>
+    req<EnvironmentData>(`/orgs/${orgId}/environment`),
+
   // ── Contacts ──────────────────────────────────────────────────────────────
   getContacts: (orgId: string) =>
     req<Contact[]>(`/orgs/${orgId}/contacts`),
@@ -934,6 +937,20 @@ export const api = {
     req<ScopeEntity[]>(
       `/orgs/${orgId}/scope${entityType ? `?entity_type=${encodeURIComponent(entityType)}` : ""}`
     ),
+
+  // Filtered read (Q.0). A caller that passes `limit` gets at most that
+  // many rows and must take any total from elsewhere, never rows.length.
+  getScopeFiltered: (
+    orgId: string,
+    filter: { entityType?: string; status?: string; inBoundary?: boolean; limit?: number },
+  ) => {
+    const params = new URLSearchParams();
+    if (filter.entityType) params.set("entity_type", filter.entityType);
+    if (filter.status) params.set("status", filter.status);
+    if (filter.inBoundary !== undefined) params.set("in_boundary", String(filter.inBoundary));
+    if (filter.limit !== undefined) params.set("limit", String(filter.limit));
+    return req<ScopeEntity[]>(`/orgs/${orgId}/scope?${params.toString()}`);
+  },
 
   createScopeEntity: (
     orgId: string,

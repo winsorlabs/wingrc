@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { defaultDashboardView, type DashboardView } from "../lib/dashboardView";
 import { canSeeAuditLog } from "../lib/roles";
-import { familyRadarPoints } from "../lib/radarChart";
 import { donutSlices } from "../lib/raciLoad";
 import type {
   Assessment,
@@ -9,6 +9,7 @@ import type {
   BlockedObjectiveItem,
   DashboardData,
   DocumentReviewWidgetData,
+  EnvironmentData,
   EvidenceExpiringItem,
   FamilyHeatmapEntry,
   PoamSummary,
@@ -16,9 +17,10 @@ import type {
   RaciLoadWidgetData,
   ReviewQueueItem,
   SprsSubmission,
-  SprsWidgetData,
   StatementProgress,
 } from "../types";
+import { SprsCard } from "./dashboardCards";
+import { EnvironmentDashboard, type DashboardNavTarget } from "./EnvironmentDashboard";
 
 interface Props {
   orgId: string;
@@ -35,6 +37,8 @@ interface Props {
   // assessment, rather than the dashboard silently diverging from what
   // "Assessments"/"Tools" would show if the user clicked over.
   onSwitchAssessment: (assessment: Assessment) => void;
+  // Quick links and the environment view's "see all" links (Q.0).
+  onNavigate: (target: DashboardNavTarget) => void;
 }
 
 function mostRecentFirst(assessments: Assessment[]): Assessment[] {
@@ -47,7 +51,12 @@ function mostRecentlyActive(assessments: Assessment[]): Assessment {
   return mostRecentFirst(assessments)[0];
 }
 
-// Landing screen once an org is open (G.3). Nine widgets from one GET call,
+// Landing screen once an org is open (G.3; two views since Q.0). The
+// assessment view is G.3's widgets on a deliberate grid; the environment
+// view (EnvironmentDashboard.tsx) is the engineer's, with its own
+// org-scoped GET. Which one a role lands on: lib/dashboardView.ts.
+//
+// The assessment view: nine widgets from one GET call,
 // except "Recent activity" — that one calls api.listAuditLog directly,
 // unmodified, so it keeps its existing msp_admin-only gate
 // (routers/audit_log.py) rather than needing this endpoint to leak or
@@ -62,10 +71,29 @@ function mostRecentlyActive(assessments: Assessment[]): Assessment {
 // localStorage cache). Confirmed with the user before implementing rather
 // than picking silently, since "always default to freshest on mount"
 // would have silently swapped away from a choice the user just made.
-export function OrgDashboard({ orgId, assessmentId, currentUserRole, onSwitchAssessment }: Props) {
+export function OrgDashboard({
+  orgId,
+  assessmentId,
+  currentUserRole,
+  onSwitchAssessment,
+  onNavigate,
+}: Props) {
+  // Q.0: a default per role (lib/dashboardView.ts), switchable by anyone,
+  // not remembered. Per-user layout persistence is roadmap Q, not Q.0.
+  // `chosenView` is null until someone clicks the toggle.
+  const [chosenView, setView] = useState<DashboardView | null>(null);
   const [assessments, setAssessments] = useState<Assessment[] | null>(null);
+  // An org with no assessment opens on the environment view whatever the
+  // role: the assessment view would have nothing on it but a sentence.
+  const view: DashboardView =
+    chosenView ??
+    (assessments !== null && assessments.length === 0
+      ? "environment"
+      : defaultDashboardView(currentUserRole));
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [environment, setEnvironment] = useState<EnvironmentData | null>(null);
+  const [environmentError, setEnvironmentError] = useState<string | null>(null);
   // Guards the auto-default effect from firing more than once per org
   // mount — without it, a user who explicitly switches away right after
   // the auto-default runs could get overridden again on the next
@@ -74,6 +102,7 @@ export function OrgDashboard({ orgId, assessmentId, currentUserRole, onSwitchAss
 
   useEffect(() => {
     setAssessments(null);
+    setView(null);
     autoSelectedRef.current = false;
     api.getAssessments(orgId).then(setAssessments).catch(() => setAssessments([]));
   }, [orgId]);
@@ -95,20 +124,80 @@ export function OrgDashboard({ orgId, assessmentId, currentUserRole, onSwitchAss
     api.getDashboard(orgId, assessmentId).then(setData).catch((e: Error) => setError(e.message));
   }, [orgId, assessmentId]);
 
-  if (assessmentId === null) {
-    if (assessments !== null && assessments.length === 0) {
-      return (
-        <div className="workspace-content">
-          <div className="empty">No assessments yet — start one from the org picker.</div>
-        </div>
-      );
-    }
-    // Either still loading the assessments list, or it just arrived and
-    // the auto-select effect above hasn't run yet (effects fire after
-    // render) — both are a brief "resolving" state, not an error.
+  useEffect(() => {
+    if (view !== "environment") return;
+    setEnvironment(null);
+    setEnvironmentError(null);
+    api.getEnvironment(orgId).then(setEnvironment).catch((e: Error) => setEnvironmentError(e.message));
+  }, [orgId, view]);
+
+  const header = (
+    <div className="dashboard-view-switch">
+      <div className="view-toggle" role="group" aria-label="Dashboard view">
+        <button type="button" aria-pressed={view === "environment"} onClick={() => setView("environment")}>
+          Environment
+        </button>
+        <button type="button" aria-pressed={view === "assessment"} onClick={() => setView("assessment")}>
+          Assessment
+        </button>
+      </div>
+      {assessments && assessments.length > 1 && assessmentId !== null && (
+        <AssessmentSwitcher
+          assessments={assessments}
+          selectedId={assessmentId}
+          onSelect={onSwitchAssessment}
+        />
+      )}
+    </div>
+  );
+
+  // Still resolving which assessment this is, if there is one: the
+  // auto-select effect above runs after render.
+  const resolving =
+    assessments === null || (assessmentId === null && assessments.length > 0);
+
+  if (view === "environment") {
+    // The environment view needs no assessment (routers/environment.py);
+    // it waits only for one that exists, so a tenant with an assessment
+    // never flashes "no assessment yet".
+    const waitingForAssessment = assessmentId !== null && data === null && error === null;
     return (
       <div className="workspace-content">
-        <div className="loading">Loading dashboard…</div>
+        {header}
+        {environmentError && (
+          <div className="error-msg">Error loading dashboard: {environmentError}</div>
+        )}
+        {error && <div className="error-msg">Error loading the assessment: {error}</div>}
+        {!environmentError && (environment === null || resolving || waitingForAssessment) ? (
+          <div className="loading">Loading dashboard…</div>
+        ) : (
+          environment && (
+            <EnvironmentDashboard
+              orgId={orgId}
+              environment={environment}
+              assessmentData={data}
+              assessmentId={assessmentId}
+              currentUserRole={currentUserRole}
+              onNavigate={onNavigate}
+            />
+          )
+        )}
+      </div>
+    );
+  }
+
+  if (assessmentId === null) {
+    return (
+      <div className="workspace-content">
+        {header}
+        {assessments !== null && assessments.length === 0 ? (
+          <div className="empty">
+            No assessments yet — start one from the org picker. The Environment view shows this
+            org's boundary without one.
+          </div>
+        ) : (
+          <div className="loading">Loading dashboard…</div>
+        )}
       </div>
     );
   }
@@ -116,6 +205,7 @@ export function OrgDashboard({ orgId, assessmentId, currentUserRole, onSwitchAss
   if (error) {
     return (
       <div className="workspace-content">
+        {header}
         <div className="error-msg">Error loading dashboard: {error}</div>
       </div>
     );
@@ -123,35 +213,39 @@ export function OrgDashboard({ orgId, assessmentId, currentUserRole, onSwitchAss
   if (!data) {
     return (
       <div className="workspace-content">
+        {header}
         <div className="loading">Loading dashboard…</div>
       </div>
     );
   }
 
+  const showActivity = canSeeAuditLog(currentUserRole);
+  // The assessment view (Q.0's layout, styles.css `.dash-assessment`).
+  // The family radar moved to the environment view; the bar list stays
+  // here, where its per-family numbers are read.
   return (
     <div className="workspace-content">
-      {assessments && assessments.length > 1 && (
-        <AssessmentSwitcher
-          assessments={assessments}
-          selectedId={assessmentId}
-          onSelect={onSwitchAssessment}
-        />
-      )}
-      <div className="dashboard-grid">
-        <FamilyHeatmapCard entries={data.family_heatmap} />
-        <FamilyRadarCard entries={data.family_heatmap} />
-        <SprsCard sprs={data.sprs} />
-        <StatementProgressCard progress={data.statement_progress} />
-        <EvidenceExpiringCard items={data.evidence_expiring} />
-        <NeedsReviewCard items={data.needs_review} count={data.needs_review_count} />
-        <BlockedObjectivesCard items={data.blocked_objectives} count={data.blocked_objectives_count} />
-        <RaciOpenTasksCard buckets={data.raci_open_tasks} />
-        <RaciLoadSplitCard load={data.raci_load} />
-        <RaciLoadByContactCard load={data.raci_load} />
-        <PoamSummaryCard summary={data.poam_summary} />
-        <DocumentReviewCard data={data.document_reviews} />
-        <SprsSubmissionCard orgId={orgId} />
-        {canSeeAuditLog(currentUserRole) && <RecentActivityCard orgId={orgId} />}
+      {header}
+      <div className={`dash-assessment${showActivity ? " dash-assessment--with-activity" : ""}`}>
+        <div className="dash-col dash-col-left">
+          <SprsCard sprs={data.sprs} />
+          <SprsSubmissionCard orgId={orgId} />
+          <StatementProgressCard progress={data.statement_progress} />
+        </div>
+        <div className="dash-area-family"><FamilyHeatmapCard entries={data.family_heatmap} /></div>
+        <div className="dash-col dash-col-right">
+          <NeedsReviewCard items={data.needs_review} count={data.needs_review_count} />
+          <BlockedObjectivesCard items={data.blocked_objectives} count={data.blocked_objectives_count} />
+          <EvidenceExpiringCard items={data.evidence_expiring} />
+        </div>
+        <div className="dash-area-docs"><DocumentReviewCard data={data.document_reviews} /></div>
+        <div className="dash-area-poam"><PoamSummaryCard summary={data.poam_summary} /></div>
+        <div className="dash-area-owners"><RaciOpenTasksCard buckets={data.raci_open_tasks} /></div>
+        <div className="dash-area-racisplit"><RaciLoadSplitCard load={data.raci_load} /></div>
+        <div className="dash-area-racicontact"><RaciLoadByContactCard load={data.raci_load} /></div>
+        {showActivity && (
+          <div className="dash-area-activity"><RecentActivityCard orgId={orgId} /></div>
+        )}
       </div>
     </div>
   );
@@ -209,99 +303,6 @@ function FamilyHeatmapCard({ entries }: { entries: FamilyHeatmapEntry[] }) {
           );
         })}
       </div>
-    </div>
-  );
-}
-
-// 100 SVG user units = 100% completion. Padding leaves room for the axis
-// labels (family abbreviations) outside the outer ring. Kept as plain
-// constants, not props — this chart always plots the same fixed 14 axes,
-// no configurability needed (per the request: "no need for complex
-// interactivity").
-const RADAR_SIZE = 100;
-const RADAR_PADDING = 26;
-const RADAR_CENTER = RADAR_SIZE + RADAR_PADDING;
-const RADAR_RINGS = [25, 50, 75, 100];
-
-function FamilyRadarCard({ entries }: { entries: FamilyHeatmapEntry[] }) {
-  const points = familyRadarPoints(entries);
-  const toScreen = (unitX: number, unitY: number) =>
-    `${RADAR_CENTER + unitX * RADAR_SIZE},${RADAR_CENTER + unitY * RADAR_SIZE}`;
-  const ringPoints = (pct: number) =>
-    points
-      .map((p) => toScreen((pct / 100) * Math.cos(p.angle), (pct / 100) * Math.sin(p.angle)))
-      .join(" ");
-  const dataPolygon = points.map((p) => toScreen(p.unitX, p.unitY)).join(" ");
-
-  return (
-    <div className="card">
-      <h2>Family Completion (Radar)</h2>
-      {entries.length === 0 && <div className="empty">No controls in this assessment yet.</div>}
-      <svg
-        viewBox={`0 0 ${RADAR_CENTER * 2} ${RADAR_CENTER * 2}`}
-        className="radar-chart"
-        role="img"
-        aria-label="Per-family completion percentage, plotted as a radar chart across all 14 control families"
-      >
-        {RADAR_RINGS.map((pct) => (
-          <polygon key={pct} points={ringPoints(pct)} className="radar-grid-ring" />
-        ))}
-        {points.map((p) => (
-          <line
-            key={p.family}
-            x1={RADAR_CENTER}
-            y1={RADAR_CENTER}
-            x2={RADAR_CENTER + Math.cos(p.angle) * RADAR_SIZE}
-            y2={RADAR_CENTER + Math.sin(p.angle) * RADAR_SIZE}
-            className="radar-axis-line"
-          />
-        ))}
-        <polygon points={dataPolygon} className="radar-data-polygon" />
-        {points.map((p) => (
-          <circle
-            key={p.family}
-            cx={RADAR_CENTER + p.unitX * RADAR_SIZE}
-            cy={RADAR_CENTER + p.unitY * RADAR_SIZE}
-            r={3}
-            className="radar-data-point"
-          >
-            <title>{p.family}: {Math.round(p.pct)}%</title>
-          </circle>
-        ))}
-        {points.map((p) => {
-          const labelR = RADAR_SIZE + 14;
-          return (
-            <text
-              key={p.family}
-              x={RADAR_CENTER + Math.cos(p.angle) * labelR}
-              y={RADAR_CENTER + Math.sin(p.angle) * labelR}
-              className="radar-label"
-              textAnchor="middle"
-              dominantBaseline="middle"
-            >
-              {p.family}
-            </text>
-          );
-        })}
-      </svg>
-    </div>
-  );
-}
-
-function SprsCard({ sprs }: { sprs: SprsWidgetData }) {
-  const first = sprs.trajectory[0]?.score;
-  const last = sprs.trajectory[sprs.trajectory.length - 1]?.score;
-  const trend = first !== undefined && last !== undefined ? last - first : null;
-  return (
-    <div className="card">
-      <h2>SPRS Score</h2>
-      <div className="dashboard-big-stat">{sprs.current_score ?? "—"}</div>
-      {trend !== null && sprs.trajectory.length > 1 && (
-        <div className="item-meta">
-          {trend > 0 ? "▲" : trend < 0 ? "▼" : "—"} {trend > 0 ? "+" : ""}{trend} over {sprs.trajectory.length} recomputes
-        </div>
-      )}
-      {sprs.trajectory.length === 0 && <div className="empty">No score history yet.</div>}
     </div>
   );
 }

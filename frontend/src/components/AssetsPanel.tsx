@@ -158,7 +158,13 @@ export function AssetsPanel({ orgId, canWrite }: Props) {
                     <td>{(a.attributes.make_oem as string | null) ?? "—"}</td>
                     <td>{(a.attributes.model as string | null) ?? "—"}</td>
                     <td>{(a.attributes.version as string | null) ?? "—"}</td>
-                    <td>{a.status}</td>
+                    {/* A rejected asset stays status=active with
+                        in_boundary=false (domain.EntityStatus), so the
+                        status alone would read as accepted (Q.0). */}
+                    <td>
+                      {a.status}
+                      {!a.in_boundary && <div className="contact-sub">outside the boundary</div>}
+                    </td>
                     <td>
                       {canWrite && (
                         <button className="btn-ghost btn-sm" onClick={() => setDrawerAsset(a)}>Edit</button>

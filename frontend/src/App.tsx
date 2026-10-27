@@ -287,6 +287,12 @@ export function App() {
               assessmentId={assessment?.id ?? null}
               currentUserRole={user.role}
               onSwitchAssessment={setAssessment}
+              onNavigate={(target) => {
+                if (target.scopeTab) setScopeTab(target.scopeTab);
+                if (target.securityTab) setSecurityTab(target.securityTab);
+                if (target.libraryTab) setLibraryTab(target.libraryTab);
+                setNavCategory(target.category);
+              }}
             />
           )}
 
