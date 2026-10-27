@@ -108,7 +108,9 @@ Items without a status are planned but not yet started.
 - **Family radar chart** (small follow-on to G.3, same 2026-08-19 batch,
   not in the original plan) — per-family completion % for all 14 CMMC
   domains plotted as radar spokes on the dashboard, alongside (not
-  replacing) the existing Family Completion bar list. Hand-rolled SVG, no
+  replacing) the existing Family Completion bar list. *(Q.0, 2026-10-27,
+  reversed this on purpose: the radar is on the environment view and the
+  bar list on the assessment view.)* Hand-rolled SVG, no
   new frontend dependency added. New `lib/radarChart.ts` (pure, testable
   coordinate mapping) and `lib/families.ts` (single shared source of
   truth for the 14-family order, previously duplicated as a local const
@@ -5920,6 +5922,368 @@ expected.**
 
 ---
 
+### Q.0: a deliberate dashboard grid, and the engineer's environment view ✅ DONE (2026-10-27, bench-verified; endpoint, widgets, grid; no migration)
+
+The first slice of item **Q**. It builds the deliberate default grid,
+role-aware *defaults*, the environment view's widgets and their org-scoped
+endpoint. **Not built, and still item Q's:** drag-and-drop, per-user layout
+persistence, a widget registry, a grid library. Q's entry below stands for
+those.
+
+**Two views, one screen.** Dashboard opens on one of two views, each one
+click from the other:
+- the **assessment view**: G.3's widgets on a grid;
+- the **environment view**: the engineer's layout.
+
+Nothing is remembered between visits; that is Q's persistence work.
+
+| Role | Lands on | Why |
+|---|---|---|
+| `msp_engineer` | environment | the daily question: what is in the boundary, what is waiting |
+| `msp_admin` | assessment | how the assessment is progressing, plus recent activity |
+| `consultant_admin` | assessment | the consultant's question |
+| `customer_poc` | environment | Decided, not defaulted. Their own people, devices, approvals and reviews are what they act on. Statement progress and RACI load are the consultant's workflow. |
+| `c3pao_assessor` | assessment | read-only completeness is what an assessor examines |
+
+**An org with no assessment opens on the environment view for every
+role.** The assessment view would be one sentence. This was found on the
+bench, where an admin landing on an empty tenant saw exactly that.
+
+**The existing widgets are not deleted.** The assessment view keeps all of
+G.3's widgets except the radar, which moved to the environment view (see
+the family bar list decision below):
+- SPRS score and SPRS submission;
+- statement authoring;
+- the family bar list;
+- needs review, blocked objectives, evidence expiring;
+- document reviews, POA&M summary;
+- open tasks by owner, both RACI load widgets;
+- recent activity, for `msp_admin`.
+
+#### The layout, at 1366×768
+
+**Environment view.** A top band of three stacks, each sized by its own
+contents:
+- **Left, narrow:** SPRS score over the family radar.
+- **Centre, wide:** a one-line "waiting for approval" card, then People in
+  boundary and Devices in boundary. The two lists are equal height and
+  each scrolls on its own.
+- **Right, narrow:** Org Info, the full height of the band.
+
+Below the band, at full width: the task list, then the quick links as a
+light strip with no card.
+
+**What stays above the fold is a decision, measured.** The top band does.
+On the bench it ends at 717px populated (Acme with 63 devices and 28
+people) and 751px empty, and the task list's title sits at the fold. The
+task list and the quick links are below it.
+
+At 1366 a side column is about 230px. The radar's 7-unit labels, drawn for
+G.3's 280px card, would render near 5px there, so the environment view
+sets them at 11 units. They measured 11px boxes, against 9px on main.
+
+**Assessment view.** Three columns:
+- **Left stack:** SPRS, submission and statements.
+- **Centre:** the family bar list.
+- **Right stack:** the review queues.
+
+Then document reviews beside POA&M, then the RACI widgets, then recent
+activity for `msp_admin`.
+
+The queues scroll inside their cards. Before that, Acme's 20 visible
+blocked objectives made their row 1,416px tall and pushed Statement
+Authoring to y=1713. The bench found this; it is fixed.
+
+Below 1180px each view drops to two columns, and below 760px to one.
+
+**Contrast**, measured with WCAG 2.x on every text node of every capture:
+- the lowest pair on either view is 5.78:1 (`--muted` on `--bg`);
+- the count chip and the evidence-task chip: `#495057` on `#e9ecef`, 6.9:1;
+- the document-review chip: `#052c65` on `#cfe2ff`, 10.28:1;
+- the selected view toggle: white on `--primary`, 6.44:1;
+- "Missing": `--not-met-fg` on white, 13.65:1.
+
+#### "Active" is not "in the boundary", caught at design time
+
+`EntityStatus` is `active`, `decommissioned` or `pending_approval`. An
+entity **rejected** from the CUI boundary stays `status=active` with
+`in_boundary=False`, deliberately. Rejection says "not in the boundary",
+not "gone": the device still exists, and WinGRC has no authority to say
+otherwise.
+
+So a widget titled "Active Devices" that filters on `status='active'`
+would list devices a person explicitly rejected, as if they had been
+accepted. It is the same family as `/health`'s `build` field: a label
+claiming more than its query computes. This one was caught before it
+shipped.
+
+**What was built instead:**
+- The two lists filter `status='active' AND in_boundary` and are titled
+  **Devices in boundary** and **People in boundary**. Jarrod drew them as
+  "Active Devices" and "Active Users"; the titles say what is counted.
+- **Waiting for approval** (`status='pending_approval'`, any type) is its
+  own one-line card. "What is waiting for me to accept" is the
+  engineer's actionable question.
+- A rejected entity stays reachable. Under each list, "N active devices
+  outside the boundary" opens them in place, through `get_scope` with
+  `status=active&in_boundary=false`.
+
+**Tests:** one entity in each state, asserting which list each lands in
+and that the rejected one is still returned by that read.
+
+**The shipped screen had the same defect.** The Assets page's Status
+column printed "active" for a rejected device and nothing about the
+boundary. It now says "outside the boundary" under the status.
+
+#### "Active users" means scope people, not WinGRC logins
+
+Two readings were possible:
+- scope entities of type `person`: people with access to the
+  environment;
+- WinGRC logins (`routers/users.py`).
+
+**Built: the first.** The question beside the devices list is "what is in
+this environment and who has access to it". WinGRC logins are a handful
+per tenant and an administration concern.
+
+The widget's hint says "Scope people with access to this environment, not
+WinGRC logins". A person's name is the `display_name` attribute, else the
+workbook's First and Last Name, else the natural key.
+
+#### The endpoint: a separate org-scoped call, not a bigger payload
+
+`GET /orgs/{org_id}/environment` (`routers/environment.py`) returns:
+- Org Info;
+- the org's assessments, each with framework name and version;
+- the three lists;
+- the active-but-out-of-boundary counts;
+- document reviews.
+
+**Why a separate call:**
+- The data does not depend on an assessment, and a tenant with none
+  still has an environment. Threading an `assessment_id` through to reach
+  it would misstate what it depends on.
+- `dashboard.py`'s one-payload shape is a decision its docstring defends.
+  Growing it by lists it does not scope would undo that decision by
+  accretion.
+- One screen already made more than one call (recent activity).
+
+**The engineer view's assessment-scoped parts** (SPRS, the radar, open
+evidence tasks) come from the assessment dashboard. It gained one field
+for them: `open_evidence_tasks` with its own `open_evidence_tasks_count`.
+That field is assessment-scoped, so it belongs in that payload.
+
+#### `get_scope`'s additions, and the count trap
+
+`get_scope` gains four parameters:
+- **`status`**, validated against `_ENTITY_STATUSES` with the same 422
+  shape as `entity_type`;
+- **`in_boundary`**;
+- **`limit`** (1 to 1000) and **`offset`**.
+
+With no `limit` it still returns every row, which is how the Assets page
+reads it. `scope_filter()` builds the WHERE clauses for both `get_scope`
+and the environment endpoint, so a widget's rows and its count cannot be
+filtered differently.
+
+**The trap:** a widget showing a capped 50 rows must not derive its count
+from the rows it received. Every total is its own `COUNT(*)`:
+- `test_total_is_counted_not_the_length_of_the_capped_rows` sets the cap
+  to 3 under 5 entities;
+- the same holds for open evidence tasks with the cap at 2 under 3;
+- a frontend test renders 2 rows of 120 and checks the card says 120.
+
+#### Org Info: a read, not a migration
+
+Every field is on `organization` from migration 0011, and every one is
+nullable. An incomplete profile is valid.
+
+- **Empty fields:** a blank field reads "Not entered". CAGE code and UEI,
+  which are mandatory SSP header fields for a DoD submission, read
+  "Missing", with a sentence saying why and a button to complete the
+  profile.
+- **"Assessment level" is not a column.** The level is a property of the
+  framework, so the panel shows the framework's name and version, the
+  assessment's type, and its name. No field was added.
+
+#### Quick links
+
+Document library, Tools (only with an assessment), Assets, Asset
+approvals, Personnel & contacts, Org profile, and Audit log for
+`msp_admin` only.
+
+**A hidden link is a convenience; the endpoint is the control.** A
+parametrized test checks, through HTTP, that `GET …/audit-log` refuses
+every other role.
+
+#### The three elements the reconstruction lost: each placed, none dropped
+
+- **POA&M summary** stays on the assessment view, where it already was.
+  The environment view's task list does not include POA&M items and
+  says so. POA&M is named as one of the four sources in the unified task
+  feed item (Planned).
+- **The family bar list stays on the assessment view; the radar moved to
+  the environment view.** This reverses G.3's recorded "alongside (not
+  replacing)" decision, on purpose:
+  - the bar list gives the per-family numbers someone running the
+    assessment reads;
+  - the radar gives the shape at a glance, which is what the engineer
+    wants.
+
+  Both still exist, each where it is used. The two G.3 records point
+  here.
+- **Recent activity: the one element of the original layout that this
+  role cannot have today.** It is the strongest of the three on its
+  merits: "what changed" is the engineer's daily question. But
+  `GET …/audit-log` is `msp_admin`-only, and the engineer view's default
+  role is `msp_engineer`. The options:
+  1. **Leave it out of the engineer default. Chosen.** It stays on the
+     admin's assessment view, where it works.
+  2. **An activity feed that is not the audit log**, built from records
+     an engineer may already read: scope changes, approvals, document
+     publications. **Recorded as its own Planned item.** It is more
+     work, and it is a second source of truth about what happened, which
+     is the reason to be wary of it.
+  3. **Widen audit-log access to `msp_engineer`.** Not done here. It is
+     an authorization change and belongs to the auth/RBAC plan, with its
+     own reasoning.
+
+#### The task list says what it holds
+
+It is titled **Document reviews and open evidence tasks**. Each row
+carries its source.
+
+**What it holds:**
+- document reviews (`documents_needing_attention`, org-scoped);
+- the selected assessment's open, unarchived evidence tasks.
+
+**What it leaves out:** POA&M items and periodic review cycles. The card
+states this under the title. With no assessment it says evidence tasks
+appear once one exists.
+
+Totals are the server's counts. The list shows the first 10 reviews and
+20 tasks, and says so when there are more.
+
+**Not the union.** "Outstanding Tasks (Recurring etc)" across
+`EvidenceTask`, document reviews, `ReviewCycle` and `PoamItem` is four
+models with different scopes and status vocabularies, so it is a
+modelling exercise, not a cosmetic slice. Recorded as its own Planned
+item. **Jarrod's call** whether that union is what the box should
+eventually be.
+
+#### The `c3pao_assessor` decision
+
+`get_scope` and `GET …/environment` are GETs, so `require_write()` does
+not gate them, and an assessor reads the boundary inventory and the org
+profile. **This is intended:** the inventory is evidence an assessor
+examines.
+
+Both routes say so in their docstrings. A test, parametrized over all
+five roles, holds it through HTTP, and a non-member is refused (403).
+
+#### Cost, measured
+
+**Method.** The auth-path precedent:
+- **Server:** the real stack on the bench (uvicorn single worker,
+  Postgres 18, the worker stopped).
+- **Client:** a stdlib `ThreadPoolExecutor` on the bench network with a
+  real session cookie. Each request goes to a different tenant in
+  rotation. Ten warm-up calls, then 80 requests at concurrency 1, 200 at
+  10 and 300 at 50.
+- **Comparison:** main's backend (`2b35877`) was swapped in for the
+  "before" numbers on the same database, then the branch was restored.
+
+**Volume:** 44 orgs, 17,311 scope rows and 13,440 control states. Of
+those, 40 load tenants each have:
+- 300 devices and 100 people in the boundary;
+- 20 entities pending approval and 10 rejected;
+- an assessment on the real 320-objective framework;
+- 30 open evidence tasks.
+
+| Call | c=1 p50 / p95 | c=10 p50 / p95 | c=50 p50 / p95 / p99 | req/s at 50 |
+|---|---|---|---|---|
+| assessment dashboard, main | 12.5 / 13.6 ms | 114.5 / 137.1 ms | 573 / 778 / 942 ms | 81.3 |
+| assessment dashboard, branch | 14.1 / 17.0 ms | 127.7 / 172.3 ms | 620 / 843 / 985 ms | 76.2 |
+| environment, branch | 12.0 / 12.8 ms | 114.4 / 149.1 ms | 586 / 775 / 836 ms | 80.9 |
+| engineer screen (both in parallel) | 21.5 / 26.7 ms | 244 / 287 ms | see below | |
+
+- **The assessment dashboard costs about 1.6ms more per call** at
+  concurrency 1. That is the open-evidence-tasks query and its count.
+- **The environment call costs about the same as the dashboard.**
+- **The engineer's first screen waits for both,** about 21ms unloaded.
+  An admin's waits for one, as before.
+
+**The ceiling, which predates this slice.** At 100 concurrent requests
+both builds collapse, identically:
+
+| At 100 concurrent requests | p50 | failed | req/s |
+|---|---|---|---|
+| main's dashboard | 60s | 306 of 400 | 2.2 |
+| the branch's dashboard | 60s | 305 of 400 | 2.2 |
+| the branch's environment call | 60s | 309 of 400 | 2.2 |
+
+Failed means a 500 or the client's 60s timeout. The backend log shows
+`QueuePool limit of size 20 overflow 20 reached, connection timed out,
+timeout 30.00`.
+
+**Q.0 brings that ceiling closer for engineers, without moving it.** An
+engineer's screen is two calls, so 50 simultaneous engineer screens are
+100 requests. They collapsed the same way: 42 of 200 failed and the p50
+was 30s.
+
+Live is three tenants and a handful of users, nowhere near this. The
+ceiling is recorded as its own Planned item, "The backend collapses
+between 50 and 100 concurrent requests".
+
+#### Verification
+
+**Bench** (`wingrc_verify_20261027q0`) held:
+- a restored copy of live, at 0071;
+- bench-only rows: Acme got 63 in-boundary devices, 3 rejected, 4
+  pending and 2 decommissioned; 28 people with 1 out; a filled profile;
+  two never-approved documents;
+- an empty tenant;
+- 40 load tenants (below).
+
+**Captures:** headless Chromium at 1366×768, main's build and this
+branch's served over one backend:
+- the engineer default, populated and empty, top and scrolled;
+- the rejected devices expanded;
+- the admin default, populated and empty;
+- the admin switched to the environment view.
+
+**Each found something:**
+- the approval card took the SPRS card's height and pushed the devices
+  list below the fold;
+- the blocked queue pushed a row a screen down;
+- an admin's empty tenant was one sentence;
+- the ellipsis cut off "and 1 more".
+
+All four are fixed, and the captures were retaken.
+
+**Results:**
+- **Backend:** full suite in one process on the bench, 1899 passed;
+  ruff clean. Local no-database suite, 631 passed.
+- **Frontend:** `tsc -b`, vitest 478 passed, build. The G.4 switcher
+  tests ran as `customer_poc`, whose default is now the environment
+  view, so they pass `msp_admin` to keep testing the view they were
+  written for, with a comment saying so. `listAuditLog` gained a
+  resolved mock because that view mounts recent activity.
+
+**`control_state` and the SPRS score are untouched:**
+`test_reading_the_environment_changes_no_control_state_or_score`
+snapshots both around a read of each endpoint.
+
+**Found on the way, not changed:** an org with no assessment is reachable
+only through the org picker's ⚙ (Scope), then Dashboard. That is how the
+empty captures were taken. It was a dead end before this slice; now it
+lands on a useful view, but the picker still offers no direct way in.
+
+**Jarrod's walk, after deploy:**
+1. Open the dashboard as an engineer, then as an admin, and confirm they
+   read as two deliberate views rather than one reshuffled.
+2. Open a tenant with nothing in it (⚙, then Dashboard).
+
 ### `/health` reports a commit per component, and `ok` only when they agree ✅ DONE (2026-10-26, bench-verified; backend, nginx config and deploy.sh; no migration; deployed 2026-10-27)
 
 **The defect, structurally: one field cannot describe three containers.**
@@ -11022,10 +11386,16 @@ identical, counts as above).
 
 ### Q. Role-aware, user-arrangeable dashboard
 
-**Not started.** Specification only — recorded 2026-09-28 so the design gets
-made deliberately rather than assembled under time pressure. Independent of
-the document library: it neither blocks nor is blocked by N.1–N.5, and can
-be scheduled whenever.
+**Q.0 ✅ DONE (2026-10-27): the deliberate grid, role-aware defaults and
+the environment view** (Done entry "Q.0: a deliberate dashboard grid, and
+the engineer's environment view"). **Still not built, and still this
+item:** drag-and-drop, per-user layout persistence (per user per org), a
+widget registry, and the grid-library choice. Everything below about
+those stands.
+
+*Originally:* not started, specification only, recorded 2026-09-28 so the
+design gets made deliberately rather than assembled under time pressure.
+Independent of the document library.
 
 **Jarrod's ask, 2026-09-28**, with an annotated screenshot of the current
 G.3 dashboard:
@@ -11036,11 +11406,35 @@ G.3 dashboard:
 > Scrollable asset and user lists etc. Right now the widgets are all over
 > the place.
 
-**The sketch**, described so the intent survives without the image: SPRS
-score and family completion together in the top-left. **Active users** and
-**active PCs** as two large, scrollable lists filling the whole right-hand
-side — the dominant elements, not cards. Tasks centre-left. POA&M summary
-and recent activity as a strip along the bottom.
+**The sketch, as recorded 2026-09-28 while looking at it.** SPRS score and
+family completion together in the top-left. **Active users** and **active
+PCs** as two large, scrollable lists filling the whole right-hand side, the
+dominant elements rather than cards. Tasks centre-left. POA&M summary and
+recent activity as a strip along the bottom.
+
+**That image is lost (2026-10-27).** Jarrod redrew the layout from
+memory, so there are two records, and they are a union, not a contest:
+- the paragraph above is the better record of the original;
+- the drawing below is the better record of what he wants now.
+
+**The reconstruction**, which Q.0 built:
+
+| Region | Content |
+|---|---|
+| Left column, narrow | SPRS score, and beneath it the family radar |
+| Centre, wide | Active users and active devices, stacked, equal height, each scrolling on its own |
+| Right column, narrow | Org Info, the full height of the top band: company name, address, CAGE code, assessment level |
+| Full width, below | Outstanding tasks ("Recurring etc"), scrollable, taller than either list |
+| Full width, bottom strip | Quick links (document library, tools, scope, ...), lighter than everything above |
+
+**The three elements the reconstruction lost:**
+- the POA&M summary;
+- the family bar list;
+- recent activity.
+
+Each was placed rather than dropped. The decisions are in the Q.0 entry.
+So are the titles: the lists say "in boundary" rather than "active",
+because "active" counts rejected entities.
 
 #### This is two dashboards, not one layout
 
@@ -11118,7 +11512,10 @@ prerequisite for the first being worth anything.
   pagination and no `status` filter** (only `entity_type`), so it returns
   the tenant's entire inventory and cannot answer "just the ones pending
   approval" server-side. Both are small additions, and both are needed
-  before a live list widget is reasonable.
+  before a live list widget is reasonable. *(True when written. Q.0 added
+  `status`, `in_boundary`, `limit` and `offset`, and the lists come from
+  their own org-scoped endpoint with `COUNT(*)` totals. "Users" became
+  scope people, not `routers/users.py`.)*
 - Every aggregation in `dashboard.py` fetches raw rows and rolls them up in
   Python rather than in SQL, deliberately. Adding list widgets means more
   raw rows, not fewer.
@@ -11167,6 +11564,91 @@ No scaffolding, no columns added in anticipation. When this is picked up it
 gets its own plan doc and its own prompt, like the document library did.
 
 ---
+
+### One task feed across four models -- recorded with Q.0
+
+**Not started.** Jarrod's reconstructed layout has one large box,
+"Outstanding Tasks (Recurring etc)". Q.0 built it from two sources and
+titled it for those ("Document reviews and open evidence tasks"). The
+union is a modelling decision, not a layout one:
+
+| Source | Scope | Statuses |
+|---|---|---|
+| `EvidenceTask` | assessment | `open` → `collected` → `na`, plus archived |
+| Document reviews (`document_reviews.py`) | org | derived: `overdue`, `due_soon`, `never_approved` |
+| `ReviewCycle` / `ReviewCycleItem` | org | live cycles, reviewers, reminders |
+| `PoamItem` | assessment (via `Finding`), or none for a bare `control_id` | `open`, `on_track`, `delayed`, `completed`, `cancelled` |
+
+**What it has to settle:**
+- **One feed or four sections.** Two scopes and four status vocabularies
+  are why one ordering is not obvious: is an overdue review worse than a
+  delayed POA&M item?
+- **What "recurring" means here.** Document review cadence is the
+  recurring thing that exists today. Evidence recurrence is CLAUDE.md
+  item 9b, not built.
+- **Whether the feed is per assessment or per org.** It is both today.
+
+Whatever it shows, its title says what it holds. A box called
+"Outstanding Tasks" that silently omits one source is the `build` field
+again.
+
+### An activity feed an engineer may read -- recorded with Q.0
+
+**Not started.** "What changed recently" was in Jarrod's original layout
+and is the engineer's daily question. The only feed today is the audit
+log, which is `msp_admin`-only (`routers/audit_log.py`), so the engineer
+view leaves it out (Q.0's option 1).
+
+**The option recorded here:** a feed built from records an engineer may
+already read, such as:
+- scope changes and approvals (`asset_approval`, a sync's changes);
+- document publications and approvals;
+- list versions and their causes.
+
+**The reason to be wary:** it is a second source of truth about what
+happened, beside the audit log. Each line must name the record it came
+from, and the feed must never claim to be complete.
+
+**The other option, widening the audit log to `msp_engineer`, is not this
+item.** It is an authorization change, and it belongs to
+`docs/PLAN-auth-rbac-completion.md` with its own reasoning.
+
+### The backend collapses between 50 and 100 concurrent requests -- found measuring Q.0
+
+**Not started; the mechanism is a hypothesis.** Measured 2026-10-27 on the
+Q.0 bench: single uvicorn worker, `pool_size=20`, `max_overflow=20`.
+- **At 50 concurrent requests:** the assessment dashboard served about
+  80 req/s with a p95 of about 0.8s.
+- **At 100:** main and the branch both collapsed to 2.2 req/s with
+  roughly 305 of 400 requests failing. The failures were 500s carrying
+  `QueuePool limit ... reached, connection timed out, timeout 30.00`,
+  plus client timeouts at 60s.
+
+That is not a gradual slowdown. Doubling the load cut throughput by 97%.
+
+**Hypothesis, not verified:** a deadlock between the threadpool and the
+connection pool, a known FastAPI pattern.
+- `get_session` is a sync `yield` dependency. Closing it, which returns
+  the connection, needs an anyio threadpool token, and there are 40 by
+  default.
+- With more than 40 requests in flight, every token can be held by a
+  request waiting for a pooled connection.
+- The connections are held by requests that need a token to close.
+- Nothing moves until the 30-second pool timeout.
+
+The 2026-09-09 auth benchmark stopped at 50 concurrent requests, which is
+why it never saw this.
+
+**What the item has to settle:**
+- **Prove or refute the mechanism.** For example, raise the threadpool
+  limit above the pool size and see whether the collapse moves.
+- **Choose the remedy:** a token limit above the pool size, an async
+  session, a bounded request queue, or more workers.
+- **Measure at 100 and 200** the way Q.0 measured.
+
+Live is three tenants and a handful of users today, so this is not
+urgent. It is the ceiling that Q.0's engineer screen, with two calls per
+load, reaches at half the users.
 
 ### Workbook importer: scope, and the shared natural key (2026-10-09)
 

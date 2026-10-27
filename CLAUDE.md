@@ -723,6 +723,13 @@ configured provider from the encrypted "ai" connector (Administration → AI
 Provider), added 2026-09-19 — see that section's roadmap entry below.
 
 ### 6. SPRS score display (dashboard widget) ✅ DONE (G.3)
+**Q.0 (2026-10-27): two views.** The assessment view is G.3's widgets on
+a named-area grid. The environment view (`EnvironmentDashboard.tsx`,
+`GET /orgs/{org_id}/environment`) lists devices and people *in the
+boundary*, meaning `status='active' AND in_boundary`, because "active"
+alone includes rejected entities. Its totals are `COUNT(*)`, never
+`len(rows)`. Which view a role lands on is `lib/dashboardView.ts`.
+Drag-and-drop and persistence are still item Q (`docs/roadmap.md`).
 Shipped as part of a broader org dashboard, not a standalone widget as
 originally scoped here — see `docs/PLAN-gui-restructure.md`'s G.3 section
 for the full writeup (backend `routers/dashboard.py`, frontend
