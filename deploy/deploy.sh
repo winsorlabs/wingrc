@@ -42,7 +42,7 @@ docker compose up -d --no-deps backend worker nginx
 # is noted in the record, never a reason to undo a healthy deploy.
 TRIVY_IMAGE="aquasec/trivy:0.69.3"
 record_deploy() {
-  local dir
+  local dir id
   dir="${WINGRC_DEPLOY_RECORD_DIR:-$HOME/wingrc-deploys}/$(date -u +%Y%m%dT%H%M%SZ)-${sha:0:12}"
   mkdir -p "$dir"
   {
@@ -50,7 +50,10 @@ record_deploy() {
     echo "deployed: $(date -u +%Y-%m-%dT%H:%M:%SZ) by $(id -un)"
     echo "health:   $1"
     for svc in backend worker nginx; do
-      echo "image:    $svc $(docker compose images -q "$svc" 2>/dev/null | head -1)"
+      # The image IDs are what tell a changed base from a new advisory when
+      # two records' scans differ, so a failed lookup says so, not blank.
+      id="$(docker compose images -q "$svc" 2>/dev/null | head -1 || true)"
+      echo "image:    $svc ${id:-unknown (docker compose images printed nothing)}"
     done
   } > "$dir/deploy.txt"
   local project
