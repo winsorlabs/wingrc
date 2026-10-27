@@ -5922,7 +5922,7 @@ expected.**
 
 ---
 
-### Q.0: a deliberate dashboard grid, and the engineer's environment view ✅ DONE (2026-10-27, bench-verified; endpoint, widgets, grid; no migration)
+### Q.0: a deliberate dashboard grid, and the engineer's environment view ✅ DONE (2026-10-27, bench-verified; endpoint, widgets, grid; no migration; deployed 2026-10-27)
 
 The first slice of item **Q**. It builds the deliberate default grid,
 role-aware *defaults*, the environment view's widgets and their org-scoped
@@ -6003,7 +6003,23 @@ Below 1180px each view drops to two columns, and below 760px to one.
 - the selected view toggle: white on `--primary`, 6.44:1;
 - "Missing": `--not-met-fg` on white, 13.65:1.
 
-#### "Active" is not "in the boundary", caught at design time
+#### "Active" is not "in the boundary": a live mislabel, found and fixed
+
+*Corrected 2026-10-27, after merge.* This section first said the finding
+was "caught at design time". It was not. **Live had already shipped it:**
+the Assets page showed rejected devices as "active". This slice found a
+live mislabel and fixed it.
+
+The two readings are different facts about how well the product catches
+this class:
+- "found at design time" would mean the review that designs a widget
+  catches a label claiming more than its query;
+- "found on live after shipping" means nothing caught it for as long as
+  rejection has existed (D.3, 2026-09-18).
+
+What caught it this time was a brief that named the question for the
+new widget, and then a look at the existing screen that answers the
+same question.
 
 `EntityStatus` is `active`, `decommissioned` or `pending_approval`. An
 entity **rejected** from the CUI boundary stays `status=active` with
@@ -6014,8 +6030,8 @@ otherwise.
 So a widget titled "Active Devices" that filters on `status='active'`
 would list devices a person explicitly rejected, as if they had been
 accepted. It is the same family as `/health`'s `build` field: a label
-claiming more than its query computes. This one was caught before it
-shipped.
+claiming more than its query computes. The new widgets were built
+without it; the Assets page had it.
 
 **What was built instead:**
 - The two lists filter `status='active' AND in_boundary` and are titled
@@ -6024,16 +6040,20 @@ shipped.
 - **Waiting for approval** (`status='pending_approval'`, any type) is its
   own one-line card. "What is waiting for me to accept" is the
   engineer's actionable question.
-- A rejected entity stays reachable. Under each list, "N active devices
-  outside the boundary" opens them in place, through `get_scope` with
-  `status=active&in_boundary=false`.
+- A rejected entity stays reachable. Under each list, "N devices outside
+  the boundary" opens them in place, through `get_scope` with
+  `status=active&in_boundary=false`. As merged, the link read "N *active*
+  devices outside the boundary", reusing the word the retitle had
+  removed. The follow-up below fixed that.
 
 **Tests:** one entity in each state, asserting which list each lands in
 and that the rejected one is still returned by that read.
 
-**The shipped screen had the same defect.** The Assets page's Status
+**The shipped screen had the defect, on live.** The Assets page's Status
 column printed "active" for a rejected device and nothing about the
-boundary. It now says "outside the boundary" under the status.
+boundary. Q.0 added "outside the boundary" under the status. The
+follow-up replaced the column's word outright, so the page uses the
+dashboard's vocabulary.
 
 #### "Active users" means scope people, not WinGRC logins
 
@@ -6275,9 +6295,44 @@ All four are fixed, and the captures were retaken.
 snapshots both around a read of each endpoint.
 
 **Found on the way, not changed:** an org with no assessment is reachable
-only through the org picker's ⚙ (Scope), then Dashboard. That is how the
-empty captures were taken. It was a dead end before this slice; now it
-lands on a useful view, but the picker still offers no direct way in.
+only through the org picker's ⚙ (Scope), then Dashboard. That is its own
+Planned entry, "An org with no assessment has no way into its
+dashboard".
+
+#### Follow-up, the same day (after merge; frontend only)
+
+Jarrod's review of the deployed screens, three points:
+- **One vocabulary.** The link under each list now reads "3 devices
+  outside the boundary". The Assets page's Status column uses the same
+  words, from one helper (`assetDisplay.ts:scopeStateLabel`): *in the
+  boundary*, *outside the boundary*, *pending approval*,
+  *decommissioned*. Never "active", which reads as accepted for a
+  rejected entity.
+  - **Tests:** `scopeStateLabel` over every state; a dashboard test that
+    the link says "3 devices outside the boundary" and that no "active
+    device" text renders.
+- **The radar draws nothing when there is nothing to plot.** On an empty
+  tenant it drew all fourteen spokes and a centre dot under "No
+  assessment yet", which made it the largest card in the left column
+  while conveying nothing.
+  - **Decision:** suppress the plot and keep the sentence, rather than
+    shrinking the card. A smaller empty web still conveys nothing.
+  - **"Nothing to plot"** means no entries, or every family at 0%
+    (`radarChart.ts:radarHasData`). A fresh assessment reads "No family
+    has a satisfied control yet."
+  - **The card now takes its content's height.** Acme, at 1 of 22 in
+    AC, still draws its small shape. Near-zero is a real state, not an
+    empty one.
+- **The record above is corrected:** found on live, not at design time.
+
+On the bench (`wingrc_verify_20261027q0f`, the same restored copy and
+Acme rows), the captures showed one more problem. "and 1 more", once it
+was outside the ellipsis, pushed the approval button onto a second line.
+The line no longer wraps, and the names truncate.
+
+**Checks:** `tsc -b`, vitest 482, build; captures of Acme, the rejected
+devices expanded, the empty tenant, and Assets scrolled to the rejected
+and pending rows.
 
 **Jarrod's walk, after deploy:**
 1. Open the dashboard as an engineer, then as an admin, and confirm they
@@ -11565,6 +11620,28 @@ gets its own plan doc and its own prompt, like the document library did.
 
 ---
 
+### An org with no assessment has no way into its dashboard -- found with Q.0
+
+**Not started.** The org picker opens an org through one of its
+assessments ("Open"), or through ⚙, which lands on Scope. An org with
+no assessment has no "Open", so its dashboard is reachable only through
+⚙ and then Dashboard in the side nav. That is how Q.0's empty-tenant
+captures were taken.
+
+**Why it is its own entry.** Q.0 built the environment view so that an
+org with no assessment has something worth showing, and it opens there
+for every role. That view is hardest to reach for exactly those orgs,
+which are the new tenants an evaluating MSP sees first.
+
+**What it has to settle:**
+- **What the picker offers for such an org:** an "Open" that lands on
+  the dashboard, beside "Start new assessment".
+- **Whether `enterBoard`'s org-plus-assessment pairing should allow no
+  assessment.** Several screens (Assessments, Tools) already render "No
+  assessment selected" for that case.
+- **Where the ⚙ path should land.** Today it lands on Scope, which suits
+  setup but not a daily look.
+
 ### One task feed across four models -- recorded with Q.0
 
 **Not started.** Jarrod's reconstructed layout has one large box,
@@ -11591,6 +11668,23 @@ union is a modelling decision, not a layout one:
 Whatever it shows, its title says what it holds. A box called
 "Outstanding Tasks" that silently omits one source is the `build` field
 again.
+
+**The shape comes first (Jarrod, 2026-10-27: "yes eventually"). No code
+until this section is written:**
+- **The question the box answers.** "What do I need to do today" is the
+  question, and it argues for all four sources. Each is something a
+  person must act on, and leaving any out answers a narrower question
+  under the same heading.
+- **Each source stays individually countable and nameable.** The feed
+  keeps every source's own count, from its own query, alongside the
+  rows. So the heading can always state what the box contains ("4
+  reviews, 7 evidence tasks, 2 POA&M items, 1 review cycle"), and a
+  reader can tell a source with zero items from a source that is not
+  included.
+- **A fifth source is a deliberate act, never a silent widening.**
+  Adding one changes the heading and the per-source counts in the same
+  change, and comes with a test that the heading names it. No query
+  grows a new model "while it's there".
 
 ### An activity feed an engineer may read -- recorded with Q.0
 
@@ -12171,10 +12265,18 @@ are CRITICAL and HIGH rows.
 | 2026-10-18 `d0d745c` to 2026-10-20 `09aee13`, five deploys | 296 / 152 / 1 / 28 | 181 / 113 / 0 / 8 |
 | **2026-10-26 `d802851`** | **308 / 161 / 2 / 29** | **231 / 139 / 0 / 8** |
 | 2026-10-27 `9fa9d0e` | 308 / 161 / 2 / 29 | 231 / 139 / 0 / 8 |
+| 2026-10-27 `7d81b4a` (Q.0) | 301 / 156 / 1 / 29 | 231 / 139 / 0 / 8 |
 
 2026-10-27's scans are byte-identical to the previous day's, under new
 image IDs (the application layers changed): one day, no new advisory and
 no changed package.
+
+The same day's Q.0 deploy shows the backend down 7 rows, 5 advisories and
+1 CRITICAL, with nginx unchanged. Q.0 changed no dependency, so the drop
+is the base layer or the package index moving under a floating tag. It
+is the first downward step in this table, and the first record whose
+image IDs come from the fixed lookup (#62). Which package moved is not
+answered here.
 
 In six days the nginx image went 181 → 231 rows (113 → 139 advisories),
 and the backend 296 → 308, with a **second CRITICAL**. Nobody has looked
