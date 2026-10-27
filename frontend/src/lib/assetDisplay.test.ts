@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assetDisplayName } from "./assetDisplay";
+import { assetDisplayName, scopeStateLabel } from "./assetDisplay";
 
 describe("assetDisplayName", () => {
   it("uses display_name when set", () => {
@@ -18,5 +18,14 @@ describe("assetDisplayName", () => {
 
   it("falls back to natural_key when display_name is not a string", () => {
     expect(assetDisplayName({ display_name: null }, "SN-123")).toBe("SN-123");
+  });
+});
+
+describe("scopeStateLabel", () => {
+  it("never says active, and a rejected entity reads as outside the boundary", () => {
+    expect(scopeStateLabel("active", true)).toBe("in the boundary");
+    expect(scopeStateLabel("active", false)).toBe("outside the boundary");
+    expect(scopeStateLabel("pending_approval", true)).toBe("pending approval");
+    expect(scopeStateLabel("decommissioned", false)).toBe("decommissioned");
   });
 });

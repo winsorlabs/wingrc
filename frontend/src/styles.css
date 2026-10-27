@@ -1619,7 +1619,10 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .env-area-links { grid-area: links; }
 .env-grid > div { min-width: 0; }
 .env-col { display: flex; flex-direction: column; gap: 1rem; }
-.env-col-left > .card:last-child, .env-col-org > .card { flex: 1; }
+/* The radar card takes its content's height, so with nothing to plot it
+   is a title and a sentence, not the largest card in the column. */
+.env-col-org > .card { flex: 1; }
+.radar-empty { padding: 0.25rem 0 0.5rem; }
 .env-grid .card { padding: 0.9rem 1.1rem; }
 .env-grid .card h2 { margin-bottom: 0.4rem; }
 /* The radar's family labels are 7 viewBox units, drawn for a 280px card.
@@ -1631,7 +1634,9 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 
 .env-grid .card.env-pending { padding: 0.6rem 1rem; border-left: 4px solid var(--border); }
 .env-grid .card.env-pending--waiting { border-left-color: var(--primary); }
-.env-pending-line { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.env-pending-line { display: flex; align-items: center; gap: 0.75rem; }
+.env-pending-line > * { flex-shrink: 0; }
+.env-pending-line > .env-pending-names, .env-pending-line > .field-hint { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .env-grid .env-pending-line h2 { margin: 0; font-size: 0.9rem; }
 .env-pending-line .btn-ghost { margin-left: auto; }
 .env-pending-names { font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 1 auto; }

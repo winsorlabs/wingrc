@@ -284,6 +284,17 @@ describe("OrgDashboard views (Q.0)", () => {
     expect(await screen.findByText("No assessments yet", { exact: false })).toBeTruthy();
   });
 
+  it("says outside the boundary, never active, and draws no radar with nothing to plot", async () => {
+    const a1 = makeAssessment();
+    vi.mocked(api.getAssessments).mockResolvedValue([a1]);
+    vi.mocked(api.getEnvironment).mockResolvedValue(makeEnvironment({ devices_out_of_boundary: 3 }));
+    const { container } = render(<Harness initial={a1} role="msp_engineer" />);
+    expect(await screen.findByRole("button", { name: "3 devices outside the boundary" })).toBeTruthy();
+    expect(screen.queryByText(/active device/)).toBeNull();
+    expect(container.querySelector(".radar-chart")).toBeNull();
+    expect(screen.getByText("No controls in this assessment yet.")).toBeTruthy();
+  });
+
   it("titles the task list for what it holds and says what it leaves out", async () => {
     const a1 = makeAssessment();
     vi.mocked(api.getAssessments).mockResolvedValue([a1]);

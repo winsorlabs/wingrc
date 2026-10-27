@@ -40,3 +40,10 @@ export function familyRadarPoints(entries: FamilyHeatmapEntry[]): RadarPoint[] {
     };
   });
 }
+
+// Whether the radar has anything to draw (Q.0 follow-up). With no entries
+// (no assessment) or every family at 0%, the plot is fourteen spokes and a
+// centre dot, which says nothing a sentence does not say better.
+export function radarHasData(entries: FamilyHeatmapEntry[]): boolean {
+  return familyRadarPoints(entries).some((p) => p.pct > 0);
+}

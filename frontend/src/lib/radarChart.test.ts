@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { FamilyHeatmapEntry } from "../types";
 import { FAMILY_ORDER } from "./families";
-import { familyRadarPoints } from "./radarChart";
+import { familyRadarPoints, radarHasData } from "./radarChart";
 
 function entry(overrides: Partial<FamilyHeatmapEntry> = {}): FamilyHeatmapEntry {
   return { family: "AC", controls_met: 0, controls_total: 1, ...overrides };
@@ -74,5 +74,16 @@ describe("familyRadarPoints", () => {
     const points = familyRadarPoints([]);
     expect(points).toHaveLength(14);
     expect(points.every((p) => p.pct === 0)).toBe(true);
+  });
+});
+
+describe("radarHasData", () => {
+  it("is false with no entries and with every family at 0%", () => {
+    expect(radarHasData([])).toBe(false);
+    expect(radarHasData([entry({ family: "AC", controls_met: 0, controls_total: 22 })])).toBe(false);
+  });
+
+  it("is true once any family has a satisfied control", () => {
+    expect(radarHasData([entry({ family: "AC", controls_met: 1, controls_total: 22 })])).toBe(true);
   });
 });

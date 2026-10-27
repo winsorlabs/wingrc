@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { assetDisplayName } from "../lib/assetDisplay";
+import { assetDisplayName, scopeStateLabel } from "../lib/assetDisplay";
 import type { ScopeEntity } from "../types";
 import { AssetDrawer } from "./AssetDrawer";
 import { AssetImportWizard } from "./AssetImportWizard";
@@ -158,13 +158,7 @@ export function AssetsPanel({ orgId, canWrite }: Props) {
                     <td>{(a.attributes.make_oem as string | null) ?? "—"}</td>
                     <td>{(a.attributes.model as string | null) ?? "—"}</td>
                     <td>{(a.attributes.version as string | null) ?? "—"}</td>
-                    {/* A rejected asset stays status=active with
-                        in_boundary=false (domain.EntityStatus), so the
-                        status alone would read as accepted (Q.0). */}
-                    <td>
-                      {a.status}
-                      {!a.in_boundary && <div className="contact-sub">outside the boundary</div>}
-                    </td>
+                    <td>{scopeStateLabel(a.status, a.in_boundary)}</td>
                     <td>
                       {canWrite && (
                         <button className="btn-ghost btn-sm" onClick={() => setDrawerAsset(a)}>Edit</button>

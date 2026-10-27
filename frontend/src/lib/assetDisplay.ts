@@ -17,3 +17,13 @@ export function assetDisplayName(
   if (typeof displayName === "string" && displayName.trim()) return displayName;
   return naturalKey;
 }
+
+// Where a scope entity stands, in the one vocabulary the dashboard and the
+// Assets page share (Q.0 follow-up). Never "active": a rejected entity is
+// status=active with in_boundary=false (domain.EntityStatus), so "active"
+// reads as accepted when it is not.
+export function scopeStateLabel(status: string, inBoundary: boolean): string {
+  if (status === "pending_approval") return "pending approval";
+  if (status === "decommissioned") return "decommissioned";
+  return inBoundary ? "in the boundary" : "outside the boundary";
+}

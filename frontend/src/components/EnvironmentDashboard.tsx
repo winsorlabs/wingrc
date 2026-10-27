@@ -226,7 +226,7 @@ function ScopeListCard({
               aria-expanded={excludedOpen}
               onClick={toggleExcluded}
             >
-              {outOfBoundary} active {outOfBoundary === 1 ? noun[0] : noun[1]} outside the boundary
+              {outOfBoundary} {outOfBoundary === 1 ? noun[0] : noun[1]} outside the boundary
             </button>
           </>
         )}
