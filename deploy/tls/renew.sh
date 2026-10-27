@@ -25,7 +25,13 @@ served() {
     | openssl x509 -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2
 }
 
-before="$(served dev.wingrc.us)"
+# Under pipefail a failed handshake fails the assignment, and set -e would
+# then exit with nothing printed: both openssl calls discard stderr.
+before="$(served dev.wingrc.us)" || {
+  echo "nothing is served on $host:443 for dev.wingrc.us; this script compares" >&2
+  echo "what nginx serves before and after, so nginx must be up first" >&2
+  exit 1
+}
 echo "serving now: $before"
 
 work="$(mktemp -d)"
@@ -67,7 +73,10 @@ cat "$work/certbot.log"
 docker compose --project-directory "$compose_dir" exec -T nginx nginx -s reload
 sleep 2
 for n in $names; do
-  after="$(served "$n")"
+  after="$(served "$n")" || {
+    echo "renewed, but nothing is served on $host:443 for $n after the reload" >&2
+    exit 1
+  }
   echo "serving $n: $after"
   if [ "$after" = "$before" ] && [ "$shown" -gt 0 ]; then
     echo "renewed, but nginx still serves the old certificate for $n" >&2
