@@ -1584,12 +1584,177 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .completion-dot { font-size: 0.75rem; color: var(--muted); }
 .completion-dot.complete { color: #16a34a; }
 
-/* ── Org dashboard (G.3) ─────────────────────────────────────────────────── */
-.dashboard-grid {
+/* ── Org dashboard (G.3; layout Q.0) ─────────────────────────────────────────
+   Two deliberate grids with named regions, replacing G.3's uniform
+   auto-fill (every widget the same footprint, reflowing only by width).
+   1366x768 is the bar. The environment view's top band -- SPRS and radar,
+   the approval line and both lists, Org Info -- is sized to sit above the
+   fold there; the task list starts at the fold and the quick links sit
+   below it. Narrower viewports go to two columns, then one. */
+.dashboard-view-switch { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.dashboard-view-switch .assessment-switcher { margin-bottom: 0; }
+.view-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.view-toggle button {
+  background: var(--surface); color: var(--text); border: none; padding: 0.35rem 0.8rem;
+  font: inherit; font-size: 0.82rem; cursor: pointer;
+}
+.view-toggle button + button { border-left: 1px solid var(--border); }
+.view-toggle button[aria-pressed="true"] { background: var(--primary); color: #fff; font-weight: 600; }
+
+/* The top band is three stacks, each sized by its own contents, so the
+   one-line approval card never takes the SPRS card's height. */
+.env-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 1.25rem;
+  gap: 1rem;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 2.6fr) minmax(220px, 1fr);
+  grid-template-areas:
+    "left  centre org"
+    "tasks tasks  tasks"
+    "links links  links";
+}
+.env-col-left { grid-area: left; }
+.env-col-centre { grid-area: centre; }
+.env-col-org { grid-area: org; }
+.env-area-tasks { grid-area: tasks; }
+.env-area-links { grid-area: links; }
+.env-grid > div { min-width: 0; }
+.env-col { display: flex; flex-direction: column; gap: 1rem; }
+.env-col-left > .card:last-child, .env-col-org > .card { flex: 1; }
+.env-grid .card { padding: 0.9rem 1.1rem; }
+.env-grid .card h2 { margin-bottom: 0.4rem; }
+/* The radar's family labels are 7 viewBox units, drawn for a 280px card.
+   A side column here is ~230px at 1366, which would render them near 5px;
+   at 11 units they render ~9px there. */
+.env-col-left .radar-label { font-size: 11px; }
+.env-col-left .radar-chart { max-width: 240px; }
+.dashboard-big-stat--empty { color: var(--muted); }
+
+.env-grid .card.env-pending { padding: 0.6rem 1rem; border-left: 4px solid var(--border); }
+.env-grid .card.env-pending--waiting { border-left-color: var(--primary); }
+.env-pending-line { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.env-grid .env-pending-line h2 { margin: 0; font-size: 0.9rem; }
+.env-pending-line .btn-ghost { margin-left: auto; }
+.env-pending-names { font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 1 auto; }
+.env-pending-more { font-size: 0.85rem; white-space: nowrap; }
+
+.env-list-card, .env-tasks { display: flex; flex-direction: column; }
+.env-list-head .field-hint { margin-bottom: 0.4rem; }
+.env-count {
+  display: inline-block; min-width: 1.6em; padding: 0 0.4rem; margin-left: 0.25rem;
+  border-radius: 999px; background: var(--na-bg); color: var(--na-fg);
+  font-size: 0.78rem; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums;
+}
+/* Equal fixed heights, each scrolling on its own, so a long list never
+   pushes the other off the screen. */
+.env-list-scroll {
+  height: 150px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface);
+}
+.env-tasks .env-list-scroll { height: 236px; }
+.env-list-scroll:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.env-list-scroll .empty { padding: 1.25rem 1rem; }
+.env-list { list-style: none; }
+.env-list li {
+  display: flex; align-items: baseline; gap: 0.6rem; padding: 0.3rem 0.65rem;
+  border-bottom: 1px solid var(--border); font-size: 0.84rem; min-width: 0;
+}
+.env-list li:last-child { border-bottom: none; }
+.env-list-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.env-list-sub { color: var(--muted); font-size: 0.78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.env-list-cat { margin-left: auto; color: var(--muted); font-size: 0.75rem; white-space: nowrap; }
+.env-list-foot { font-size: 0.78rem; color: var(--muted); margin-top: 0.4rem; }
+.env-list-foot .link-button { font-size: 0.78rem; }
+.env-excluded { margin-top: 0.5rem; border-top: 1px dashed var(--border); padding-top: 0.5rem; }
+.env-excluded .env-list { max-height: 140px; overflow-y: auto; }
+.env-task-list li .doc-review { margin-left: auto; padding: 0.05rem 0.4rem; border-radius: 4px; font-size: 0.74rem; white-space: nowrap; }
+.env-task-list li .env-list-sub:last-child { margin-left: auto; }
+.env-source {
+  flex-shrink: 0; font-size: 0.7rem; font-weight: 600; padding: 0.05rem 0.4rem; border-radius: 4px;
+}
+.env-source--document_review { background: var(--inherited-bg); color: var(--inherited-fg); }
+.env-source--evidence_task { background: var(--na-bg); color: var(--na-fg); }
+
+.env-org-name { font-size: 1.05rem; font-weight: 700; margin-bottom: 0.6rem; overflow-wrap: anywhere; }
+.env-org-fields { display: grid; grid-template-columns: 1fr; gap: 0.1rem; font-size: 0.84rem; margin-bottom: 0.6rem; }
+.env-org-fields dt { font-size: 0.72rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; margin-top: 0.45rem; }
+.env-org-fields dd { margin: 0; }
+.env-org-wrap { overflow-wrap: anywhere; }
+.env-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.env-missing { color: var(--not-met-fg); font-weight: 500; }
+.env-not-entered { color: var(--muted); }
+.env-org-sub { color: var(--muted); font-size: 0.78rem; overflow-wrap: anywhere; }
+.env-org .field-hint { margin-bottom: 0.6rem; }
+
+/* Lighter than everything above: no card, a rule and plain links. */
+.quick-links {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 1rem;
+  border-top: 1px solid var(--border); padding: 0.6rem 0.25rem 0;
+}
+.quick-links-label { font-size: 0.72rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+.quick-link { background: none; border: none; padding: 0.2rem 0; color: var(--primary); font: inherit; font-size: 0.85rem; cursor: pointer; }
+.quick-link:hover { text-decoration: underline; }
+
+/* Top band: the score and its two neighbours stacked left, the family bar
+   list centre, the review queues stacked right, each stack sized by its
+   own contents. */
+.dash-assessment {
+  display: grid;
+  gap: 1rem;
   align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr);
+  grid-template-areas:
+    "left   family    right"
+    "docs   docs      poam"
+    "owners racisplit racicontact";
+}
+.dash-assessment--with-activity {
+  grid-template-areas:
+    "left     family    right"
+    "docs     docs      poam"
+    "owners   racisplit racicontact"
+    "activity activity  activity";
+}
+.dash-col { display: flex; flex-direction: column; gap: 1rem; }
+.dash-col-left { grid-area: left; }
+.dash-col-right { grid-area: right; }
+.dash-area-family { grid-area: family; }
+.dash-area-docs { grid-area: docs; }
+.dash-area-poam { grid-area: poam; }
+.dash-area-owners { grid-area: owners; }
+.dash-area-racisplit { grid-area: racisplit; }
+.dash-area-racicontact { grid-area: racicontact; }
+.dash-area-activity { grid-area: activity; }
+.dash-assessment > div { min-width: 0; }
+/* Queues scroll inside their cards, so twenty blocked objectives do not
+   push the next row a screen down. */
+.dash-assessment .item-list { max-height: 236px; overflow-y: auto; }
+
+@media (max-width: 1180px) {
+  .env-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "left   org"
+      "centre centre"
+      "tasks  tasks"
+      "links  links";
+  }
+  .dash-assessment, .dash-assessment--with-activity {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "left        family"
+      "right       poam"
+      "docs        docs"
+      "owners      racisplit"
+      "racicontact racicontact"
+      "activity    activity";
+  }
+}
+@media (max-width: 760px) {
+  .env-grid, .dash-assessment, .dash-assessment--with-activity {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: none;
+  }
+  .env-grid > div, .dash-assessment > div { grid-area: auto; }
 }
 .dashboard-big-stat { font-size: 2.2rem; font-weight: 700; line-height: 1; margin: 0.25rem 0; }
 .heatmap-rows { display: flex; flex-direction: column; gap: 0.6rem; }
