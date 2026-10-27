@@ -5920,7 +5920,7 @@ expected.**
 
 ---
 
-### `/health` reports a commit per component, and `ok` only when they agree ✅ DONE (2026-10-26, bench-verified; backend, nginx config and deploy.sh; no migration)
+### `/health` reports a commit per component, and `ok` only when they agree ✅ DONE (2026-10-26, bench-verified; backend, nginx config and deploy.sh; no migration; deployed 2026-10-27)
 
 **The defect, structurally: one field cannot describe three containers.**
 A deployment is three images built separately (`backend`, `worker`,
@@ -5956,7 +5956,9 @@ healthcheck acts on by restarting it, and a restart fixes neither. 503
 still means the database is unreachable or the schema does not match.
 
 **Where each commit comes from.** Each is the component's own build arg,
-baked into its image, observed in a way only that component can produce:
+baked into its image. On the normal path only that component sends it,
+but two of the three are values a caller supplies, so they can be forged
+from inside the deployment (Known limitations, below):
 - **backend:** `WINGRC_BUILD_SHA` in its own environment.
 - **nginx:** the nginx image now sets `ENV WINGRC_BUILD_SHA`, and its
   config is a template the image's entrypoint fills at start. It sends
@@ -6025,15 +6027,170 @@ red, including the worker disagreement case; restored, all pass. Full
 suite on the bench in one process: 1878 passed, ruff clean. The
 no-database suite locally: 631 passed.
 
-**A deployment without the `worker` service (host cron) reads
-`incomplete`, truthfully: no worker is running.** `deploy.sh` would
-never report it deployed. That is the honest reading for this deployment
-shape, which runs the worker. A way to declare "no worker here by
-design" is not built.
+**Deployed 2026-10-27 at 13:09 UTC, `9fa9d0e`** (record
+`20261027T130913Z-9fa9d0ec3623`). `https://dev.wingrc.us/api/health`,
+fetched on the host by its public name, names all three components at
+`9fa9d0e` with `status: ok`. Jarrod's walk: open that URL and confirm the
+same. The deploy carried #59, #60 and #61. #60 merged `health-components`,
+the unsquashed history of #61, so `main` has both. The two trees are the
+same. The scans are byte-identical to 2026-10-26's (the scan item's
+table).
 
-**Not yet deployed.** Jarrod's walk, after deploy: open
-`https://dev.wingrc.us/api/health` and confirm it names three commits,
-all the deployed one, with `status: ok`.
+**Deploying it showed that `deploy.sh` cannot deploy a change to
+itself.** Bash reads a script while it runs, from the file it opened.
+`deploy.sh` runs `git checkout --detach "$sha"` and carries on. Git writes
+a new file, and the running shell keeps reading the old one. This deploy
+changed the wait loop: it now reads through nginx and checks `components`
+instead of `build`. Run as it was, the old loop would have waited for a
+`"build":` field the new `/health` no longer has. It would then have said
+"did not become healthy" after five minutes, exited 1 and written no
+record, after a deploy that had succeeded. I avoided it by checking out
+`origin/main` by hand first, the same detached checkout `deploy.sh`
+makes, so the script that ran was the new one. The same applies to every
+merge that changes `deploy.sh`. Not fixed. The fix, sized: after the
+checkout, if `deploy/deploy.sh` differs from the running copy, `exec` the
+new one with the same SHA, guarded by an environment variable so it
+happens once. The workaround is in `docs/deployment.md` and CLAUDE.md.
+
+**Known limitations (recorded 2026-10-27, after the deploy, at Jarrod's
+request; the health code is unchanged).** Each is here so that whoever
+meets it finds the reason rather than filing a bug.
+
+- **The commits are self-declared, so `/health` can be made to name a
+  commit nobody runs, from inside the deployment.** Two of the three
+  inputs are values a caller supplies:
+  - **nginx's header.** Through nginx it is replaced. A request to
+    `https://dev.wingrc.us/api/health` carrying
+    `X-WinGRC-Nginx-Build: 0000…` came back naming `9fa9d0e`. On a direct
+    call to `backend:8000` nothing replaces it, and the backend trusts
+    it. Live, 2026-10-27, all three on the same direct call:
+    - no header: nginx `unknown`, status `incomplete`;
+    - `0000…`: nginx `0000…`, status `split`;
+    - the deployed commit: status `ok`, though the request never touched
+      nginx.
+  - **The worker's connection name.** `application_name` is chosen by the
+    client. Anyone who can connect to the database can open a connection
+    named `wingrc-worker@<anything>`, which is exactly what the
+    integration test does. With the real worker stopped, such a
+    connection makes `/health` read `ok`. This was not shown on live; the
+    test shows the mechanism.
+
+  **Who can do this.** Port 8000 is not published (`docker-compose.yml`),
+  so forging the header needs a shell on the host or in a container on
+  the compose network. Forging the name needs the database credentials.
+  Either is far more access than lying to `/health` requires, and these
+  are report fields, never an auth decision, so the finding is recorded,
+  not fixed. `deploy.sh` reads through nginx, so a forged header cannot
+  fool it; a forged worker connection held open could.
+
+  This is the confident-signal family again, as a different kind of
+  member: a signal that reports a value it was handed as one it observed.
+
+  **Two sentences said otherwise.** "Observed in a way only that
+  component can produce", above, is corrected. `health.py`'s docstring
+  says the header "is present only when the request came through
+  nginx", which a forged direct call disproves. That is a universal
+  claim with no test, to be reworded when that file is next touched
+  (CLAUDE.md, the docstring rule).
+
+  **A fix, if one is ever wanted:** the backend accepts the header only
+  from nginx, by a shared secret or by source address.
+- **The worker reads `incomplete` from the moment its process exits
+  until the new one's first query.** The worker connects at the top of
+  its loop (`run_due_jobs` → `_is_due`) and returns the connection to
+  SQLAlchemy's pool, which keeps it open. There is no `pool_recycle`,
+  `pool_pre_ping` replaces only a dead connection at checkout, and live's
+  `idle_session_timeout` is 0. So between restarts a named connection is
+  always there. Live, after the deploy: one idle connection, started
+  13:09:09, touched every 60s. The windows:
+  - **A deploy (measured on this one).**
+    - The old worker stopped at 13:08:36, when compose recreated it.
+    - The new one started at 13:09:07.85, after the backend was healthy
+      (`depends_on: service_healthy`).
+    - Its named connection appeared at 13:09:09.07.
+
+    That is about 33 seconds, 1.2 of them the new worker starting, and
+    the backend was itself restarting for most of it. `deploy.sh` starts
+    polling only after `up -d` returns, which is after the worker has
+    started. It polls every 5s for five minutes and accepts only `ok`, so
+    an `incomplete` or momentary `split` sample is retried, not treated
+    as a verdict. This deploy reached `ok` within five seconds of the
+    worker's connection (the record is stamped 13:09:13). A good deploy
+    reads as not deployed only if the worker takes more than five minutes
+    to connect.
+  - **A worker crash:** Docker's restart delay (`restart:
+    unless-stopped`, backing off on repeated crashes) plus about 1.2s to
+    connect. Not measured.
+  - **A database restart:** the pooled connection dies, and the worker
+    opens a new one at its next poll, up to 60s later. `/health` is 503
+    while the database is down, then `incomplete` for up to 60s.
+  - **Pool recycling:** none is configured. If `pool_recycle` is ever
+    added, a recycled connection is closed and reopened within a single
+    checkout, so the gap is milliseconds.
+
+  Nothing reads `/health` on a schedule. The container healthcheck always
+  sees `incomplete`, as HTTP 200. So these windows matter only to
+  `deploy.sh` and to a person looking at that moment, and what they would
+  see is true.
+- **"No worker here by design" cannot be declared.** A deployment
+  without the `worker` service (host cron running `wingrc jobs-run-due`
+  instead) reads `incomplete` forever, and `deploy.sh` never reports it
+  deployed.
+  - **Not a bug.** No worker is running, and that is what it says.
+  - **Why it is not declarable.** The verdict iterates a fixed component
+    list on purpose, so it cannot be computed from fewer components. A
+    setting that drops the worker from the verdict is the very mutation
+    the tests exist to catch.
+  - **If it is wanted:** an explicit deployment-level declaration (an
+    environment variable on the backend). `/health` would report it as
+    the worker's value, `not deployed (declared)`, and count it as
+    agreement. It must never be inferred from the absence of a
+    connection.
+  - **Not built** because live runs the worker and no other deployment
+    exists yet.
+
+**Pipes whose status could hide a failure (Jarrod, 2026-10-27).** On
+2026-10-26 a pipeline reported `tail`'s status, not the failed `git
+pull`'s. Every pipe in the repo's shell, CI and Dockerfiles was checked
+for the same shape:
+- **`deploy.sh`** (`set -euo pipefail`):
+  - `compose config | python3 … || echo wingrc` reads the whole
+    pipeline's status, which is correct under pipefail.
+  - A failed `compose images -q | head -1` left the record's image line
+    blank. Fixed: it now says unknown.
+  - The wait loop's `printf | grep -q` could see `grep` exit before
+    `printf` finished, which under pipefail is a SIGPIPE and a false "no
+    match". That happens only for a body larger than the pipe buffer
+    (64 KiB), and `/health`'s is about 400 bytes, so it is unchanged.
+- **`tls/renew.sh`** (`set -euo pipefail`): `served()` pipes `openssl
+  s_client` through `openssl x509` into `cut`, with both openssl calls'
+  stderr discarded. A failed handshake failed the assignment, and `set
+  -e` exited 1 with **nothing printed**, before renewal and again after
+  the reload. Reproduced, then fixed: each now says nothing is served,
+  and for which name.
+- **`tls/check-expiry.sh`** (`set -uo pipefail`, without `-e` so that
+  every name is reported): the handshake pipeline's status is discarded
+  with `|| true` and its output is checked for empty instead, which is
+  correct.
+- **`tls/auth-hook.sh`** (`/bin/sh`, `set -eu`, no pipefail):
+  - `nslookup | sed` reported sed's status, so a failed NS lookup read as
+    "no nameservers found". Fixed, and run both ways in the
+    `certbot/certbot:v5.8.0` image: through 1.1.1.1 it returns the same
+    four nameservers, and against a resolver that is not there it prints
+    nslookup's failure.
+  - The wait loop's `nslookup | grep -qF` reads grep's status, which is
+    the intent (the record is present). Under pipefail that could
+    false-negative on a SIGPIPE, which is a reason not to add pipefail
+    there.
+- **CI and the Dockerfiles:** no `run:` step or `RUN` line pipes. GitHub's
+  default `bash` is `-e` without pipefail, so a future `pytest | tee`
+  would report `tee`'s status unless the step says `shell: bash`.
+- **Docs:** the one command pipe is `docs/deployment.md`'s `pg_restore
+  --list … | head -20`. A person reads it, and its errors go to stderr,
+  outside the pipe.
+
+The 26th's pipe was typed at a terminal, which nothing in the repo can
+check. That is why the notes describe what it looks like on screen.
 
 ### V.1: `--primary` has headroom, its hover derived from it ✅ DONE (2026-10-25, bench-verified; frontend only; deployed 2026-10-26)
 
@@ -11531,6 +11688,11 @@ are CRITICAL and HIGH rows.
 | 2026-10-14 to 2026-10-18, nine deploys | 296 / 152 / 1 / 28 | 179 / 111 / 0 / 8 |
 | 2026-10-18 `d0d745c` to 2026-10-20 `09aee13`, five deploys | 296 / 152 / 1 / 28 | 181 / 113 / 0 / 8 |
 | **2026-10-26 `d802851`** | **308 / 161 / 2 / 29** | **231 / 139 / 0 / 8** |
+| 2026-10-27 `9fa9d0e` | 308 / 161 / 2 / 29 | 231 / 139 / 0 / 8 |
+
+2026-10-27's scans are byte-identical to the previous day's, under new
+image IDs (the application layers changed): one day, no new advisory and
+no changed package.
 
 In six days the nginx image went 181 → 231 rows (113 → 139 advisories),
 and the backend 296 → 308, with a **second CRITICAL**. Nobody has looked
