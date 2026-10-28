@@ -12257,30 +12257,99 @@ The counts from every record in `~claude/wingrc-deploys/`. *Rows* are
 package × advisory lines; *unique* counts distinct advisories; C and H
 are CRITICAL and HIGH rows.
 
-| Deploy record | backend rows / unique / C / H | nginx rows / unique / C / H |
-|---|---|---|
-| 2026-10-09 `b781f2b` | 289 / 151 / 1 / 28 | 161 / 108 / 2 / 11 |
-| 2026-10-10 `b27e8a6` (nginx base 1.29) | 297 / 153 / 1 / 28 | 179 / 111 / 0 / 8 |
-| 2026-10-14 to 2026-10-18, nine deploys | 296 / 152 / 1 / 28 | 179 / 111 / 0 / 8 |
-| 2026-10-18 `d0d745c` to 2026-10-20 `09aee13`, five deploys | 296 / 152 / 1 / 28 | 181 / 113 / 0 / 8 |
-| **2026-10-26 `d802851`** | **308 / 161 / 2 / 29** | **231 / 139 / 0 / 8** |
-| 2026-10-27 `9fa9d0e` | 308 / 161 / 2 / 29 | 231 / 139 / 0 / 8 |
-| 2026-10-27 `7d81b4a` (Q.0) | 301 / 156 / 1 / 29 | 231 / 139 / 0 / 8 |
+| Deploy record | backend rows / unique / C / H | nginx rows / unique / C / H | backend CRITICAL, by Trivy's total |
+|---|---|---|---|
+| 2026-10-09 `b781f2b` | 289 / 151 / 1 / 28 | 161 / 108 / 2 / 11 | 1: `libxml2` CVE-2026-6653, unreachable |
+| 2026-10-10 `b27e8a6` (nginx base 1.29) | 297 / 153 / 1 / 28 | 179 / 111 / 0 / 8 | 1: the same |
+| 2026-10-14 to 2026-10-18, nine deploys | 296 / 152 / 1 / 28 | 179 / 111 / 0 / 8 | 1: the same |
+| 2026-10-18 `d0d745c` to 2026-10-20 `09aee13`, five deploys | 296 / 152 / 1 / 28 | 181 / 113 / 0 / 8 | 1: the same |
+| **2026-10-26 `d802851`** | **308 / 161 / 2 / 29** | **231 / 139 / 0 / 8** | **4: `libxml2` CVE-2026-6653, unreachable; Python: `brotli`, `certifi` (3)** |
+| 2026-10-27 `9fa9d0e` | 308 / 161 / 2 / 29 | 231 / 139 / 0 / 8 | 4: the same |
+| 2026-10-27 `7d81b4a` (Q.0) | 301 / 156 / 1 / 29 | 231 / 139 / 0 / 8 | 1: `libxml2` CVE-2026-6653, unreachable (Python ones resolved away) |
+| 2026-10-27 `07bc630` (#64) | 301 / 156 / 1 / 29 | 231 / 139 / 0 / 8 | 1: the same |
 
 2026-10-27's scans are byte-identical to the previous day's, under new
 image IDs (the application layers changed): one day, no new advisory and
 no changed package.
 
 The same day's Q.0 deploy shows the backend down 7 rows, 5 advisories and
-1 CRITICAL, with nginx unchanged. Q.0 changed no dependency, so the drop
-is the base layer or the package index moving under a floating tag. It
-is the first downward step in this table, and the first record whose
-image IDs come from the fixed lookup (#62). Which package moved is not
-answered here.
+1 CRITICAL, with nginx unchanged. It is the first downward step in this
+table, and the first record whose image IDs come from the fixed lookup
+(#62). #64's deploy, the same evening, scanned byte-identical to Q.0's.
+
+*Corrected 2026-10-28.* This paragraph first said the drop was "the base
+layer or the package index moving under a floating tag". **It was
+neither.** The Debian section of the two scans is identical: 301
+advisories, 1 CRITICAL. The whole drop is in the Python section, 13
+advisories (3 CRITICAL) down to 7 (0 CRITICAL), because the build
+resolved newer Python packages:
+- `brotli` 1.2.0 → 1.2.1;
+- `certifi` 2026.10.18 → 2026.10.23;
+- `pypdf` 6.21.1 → 6.21.3.
+
+Q.0 changed no dependency declaration, but `pyproject.toml` declares
+floors only (`fastapi>=0.118`), with no lock file. So every build
+resolves the newest release of every package, and a deploy carries
+whatever was published since the last one. This one also carried
+`anthropic` 1.15.0 → 2.3.0, a major version, and `fastapi` 0.146 →
+0.162, with no change in the repo naming either. This is a third cause
+of drift beside the two below (new advisories, a changed base layer),
+and digest pinning under item R does not freeze it. It is recorded here,
+not acted on.
+
+**How to read the C column.** It counts table rows that print CRITICAL.
+Trivy's table merges a severity cell down the rows below it, so the
+column undercounts. Trivy's own totals (the `Total:` line per target)
+are the authoritative figure: 4 CRITICAL at `9fa9d0e` (1 Debian, 3
+Python), 1 at `7d81b4a` and `07bc630`.
+
+**The one CRITICAL left (asked 2026-10-28): an OS package with no
+reachable path. Not the base image's, though; our own apt line adds it.**
+- **Package:** Debian's `libxml2`, version
+  `2.12.7+dfsg+really2.9.14-2.1+deb13u3`. Despite the prefix it is
+  upstream 2.9.14 (the `really` convention). `python:3.13-slim` does not
+  contain it. The backend Dockerfile's `apt-get install` line installs
+  `shared-mime-info` beside WeasyPrint's libraries, and `libxml2` comes
+  in as its dependency (`apt-cache rdepends --installed`: only
+  `shared-mime-info`).
+- **Advisory:** CVE-2026-6653, a use-after-free in
+  `xmlParseInternalSubset`, giving denial of service from crafted XML.
+  Affects upstream 2.9.11 up to 2.11.0. NVD scores it 9.8 (CVSS 3.1),
+  which is the CRITICAL Trivy prints; the CNA (Ubuntu) scores it 7.0
+  (CVSS 4.0). **Debian has no fixed version**, so no rebuild clears it.
+  It has been in every record since 2026-10-09: the C column's constant 1.
+- **Nothing that runs loads it.** Checked in live's backend container,
+  2026-10-28:
+  - Of every shared object and executable in the image, the only one
+    linked to `libxml2.so.2` is `/usr/bin/update-mime-database`.
+    `shared-mime-info` runs that at package install, during the build.
+    Pango, Cairo and GDK-Pixbuf, WeasyPrint's native libraries, do not
+    link it.
+  - No process in the backend or worker container has it mapped
+    (`/proc/*/maps`).
+- **The XML WinGRC parses goes elsewhere:**
+  - Uploaded `.docx` files (product document ingestion,
+    `importers/document.py`) go through `python-docx` and `lxml`.
+    `lxml` 6.1.3 bundles its own libxml2, **2.14.6**, outside the
+    affected range, and Trivy's Python section reports nothing against
+    it.
+  - SVG logos go through `defusedxml` over the stdlib's expat
+    (`svg_sanitize.py`). `openpyxl` uses `et_xmlfile`, or `lxml` when it
+    is installed.
+
+  So it is the first case the item describes in the abstract: a
+  CRITICAL row in a record nobody read for eighteen days, which turns
+  out to be an unreachable OS package. Its one route out is ours:
+  whether `shared-mime-info` is needed at all is a question about our
+  apt line, not about the base. That answer was found by reading it,
+  and the record cannot say so by itself. A later change can make it
+  reachable without touching this row: installing `librsvg` (WeasyPrint
+  SVG), or a wheel built against the system libxml2.
 
 In six days the nginx image went 181 → 231 rows (113 → 139 advisories),
 and the backend 296 → 308, with a **second CRITICAL**. Nobody has looked
-at which. A count also mixes two causes the record does not separate:
+at which. (Answered 2026-10-28, above: it was in the Python packages
+and went with them. The Debian one is `libxml2`, unreachable.) A count also mixes two causes the record does not separate:
 new advisories published against the same packages, and a changed image
 (a rebuilt base layer). The record keeps image IDs, so the second can be
 answered after the fact.
