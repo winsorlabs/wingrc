@@ -276,11 +276,32 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   after the pull said which commit was running; `/health` now does, per
   component. A bench clone is a branch checkout, where a pull is fine
   (`docs/bench-stack-verification.md`).
-  - **A deploy that changes `deploy.sh` runs the old one.** Bash keeps
-    reading the file it opened, and the checkout writes a new one. When
-    `deploy/deploy.sh` differs between `HEAD` and the target, run
-    `git checkout --detach origin/main` first, then `deploy.sh`
-    (`docs/deployment.md`, 7c; 2026-10-27).
+  - **A deploy that changes `deploy.sh` runs the target's copy.** Bash
+    keeps reading the file it opened, and the checkout writes a new one.
+    Since 2026-10-28 `deploy.sh` compares its own blob with the
+    target's and, when they differ, checks out and `exec`s the target's,
+    once. That works only from a running copy that has the check, so
+    the hand checkout first (`git checkout --detach origin/main`, then
+    `deploy.sh`) is still needed when the copy on the host predates it
+    (`docs/deployment.md`, 7c).
+- **A pipe whose status is read must not report the last command's
+  status in place of a failure.** On 2026-10-26 a failed `git pull`
+  read as success through `| tail`. A new bash script starts
+  `set -euo pipefail`, as `deploy.sh` and `tls/renew.sh` do. Two
+  exceptions are deliberate:
+  - `tls/check-expiry.sh` drops `-e`, so that every name is reported.
+  - `tls/auth-hook.sh` is POSIX `sh` with no pipefail, because its wait
+    loop reads `grep -q`'s status by intent.
+
+  A pipe ending in `grep -q` can SIGPIPE its writer, which pipefail
+  reads as a failure. It is safe in `deploy.sh`'s wait loop only
+  because `/health`'s body is far under the 64 KiB pipe buffer. A CI
+  `run:` step that pipes needs `shell: bash`: GitHub's default runs
+  `bash -e` without pipefail, and naming `bash` adds it. At a terminal,
+  check the result itself (`git rev-parse HEAD`, `git ls-remote`,
+  `/health`), never the exit status a `| tail` shows. The full sweep
+  of every pipe is `docs/roadmap.md`'s "Pipes whose status could hide a
+  failure".
 - **Landing a slice, in order: bench-verify → open a PR → *watch CI go
   green* → merge → deploy → report.** The CI step is not optional and not
   "check later". Six consecutive red runs on `main` went unnoticed
