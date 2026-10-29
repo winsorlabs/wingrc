@@ -6015,6 +6015,37 @@ the record explains.
 packages, npm, and CI's own `setup-python`. Item R, revised the same
 day, says which of these R covers.
 
+### Observation: a correct fix that would have been worse than the defect (2026-10-28, recorded 2026-10-29)
+
+**What happened.** Building the lock, I removed `pip install --upgrade
+pip` from the Dockerfile.
+- **The instinct was right:** that line took whatever pip was newest at
+  build time, which is exactly what a lock exists to stop.
+- **The result was worse:** the build fell back to the base image's pip
+  26.2.1. Its vendored `certifi` carries the compromised emSign roots
+  (GHSA-6q48-6c7w-9gw2), a CRITICAL. Live does not have it, because the
+  floating upgrade had happened to land on 26.2.2.
+
+Shipped, the reproducibility fix would have added a CRITICAL to the
+image. **The resolution:** pip is in the lock at 26.2.2, so it is
+neither floating nor the base's.
+
+**Why it is worth a record.**
+- **First of its kind in this sequence:** the first time a fix would
+  have been worse than the defect it fixed.
+- **"Reproducible" and "safe" pulled in opposite directions.** The
+  floating line was unreproducible and, that day, safe. The
+  reproducible version was unsafe.
+- **Reasoning could not tell them apart.** Removing an unpinned upgrade
+  reads as purely good.
+
+**How it was caught:** the bench's scan comparison, not reasoning.
+The locked image and live's were each scanned with Trivy's JSON on the
+same database, and the locked one had a CRITICAL that live's did not.
+Measuring both images was the only check that could see it. The lesson
+for the next change that removes something floating: the scan diff
+against live is the check, not a review of the diff.
+
 ### Q.0: a deliberate dashboard grid, and the engineer's environment view ✅ DONE (2026-10-27, bench-verified; endpoint, widgets, grid; no migration; deployed 2026-10-27)
 
 The first slice of item **Q**. It builds the deliberate default grid,
@@ -11907,8 +11938,52 @@ arrive all at once, unannounced, when a Dockerfile line above them
 changes or the cache is cleared. The bench showed it the same day: the
 gdk-pixbuf change rebuilt the apt layer, which brought Debian's fixed
 `libbrotli1` (live's is CRITICAL) and a newer `libexpat1` with it.
-Pinning the base by digest, and dating the apt resolution, would make
-both of these deliberate.
+
+**The remaining hole, named (Jarrod, 2026-10-29).** Ask "when do OS
+security fixes reach live?" With the lock in place, the answer is
+"whenever the cache evicts", and that is nobody's decision.
+- **It is (2) and (3) together, not the apt line alone.** The base
+  image's own Debian packages carry findings too. Nobody has split the
+  findings between base and apt line. The base's packages move only
+  when `python:3.13-slim` is re-pulled, by the same cache behaviour.
+- **nginx has no apt line.** Its OS fixes come only from re-pulling
+  `nginx:1.29-alpine`.
+- **npm, (4), also sits in the cache.** It reaches live as built
+  JavaScript that no scan reads, so it is a reproducibility hole, not
+  this one.
+
+**Two options. They trade the same thing in opposite directions.**
+- **Pin, so that updating is an act.**
+  - What it means: `FROM …@sha256:` for each base, and the apt line
+    resolved against `snapshot.debian.org` at a stated timestamp, for
+    both `debian` and `debian-security`.
+  - What it buys: a build is reproducible. An update is a commit moving
+    the date or digest, with a scan before and after.
+  - The cost: if nobody moves it, fixes stop arriving at all. That is
+    worse than today, when the cache at least evicts eventually.
+  - Smaller points:
+    - Alpine has no snapshot archive, but nginx installs nothing, so its
+      digest is enough.
+    - The snapshot service is slow and rate-limited.
+    - An air-gapped site builds from its own mirror either way.
+- **Re-pull on a stated cadence, so that updating is regular.**
+  - What it means: `docker build --pull --no-cache` on every deploy, or
+    on a schedule.
+  - What it buys: fixes arrive on a known rhythm.
+  - The cost: two builds of one commit differ, and what changed shows
+    only in the scan's diff.
+
+**Recommendation: pin, and move the pin on a stated cadence.**
+- **The age check is what makes the cadence real.** Something must read
+  how old the pin is: for example, `deploy.sh` stating the snapshot
+  date's and each digest's age, and refusing past a stated limit.
+- **This is not a third answer.** It is the first option with a
+  calendar, and it still pays for the act each time.
+- **Without the age check it fails the way the scans did.** A cadence
+  nobody reads is the cache again, under a quieter name. That is the
+  scan item's finding: a signal nobody reads.
+
+Not built.
 
 R as written was read as covering more than (1). The scan item said
 that "after R a count could only rise from new advisories". It cannot
