@@ -11899,6 +11899,17 @@ pins none of them:
    resolves at build time. The open decision is in
    `docs/bench-stack-verification.md`. Not done.
 
+**In practice (2) and (3) sit in Docker's layer cache rather than
+floating.** Live's apt layer was resolved on 2026-10-14 and reused by
+every deploy since. Its base is the `python:3.13-slim` pulled on
+2026-09-19. So Debian's fixes since then have not reached live. They
+arrive all at once, unannounced, when a Dockerfile line above them
+changes or the cache is cleared. The bench showed it the same day: the
+gdk-pixbuf change rebuilt the apt layer, which brought Debian's fixed
+`libbrotli1` (live's is CRITICAL) and a newer `libexpat1` with it.
+Pinning the base by digest, and dating the apt resolution, would make
+both of these deliberate.
+
 R as written was read as covering more than (1). The scan item said
 that "after R a count could only rise from new advisories". It cannot
 while (2) to (4) float, and it could not while (1) did; that sentence is
