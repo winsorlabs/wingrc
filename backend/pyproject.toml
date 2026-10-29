@@ -51,8 +51,9 @@ ai = [
 [dependency-groups]
 # The build backend, locked like everything else: the Dockerfile and CI
 # install the package with --no-build-isolation from requirements.lock, so
-# no build fetches its own unpinned hatchling.
-build = ["hatchling"]
+# no build fetches its own unpinned hatchling. `editables` is what
+# hatchling needs for CI's and a dev box's `pip install -e`.
+build = ["hatchling", "editables"]
 
 [project.scripts]
 wingrc = "app.cli:app"
