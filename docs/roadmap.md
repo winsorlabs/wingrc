@@ -6015,7 +6015,6 @@ the record explains.
 packages, npm, and CI's own `setup-python`. Item R, revised the same
 day, says which of these R covers.
 
-<<<<<<< HEAD
 ### The image drops gdk-pixbuf, and with it the CRITICAL `libxml2` ✅ DONE (2026-10-28, bench-verified; branch `drop-gdk-pixbuf`, after the lock)
 
 **Asked:** can `shared-mime-info` go? The backend's one CRITICAL,
@@ -6067,7 +6066,7 @@ took Debian's fixed `libbrotli1` (`1.1.0-2+deb13u1`; live's is the
 CRITICAL CVE-2026-111497) and `libexpat1` 2.8.3 → 2.9.0. Those two came
 from re-resolving, and would have come from any edit above that line.
 Item R records that the cache, not intent, decides when that happens.
-=======
+
 ### Observation: a correct fix that would have been worse than the defect (2026-10-28, recorded 2026-10-29)
 
 **What happened.** Building the lock, I removed `pip install --upgrade
@@ -6098,7 +6097,6 @@ same database, and the locked one had a CRITICAL that live's did not.
 Measuring both images was the only check that could see it. The lesson
 for the next change that removes something floating: the scan diff
 against live is the check, not a review of the diff.
->>>>>>> python-lock
 
 ### Q.0: a deliberate dashboard grid, and the engineer's environment view ✅ DONE (2026-10-27, bench-verified; endpoint, widgets, grid; no migration; deployed 2026-10-27)
 
