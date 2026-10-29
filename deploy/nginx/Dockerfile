@@ -16,6 +16,10 @@ RUN npm run build
 # runs curl, and nginx.conf uses no regex locations, rewrites or maps, so
 # PCRE2 is not exercised by request handling. 1.28-alpine (stable) scanned
 # worse: 2 CRITICAL, OpenSSL 3.5.5. Re-check with deploy.sh's per-deploy scan.
+# Note, 2026-10-29: these HIGH figures were read off Trivy's table, which
+# prints a repeated severity once per package, so they likely undercount.
+# The CRITICALs match Trivy's totals (docs/roadmap.md, "The deploy scans are
+# read by nobody"); the per-library HIGHs cannot be re-derived.
 FROM nginx:1.29-alpine
 COPY --from=frontend-build /app/dist /usr/share/nginx/html
 # A template, not a plain config: the image's entrypoint substitutes

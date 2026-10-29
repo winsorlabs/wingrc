@@ -6818,7 +6818,9 @@ that revision label, `/health` reports `build: d802851…` and migration
 `~claude/wingrc-deploys/20261026T152749Z-d80285198800`. That
 deploy's scans report 308 backend rows and 231 nginx (296 and 181 on
 2026-10-20), report-only and read by nobody (Planned, "The deploy scans
-are read by nobody").
+are read by nobody"). *Note, 2026-10-29:* these are rendered-row counts,
+which undercount. From Trivy's own totals they are 314 and 232 (303 and
+181 on 2026-10-20); that item has the re-derived table.
 
 **What `/health` said during the split.** It said `build: 09aee13…`,
 which was true of the backend: `WINGRC_BUILD_SHA` is baked into the
@@ -9025,7 +9027,9 @@ Jarrod's `CMMC Prep` folder into a bench org):
   reboot.
   - The host came back clean: five services up, IP still .35, no bench
     containers, `/health` ok at the prior build.
-  - Scans: backend 296 findings, nginx 179.
+  - Scans: backend 296 findings, nginx 179. *Note, 2026-10-29:* a
+    rendered-row count; Trivy's own totals are 303 and 179 ("The deploy
+    scans are read by nobody" has the re-derived table).
 - **Database checks, read-only.**
   - `pg_trigger` shows `list_version_no_update` (BEFORE UPDATE, enabled).
   - The backend's own session reports `current_user = wingrc_app`
@@ -12295,6 +12299,32 @@ rendered table, for comparison:
   deploy report until now said 289 to 308 where Trivy had found 296 to
   314.
 
+**The old figures were wrong, not only unread (Jarrod, 2026-10-29).**
+- **How far off:** HIGH was undercounted by more than half in every
+  record from 2026-10-09 to 2026-10-27:
+  - backend 28 against 69, about 60% low;
+  - nginx 8 against 43, about 80% low.
+- **Cited elsewhere:** other entries quoted these figures:
+  - the 2026-10-14 live deploy;
+  - the 2026-10-26 `d802851` deploy;
+  - the nginx Dockerfile's base-image comment.
+
+  Each now carries a note pointing here.
+- **The connection:** the counter was free to be wrong *because* nothing
+  read it. Anyone comparing "28 HIGH" with the table it came from would
+  have seen a page of HIGH rows. Nobody did, for eighteen days, so a
+  wrong count cost nothing and showed nothing. It was found the first
+  time someone asked the record a specific question: which package is
+  the CRITICAL?
+- **Why this is the strongest case so far:** this is the product's
+  recurring finding, a signal nobody reads, in its strongest form.
+  - The six red CI runs were true signals nobody looked at.
+  - Here the unread signal was also false. Being unread is what let it
+    stay false.
+
+  A record nobody reads does not stay correct by default. Its
+  correctness is unknown, and so is everything that cites it.
+
 **No record kept the JSON, and the scanned images are gone.** Only each
 service's latest image is on the host. So the per-severity figures come
 from each table file's `Total:` lines. Trivy computes those from its data
@@ -12414,7 +12444,10 @@ finding is fixed here.**
 - **A baseline, so drift is measurable.** 231 on its own means nothing;
   +50 in six days is a fact. The record would need the previous deploy's
   counts beside its own, by severity and as distinct advisories, and the
-  difference stated.
+  difference stated. The worked example: on 2026-10-29, with no deploy
+  and no code change, CVE-2026-111497 (brotli) went from HIGH to
+  CRITICAL in both images overnight. A count says the images got worse.
+  A baseline says nothing changed but the advisory database.
 - **Who looks, and when.** If the answer is "nobody, deliberately, until
   the product has users", write that here. A deliberate no is a decision;
   the silent no that exists today is a gap.
