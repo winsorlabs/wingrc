@@ -46,10 +46,13 @@ COPY backend/pyproject.toml backend/requirements.lock ./
 # docs/deployment.md's "Python dependencies" say how a version changes).
 # The package itself goes in after with --no-deps, so it can pull nothing
 # the lock does not name, and --no-build-isolation, so its build uses the
-# lock's hatchling rather than fetching the newest. No `pip install
-# --upgrade pip`: that took whatever pip was newest at build time; pip is
-# the base image's. `pip check` fails the build on a lock that no longer
-# satisfies pyproject.toml's core dependencies.
+# lock's hatchling rather than fetching the newest. pip is in the lock
+# too, replacing `pip install --upgrade pip`, which took whatever pip was
+# newest at build time. Not the base image's pip either: 26.2.1's vendored
+# certifi carries the compromised emSign roots (GHSA-6q48-6c7w-9gw2), and
+# the bench's scan caught it when the upgrade was first dropped.
+# `pip check` fails the build on a lock that no longer satisfies
+# pyproject.toml's core dependencies.
 RUN pip install --no-deps -r requirements.lock \
     && pip install --no-deps --no-build-isolation ".[dev,ai]" \
     && pip check
