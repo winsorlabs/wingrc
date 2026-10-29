@@ -302,6 +302,26 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   `/health`), never the exit status a `| tail` shows. The full sweep
   of every pipe is `docs/roadmap.md`'s "Pipes whose status could hide a
   failure".
+
+  **This convention reaches committed scripts and CI steps, not commands
+  typed while investigating.** That is where every instance has been:
+  - 2026-10-26's `git pull`;
+  - two more by 2026-10-28, one the editable install hidden behind
+    `| tail -1` the same day this bullet was written;
+  - on 2026-10-29, a chain of commands joined with `;`, whose first step
+    failed. The rest committed and pushed conflict markers.
+
+  For a person at a terminal it stays a recognition problem: read the
+  result, not the status. For Claude's Bash tool, a mechanical catch
+  exists but is **not built**. A `PreToolUse` hook can rewrite each
+  command to start with `set -eo pipefail;`. Then a failed step stops
+  the chain, and a `| tail` reports the failure's status, which the tool
+  surfaces as a failure. It does not reach:
+  - pipes inside a quoted remote command (`ssh host '… | tail'`);
+  - the PowerShell tool;
+  - a command that prints an error and exits 0.
+
+  It also changes the text that permission rules match.
 - **Landing a slice, in order: bench-verify → open a PR → *watch CI go
   green* → merge → deploy → report.** The CI step is not optional and not
   "check later". Six consecutive red runs on `main` went unnoticed
