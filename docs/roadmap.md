@@ -6455,6 +6455,23 @@ the unsquashed history of #61, so `main` has both. The two trees are the
 same. The scans are byte-identical to 2026-10-26's (the scan item's
 table).
 
+**`main` carries this change twice, and a bisect across 26 October can
+land on a working step.** This is the part that will bite.
+- **Two parallel lines.** Both start from #59's merge (`ec3ebc9`):
+  - `d57289e` → `a4a8581` → `404fdff`, merged by #60 (`3e47dfc`);
+  - `fb66c7c` → `2911cf3` → `8b1c3e7`, merged by #61 (`9fa9d0e`).
+
+  The trees agree at the end, so nothing looks wrong on `main`.
+- **What a bisect sees.** `git bisect` walks both parents of a merge.
+  A bisect over that day can test, and name, `d57289e`. That commit is
+  the change without the two fixes the bench found: the worker's
+  "not connected" wording, and the stale `pg_stat_activity` snapshot.
+  Its code was never reviewed or deployed in that form, and a defect
+  those fixes removed will point a bisect there.
+- **What else it costs.** `git log --first-parent main` shows the change
+  arriving at #60, a PR with no description, rather than at #61, the
+  reviewed one.
+
 **Why `health-components` existed (2026-10-28; the branch is now
 deleted).**
 - **It was the working branch.** It held the change and the two fixes
@@ -6467,9 +6484,7 @@ deleted).**
 - **#60 then opened and merged it,** eight seconds apart, seven seconds
   before #61 was opened.
 
-The cost: `main` carries the code twice. A bisect over 2026-10-26 finds
-the change at `3e47dfc` (#60), not at #61, and the commit it lands on is
-a working step, not the reviewed one. The lesson, for a rebuilt history:
+The lesson, for a rebuilt history:
 delete the old branch when pushing the new one, or force-push it, so
 that only one branch names the slice. Every merged branch has since been
 deleted from the remote.
@@ -6613,8 +6628,10 @@ meets it finds the reason rather than filing a bug.
     unless-stopped`, backing off on repeated crashes) plus about 1.2s to
     connect. Not measured.
   - **A database restart:** the pooled connection dies, and the worker
-    opens a new one at its next poll, up to 60s later. `/health` is 503
-    while the database is down, then `incomplete` for up to 60s.
+    opens a new one at its next poll, expected within 60s (the poll
+    interval; reasoned, not observed at its edge). `/health` is 503
+    while the database is down, then `incomplete` until the worker
+    reconnects.
     **Measured 2026-10-28** on a bench stack (`wingrc_verify_20261028db`:
     db, minio, backend and worker at `07bc630`, no nginx). `/health` was
     polled every 250ms from inside the backend, during a
@@ -6626,14 +6643,20 @@ meets it finds the reason rather than filing a bug.
       503, because a postgres restart is quick. The worker is still
       `unknown`;
     - 40.498: the worker is back, at `07bc630`, **33.6s** after the
-      database. That is where in its 60s cycle the worker happened to
-      be, so 60s is the bound and this sample is one draw from it.
+      database.
+
+    **This is one measurement, under favourable conditions; it is not a
+    bound.** The restart took under a second, and the worker found the
+    database up at its next poll. "Up to 60s" above is reasoning from
+    the poll interval, and its edge has not been observed. A restart
+    slow enough to span a poll, a worker that errors on a dead
+    connection mid-job, or Docker restarting a crashed worker could each
+    make the gap longer. None was tried.
 
     The backend's pool recovered by itself (`pool_pre_ping`). So did the
     worker's, with no error in its log. `status` read `incomplete`
     throughout, because a direct call has no nginx header, so what the
-    sample shows is the worker field. One run, with a restart lasting
-    under a second. A longer outage was not measured.
+    sample shows is the worker field.
   - **Pool recycling:** none is configured. If `pool_recycle` is ever
     added, a recycled connection is closed and reopened within a single
     checkout, so the gap is milliseconds.
