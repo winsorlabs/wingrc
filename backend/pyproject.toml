@@ -48,6 +48,12 @@ ai = [
     "python-docx>=1.1",
 ]
 
+[dependency-groups]
+# The build backend, locked like everything else: the Dockerfile and CI
+# install the package with --no-build-isolation from requirements.lock, so
+# no build fetches its own unpinned hatchling.
+build = ["hatchling"]
+
 [project.scripts]
 wingrc = "app.cli:app"
 wingrc-admin = "app.manage:app"
