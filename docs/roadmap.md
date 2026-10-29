@@ -12253,27 +12253,77 @@ surfaces a rise. The nginx Dockerfile's base-image comment
 (2026-10-10) says to "re-check with deploy.sh's per-deploy scan";
 nothing did until today.
 
-The counts from every record in `~claude/wingrc-deploys/`. *Rows* are
-package × advisory lines; *unique* counts distinct advisories; C and H
-are CRITICAL and HIGH rows.
+The counts from every record in `~claude/wingrc-deploys/`, as
+*findings / distinct advisories / CRITICAL / HIGH*, all from Trivy's own
+`Total:` lines. *Re-derived 2026-10-28:* the first version of this table
+counted the rendered table's rows, and Trivy merges repeated cells down a
+column, so that undercounted. It is kept below the table for comparison,
+because every C and H figure in it was wrong and the prose quoted it.
 
-| Deploy record | backend rows / unique / C / H | nginx rows / unique / C / H | backend CRITICAL, by Trivy's total |
+| Deploy record | backend | nginx | backend CRITICAL, named |
 |---|---|---|---|
-| 2026-10-09 `b781f2b` | 289 / 151 / 1 / 28 | 161 / 108 / 2 / 11 | 1: `libxml2` CVE-2026-6653, unreachable |
-| 2026-10-10 `b27e8a6` (nginx base 1.29) | 297 / 153 / 1 / 28 | 179 / 111 / 0 / 8 | 1: the same |
-| 2026-10-14 to 2026-10-18, nine deploys | 296 / 152 / 1 / 28 | 179 / 111 / 0 / 8 | 1: the same |
-| 2026-10-18 `d0d745c` to 2026-10-20 `09aee13`, five deploys | 296 / 152 / 1 / 28 | 181 / 113 / 0 / 8 | 1: the same |
-| **2026-10-26 `d802851`** | **308 / 161 / 2 / 29** | **231 / 139 / 0 / 8** | **4: `libxml2` CVE-2026-6653, unreachable; Python: `brotli`, `certifi` (3)** |
-| 2026-10-27 `9fa9d0e` | 308 / 161 / 2 / 29 | 231 / 139 / 0 / 8 | 4: the same |
-| 2026-10-27 `7d81b4a` (Q.0) | 301 / 156 / 1 / 29 | 231 / 139 / 0 / 8 | 1: `libxml2` CVE-2026-6653, unreachable (Python ones resolved away) |
-| 2026-10-27 `07bc630` (#64) | 301 / 156 / 1 / 29 | 231 / 139 / 0 / 8 | 1: the same |
+| 2026-10-09 `b781f2b` | 296 / 151 / 1 / 72 | 161 / 108 / 2 / 43 | 1: `libxml2` CVE-2026-6653, unreachable |
+| 2026-10-10 `b27e8a6` (nginx base 1.29) | 304 / 153 / 1 / 69 | 179 / 111 / 0 / 44 | 1: the same |
+| 2026-10-14 to 2026-10-18, nine deploys | 303 / 152 / 1 / 69 | 179 / 111 / 0 / 44 | 1: the same |
+| 2026-10-18 `d0d745c` to 2026-10-20 `09aee13`, five deploys | 303 / 152 / 1 / 69 | 181 / 113 / 0 / 45 | 1: the same |
+| **2026-10-26 `d802851`** | **314 / 161 / 4 / 73** | **232 / 139 / 0 / 48** | **4: `libxml2` CVE-2026-6653, unreachable; Python: `brotli`, `certifi` ×2** |
+| 2026-10-27 `9fa9d0e` | 314 / 161 / 4 / 73 | 232 / 139 / 0 / 48 | 4: the same |
+| 2026-10-27 `7d81b4a` (Q.0) | 308 / 156 / 1 / 70 | 232 / 139 / 0 / 48 | 1: `libxml2` CVE-2026-6653, unreachable (the Python ones resolved away) |
+| 2026-10-27 `07bc630` (#64) | 308 / 156 / 1 / 70 | 232 / 139 / 0 / 48 | 1: the same |
+| 2026-10-29 UTC, **no deploy**: live's `07bc630` images rescanned, from JSON | 311 / 164 / 2 / 70 | 232 / 139 / 1 / 47 | 2: `libxml2` CVE-2026-6653, unreachable; `libbrotli1` CVE-2026-111497 (nginx: Alpine's `brotli-libs`, the same CVE) |
+
+**The first version's figures,** *rows / unique / C / H* counted from the
+rendered table, for comparison:
+
+| Deploy record | backend | nginx |
+|---|---|---|
+| 2026-10-09 `b781f2b` | 289 / 151 / 1 / 28 | 161 / 108 / 2 / 11 |
+| 2026-10-10 `b27e8a6` | 297 / 153 / 1 / 28 | 179 / 111 / 0 / 8 |
+| 2026-10-14 to 2026-10-20 | 296 / 152 / 1 / 28 | 179–181 / 111–113 / 0 / 8 |
+| 2026-10-26, 2026-10-27 `9fa9d0e` | 308 / 161 / 2 / 29 | 231 / 139 / 0 / 8 |
+| 2026-10-27 `7d81b4a`, `07bc630` | 301 / 156 / 1 / 29 | 231 / 139 / 0 / 8 |
+
+- **HIGH was the worst:** backend 28–29 against a real 69–73, and nginx
+  8–11 against 43–48. Where a package has several advisories of the same
+  severity, Trivy prints that severity on the first row only.
+- **CRITICAL** was right except on 10-26 and 10-27 at `9fa9d0e`: 2
+  against 4, because `certifi`'s two installs shared one cell.
+- **Findings** were about 7 low.
+- **Unique** was right throughout. A distinct ID survives a merged cell,
+  because the cell still prints it once.
+- `deploy.sh`'s own "N findings" line used the same row count, so every
+  deploy report until now said 289 to 308 where Trivy had found 296 to
+  314.
+
+**No record kept the JSON, and the scanned images are gone.** Only each
+service's latest image is on the host. So the per-severity figures come
+from each table file's `Total:` lines. Trivy computes those from its data
+per target, so they are its own counts, not a reading of the rendering.
+Nothing finer than per severity can be re-derived; any per-package
+question about an old record needs its table read by eye. **Since
+2026-10-28, `deploy.sh` stores Trivy's JSON as the record**
+(`trivy-<svc>.json`), takes its counts from that, and renders the table
+from the same JSON for reading. `trivy-<svc>.err` keeps whatever Trivy
+printed to stderr.
+
+**The last row moved with no deploy.** The images are the ones scanned on
+10-27; the advisory database changed. Overnight, CVE-2026-111497 (an
+out-of-bounds write in the Brotli decoder) went from HIGH to CRITICAL. It
+sits in both images, through a system library:
+- backend: Debian's `libbrotli1`, fixed in `1.1.0-2+deb13u1`;
+- nginx: Alpine's `brotli-libs`, fixed in `1.2.1-r0`.
+
+Neither build takes the fix, because neither base image is re-pulled
+(item R, input 2). Whether anything reachable decodes Brotli through
+them has not been examined.
 
 2026-10-27's scans are byte-identical to the previous day's, under new
 image IDs (the application layers changed): one day, no new advisory and
 no changed package.
 
 The same day's Q.0 deploy shows the backend down 7 rows, 5 advisories and
-1 CRITICAL, with nginx unchanged. It is the first downward step in this
+1 CRITICAL, with nginx unchanged. (Re-derived: down 6 findings, 5
+advisories and **3** CRITICAL, 314 / 4 to 308 / 1.) It is the first downward step in this
 table, and the first record whose image IDs come from the fixed lookup
 (#62). #64's deploy, the same evening, scanned byte-identical to Q.0's.
 
@@ -12297,11 +12347,10 @@ of drift beside the two below (new advisories, a changed base layer),
 and digest pinning under item R does not freeze it. It is recorded here,
 not acted on.
 
-**How to read the C column.** It counts table rows that print CRITICAL.
-Trivy's table merges a severity cell down the rows below it, so the
-column undercounts. Trivy's own totals (the `Total:` line per target)
-are the authoritative figure: 4 CRITICAL at `9fa9d0e` (1 Debian, 3
-Python), 1 at `7d81b4a` and `07bc630`.
+**How to read the C column:** it was a count of rendered rows, and
+undercounted. The table above is now re-derived from Trivy's totals: 4
+CRITICAL at `9fa9d0e` (1 Debian, 3 Python), 1 at `7d81b4a` and
+`07bc630`.
 
 **The one CRITICAL left (asked 2026-10-28): an OS package with no
 reachable path. Not the base image's, though; our own apt line adds it.**
@@ -12347,7 +12396,8 @@ reachable path. Not the base image's, though; our own apt line adds it.**
   SVG), or a wheel built against the system libxml2.
 
 In six days the nginx image went 181 → 231 rows (113 → 139 advisories),
-and the backend 296 → 308, with a **second CRITICAL**. Nobody has looked
+and the backend 296 → 308, with a **second CRITICAL**. (Re-derived:
+nginx 181 → 232 findings, backend 303 → 314, and CRITICAL 1 → **4**.) Nobody has looked
 at which. (Answered 2026-10-28, above: it was in the Python packages
 and went with them. The Debian one is `libxml2`, unreachable.) A count also mixes two causes the record does not separate:
 new advisories published against the same packages, and a changed image
