@@ -5922,6 +5922,99 @@ expected.**
 
 ---
 
+### Python dependencies come from a lock file, first locked at what live runs ✅ DONE (2026-10-28, bench-verified; branch `python-lock`)
+
+**Why, and why first.** `pyproject.toml` declares floors only
+(`fastapi>=0.118`) and nothing pinned the rest. So every build installed
+the newest release of every package, and a deploy carried whatever was
+published since the last one. The 2026-10-27 deploys took `anthropic`
+1.15 → 2.3, a major version, and `fastapi` 0.146 → 0.162, with nothing in
+the repo naming either. They were found by diffing two scans' package
+lists (the scan item). Jarrod's bar: a build of commit X installs the
+same versions in six months as today, and changing a version is a commit
+someone can read. This landed before anything else.
+
+**The record of what was running.**
+`docs/records/live-python-packages-2026-10-28.txt` is `pip freeze --all`
+from live's backend at `07bc630`, with the worker's identical: 85
+packages and the app. Nothing like it existed before. The first lock is
+that set.
+
+**The tool: `uv pip compile`, producing a pip requirements file with
+hashes.**
+- **Least ceremony where it is installed.** The Dockerfile and both CI
+  jobs keep using plain `pip`, with `-r requirements.lock`. No new tool
+  enters the image or CI's install path, and an air-gapped site can
+  mirror the file with `pip download -r`.
+- **Why not `uv.lock`:** it needs uv to install (`uv sync`), in the image
+  and in CI.
+- **Why not `poetry.lock`:** it needs Poetry to install, and moves
+  packaging off hatchling.
+- **Why uv rather than pip-tools to generate it:** `--universal` resolves
+  for every platform in one file. Linux gets exactly live's set, and the
+  Windows dev box gets the same versions plus `colorama` and `tzdata`
+  behind markers. pip-tools resolves for the machine it runs on.
+- **Pinned, run in a container:** uv 0.13.6, in `make lock`, which runs
+  it in `python:3.13-slim`.
+
+**What changed:**
+- **`backend/requirements.lock`:** 95 entries, every file's hash:
+  - live's 85;
+  - the five build tools and pip (below);
+  - four entries for other platforms, behind markers (`colorama`,
+    `tzdata`, `brotlicffi`, `httpx2-jsfetch`).
+- **`pyproject.toml`:** a `build` dependency group (`hatchling`,
+  `editables`, `pip`), so the build backend and the installer are locked
+  like everything else.
+- **`backend/Dockerfile`:** `pip install --no-deps -r requirements.lock`,
+  then the package with `--no-deps --no-build-isolation`, then `pip
+  check`. `pip install --upgrade pip` is gone; pip comes from the lock.
+- **CI, both jobs:** the same install. The `backend` job gains `Lock is
+  current`, which re-resolves with the committed lock as its starting
+  point and fails with the diff if `pyproject.toml` asks for what the
+  lock lacks.
+- **`make lock`:** re-resolves without moving any pin it need not.
+  `UPGRADE="--upgrade-package X"` moves one.
+- **Docs:** `docs/deployment.md`'s new "Python dependencies" section,
+  CLAUDE.md, CONTRIBUTING and README.
+
+**Verified on the bench** (`wingrc_verify_20261028lock`, built from the
+branch on wl-util-1):
+- **Packages:** `pip freeze --all` of the locked image against live's
+  differs only by the five build tools (`editables`, `hatchling`,
+  `pathspec`, `tomlkit`, `trove-classifiers`). Every runtime version is
+  live's.
+- **Scan:** Trivy JSON of the locked image and of live's, same database,
+  same day: 303 Debian and 8 Python findings each, the same two
+  CRITICALs (`libbrotli1`, `libxml2`).
+- **Tests and lint:** full suite in one process, 1899 passed; ruff clean.
+- **The checks fail when they should:**
+  - `Lock is current`: unchanged, exit 0. With `tomli>=2.0` added to
+    `pyproject.toml`, exit 1, showing `+tomli==2.5.0`.
+  - `pip check` after installing that `pyproject.toml` over the lock:
+    "wingrc-backend 0.1.0 requires tomli, which is not installed", exit 1.
+  - CI's editable install: succeeds, `wingrc` is on `PATH`, and `app`
+    imports from outside the checkout.
+
+**The bench caught two things on the way.**
+- **The editable install failed.** Hatchling's editable build needs
+  `editables`, which build isolation had been fetching unseen. It
+  surfaced only once nothing was fetched. My first run piped the install
+  through `tail -1` and showed only a "hint" line, the 26th's pattern
+  again. Rerun without the pipe, the error was plain.
+- **Dropping `--upgrade pip` added a CRITICAL live does not have.** The
+  base image's pip 26.2.1 vendors a `certifi` carrying the compromised
+  emSign roots (GHSA-6q48-6c7w-9gw2). Live runs 26.2.2, because of the
+  upgrade. So pip is in the lock at 26.2.2, not left to the base.
+
+**Deploying it changes no runtime version.** The image gains the five
+build tools, and `pip freeze` still prints the stale `pip==26.2.1` line
+the record explains.
+
+**What it does not freeze:** the base image, the apt line's Debian
+packages, npm, and CI's own `setup-python`. Item R, revised the same
+day, says which of these R covers.
+
 ### Q.0: a deliberate dashboard grid, and the engineer's environment view ✅ DONE (2026-10-27, bench-verified; endpoint, widgets, grid; no migration; deployed 2026-10-27)
 
 The first slice of item **Q**. It builds the deliberate default grid,
@@ -11781,6 +11874,38 @@ as a conflict, never overwritten by a workbook).
 
 ### R. Deploy the image CI scanned, not an equivalent one (registry)
 
+**What R delivers, and what it does not (revised 2026-10-28).** R is the
+*identity* half: the image serving requests is the one CI built and
+scanned, pulled by digest. That holds whatever the build's inputs did,
+because nothing is rebuilt on the host. R does **not** make a build
+*reproducible*. A commit built again later, or the next commit built at
+all, takes each input as it is that day. There are four inputs, and R
+pins none of them:
+1. **Python packages.** Frozen by `backend/requirements.lock` since
+   2026-10-28, the entry above. This is the other half of what R's
+   title promises, and it is done.
+2. **The base images** are floating tags: `python:3.13-slim`,
+   `nginx:1.29-alpine`, and `node:24-alpine`, which builds the
+   frontend. On wl-util-1 the cached `python:3.13-slim` dates from
+   2026-09-19 and is re-pulled only when the cache misses. So Debian
+   fixes since then (`libbrotli1`'s, for one) do not arrive, and they
+   would arrive unannounced if it were re-pulled. The fix is `FROM …@sha256:`
+   in each Dockerfile, moved deliberately. Not done.
+3. **Debian packages** from the backend's `apt-get install` line resolve
+   against the live archive at build time. Freezing them
+   needs a snapshot archive (`snapshot.debian.org`) or a vendored mirror.
+   Not done, and the heaviest of the four.
+4. **npm.** The frontend has no `package-lock.json`, so nginx's image
+   resolves at build time. The open decision is in
+   `docs/bench-stack-verification.md`. Not done.
+
+R as written was read as covering more than (1). The scan item said
+that "after R a count could only rise from new advisories". It cannot
+while (2) to (4) float, and it could not while (1) did; that sentence is
+corrected there. So R stays the registry and identity item. "A build of
+commit X is the same in six months" is the lock plus (2) to (4), each
+its own act.
+
 **State (2026-10-09):**
 
 - Live runs images built on the host from one pinned commit
@@ -11792,7 +11917,9 @@ as a conflict, never overwritten by a workbook).
   It never builds nginx.
 - The artifact serving requests is therefore *equivalent* to the one CI
   scanned (same commit, same Dockerfile) but not *identical*. Dependencies
-  resolve at build time, and nginx's `npm install` has no lockfile. CI's
+  resolve at build time, and nginx's `npm install` has no lockfile.
+  (Python's no longer resolve at build time, since 2026-10-28's lock.
+  The base image, apt and npm still do; see above.) CI's
   scan result does not attach to anything that runs.
 
 **The fix:** CI pushes both images to a registry, tagged by commit, and
@@ -12303,7 +12430,12 @@ finding is fixed here.**
   of item R, not a dependent. R is about deploying the identical image CI
   scanned, by digest from a registry. Pinning by digest *freezes* the
   base layer, so after R a count could only rise from new advisories,
-  and moving to a newer base would become a deliberate act. Today
+  and moving to a newer base would become a deliberate act.
+  *Corrected 2026-10-28:* R pins the deployed image, not the
+  Dockerfile's base. Each new build still takes the base tag, the apt
+  archive and, until that day's lock, the Python packages as they then
+  were. So after R a count can still move with every build. Item R now
+  says which input each fix freezes. Today
   `nginx:1.29-alpine` and the backend's base are floating tags, re-pulled
   whenever a build misses the cache. Which of the 10-20 to 10-26 rise
   came from a changed base and which from new advisories is the first
