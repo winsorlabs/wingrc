@@ -110,7 +110,8 @@ docker compose restart backend
 ### Running without Docker (local Postgres)
 ```bash
 cd backend
-pip install -e ".[dev]"
+pip install --no-deps -r requirements.lock   # the versions CI and the image use
+pip install --no-deps --no-build-isolation -e ".[dev,ai]"
 export WINGRC_DATABASE_URL=postgresql+psycopg://wingrc:wingrc@localhost:5432/wingrc
 alembic upgrade head
 uvicorn app.main:app --reload

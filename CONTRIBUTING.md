@@ -16,7 +16,7 @@ cp .env.example .env
 cp docker-compose.override.yml.example docker-compose.override.yml   # once
 docker compose up --build         # full stack, live-reloading frontend
 # or backend only:
-cd backend && pip install -e ".[dev]" && pytest -q && ruff check .
+cd backend && pip install --no-deps -r requirements.lock && pip install --no-deps --no-build-isolation -e ".[dev,ai]" && pytest -q && ruff check .
 ```
 
 `docker-compose.override.yml` (gitignored, auto-loaded by `docker compose up`
