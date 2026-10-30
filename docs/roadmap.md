@@ -5930,6 +5930,11 @@ endpoint. **Not built, and still item Q's:** drag-and-drop, per-user layout
 persistence, a widget registry, a grid library. Q's entry below stands for
 those.
 
+**Built from Jarrod's 2026-10-27 drawing,**
+[`docs/dashboard-q0-reconstruction-2026-10-27.png`](dashboard-q0-reconstruction-2026-10-27.png).
+It is a reconstruction from memory; the original sketch is lost (item Q
+below).
+
 **Two views, one screen.** Dashboard opens on one of two views, each one
 click from the other:
 - the **assessment view**: G.3's widgets on a grid;
@@ -11471,6 +11476,22 @@ recent activity as a strip along the bottom.
 memory, so there are two records, and they are a union, not a contest:
 - the paragraph above is the better record of the original;
 - the drawing below is the better record of what he wants now.
+
+**The drawing is
+[`docs/dashboard-q0-reconstruction-2026-10-27.png`](dashboard-q0-reconstruction-2026-10-27.png)**
+(committed 2026-10-30). Read it with three facts in mind:
+- **It is a reconstruction from memory, not the original sketch.**
+- **It was drawn on 2026-10-27.** The file itself was saved 2026-10-30.
+  It is a screenshot of the drawing open in its editor: a selection
+  handle shows on the tasks scrollbar. It matches the table below
+  region for region. That it is unchanged since 2026-10-27 rests on
+  Jarrod's word.
+- **The original image is lost.** Only the 2026-09-28 paragraph above
+  describes it.
+
+Compare the built screen against the drawing; the table is a
+description of it. The drawing's list titles say "Active"; the built
+lists say "in boundary", and the Q.0 entry says why.
 
 **The reconstruction**, which Q.0 built:
 
