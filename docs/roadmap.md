@@ -12836,6 +12836,21 @@ would be lost: `.scratch/`, `Claude outputs/`, `cleanup_yaml.py`,
 would a raw `wingrc_` API token in `.scratch/hit_live_endpoint.py`,
 which needs revoking whether or not a clone happens.
 
+**`.claude/settings.local.json` is the one loss that stops a protection
+without a word (Jarrod, 2026-10-30).** It registers the Bash-tool
+pipefail hook (CLAUDE.md, the pipefail bullet). The script is tracked,
+`.claude/hooks/strict_bash.py`, so a clone carries it; the registration
+is machine-specific and lost. Jarrod's global git ignore covers the
+file, so `git status` does not list it among the untracked files. A
+missing hook looks exactly like a working one until a pipe hides a
+failure, which is the failure the hook exists to catch. After the
+clone:
+1. re-add the registration, whose block is in the script's docstring;
+2. run `false | cat` in Claude's Bash tool and confirm it exits 1.
+
+That check is also in CLAUDE.md, at the start of every session, because
+CLAUDE.md is what a clone carries.
+
 ### X. Publishing a document attaches it as evidence unchosen -- a hard-rule violation, live ✅ BUILT (2026-10-18)
 
 **Built as the Done entry "Item X: a published document is offered, and a

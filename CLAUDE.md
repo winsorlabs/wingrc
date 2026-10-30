@@ -315,10 +315,24 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   result, not the status.
 
   **For Claude's Bash tool on wl-dt26, a hook catches the pipe half and
-  not the chain half (2026-10-30).** It is local, not in this repo:
-  `~/.claude/hooks/strict_bash.py`, registered in this checkout's
-  `.claude/settings.local.json`. It rewrites every command to start with
-  `set -o pipefail`.
+  not the chain half (2026-10-30).** It rewrites every command to start
+  with `set -o pipefail`.
+  - **The script is tracked; what turns it on is not.** The script is
+    `.claude/hooks/strict_bash.py`, reviewed like any code. The
+    registration lives in the checkout's `.claude/settings.local.json`,
+    which is machine-specific (`py -3`, an absolute path). Jarrod's global
+    git ignore covers that file, so `git status` does not list it. A fresh
+    clone keeps the script and loses the hook without a word. **So at the
+    start of a session, run `false | cat`: it must exit 1.** Exit 0 means
+    the hook is off. The registration block is in the script's docstring,
+    and the clone checklist is in `docs/roadmap.md`'s item on the git
+    repack failure.
+  - **Until this is on `main`, the registration points at an identical
+    copy in `~/.claude/hooks/`.** On a branch without the file, `py` exits
+    2 (measured), and the hooks documentation says a PreToolUse exit of 2
+    blocks the call, so every Bash command would be refused. Once every
+    branch has it, point the registration at the tracked file. A branch
+    from before then fails loudly, not silently.
   - **Pipes: caught.** `false | cat` now ends with exit 1, which the tool
     reports as a failure.
   - **`;` chains: not caught, and no prefix can catch them.** The tool
@@ -328,15 +342,20 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
     rules would then match the outer `bash -c '…'` text, so it was not
     built. The chain that pushed conflict markers stays a recognition
     problem.
-  - **Permission rules, measured:** temporary deny rules (a prefix
-    rule, an exact rule, and one inside a `;` compound) denied the same
-    commands before and after the rewrite. The denial message quotes
-    the rewritten text, so rules see what runs, and the added line does
-    not hide the denied step. Not measured:
-    - `ask` rules, since a probe would have stopped the session at a
-      prompt;
-    - whether `allow` rules still match. In auto mode a miss goes to the
-      classifier, so it cannot be seen from here.
+  - **Permission rules: deny, the case that matters, was measured.**
+    Temporary deny rules (a prefix rule, an exact rule, and one inside a
+    `;` compound) denied the same commands before and after the rewrite.
+    The denial message quotes the rewritten text, so rules see what runs,
+    and the added line does not hide the denied step. The two unmeasured
+    cases point the safe way, or do not arise:
+    - **`allow`:** a rule that stopped matching sends the command to the
+      auto-mode classifier, or to a prompt outside auto mode. That is
+      more scrutiny, not less.
+    - **`ask`:** this is the one direction that would mean less
+      scrutiny. But no `ask` rule is configured. On 2026-10-30 there was
+      none in `~/.claude/settings.json`, `~/.claude/settings.local.json`
+      or this checkout's. `ask` goes through the same matching the deny
+      probes measured. Measure one before adding the first `ask` rule.
   - **The hook never returns a permission decision.** A hook that
     returns `"allow"` with its rewrite skips every permission check.
     That is the shape the documentation's example shows.
@@ -349,12 +368,15 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
     - the PowerShell tool;
     - a command that prints an error and exits 0.
 
-  **CI is not a gate against conflict markers in prose.** On the
-  marker commit (`6bd3d5a`), `backend` ran its lock check, ruff and the
-  full no-database suite, and passed. Nothing in CI reads
-  `docs/roadmap.md`, and nothing checks for markers. That run was later
-  cancelled, superseded by the fix, so it left no failure behind to
-  notice. Markers in a `.py` file would fail ruff's parse.
+  **CI was no gate against conflict markers in prose until #69.** On
+  the marker commit (`6bd3d5a`), `backend` ran its lock check, ruff and
+  the full no-database suite, and passed. Nothing in CI reads
+  `docs/roadmap.md`. That run was later cancelled, superseded by the
+  fix, so it left no failure behind to notice. #69 adds a `backend` step
+  that greps every tracked file. It passes only on `git grep`'s no-match
+  exit, so an erroring grep fails. A planted marker was shown to fail it.
+  Every file, not only prose: markers in a `.py` file should fail ruff's
+  parse, but "should" was never measured.
 - **Landing a slice, in order: bench-verify → open a PR → *watch CI go
   green* → merge → deploy → report.** The CI step is not optional and not
   "check later". Six consecutive red runs on `main` went unnoticed
