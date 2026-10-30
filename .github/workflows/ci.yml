@@ -53,6 +53,16 @@ jobs:
       WINGRC_MIN_TESTS_RUN: "200"
     steps:
       - uses: actions/checkout@v7
+      # Every tracked file, prose included: docs/roadmap.md is the record the
+      # code is cited against and nothing else reads it (6bd3d5a passed lint
+      # and tests with markers in it). Exit 1 is git grep's "no match"; a
+      # match (0) or an error (2, or 128 outside a repo) fails, so the check
+      # cannot pass by erroring.
+      - name: No conflict markers
+        run: |
+          set +e
+          git grep -nIE '^(<{7}|[|]{7}|>{7})( |$)'
+          test $? -eq 1
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
