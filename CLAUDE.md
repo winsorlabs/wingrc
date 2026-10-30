@@ -322,11 +322,20 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
     registration lives in the checkout's `.claude/settings.local.json`,
     which is machine-specific (`py -3`, an absolute path). Jarrod's global
     git ignore covers that file, so `git status` does not list it. A fresh
-    clone keeps the script and loses the hook without a word. **So at the
-    start of a session, run `false | cat`: it must exit 1.** Exit 0 means
-    the hook is off. The registration block is in the script's docstring,
-    and the clone checklist is in `docs/roadmap.md`'s item on the git
-    repack failure.
+    clone keeps the script and loses the hook without a word. The
+    registration block is in the script's docstring, and the clone
+    checklist is in `docs/roadmap.md`'s item on the git repack failure.
+  - **Claude: your first Bash call in every session is `false | cat`,
+    and it must exit 1.** That includes a session resumed from a summary.
+    Run it before any other command, because the failure it catches is
+    silent and anything run first has already depended on the hook. This
+    is Claude's job, not Jarrod's: Claude reads this file at the start of
+    every session, and a check left to memory gets skipped. If it exits
+    0, or the Bash tool refuses or errors, **stop and report it to
+    Jarrod before any other work**, with the result as it came back. It
+    is not a note to add to the report. Do not re-register the hook
+    yourself: settings that change what runs on every command are
+    Jarrod's to restore.
   - **Until this is on `main`, the registration points at an identical
     copy in `~/.claude/hooks/`.** On a branch without the file, `py` exits
     2 (measured), and the hooks documentation says a PreToolUse exit of 2
