@@ -336,6 +336,21 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
     is not a note to add to the report. Do not re-register the hook
     yourself: settings that change what runs on every command are
     Jarrod's to restore.
+  - **The general rule: a check that repairs what it checks reports
+    success either way.** If the check could quietly re-register the
+    hook, a lost hook and a working one would look the same, and nobody
+    would learn the clone dropped it. Report, then let the owner fix it.
+    This is the product invariant "a check must actually check", seen
+    from the other side.
+  - **There is no tracked `.claude/settings.json`, and none will be
+    added to automate this check (Jarrod, 2026-10-30).** A tracked
+    session-start hook would survive a clone and run the check without
+    anyone remembering. But the repo is public. A settings file that runs
+    commands when a session starts executes repo-controlled code in
+    every cloner's environment. The check itself is harmless; the
+    precedent is what is declined. Do not re-propose it as an obvious
+    improvement. Machine-specific registration stays in
+    `settings.local.json`, and the check stays Claude's first call.
   - **Until this is on `main`, the registration points at an identical
     copy in `~/.claude/hooks/`.** On a branch without the file, `py` exits
     2 (measured), and the hooks documentation says a PreToolUse exit of 2
