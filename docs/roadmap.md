@@ -11948,9 +11948,7 @@ security fixes reach live?" With the lock in place, the answer is
   when `python:3.13-slim` is re-pulled, by the same cache behaviour.
 - **nginx has no apt line.** Its OS fixes come only from re-pulling
   `nginx:1.29-alpine`.
-- **npm, (4), also sits in the cache.** It reaches live as built
-  JavaScript that no scan reads, so it is a reproducibility hole, not
-  this one.
+- npm, (4), is a different kind of gap, recorded on its own below.
 
 **Two options. They trade the same thing in opposite directions.**
 - **Pin, so that updating is an act.**
@@ -11984,6 +11982,29 @@ security fixes reach live?" With the lock in place, the answer is
   scan item's finding: a signal nobody reads.
 
 Not built.
+
+**The frontend's dependency tree is unexamined (Jarrod, 2026-10-30).**
+This is a different kind of gap from the apt one, and not urgent at
+three tenants.
+- **Not under-counted: never examined.** The Trivy figures were
+  under-counted. This tree is not counted at all, wrongly or otherwise.
+- **The shipped JavaScript carries the packages but not their names.**
+  `deploy/nginx/Dockerfile` runs `npm install` in a `node:24-alpine`
+  build stage, and the final image copies only the built `dist/`. That
+  output carries the packages' code with no `package.json` or lock beside
+  it, so nothing in the image says which packages or versions it holds.
+- **No scan reaches it.**
+  - Trivy scans the final image, where nothing is left to identify.
+  - The build stage is discarded unscanned.
+  - CI's `image` job builds only the backend.
+- **There is nothing to audit against.** With no `package-lock.json`,
+  `npm audit` has no fixed tree, and every build resolves afresh, cached
+  only until `package.json` changes.
+- **Its own item, not a line in the apt decision.** A fix would need:
+  - a committed lock (the open decision in
+    `docs/bench-stack-verification.md`);
+  - a scan of the lock, or of the build stage, kept with the deploy
+    record.
 
 R as written was read as covering more than (1). The scan item said
 that "after R a count could only rise from new advisories". It cannot
