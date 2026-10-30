@@ -7646,6 +7646,27 @@ AC.L2-3.1.1[a], *CMMC L2 Assessment 2026-09-16*) and one archived
 
 ---
 
+### Observation: a walk list kept only in a message (2026-10-30)
+
+**What happened.** #64's deploy report gave Jarrod three live clicks,
+with the text each should show. They were never walked: #64 went live
+on `07bc630` on 2026-10-27. The list existed only in that message.
+Three days later, after a context summary, Claude could not find it by
+searching the saved transcript. It offered to restate three clicks
+after the next deploy and ask Jarrod to check them. That would have been
+a reconstruction from memory, standing in for the record. Jarrod
+supplied the list verbatim from the report. It is now in #68's PR body.
+
+**The search not finding it is the finding.** A summary keeps
+conclusions and drops the detail a later step needs. Nothing showed the
+list was gone until it was needed. A reconstruction would have looked
+the same as the original, and nobody could have told them apart
+afterwards: the same failure as the lost dashboard mockup.
+
+**The rule (CLAUDE.md, "Landing a slice"):** a walk list goes in the PR
+body. Until it is walked, it is carried forward in the next deploying
+PR.
+
 ### Lesson: a record that rested on a side effect (item X, migration 0069)
 
 A document version's "what was this approved for" was never stored. It was

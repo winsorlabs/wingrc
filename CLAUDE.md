@@ -407,6 +407,12 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   (2026-09-28/29) purely because nobody looked; the signal existed the
   whole time. A slice is not done until `backend` and `integration` have
   both actually **run** and passed — a skipped job is not a passed job.
+  **The live walk (clicks and the text each should show) goes in the PR
+  body, not only in a message.** Messages are what a context summary
+  drops. A walk kept only there gets reconstructed from memory later,
+  and nobody can tell the reconstruction from the record. Until a walk is
+  done, carry it forward in the next deploying PR (`docs/roadmap.md`'s
+  "a walk list kept only in a message").
 - **`main` is protected (since 2026-09-29): the merge path is a PR, not a
   fast-forward push.** The repository ruleset "Branch Protection" requires
   **`backend`, `integration` and `image`** (read from the API on
