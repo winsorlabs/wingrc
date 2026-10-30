@@ -276,17 +276,143 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   after the pull said which commit was running; `/health` now does, per
   component. A bench clone is a branch checkout, where a pull is fine
   (`docs/bench-stack-verification.md`).
-  - **A deploy that changes `deploy.sh` runs the old one.** Bash keeps
-    reading the file it opened, and the checkout writes a new one. When
-    `deploy/deploy.sh` differs between `HEAD` and the target, run
-    `git checkout --detach origin/main` first, then `deploy.sh`
-    (`docs/deployment.md`, 7c; 2026-10-27).
+  - **A deploy that changes `deploy.sh` runs the target's copy.** Bash
+    keeps reading the file it opened, and the checkout writes a new one.
+    Since 2026-10-28 `deploy.sh` compares its own blob with the
+    target's and, when they differ, checks out and `exec`s the target's,
+    once. That works only from a running copy that has the check, so
+    the hand checkout first (`git checkout --detach origin/main`, then
+    `deploy.sh`) is still needed when the copy on the host predates it
+    (`docs/deployment.md`, 7c).
+- **A pipe whose status is read must not report the last command's
+  status in place of a failure.** On 2026-10-26 a failed `git pull`
+  read as success through `| tail`. A new bash script starts
+  `set -euo pipefail`, as `deploy.sh` and `tls/renew.sh` do. Two
+  exceptions are deliberate:
+  - `tls/check-expiry.sh` drops `-e`, so that every name is reported.
+  - `tls/auth-hook.sh` is POSIX `sh` with no pipefail, because its wait
+    loop reads `grep -q`'s status by intent.
+
+  A pipe ending in `grep -q` can SIGPIPE its writer, which pipefail
+  reads as a failure. It is safe in `deploy.sh`'s wait loop only
+  because `/health`'s body is far under the 64 KiB pipe buffer. A CI
+  `run:` step that pipes needs `shell: bash`: GitHub's default runs
+  `bash -e` without pipefail, and naming `bash` adds it. At a terminal,
+  check the result itself (`git rev-parse HEAD`, `git ls-remote`,
+  `/health`), never the exit status a `| tail` shows. The full sweep
+  of every pipe is `docs/roadmap.md`'s "Pipes whose status could hide a
+  failure".
+
+  **This convention reaches committed scripts and CI steps, not commands
+  typed while investigating.** That is where every instance has been:
+  - 2026-10-26's `git pull`;
+  - two more by 2026-10-28, one the editable install hidden behind
+    `| tail -1` the same day this bullet was written;
+  - on 2026-10-29, a chain of commands joined with `;`, whose first step
+    failed. The rest committed and pushed conflict markers.
+
+  For a person at a terminal it stays a recognition problem: read the
+  result, not the status.
+
+  **For Claude's Bash tool on wl-dt26, a hook catches the pipe half and
+  not the chain half (2026-10-30).** It rewrites every command to start
+  with `set -o pipefail`.
+  - **The script is tracked; what turns it on is not.** The script is
+    `.claude/hooks/strict_bash.py`, reviewed like any code. The
+    registration lives in the checkout's `.claude/settings.local.json`,
+    which is machine-specific (`py -3`, an absolute path). Jarrod's global
+    git ignore covers that file, so `git status` does not list it. A fresh
+    clone keeps the script and loses the hook without a word. The
+    registration block is in the script's docstring, and the clone
+    checklist is in `docs/roadmap.md`'s item on the git repack failure.
+  - **Claude: your first Bash call in every session is `false | cat`,
+    and it must exit 1.** That includes a session resumed from a summary.
+    Run it before any other command, because the failure it catches is
+    silent and anything run first has already depended on the hook. This
+    is Claude's job, not Jarrod's: Claude reads this file at the start of
+    every session, and a check left to memory gets skipped. If it exits
+    0, or the Bash tool refuses or errors, **stop and report it to
+    Jarrod before any other work**, with the result as it came back. It
+    is not a note to add to the report. Do not re-register the hook
+    yourself: settings that change what runs on every command are
+    Jarrod's to restore.
+  - **The general rule: a check that repairs what it checks reports
+    success either way.** If the check could quietly re-register the
+    hook, a lost hook and a working one would look the same, and nobody
+    would learn the clone dropped it. Report, then let the owner fix it.
+    This is the product invariant "a check must actually check", seen
+    from the other side.
+  - **There is no tracked `.claude/settings.json`, and none will be
+    added to automate this check (Jarrod, 2026-10-30).** A tracked
+    session-start hook would survive a clone and run the check without
+    anyone remembering. But the repo is public. A settings file that runs
+    commands when a session starts executes repo-controlled code in
+    every cloner's environment. The check itself is harmless; the
+    precedent is what is declined. Do not re-propose it as an obvious
+    improvement. Machine-specific registration stays in
+    `settings.local.json`, and the check stays Claude's first call.
+  - **Until this is on `main`, the registration points at an identical
+    copy in `~/.claude/hooks/`.** On a branch without the file, `py` exits
+    2 (measured), and the hooks documentation says a PreToolUse exit of 2
+    blocks the call, so every Bash command would be refused. Once every
+    branch has it, point the registration at the tracked file. A branch
+    from before then fails loudly, not silently.
+  - **Pipes: caught.** `false | cat` now ends with exit 1, which the tool
+    reports as a failure.
+  - **`;` chains: not caught, and no prefix can catch them.** The tool
+    runs each command where bash ignores `set -e` and the ERR trap. With
+    both set and showing as on, a bare `false` still did not stop the
+    chain. A fresh `bash -c` process would escape that, but permission
+    rules would then match the outer `bash -c '…'` text, so it was not
+    built. The chain that pushed conflict markers stays a recognition
+    problem.
+  - **Permission rules: deny, the case that matters, was measured.**
+    Temporary deny rules (a prefix rule, an exact rule, and one inside a
+    `;` compound) denied the same commands before and after the rewrite.
+    The denial message quotes the rewritten text, so rules see what runs,
+    and the added line does not hide the denied step. The two unmeasured
+    cases point the safe way, or do not arise:
+    - **`allow`:** a rule that stopped matching sends the command to the
+      auto-mode classifier, or to a prompt outside auto mode. That is
+      more scrutiny, not less.
+    - **`ask`:** this is the one direction that would mean less
+      scrutiny. But no `ask` rule is configured. On 2026-10-30 there was
+      none in `~/.claude/settings.json`, `~/.claude/settings.local.json`
+      or this checkout's. `ask` goes through the same matching the deny
+      probes measured. Measure one before adding the first `ask` rule.
+  - **The hook never returns a permission decision.** A hook that
+    returns `"allow"` with its rewrite skips every permission check.
+    That is the shape the documentation's example shows.
+  - **Escape hatches:**
+    - `… | head || true` for a pipe whose first stage may fail;
+    - `#strict-off` as a command's first line leaves it untouched;
+    - a command already starting with `set -` is left as written.
+  - **Out of reach:**
+    - pipes inside a quoted remote command (`ssh host '… | tail'`);
+    - the PowerShell tool;
+    - a command that prints an error and exits 0.
+
+  **CI was no gate against conflict markers in prose until #69.** On
+  the marker commit (`6bd3d5a`), `backend` ran its lock check, ruff and
+  the full no-database suite, and passed. Nothing in CI reads
+  `docs/roadmap.md`. That run was later cancelled, superseded by the
+  fix, so it left no failure behind to notice. #69 adds a `backend` step
+  that greps every tracked file. It passes only on `git grep`'s no-match
+  exit, so an erroring grep fails. A planted marker was shown to fail it.
+  Every file, not only prose: markers in a `.py` file should fail ruff's
+  parse, but "should" was never measured.
 - **Landing a slice, in order: bench-verify → open a PR → *watch CI go
   green* → merge → deploy → report.** The CI step is not optional and not
   "check later". Six consecutive red runs on `main` went unnoticed
   (2026-09-28/29) purely because nobody looked; the signal existed the
   whole time. A slice is not done until `backend` and `integration` have
   both actually **run** and passed — a skipped job is not a passed job.
+  **The live walk (clicks and the text each should show) goes in the PR
+  body, not only in a message.** Messages are what a context summary
+  drops. A walk kept only there gets reconstructed from memory later,
+  and nobody can tell the reconstruction from the record. Until a walk is
+  done, carry it forward in the next deploying PR (`docs/roadmap.md`'s
+  "a walk list kept only in a message").
 - **`main` is protected (since 2026-09-29): the merge path is a PR, not a
   fast-forward push.** The repository ruleset "Branch Protection" requires
   **`backend`, `integration` and `image`** (read from the API on

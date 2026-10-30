@@ -201,13 +201,25 @@ nginx` with that commit stamped in as `WINGRC_BUILD_SHA`, recreates them with
 `status: ok` **and** that commit for the backend. A deploy is done when
 `/health` names the commit you meant to ship, not when the commands exit.
 
-**When the merge being deployed changes `deploy.sh` itself, check it out
-first.** Bash reads a script while it runs, from the file it opened. Git
-writes a new file at the checkout, so the run that does the checkout
-finishes with the *old* script's steps. On 2026-10-27 that would have been
-a wait loop checking a `/health` field the new code had removed: "did not
-become healthy" after five minutes, exit 1 and no record, after a deploy
-that had succeeded. So, after `git fetch origin`, when `git diff HEAD origin/main -- deploy/deploy.sh`
+**When the merge being deployed changes `deploy.sh` itself, the target's
+copy has to be the one that runs.** Bash reads a script while it runs,
+from the file it opened. Git writes a new file at the checkout, so the run
+that does the checkout would finish with the *old* script's steps. On
+2026-10-27 that would have been a wait loop checking a `/health` field the
+new code had removed: "did not become healthy" after five minutes, exit 1
+and no record, after a deploy that had succeeded.
+
+Since 2026-10-28, `deploy.sh` handles this itself. Before its checkout it
+compares its own blob (`HEAD:deploy/deploy.sh`, which is the running copy,
+because the tree is clean) with the target's. When they differ it checks
+out the target and `exec`s the target's `deploy.sh` with the same commit,
+printing `deploy.sh differs at <sha>; running that one`. It sets
+`WINGRC_DEPLOY_REEXEC=1` for that run. A run with that variable set that
+still finds a difference refuses, rather than looping.
+
+**This works only when the copy on the host has the check.** On a host
+whose checkout predates it, check out first by hand. After
+`git fetch origin`, when `git diff HEAD origin/main -- deploy/deploy.sh`
 is not empty:
 
 ```bash
