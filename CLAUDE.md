@@ -312,16 +312,49 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
     failed. The rest committed and pushed conflict markers.
 
   For a person at a terminal it stays a recognition problem: read the
-  result, not the status. For Claude's Bash tool, a mechanical catch
-  exists but is **not built**. A `PreToolUse` hook can rewrite each
-  command to start with `set -eo pipefail;`. Then a failed step stops
-  the chain, and a `| tail` reports the failure's status, which the tool
-  surfaces as a failure. It does not reach:
-  - pipes inside a quoted remote command (`ssh host '… | tail'`);
-  - the PowerShell tool;
-  - a command that prints an error and exits 0.
+  result, not the status.
 
-  It also changes the text that permission rules match.
+  **For Claude's Bash tool on wl-dt26, a hook catches the pipe half and
+  not the chain half (2026-10-30).** It is local, not in this repo:
+  `~/.claude/hooks/strict_bash.py`, registered in this checkout's
+  `.claude/settings.local.json`. It rewrites every command to start with
+  `set -o pipefail`.
+  - **Pipes: caught.** `false | cat` now ends with exit 1, which the tool
+    reports as a failure.
+  - **`;` chains: not caught, and no prefix can catch them.** The tool
+    runs each command where bash ignores `set -e` and the ERR trap. With
+    both set and showing as on, a bare `false` still did not stop the
+    chain. A fresh `bash -c` process would escape that, but permission
+    rules would then match the outer `bash -c '…'` text, so it was not
+    built. The chain that pushed conflict markers stays a recognition
+    problem.
+  - **Permission rules, measured:** temporary deny rules (a prefix
+    rule, an exact rule, and one inside a `;` compound) denied the same
+    commands before and after the rewrite. The denial message quotes
+    the rewritten text, so rules see what runs, and the added line does
+    not hide the denied step. Not measured:
+    - `ask` rules, since a probe would have stopped the session at a
+      prompt;
+    - whether `allow` rules still match. In auto mode a miss goes to the
+      classifier, so it cannot be seen from here.
+  - **The hook never returns a permission decision.** A hook that
+    returns `"allow"` with its rewrite skips every permission check.
+    That is the shape the documentation's example shows.
+  - **Escape hatches:**
+    - `… | head || true` for a pipe whose first stage may fail;
+    - `#strict-off` as a command's first line leaves it untouched;
+    - a command already starting with `set -` is left as written.
+  - **Out of reach:**
+    - pipes inside a quoted remote command (`ssh host '… | tail'`);
+    - the PowerShell tool;
+    - a command that prints an error and exits 0.
+
+  **CI is not a gate against conflict markers in prose.** On the
+  marker commit (`6bd3d5a`), `backend` ran its lock check, ruff and the
+  full no-database suite, and passed. Nothing in CI reads
+  `docs/roadmap.md`, and nothing checks for markers. That run was later
+  cancelled, superseded by the fix, so it left no failure behind to
+  notice. Markers in a `.py` file would fail ruff's parse.
 - **Landing a slice, in order: bench-verify → open a PR → *watch CI go
   green* → merge → deploy → report.** The CI step is not optional and not
   "check later". Six consecutive red runs on `main` went unnoticed
