@@ -161,12 +161,12 @@ jobs:
       # image — WeasyPrint (SSP PDF export) needs these as system packages, not
       # pure-Python wheels, so they must be installed here too. Keep this list in
       # sync with backend/Dockerfile's `base` stage.
-      - name: "Install system libraries (WeasyPrint: Pango/cairo/gdk-pixbuf)"
+      - name: "Install system libraries (WeasyPrint: Pango)"
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
-            libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 \
-            libffi8 shared-mime-info
+            libpango-1.0-0 libpangocairo-1.0-0 libcairo2 \
+            libffi8
       - name: Install
         working-directory: backend
         run: |

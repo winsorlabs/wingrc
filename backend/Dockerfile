@@ -1,14 +1,17 @@
 FROM python:3.13-slim AS base
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1
 WORKDIR /app
-# WeasyPrint (SSP PDF export, docs/pdf_ssp_template_spec.md) needs Pango/
-# cairo/gdk-pixbuf at import time — not pure-Python wheels, so they must be
-# system packages. Installed on `base` (not just `deps`) because `runtime`
-# is FROM base and only inherits the deps stage's Python site-packages/bin,
-# not its apt state.
+# WeasyPrint (SSP PDF export, docs/pdf_ssp_template_spec.md) needs Pango
+# at import time — not pure-Python wheels, so they must be system packages.
+# Installed on `base` (not just `deps`) because `runtime` is FROM base and
+# only inherits the deps stage's Python site-packages/bin, not its apt state.
+# No gdk-pixbuf, so no shared-mime-info (its hard dependency) and no
+# libxml2 (that one's): WeasyPrint 53+ decodes images with Pillow and never
+# loads gdk-pixbuf, and the image's CRITICAL libxml2 (CVE-2026-6653) came
+# in only through this line (docs/roadmap.md's scan item, 2026-10-28).
 RUN apt-get update && apt-get install --no-install-recommends -y \
-    libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 \
-    libffi8 shared-mime-info libpq5 \
+    libpango-1.0-0 libpangocairo-1.0-0 libcairo2 \
+    libffi8 libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
 # Source of a `pg_dump` binary that actually matches docker-compose.yml's

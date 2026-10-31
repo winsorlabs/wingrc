@@ -6015,6 +6015,58 @@ the record explains.
 packages, npm, and CI's own `setup-python`. Item R, revised the same
 day, says which of these R covers.
 
+### The image drops gdk-pixbuf, and with it the CRITICAL `libxml2` ✅ DONE (2026-10-28, bench-verified; branch `drop-gdk-pixbuf`, after the lock)
+
+**Asked:** can `shared-mime-info` go? The backend's one CRITICAL,
+`libxml2` (CVE-2026-6653, no Debian fix), came in through our own apt
+line, not the base image. Removing it would remove the finding rather
+than annotate it.
+
+**What needed it.** `shared-mime-info` alone could not go:
+`libgdk-pixbuf-2.0-0`, which the same line installs, hard-depends on it
+(`dpkg -s`). The question was whether anything needs gdk-pixbuf. Nothing
+does:
+- WeasyPrint 70 `dlopen`s gobject, pango, pangoft2, harfbuzz and
+  fontconfig (`weasyprint/text/ffi.py`). Since version 53 it decodes
+  images with Pillow, and it never loads gdk-pixbuf or cairo.
+- With WeasyPrint imported and rendering, the process maps no gdk-pixbuf,
+  no cairo and no Debian `libxml2`.
+- The apt line was written when WeasyPrint still needed them (the
+  Dockerfile comment said "Pango/cairo/gdk-pixbuf").
+
+`libglib2.0-0t64` only *recommends* `shared-mime-info`, which
+`--no-install-recommends` skips.
+
+**The change.** `libgdk-pixbuf-2.0-0` and `shared-mime-info` leave the
+backend Dockerfile's apt line and CI's `integration` job, which mirrors
+it. Eleven Debian packages go with them: `libxml2`, gdk-pixbuf and its
+common data, `libjpeg62-turbo`, `libtiff6`, `libwebp7`, `libjbig0`,
+`liblerc4`, `libdeflate0` and `libsharpyuv0`. `libcairo2` and
+`libpangocairo-1.0-0` are just as unused. They stay for now, because
+`libpangoft2`, which WeasyPrint does load, currently arrives through
+`libpangocairo`. Swapping them is its own change.
+
+**Verified on the bench**, as an image built from this branch on top of
+the lock:
+- **The packages are gone:** `dpkg -s libxml2 shared-mime-info
+  libgdk-pixbuf-2.0-0` reports each as not installed.
+- **PDFs are unchanged.** One page with PNG, JPEG, GIF, WebP and SVG
+  images and accented text was rendered in this image and in the lock's.
+  The text and every decoded image are identical, twice over. A plain
+  byte hash is useless here: WeasyPrint's bytes differ between two runs
+  on one image.
+- **Tests:** the full suite in one process, 1899 passed. That includes
+  the bundle's SSP PDF tests.
+- **Scan, Trivy JSON, against live:** Debian 303 → 263 findings, HIGH
+  65 → 51, CRITICAL 2 → 0. Python is unchanged at 8.
+
+**Not all of that drop is this change.** Editing the apt line rebuilt
+its cached layer, the first rebuild since 2026-10-14. The fresh install
+took Debian's fixed `libbrotli1` (`1.1.0-2+deb13u1`; live's is the
+CRITICAL CVE-2026-111497) and `libexpat1` 2.8.3 → 2.9.0. Those two came
+from re-resolving, and would have come from any edit above that line.
+Item R records that the cache, not intent, decides when that happens.
+
 ### Observation: a correct fix that would have been worse than the defect (2026-10-28, recorded 2026-10-29)
 
 **What happened.** Building the lock, I removed `pip install --upgrade
