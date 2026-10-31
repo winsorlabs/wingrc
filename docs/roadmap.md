@@ -11504,12 +11504,23 @@ Read them with three facts in mind:
 - **Re-run as a measurement, 2026-10-31,** with both files committed.
   The as-sent capture was offset by (21, 5) pixels inside the other, and
   the 1475x1063 overlap was compared pixel by pixel with Pillow. 11 of
-  1,567,925 pixels differ, all in a 4x4 spot at (1147â€“1150, 106â€“109),
-  the top edge of the Active Users scrollbar. Everything else is
-  identical.
+  1,567,925 pixels differ, all in one 4x4 spot at (1147-1150, 106-109)
+  in the 10-30 capture.
+- **The spot, identified.** It is not the editor's overlay. A selection
+  handle was the expectation, and the crops show it is wrong. It is the
+  top-left corner of the Active Users scrollbar's own outline:
+  - in the as-sent capture, the hand-drawn stroke has a two-to-three
+    pixel spur at that corner, where it starts or ends;
+  - in the 10-30 capture, the corner is a clean curve.
 
-**The chain:** original sketch (lost) â†’ reconstruction drawn
-2026-10-27 â†’ capture sent 2026-10-27 (`-as-sent`) â†’ second capture,
+  The pixels cannot say why one stroke end renders differently. So the
+  exact reading is: **every region, label, shape and position is
+  identical, and one stroke's end differs by about three pixels.** That
+  is not "the drawing is identical" in the strict sense. It changes
+  nothing a reader of the layout would use.
+
+**The chain:** original sketch (lost) → reconstruction drawn
+2026-10-27 → capture sent 2026-10-27 (`-as-sent`) → second capture,
 2026-10-30. The last two are verified to match, and both are here.
 **What the match does not establish:**
 - that either capture is the original sketch;
