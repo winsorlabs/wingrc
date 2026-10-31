@@ -11481,13 +11481,28 @@ memory, so there are two records, and they are a union, not a contest:
 [`docs/dashboard-q0-reconstruction-2026-10-27.png`](dashboard-q0-reconstruction-2026-10-27.png)**
 (committed 2026-10-30). Read it with three facts in mind:
 - **It is a reconstruction from memory, not the original sketch.**
-- **It was drawn on 2026-10-27.** The file itself was saved 2026-10-30.
-  It is a screenshot of the drawing open in its editor: a selection
-  handle shows on the tasks scrollbar. It matches the table below
-  region for region. That it is unchanged since 2026-10-27 rests on
-  Jarrod's word.
+- **It was drawn on 2026-10-27; this file was captured on 2026-10-30.**
+  It is a second screenshot of the drawing open in its editor, not the
+  file sent on the 27th. On 2026-10-31 it was compared with the capture
+  Jarrod sent on 2026-10-27:
+  - The bytes and dimensions differ: 1503x1063 here, 1496x1072 then.
+  - The content is identical, element for element: all six regions,
+    every label, both list scrollbars, and the selection handle on the
+    tasks scrollbar.
+  - The crop is all that differs, which is what re-screenshotting an
+    unchanged drawing produces. The handle was already in the 27th's
+    capture, so it is no sign of an edit.
+
+  The comparison was made by the reviewer who holds the 27th's capture.
+  That capture is not in the repo.
 - **The original image is lost.** Only the 2026-09-28 paragraph above
-  describes it.
+  describes it. The match shows this file is the 10-27 reconstruction.
+  It does not make it the original.
+
+The chain is: original sketch (lost) → reconstruction drawn 2026-10-27
+→ capture sent 2026-10-27 → this capture, committed 2026-10-30. The
+last two are verified to match. The filename carries the drawing's
+date, not the file's.
 
 Compare the built screen against the drawing; the table is a
 description of it. The drawing's list titles say "Active"; the built
