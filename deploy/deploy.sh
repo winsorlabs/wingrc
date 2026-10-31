@@ -27,6 +27,19 @@ fi
 git fetch --quiet origin
 ref="${1:-origin/main}"
 sha="$(git rev-parse --verify "${ref}^{commit}")"
+# Bash runs this script from the file it opened, and the checkout writes a
+# new one, so a deploy whose target changes deploy.sh would finish with this
+# copy's steps. When it does, run the target's own deploy.sh instead, once.
+# The tree is clean, so HEAD's blob is the copy running now.
+if [ "$(git rev-parse HEAD:deploy/deploy.sh)" != "$(git rev-parse "$sha:deploy/deploy.sh")" ]; then
+  if [ -n "${WINGRC_DEPLOY_REEXEC:-}" ]; then
+    echo "refusing: deploy.sh differs from $sha's even after running $sha's" >&2
+    exit 1
+  fi
+  git checkout --quiet --detach "$sha"
+  echo "deploy.sh differs at $sha; running that one"
+  WINGRC_DEPLOY_REEXEC=1 exec bash deploy/deploy.sh "$sha"
+fi
 git checkout --quiet --detach "$sha"
 echo "deploying $sha"
 
@@ -41,6 +54,20 @@ docker compose up -d --no-deps backend worker nginx
 # requests. Report-only, like CI's own Trivy step -- a scan that cannot run
 # is noted in the record, never a reason to undo a healthy deploy.
 TRIVY_IMAGE="aquasec/trivy:0.69.3"
+# Findings, distinct advisories and per-severity counts, read from Trivy's
+# JSON. A count it cannot compute says so; it is never a guess.
+scan_counts() {
+  python3 - "$1" <<'PY' 2>/dev/null || echo "counts unavailable (python3 could not read $1)"
+import collections, json, sys
+results = json.load(open(sys.argv[1])).get("Results") or []
+vulns = [v for r in results for v in (r.get("Vulnerabilities") or [])]
+sev = collections.Counter(v["Severity"] for v in vulns)
+order = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN")
+print("%d findings, %d distinct advisories (%s)" % (
+    len(vulns), len({v["VulnerabilityID"] for v in vulns}),
+    ", ".join("%s %d" % (s, sev.get(s, 0)) for s in order)))
+PY
+}
 record_deploy() {
   local dir id
   dir="${WINGRC_DEPLOY_RECORD_DIR:-$HOME/wingrc-deploys}/$(date -u +%Y%m%dT%H%M%SZ)-${sha:0:12}"
@@ -59,13 +86,24 @@ record_deploy() {
   local project
   project="$(docker compose config --format json 2>/dev/null \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])' 2>/dev/null || echo wingrc)"
+  # The JSON is the record, and the counts come from it. The table is
+  # rendered from that same JSON for a person to read. Trivy's table merges
+  # repeated cells down a column, so counting its rows undercounted: on
+  # 2026-10-26 it gave 2 CRITICAL for a real 4, and 29 HIGH for 73.
+  # Output goes through stdout, so every file in the record is this
+  # user's, not the container's root.
+  trivy() {
+    docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache/ \
+      -v "$dir:/record:ro" "$TRIVY_IMAGE" "$@"
+  }
   for svc in backend nginx; do
-    if docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache/ \
-         "$TRIVY_IMAGE" image --quiet --scanners vuln --format table "${project}-${svc}:latest" \
-         > "$dir/trivy-$svc.txt" 2>&1; then
-      echo "scan $svc: $(grep -c 'CVE-\|GHSA-' "$dir/trivy-$svc.txt" || true) findings -> $dir/trivy-$svc.txt"
+    if trivy image --quiet --scanners vuln --format json "${project}-${svc}:latest" \
+         > "$dir/trivy-$svc.json" 2> "$dir/trivy-$svc.err"; then
+      trivy convert --format table "/record/trivy-$svc.json" > "$dir/trivy-$svc.txt" 2>> "$dir/trivy-$svc.err" \
+        || echo "scan $svc: table not rendered (see $dir/trivy-$svc.err)"
+      echo "scan $svc: $(scan_counts "$dir/trivy-$svc.json") -> $dir/trivy-$svc.json" | tee -a "$dir/deploy.txt"
     else
-      echo "scan $svc: did not run (see $dir/trivy-$svc.txt); deploy stands" | tee -a "$dir/deploy.txt"
+      echo "scan $svc: did not run (see $dir/trivy-$svc.err); deploy stands" | tee -a "$dir/deploy.txt"
     fi
   done
   echo "deploy record: $dir"
