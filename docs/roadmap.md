@@ -6054,6 +6054,11 @@ endpoint. **Not built, and still item Q's:** drag-and-drop, per-user layout
 persistence, a widget registry, a grid library. Q's entry below stands for
 those.
 
+**Built from Jarrod's 2026-10-27 drawing,**
+[`docs/dashboard-q0-reconstruction-2026-10-27.png`](dashboard-q0-reconstruction-2026-10-27.png).
+It is a reconstruction from memory; the original sketch is lost (item Q
+below).
+
 **Two views, one screen.** Dashboard opens on one of two views, each one
 click from the other:
 - the **assessment view**: G.3's widgets on a grid;
@@ -11595,6 +11600,60 @@ recent activity as a strip along the bottom.
 memory, so there are two records, and they are a union, not a contest:
 - the paragraph above is the better record of the original;
 - the drawing below is the better record of what he wants now.
+
+**The drawing is in the repo as two captures of the same drawing:**
+- [`docs/dashboard-q0-reconstruction-2026-10-27-as-sent.png`](dashboard-q0-reconstruction-2026-10-27-as-sent.png)
+  (1496x1072): the capture Jarrod sent on 2026-10-27. It came back to
+  this machine as a file on 2026-10-31, and was committed then.
+- [`docs/dashboard-q0-reconstruction-2026-10-27.png`](dashboard-q0-reconstruction-2026-10-27.png)
+  (1503x1063): a second screenshot of the drawing open in its editor,
+  captured and committed 2026-10-30.
+
+Read them with three facts in mind:
+- **They are a reconstruction from memory, not the original sketch.**
+- **The drawing dates from 2026-10-27.** The filenames carry the
+  drawing's date, not each file's.
+- **The original image is lost.** Only the 2026-09-28 paragraph above
+  describes it.
+
+**The two captures match, and anyone can re-check it.**
+- **First comparison, 2026-10-31:** made by the reviewer who then held
+  the 27th's capture, before it was in the repo. Their result: the bytes
+  and dimensions differ, and the content is identical element for
+  element. That means all six regions, every label, both list
+  scrollbars, and the selection handle on the tasks scrollbar. Only the
+  crop differs, which is what re-screenshotting an unchanged drawing
+  produces. The handle was already in the 27th's capture, so it is no
+  sign of an edit.
+- **Re-run as a measurement, 2026-10-31,** with both files committed.
+  The as-sent capture was offset by (21, 5) pixels inside the other, and
+  the 1475x1063 overlap was compared pixel by pixel with Pillow. 11 of
+  1,567,925 pixels differ, all in one 4x4 spot at (1147-1150, 106-109)
+  in the 10-30 capture.
+- **The spot, identified.** It is not the editor's overlay. A selection
+  handle was the expectation, and the crops show it is wrong. It is the
+  top-left corner of the Active Users scrollbar's own outline:
+  - in the as-sent capture, the hand-drawn stroke has a two-to-three
+    pixel spur at that corner, where it starts or ends;
+  - in the 10-30 capture, the corner is a clean curve.
+
+  The pixels cannot say why one stroke end renders differently. So the
+  exact reading is: **every region, label, shape and position is
+  identical, and one stroke's end differs by about three pixels.** That
+  is not "the drawing is identical" in the strict sense. It changes
+  nothing a reader of the layout would use.
+
+**The chain:** original sketch (lost) → reconstruction drawn
+2026-10-27 → capture sent 2026-10-27 (`-as-sent`) → second capture,
+2026-10-30. The last two are verified to match, and both are here.
+**What the match does not establish:**
+- that either capture is the original sketch;
+- that the as-sent file's bytes are the ones sent on the 27th. That
+  rests on the chain that returned it.
+
+Compare the built screen against the drawing; the table is a
+description of it. The drawing's list titles say "Active"; the built
+lists say "in boundary", and the Q.0 entry says why.
 
 **The reconstruction**, which Q.0 built:
 
