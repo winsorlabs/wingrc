@@ -63,6 +63,17 @@ jobs:
           set +e
           git grep -nIE '^(<{7}|[|]{7}|>{7})( |$)'
           test $? -eq 1
+      # UTF-8 read as CP1252 and written back. Only the two signatures seen
+      # here: U+00E2 U+20AC (an en or em dash, 611628a's roadmap entry and the
+      # memory index) and U+00E2 U+2020 (an arrow, 611628a). Written as bytes
+      # and named by code point, so this file cannot match itself. Same exit
+      # rule as above.
+      - name: No mojibake
+        shell: bash
+        run: |
+          set +e
+          git grep -nIF -e $'\xc3\xa2\xe2\x82\xac' -e $'\xc3\xa2\xe2\x80\xa0'
+          test $? -eq 1
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
