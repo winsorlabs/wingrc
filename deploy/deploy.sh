@@ -27,6 +27,19 @@ fi
 git fetch --quiet origin
 ref="${1:-origin/main}"
 sha="$(git rev-parse --verify "${ref}^{commit}")"
+# Bash runs this script from the file it opened, and the checkout writes a
+# new one, so a deploy whose target changes deploy.sh would finish with this
+# copy's steps. When it does, run the target's own deploy.sh instead, once.
+# The tree is clean, so HEAD's blob is the copy running now.
+if [ "$(git rev-parse HEAD:deploy/deploy.sh)" != "$(git rev-parse "$sha:deploy/deploy.sh")" ]; then
+  if [ -n "${WINGRC_DEPLOY_REEXEC:-}" ]; then
+    echo "refusing: deploy.sh differs from $sha's even after running $sha's" >&2
+    exit 1
+  fi
+  git checkout --quiet --detach "$sha"
+  echo "deploy.sh differs at $sha; running that one"
+  WINGRC_DEPLOY_REEXEC=1 exec bash deploy/deploy.sh "$sha"
+fi
 git checkout --quiet --detach "$sha"
 echo "deploying $sha"
 

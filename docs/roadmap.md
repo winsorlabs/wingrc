@@ -6584,6 +6584,40 @@ the unsquashed history of #61, so `main` has both. The two trees are the
 same. The scans are byte-identical to 2026-10-26's (the scan item's
 table).
 
+**`main` carries this change twice, and a bisect across 26 October can
+land on a working step.** This is the part that will bite.
+- **Two parallel lines.** Both start from #59's merge (`ec3ebc9`):
+  - `d57289e` → `a4a8581` → `404fdff`, merged by #60 (`3e47dfc`);
+  - `fb66c7c` → `2911cf3` → `8b1c3e7`, merged by #61 (`9fa9d0e`).
+
+  The trees agree at the end, so nothing looks wrong on `main`.
+- **What a bisect sees.** `git bisect` walks both parents of a merge.
+  A bisect over that day can test, and name, `d57289e`. That commit is
+  the change without the two fixes the bench found: the worker's
+  "not connected" wording, and the stale `pg_stat_activity` snapshot.
+  Its code was never reviewed or deployed in that form, and a defect
+  those fixes removed will point a bisect there.
+- **What else it costs.** `git log --first-parent main` shows the change
+  arriving at #60, a PR with no description, rather than at #61, the
+  reviewed one.
+
+**Why `health-components` existed (2026-10-28; the branch is now
+deleted).**
+- **It was the working branch.** It held the change and the two fixes
+  the bench found (`d57289e`, `a4a8581`, `404fdff`).
+- **#61's branch was the history rebuilt for review.** For bisect,
+  `health-per-component` re-made the work as three commits: the code in
+  one, then the roadmap, then the deploy notes. It went to a new branch
+  rather than being force-pushed over the old one, so the old one stayed
+  on the remote, looking like the slice.
+- **#60 then opened and merged it,** eight seconds apart, seven seconds
+  before #61 was opened.
+
+The lesson, for a rebuilt history:
+delete the old branch when pushing the new one, or force-push it, so
+that only one branch names the slice. Every merged branch has since been
+deleted from the remote.
+
 **Deploying it showed that `deploy.sh` cannot deploy a change to
 itself.** Bash reads a script while it runs, from the file it opened.
 `deploy.sh` runs `git checkout --detach "$sha"` and carries on. Git writes
@@ -6599,6 +6633,33 @@ merge that changes `deploy.sh`. Not fixed. The fix, sized: after the
 checkout, if `deploy/deploy.sh` differs from the running copy, `exec` the
 new one with the same SHA, guarded by an environment variable so it
 happens once. The workaround is in `docs/deployment.md` and CLAUDE.md.
+
+**Fixed 2026-10-28 (branch `deploy-followups`), as sized.**
+- Before its checkout, `deploy.sh` compares `HEAD:deploy/deploy.sh` (the
+  running copy, since it refuses a dirty tree) with the target's blob.
+- When they differ, it checks out the target, prints `deploy.sh differs
+  at <sha>; running that one`, and `exec`s the target's script with the
+  same commit and `WINGRC_DEPLOY_REEXEC=1`.
+- A run with that set that still finds a difference refuses, so a fault
+  cannot loop.
+
+A rollback works the same way: the older commit's own script runs.
+
+**Tested** on wl-util-1 in a throwaway repo, with a fake `docker` on
+`PATH`, so no container was touched. The target's script printed a
+marker, so the output says which copy ran:
+- running the new script, with a target that changes `deploy.sh`: it
+  re-ran, the marker printed, and the run deployed and recorded;
+- running the **old** script, same target: no marker. This is the
+  defect, and it shows the test can tell the two apart;
+- `deploy.sh` unchanged: no re-run;
+- `WINGRC_DEPLOY_REEXEC` already set, with the scripts differing: it
+  refused, exit 1.
+
+**The deploy that lands this still runs the old copy,** which lacks the
+check. That is harmless here, because nothing else in the script
+changed. The hand checkout in CLAUDE.md is kept for any host whose copy
+predates the fix.
 
 **Known limitations (recorded 2026-10-27, after the deploy, at Jarrod's
 request; the health code is unchanged).** Each is here so that whoever
@@ -6633,6 +6694,32 @@ meets it finds the reason rather than filing a bug.
 
   This is the confident-signal family again, as a different kind of
   member: a signal that reports a value it was handed as one it observed.
+
+  **Ranked (2026-10-28): the worker's name is the one that matters; the
+  header barely does.**
+  1. **A forged worker connection** changes what *everyone* reads.
+     - **Who it fools:** every reader of `/health`, `deploy.sh` included,
+       for as long as the connection stays open.
+     - **What it can hide:** a stopped worker. That is the case the field
+       exists to show, and with it no scheduled job runs.
+     - **What it takes:** the database credentials. The backend and
+       worker containers carry them in their environment, so a shell in
+       either is enough.
+  2. **A forged header** changes only the response to the request that
+     carries it.
+     - **Who it fools:** only the person who sent it. A direct call to
+       `backend:8000` is answered to its sender. `deploy.sh` and anyone
+       using the public URL go through nginx, which replaces the header.
+     - **What it takes:** a shell on the host or the compose network. On
+       the host, `.env` holds the database credentials, so that access
+       usually reaches rank 1 already.
+
+  So the header's fix (accept it only from nginx) buys little, and a
+  fix to the name would need something the client does not choose. One
+  option: a database role for the worker alone, with `/health` reading
+  `pg_stat_activity.usename` beside `application_name`. Then forging the
+  name takes the worker's credentials, not any. Not built; recorded so
+  that a fix starts with the one that matters.
 
   **Two sentences said otherwise.** "Observed in a way only that
   component can produce", above, is corrected. `health.py`'s docstring
@@ -6670,8 +6757,35 @@ meets it finds the reason rather than filing a bug.
     unless-stopped`, backing off on repeated crashes) plus about 1.2s to
     connect. Not measured.
   - **A database restart:** the pooled connection dies, and the worker
-    opens a new one at its next poll, up to 60s later. `/health` is 503
-    while the database is down, then `incomplete` for up to 60s.
+    opens a new one at its next poll, expected within 60s (the poll
+    interval; reasoned, not observed at its edge). `/health` is 503
+    while the database is down, then `incomplete` until the worker
+    reconnects.
+    **Measured 2026-10-28** on a bench stack (`wingrc_verify_20261028db`:
+    db, minio, backend and worker at `07bc630`, no nginx). `/health` was
+    polled every 250ms from inside the backend, during a
+    `docker compose restart db`:
+    - 21:14:06.193: restart issued; 06.637: compose reports it done;
+    - 06.384: **503**, `database: unreachable: OperationalError`, the
+      worker `unknown`;
+    - 06.893: 200 and `database: ok`, about half a second after the
+      503, because a postgres restart is quick. The worker is still
+      `unknown`;
+    - 40.498: the worker is back, at `07bc630`, **33.6s** after the
+      database.
+
+    **This is one measurement, under favourable conditions; it is not a
+    bound.** The restart took under a second, and the worker found the
+    database up at its next poll. "Up to 60s" above is reasoning from
+    the poll interval, and its edge has not been observed. A restart
+    slow enough to span a poll, a worker that errors on a dead
+    connection mid-job, or Docker restarting a crashed worker could each
+    make the gap longer. None was tried.
+
+    The backend's pool recovered by itself (`pool_pre_ping`). So did the
+    worker's, with no error in its log. `status` read `incomplete`
+    throughout, because a direct call has no nginx header, so what the
+    sample shows is the worker field.
   - **Pool recycling:** none is configured. If `pool_recycle` is ever
     added, a recycled connection is closed and reopened within a single
     checkout, so the gap is milliseconds.
@@ -7662,6 +7776,27 @@ AC.L2-3.1.1[a], *CMMC L2 Assessment 2026-09-16*) and one archived
 (version 3).
 
 ---
+
+### Observation: a walk list kept only in a message (2026-10-30)
+
+**What happened.** #64's deploy report gave Jarrod three live clicks,
+with the text each should show. They were never walked: #64 went live
+on `07bc630` on 2026-10-27. The list existed only in that message.
+Three days later, after a context summary, Claude could not find it by
+searching the saved transcript. It offered to restate three clicks
+after the next deploy and ask Jarrod to check them. That would have been
+a reconstruction from memory, standing in for the record. Jarrod
+supplied the list verbatim from the report. It is now in #68's PR body.
+
+**The search not finding it is the finding.** A summary keeps
+conclusions and drops the detail a later step needs. Nothing showed the
+list was gone until it was needed. A reconstruction would have looked
+the same as the original, and nobody could have told them apart
+afterwards: the same failure as the lost dashboard mockup.
+
+**The rule (CLAUDE.md, "Landing a slice"):** a walk list goes in the PR
+body. Until it is walked, it is carried forward in the next deploying
+PR.
 
 ### Lesson: a record that rested on a side effect (item X, migration 0069)
 
@@ -13171,6 +13306,21 @@ would be lost: `.scratch/`, `Claude outputs/`, `cleanup_yaml.py`,
 `.claude/settings.local.json` and the `.git/info/exclude` lines. So
 would a raw `wingrc_` API token in `.scratch/hit_live_endpoint.py`,
 which needs revoking whether or not a clone happens.
+
+**`.claude/settings.local.json` is the one loss that stops a protection
+without a word (Jarrod, 2026-10-30).** It registers the Bash-tool
+pipefail hook (CLAUDE.md, the pipefail bullet). The script is tracked,
+`.claude/hooks/strict_bash.py`, so a clone carries it; the registration
+is machine-specific and lost. Jarrod's global git ignore covers the
+file, so `git status` does not list it among the untracked files. A
+missing hook looks exactly like a working one until a pipe hides a
+failure, which is the failure the hook exists to catch. After the
+clone:
+1. re-add the registration, whose block is in the script's docstring;
+2. run `false | cat` in Claude's Bash tool and confirm it exits 1.
+
+That check is also in CLAUDE.md, at the start of every session, because
+CLAUDE.md is what a clone carries.
 
 ### X. Publishing a document attaches it as evidence unchosen -- a hard-rule violation, live ✅ BUILT (2026-10-18)
 
