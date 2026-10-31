@@ -53,6 +53,16 @@ jobs:
       WINGRC_MIN_TESTS_RUN: "200"
     steps:
       - uses: actions/checkout@v7
+      # Every tracked file, prose included: docs/roadmap.md is the record the
+      # code is cited against and nothing else reads it (6bd3d5a passed lint
+      # and tests with markers in it). Exit 1 is git grep's "no match"; a
+      # match (0) or an error (2, or 128 outside a repo) fails, so the check
+      # cannot pass by erroring.
+      - name: No conflict markers
+        run: |
+          set +e
+          git grep -nIE '^(<{7}|[|]{7}|>{7})( |$)'
+          test $? -eq 1
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
@@ -63,7 +73,26 @@ jobs:
         # anthropic/pypdf/python-docx (the "ai" extra) at collection time, so
         # [dev] alone fails collection here even though it never touches a
         # database -- this isn't gated by the integration marker.
-        run: pip install -e ".[dev,ai]"
+        # From requirements.lock, as backend/Dockerfile installs it, so the
+        # tests run against the versions that deploy.
+        run: |
+          pip install --no-deps -r requirements.lock
+          pip install --no-deps --no-build-isolation -e ".[dev,ai]"
+          pip check
+      - name: Lock is current
+        working-directory: backend
+        # Re-resolving with the committed lock as the starting point changes
+        # nothing unless pyproject.toml asks for something the lock lacks
+        # (a new dependency, a raised floor). Then the lock is stale and this
+        # fails with the diff; `make lock` updates it. uv is pinned, as the
+        # Makefile pins it.
+        run: |
+          pip install uv==0.13.6
+          tmp="$(mktemp -d)"
+          cp pyproject.toml requirements.lock "$tmp/"
+          (cd "$tmp" && uv pip compile pyproject.toml --extra dev --extra ai --group build --universal --python-version 3.13 --generate-hashes -o requirements.lock)
+          # The header lines record the command; only the pins are compared.
+          diff -u <(grep -v '^#' requirements.lock) <(grep -v '^#' "$tmp/requirements.lock")
       - name: Lint
         working-directory: backend
         run: ruff check .
@@ -140,7 +169,10 @@ jobs:
             libffi8 shared-mime-info
       - name: Install
         working-directory: backend
-        run: pip install -e ".[dev,ai]"
+        run: |
+          pip install --no-deps -r requirements.lock
+          pip install --no-deps --no-build-isolation -e ".[dev,ai]"
+          pip check
       - name: Migration chain (upgrade → downgrade → upgrade)
         working-directory: backend
         run: |
