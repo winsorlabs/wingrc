@@ -5922,6 +5922,182 @@ expected.**
 
 ---
 
+### Python dependencies come from a lock file, first locked at what live runs ✅ DONE (2026-10-28, bench-verified; branch `python-lock`)
+
+**Why, and why first.** `pyproject.toml` declares floors only
+(`fastapi>=0.118`) and nothing pinned the rest. So every build installed
+the newest release of every package, and a deploy carried whatever was
+published since the last one. The 2026-10-27 deploys took `anthropic`
+1.15 → 2.3, a major version, and `fastapi` 0.146 → 0.162, with nothing in
+the repo naming either. They were found by diffing two scans' package
+lists (the scan item). Jarrod's bar: a build of commit X installs the
+same versions in six months as today, and changing a version is a commit
+someone can read. This landed before anything else.
+
+**The record of what was running.**
+`docs/records/live-python-packages-2026-10-28.txt` is `pip freeze --all`
+from live's backend at `07bc630`, with the worker's identical: 85
+packages and the app. Nothing like it existed before. The first lock is
+that set.
+
+**The tool: `uv pip compile`, producing a pip requirements file with
+hashes.**
+- **Least ceremony where it is installed.** The Dockerfile and both CI
+  jobs keep using plain `pip`, with `-r requirements.lock`. No new tool
+  enters the image or CI's install path, and an air-gapped site can
+  mirror the file with `pip download -r`.
+- **Why not `uv.lock`:** it needs uv to install (`uv sync`), in the image
+  and in CI.
+- **Why not `poetry.lock`:** it needs Poetry to install, and moves
+  packaging off hatchling.
+- **Why uv rather than pip-tools to generate it:** `--universal` resolves
+  for every platform in one file. Linux gets exactly live's set, and the
+  Windows dev box gets the same versions plus `colorama` and `tzdata`
+  behind markers. pip-tools resolves for the machine it runs on.
+- **Pinned, run in a container:** uv 0.13.6, in `make lock`, which runs
+  it in `python:3.13-slim`.
+
+**What changed:**
+- **`backend/requirements.lock`:** 95 entries, every file's hash:
+  - live's 85;
+  - the five build tools and pip (below);
+  - four entries for other platforms, behind markers (`colorama`,
+    `tzdata`, `brotlicffi`, `httpx2-jsfetch`).
+- **`pyproject.toml`:** a `build` dependency group (`hatchling`,
+  `editables`, `pip`), so the build backend and the installer are locked
+  like everything else.
+- **`backend/Dockerfile`:** `pip install --no-deps -r requirements.lock`,
+  then the package with `--no-deps --no-build-isolation`, then `pip
+  check`. `pip install --upgrade pip` is gone; pip comes from the lock.
+- **CI, both jobs:** the same install. The `backend` job gains `Lock is
+  current`, which re-resolves with the committed lock as its starting
+  point and fails with the diff if `pyproject.toml` asks for what the
+  lock lacks.
+- **`make lock`:** re-resolves without moving any pin it need not.
+  `UPGRADE="--upgrade-package X"` moves one.
+- **Docs:** `docs/deployment.md`'s new "Python dependencies" section,
+  CLAUDE.md, CONTRIBUTING and README.
+
+**Verified on the bench** (`wingrc_verify_20261028lock`, built from the
+branch on wl-util-1):
+- **Packages:** `pip freeze --all` of the locked image against live's
+  differs only by the five build tools (`editables`, `hatchling`,
+  `pathspec`, `tomlkit`, `trove-classifiers`). Every runtime version is
+  live's.
+- **Scan:** Trivy JSON of the locked image and of live's, same database,
+  same day: 303 Debian and 8 Python findings each, the same two
+  CRITICALs (`libbrotli1`, `libxml2`).
+- **Tests and lint:** full suite in one process, 1899 passed; ruff clean.
+- **The checks fail when they should:**
+  - `Lock is current`: unchanged, exit 0. With `tomli>=2.0` added to
+    `pyproject.toml`, exit 1, showing `+tomli==2.5.0`.
+  - `pip check` after installing that `pyproject.toml` over the lock:
+    "wingrc-backend 0.1.0 requires tomli, which is not installed", exit 1.
+  - CI's editable install: succeeds, `wingrc` is on `PATH`, and `app`
+    imports from outside the checkout.
+
+**The bench caught two things on the way.**
+- **The editable install failed.** Hatchling's editable build needs
+  `editables`, which build isolation had been fetching unseen. It
+  surfaced only once nothing was fetched. My first run piped the install
+  through `tail -1` and showed only a "hint" line, the 26th's pattern
+  again. Rerun without the pipe, the error was plain.
+- **Dropping `--upgrade pip` added a CRITICAL live does not have.** The
+  base image's pip 26.2.1 vendors a `certifi` carrying the compromised
+  emSign roots (GHSA-6q48-6c7w-9gw2). Live runs 26.2.2, because of the
+  upgrade. So pip is in the lock at 26.2.2, not left to the base.
+
+**Deploying it changes no runtime version.** The image gains the five
+build tools, and `pip freeze` still prints the stale `pip==26.2.1` line
+the record explains.
+
+**What it does not freeze:** the base image, the apt line's Debian
+packages, npm, and CI's own `setup-python`. Item R, revised the same
+day, says which of these R covers.
+
+### The image drops gdk-pixbuf, and with it the CRITICAL `libxml2` ✅ DONE (2026-10-28, bench-verified; branch `drop-gdk-pixbuf`, after the lock)
+
+**Asked:** can `shared-mime-info` go? The backend's one CRITICAL,
+`libxml2` (CVE-2026-6653, no Debian fix), came in through our own apt
+line, not the base image. Removing it would remove the finding rather
+than annotate it.
+
+**What needed it.** `shared-mime-info` alone could not go:
+`libgdk-pixbuf-2.0-0`, which the same line installs, hard-depends on it
+(`dpkg -s`). The question was whether anything needs gdk-pixbuf. Nothing
+does:
+- WeasyPrint 70 `dlopen`s gobject, pango, pangoft2, harfbuzz and
+  fontconfig (`weasyprint/text/ffi.py`). Since version 53 it decodes
+  images with Pillow, and it never loads gdk-pixbuf or cairo.
+- With WeasyPrint imported and rendering, the process maps no gdk-pixbuf,
+  no cairo and no Debian `libxml2`.
+- The apt line was written when WeasyPrint still needed them (the
+  Dockerfile comment said "Pango/cairo/gdk-pixbuf").
+
+`libglib2.0-0t64` only *recommends* `shared-mime-info`, which
+`--no-install-recommends` skips.
+
+**The change.** `libgdk-pixbuf-2.0-0` and `shared-mime-info` leave the
+backend Dockerfile's apt line and CI's `integration` job, which mirrors
+it. Eleven Debian packages go with them: `libxml2`, gdk-pixbuf and its
+common data, `libjpeg62-turbo`, `libtiff6`, `libwebp7`, `libjbig0`,
+`liblerc4`, `libdeflate0` and `libsharpyuv0`. `libcairo2` and
+`libpangocairo-1.0-0` are just as unused. They stay for now, because
+`libpangoft2`, which WeasyPrint does load, currently arrives through
+`libpangocairo`. Swapping them is its own change.
+
+**Verified on the bench**, as an image built from this branch on top of
+the lock:
+- **The packages are gone:** `dpkg -s libxml2 shared-mime-info
+  libgdk-pixbuf-2.0-0` reports each as not installed.
+- **PDFs are unchanged.** One page with PNG, JPEG, GIF, WebP and SVG
+  images and accented text was rendered in this image and in the lock's.
+  The text and every decoded image are identical, twice over. A plain
+  byte hash is useless here: WeasyPrint's bytes differ between two runs
+  on one image.
+- **Tests:** the full suite in one process, 1899 passed. That includes
+  the bundle's SSP PDF tests.
+- **Scan, Trivy JSON, against live:** Debian 303 → 263 findings, HIGH
+  65 → 51, CRITICAL 2 → 0. Python is unchanged at 8.
+
+**Not all of that drop is this change.** Editing the apt line rebuilt
+its cached layer, the first rebuild since 2026-10-14. The fresh install
+took Debian's fixed `libbrotli1` (`1.1.0-2+deb13u1`; live's is the
+CRITICAL CVE-2026-111497) and `libexpat1` 2.8.3 → 2.9.0. Those two came
+from re-resolving, and would have come from any edit above that line.
+Item R records that the cache, not intent, decides when that happens.
+
+### Observation: a correct fix that would have been worse than the defect (2026-10-28, recorded 2026-10-29)
+
+**What happened.** Building the lock, I removed `pip install --upgrade
+pip` from the Dockerfile.
+- **The instinct was right:** that line took whatever pip was newest at
+  build time, which is exactly what a lock exists to stop.
+- **The result was worse:** the build fell back to the base image's pip
+  26.2.1. Its vendored `certifi` carries the compromised emSign roots
+  (GHSA-6q48-6c7w-9gw2), a CRITICAL. Live does not have it, because the
+  floating upgrade had happened to land on 26.2.2.
+
+Shipped, the reproducibility fix would have added a CRITICAL to the
+image. **The resolution:** pip is in the lock at 26.2.2, so it is
+neither floating nor the base's.
+
+**Why it is worth a record.**
+- **First of its kind in this sequence:** the first time a fix would
+  have been worse than the defect it fixed.
+- **"Reproducible" and "safe" pulled in opposite directions.** The
+  floating line was unreproducible and, that day, safe. The
+  reproducible version was unsafe.
+- **Reasoning could not tell them apart.** Removing an unpinned upgrade
+  reads as purely good.
+
+**How it was caught:** the bench's scan comparison, not reasoning.
+The locked image and live's were each scanned with Trivy's JSON on the
+same database, and the locked one had a CRITICAL that live's did not.
+Measuring both images was the only check that could see it. The lesson
+for the next change that removes something floating: the scan diff
+against live is the check, not a review of the diff.
+
 ### Q.0: a deliberate dashboard grid, and the engineer's environment view ✅ DONE (2026-10-27, bench-verified; endpoint, widgets, grid; no migration; deployed 2026-10-27)
 
 The first slice of item **Q**. It builds the deliberate default grid,
@@ -5929,6 +6105,11 @@ role-aware *defaults*, the environment view's widgets and their org-scoped
 endpoint. **Not built, and still item Q's:** drag-and-drop, per-user layout
 persistence, a widget registry, a grid library. Q's entry below stands for
 those.
+
+**Built from Jarrod's 2026-10-27 drawing,**
+[`docs/dashboard-q0-reconstruction-2026-10-27.png`](dashboard-q0-reconstruction-2026-10-27.png).
+It is a reconstruction from memory; the original sketch is lost (item Q
+below).
 
 **Two views, one screen.** Dashboard opens on one of two views, each one
 click from the other:
@@ -6455,6 +6636,40 @@ the unsquashed history of #61, so `main` has both. The two trees are the
 same. The scans are byte-identical to 2026-10-26's (the scan item's
 table).
 
+**`main` carries this change twice, and a bisect across 26 October can
+land on a working step.** This is the part that will bite.
+- **Two parallel lines.** Both start from #59's merge (`ec3ebc9`):
+  - `d57289e` → `a4a8581` → `404fdff`, merged by #60 (`3e47dfc`);
+  - `fb66c7c` → `2911cf3` → `8b1c3e7`, merged by #61 (`9fa9d0e`).
+
+  The trees agree at the end, so nothing looks wrong on `main`.
+- **What a bisect sees.** `git bisect` walks both parents of a merge.
+  A bisect over that day can test, and name, `d57289e`. That commit is
+  the change without the two fixes the bench found: the worker's
+  "not connected" wording, and the stale `pg_stat_activity` snapshot.
+  Its code was never reviewed or deployed in that form, and a defect
+  those fixes removed will point a bisect there.
+- **What else it costs.** `git log --first-parent main` shows the change
+  arriving at #60, a PR with no description, rather than at #61, the
+  reviewed one.
+
+**Why `health-components` existed (2026-10-28; the branch is now
+deleted).**
+- **It was the working branch.** It held the change and the two fixes
+  the bench found (`d57289e`, `a4a8581`, `404fdff`).
+- **#61's branch was the history rebuilt for review.** For bisect,
+  `health-per-component` re-made the work as three commits: the code in
+  one, then the roadmap, then the deploy notes. It went to a new branch
+  rather than being force-pushed over the old one, so the old one stayed
+  on the remote, looking like the slice.
+- **#60 then opened and merged it,** eight seconds apart, seven seconds
+  before #61 was opened.
+
+The lesson, for a rebuilt history:
+delete the old branch when pushing the new one, or force-push it, so
+that only one branch names the slice. Every merged branch has since been
+deleted from the remote.
+
 **Deploying it showed that `deploy.sh` cannot deploy a change to
 itself.** Bash reads a script while it runs, from the file it opened.
 `deploy.sh` runs `git checkout --detach "$sha"` and carries on. Git writes
@@ -6470,6 +6685,33 @@ merge that changes `deploy.sh`. Not fixed. The fix, sized: after the
 checkout, if `deploy/deploy.sh` differs from the running copy, `exec` the
 new one with the same SHA, guarded by an environment variable so it
 happens once. The workaround is in `docs/deployment.md` and CLAUDE.md.
+
+**Fixed 2026-10-28 (branch `deploy-followups`), as sized.**
+- Before its checkout, `deploy.sh` compares `HEAD:deploy/deploy.sh` (the
+  running copy, since it refuses a dirty tree) with the target's blob.
+- When they differ, it checks out the target, prints `deploy.sh differs
+  at <sha>; running that one`, and `exec`s the target's script with the
+  same commit and `WINGRC_DEPLOY_REEXEC=1`.
+- A run with that set that still finds a difference refuses, so a fault
+  cannot loop.
+
+A rollback works the same way: the older commit's own script runs.
+
+**Tested** on wl-util-1 in a throwaway repo, with a fake `docker` on
+`PATH`, so no container was touched. The target's script printed a
+marker, so the output says which copy ran:
+- running the new script, with a target that changes `deploy.sh`: it
+  re-ran, the marker printed, and the run deployed and recorded;
+- running the **old** script, same target: no marker. This is the
+  defect, and it shows the test can tell the two apart;
+- `deploy.sh` unchanged: no re-run;
+- `WINGRC_DEPLOY_REEXEC` already set, with the scripts differing: it
+  refused, exit 1.
+
+**The deploy that lands this still runs the old copy,** which lacks the
+check. That is harmless here, because nothing else in the script
+changed. The hand checkout in CLAUDE.md is kept for any host whose copy
+predates the fix.
 
 **Known limitations (recorded 2026-10-27, after the deploy, at Jarrod's
 request; the health code is unchanged).** Each is here so that whoever
@@ -6504,6 +6746,32 @@ meets it finds the reason rather than filing a bug.
 
   This is the confident-signal family again, as a different kind of
   member: a signal that reports a value it was handed as one it observed.
+
+  **Ranked (2026-10-28): the worker's name is the one that matters; the
+  header barely does.**
+  1. **A forged worker connection** changes what *everyone* reads.
+     - **Who it fools:** every reader of `/health`, `deploy.sh` included,
+       for as long as the connection stays open.
+     - **What it can hide:** a stopped worker. That is the case the field
+       exists to show, and with it no scheduled job runs.
+     - **What it takes:** the database credentials. The backend and
+       worker containers carry them in their environment, so a shell in
+       either is enough.
+  2. **A forged header** changes only the response to the request that
+     carries it.
+     - **Who it fools:** only the person who sent it. A direct call to
+       `backend:8000` is answered to its sender. `deploy.sh` and anyone
+       using the public URL go through nginx, which replaces the header.
+     - **What it takes:** a shell on the host or the compose network. On
+       the host, `.env` holds the database credentials, so that access
+       usually reaches rank 1 already.
+
+  So the header's fix (accept it only from nginx) buys little, and a
+  fix to the name would need something the client does not choose. One
+  option: a database role for the worker alone, with `/health` reading
+  `pg_stat_activity.usename` beside `application_name`. Then forging the
+  name takes the worker's credentials, not any. Not built; recorded so
+  that a fix starts with the one that matters.
 
   **Two sentences said otherwise.** "Observed in a way only that
   component can produce", above, is corrected. `health.py`'s docstring
@@ -6541,8 +6809,35 @@ meets it finds the reason rather than filing a bug.
     unless-stopped`, backing off on repeated crashes) plus about 1.2s to
     connect. Not measured.
   - **A database restart:** the pooled connection dies, and the worker
-    opens a new one at its next poll, up to 60s later. `/health` is 503
-    while the database is down, then `incomplete` for up to 60s.
+    opens a new one at its next poll, expected within 60s (the poll
+    interval; reasoned, not observed at its edge). `/health` is 503
+    while the database is down, then `incomplete` until the worker
+    reconnects.
+    **Measured 2026-10-28** on a bench stack (`wingrc_verify_20261028db`:
+    db, minio, backend and worker at `07bc630`, no nginx). `/health` was
+    polled every 250ms from inside the backend, during a
+    `docker compose restart db`:
+    - 21:14:06.193: restart issued; 06.637: compose reports it done;
+    - 06.384: **503**, `database: unreachable: OperationalError`, the
+      worker `unknown`;
+    - 06.893: 200 and `database: ok`, about half a second after the
+      503, because a postgres restart is quick. The worker is still
+      `unknown`;
+    - 40.498: the worker is back, at `07bc630`, **33.6s** after the
+      database.
+
+    **This is one measurement, under favourable conditions; it is not a
+    bound.** The restart took under a second, and the worker found the
+    database up at its next poll. "Up to 60s" above is reasoning from
+    the poll interval, and its edge has not been observed. A restart
+    slow enough to span a poll, a worker that errors on a dead
+    connection mid-job, or Docker restarting a crashed worker could each
+    make the gap longer. None was tried.
+
+    The backend's pool recovered by itself (`pool_pre_ping`). So did the
+    worker's, with no error in its log. `status` read `incomplete`
+    throughout, because a direct call has no nginx header, so what the
+    sample shows is the worker field.
   - **Pool recycling:** none is configured. If `pool_recycle` is ever
     added, a recycled connection is closed and reopened within a single
     checkout, so the gap is milliseconds.
@@ -6818,7 +7113,9 @@ that revision label, `/health` reports `build: d802851…` and migration
 `~claude/wingrc-deploys/20261026T152749Z-d80285198800`. That
 deploy's scans report 308 backend rows and 231 nginx (296 and 181 on
 2026-10-20), report-only and read by nobody (Planned, "The deploy scans
-are read by nobody").
+are read by nobody"). *Note, 2026-10-29:* these are rendered-row counts,
+which undercount. From Trivy's own totals they are 314 and 232 (303 and
+181 on 2026-10-20); that item has the re-derived table.
 
 **What `/health` said during the split.** It said `build: 09aee13…`,
 which was true of the backend: `WINGRC_BUILD_SHA` is baked into the
@@ -7531,6 +7828,27 @@ AC.L2-3.1.1[a], *CMMC L2 Assessment 2026-09-16*) and one archived
 (version 3).
 
 ---
+
+### Observation: a walk list kept only in a message (2026-10-30)
+
+**What happened.** #64's deploy report gave Jarrod three live clicks,
+with the text each should show. They were never walked: #64 went live
+on `07bc630` on 2026-10-27. The list existed only in that message.
+Three days later, after a context summary, Claude could not find it by
+searching the saved transcript. It offered to restate three clicks
+after the next deploy and ask Jarrod to check them. That would have been
+a reconstruction from memory, standing in for the record. Jarrod
+supplied the list verbatim from the report. It is now in #68's PR body.
+
+**The search not finding it is the finding.** A summary keeps
+conclusions and drops the detail a later step needs. Nothing showed the
+list was gone until it was needed. A reconstruction would have looked
+the same as the original, and nobody could have told them apart
+afterwards: the same failure as the lost dashboard mockup.
+
+**The rule (CLAUDE.md, "Landing a slice"):** a walk list goes in the PR
+body. Until it is walked, it is carried forward in the next deploying
+PR.
 
 ### Lesson: a record that rested on a side effect (item X, migration 0069)
 
@@ -9025,7 +9343,9 @@ Jarrod's `CMMC Prep` folder into a bench org):
   reboot.
   - The host came back clean: five services up, IP still .35, no bench
     containers, `/health` ok at the prior build.
-  - Scans: backend 296 findings, nginx 179.
+  - Scans: backend 296 findings, nginx 179. *Note, 2026-10-29:* a
+    rendered-row count; Trivy's own totals are 303 and 179 ("The deploy
+    scans are read by nobody" has the re-derived table).
 - **Database checks, read-only.**
   - `pg_trigger` shows `list_version_no_update` (BEFORE UPDATE, enabled).
   - The backend's own session reports `current_user = wingrc_app`
@@ -11472,6 +11792,60 @@ memory, so there are two records, and they are a union, not a contest:
 - the paragraph above is the better record of the original;
 - the drawing below is the better record of what he wants now.
 
+**The drawing is in the repo as two captures of the same drawing:**
+- [`docs/dashboard-q0-reconstruction-2026-10-27-as-sent.png`](dashboard-q0-reconstruction-2026-10-27-as-sent.png)
+  (1496x1072): the capture Jarrod sent on 2026-10-27. It came back to
+  this machine as a file on 2026-10-31, and was committed then.
+- [`docs/dashboard-q0-reconstruction-2026-10-27.png`](dashboard-q0-reconstruction-2026-10-27.png)
+  (1503x1063): a second screenshot of the drawing open in its editor,
+  captured and committed 2026-10-30.
+
+Read them with three facts in mind:
+- **They are a reconstruction from memory, not the original sketch.**
+- **The drawing dates from 2026-10-27.** The filenames carry the
+  drawing's date, not each file's.
+- **The original image is lost.** Only the 2026-09-28 paragraph above
+  describes it.
+
+**The two captures match, and anyone can re-check it.**
+- **First comparison, 2026-10-31:** made by the reviewer who then held
+  the 27th's capture, before it was in the repo. Their result: the bytes
+  and dimensions differ, and the content is identical element for
+  element. That means all six regions, every label, both list
+  scrollbars, and the selection handle on the tasks scrollbar. Only the
+  crop differs, which is what re-screenshotting an unchanged drawing
+  produces. The handle was already in the 27th's capture, so it is no
+  sign of an edit.
+- **Re-run as a measurement, 2026-10-31,** with both files committed.
+  The as-sent capture was offset by (21, 5) pixels inside the other, and
+  the 1475x1063 overlap was compared pixel by pixel with Pillow. 11 of
+  1,567,925 pixels differ, all in one 4x4 spot at (1147-1150, 106-109)
+  in the 10-30 capture.
+- **The spot, identified.** It is not the editor's overlay. A selection
+  handle was the expectation, and the crops show it is wrong. It is the
+  top-left corner of the Active Users scrollbar's own outline:
+  - in the as-sent capture, the hand-drawn stroke has a two-to-three
+    pixel spur at that corner, where it starts or ends;
+  - in the 10-30 capture, the corner is a clean curve.
+
+  The pixels cannot say why one stroke end renders differently. So the
+  exact reading is: **every region, label, shape and position is
+  identical, and one stroke's end differs by about three pixels.** That
+  is not "the drawing is identical" in the strict sense. It changes
+  nothing a reader of the layout would use.
+
+**The chain:** original sketch (lost) → reconstruction drawn
+2026-10-27 → capture sent 2026-10-27 (`-as-sent`) → second capture,
+2026-10-30. The last two are verified to match, and both are here.
+**What the match does not establish:**
+- that either capture is the original sketch;
+- that the as-sent file's bytes are the ones sent on the 27th. That
+  rests on the chain that returned it.
+
+Compare the built screen against the drawing; the table is a
+description of it. The drawing's list titles say "Active"; the built
+lists say "in boundary", and the Q.0 entry says why.
+
 **The reconstruction**, which Q.0 built:
 
 | Region | Content |
@@ -11781,6 +12155,114 @@ as a conflict, never overwritten by a workbook).
 
 ### R. Deploy the image CI scanned, not an equivalent one (registry)
 
+**What R delivers, and what it does not (revised 2026-10-28).** R is the
+*identity* half: the image serving requests is the one CI built and
+scanned, pulled by digest. That holds whatever the build's inputs did,
+because nothing is rebuilt on the host. R does **not** make a build
+*reproducible*. A commit built again later, or the next commit built at
+all, takes each input as it is that day. There are four inputs, and R
+pins none of them:
+1. **Python packages.** Frozen by `backend/requirements.lock` since
+   2026-10-28, the entry above. This is the other half of what R's
+   title promises, and it is done.
+2. **The base images** are floating tags: `python:3.13-slim`,
+   `nginx:1.29-alpine`, and `node:24-alpine`, which builds the
+   frontend. On wl-util-1 the cached `python:3.13-slim` dates from
+   2026-09-19 and is re-pulled only when the cache misses. So Debian
+   fixes since then (`libbrotli1`'s, for one) do not arrive, and they
+   would arrive unannounced if it were re-pulled. The fix is `FROM …@sha256:`
+   in each Dockerfile, moved deliberately. Not done.
+3. **Debian packages** from the backend's `apt-get install` line resolve
+   against the live archive at build time. Freezing them
+   needs a snapshot archive (`snapshot.debian.org`) or a vendored mirror.
+   Not done, and the heaviest of the four.
+4. **npm.** The frontend has no `package-lock.json`, so nginx's image
+   resolves at build time. The open decision is in
+   `docs/bench-stack-verification.md`. Not done.
+
+**In practice (2) and (3) sit in Docker's layer cache rather than
+floating.** Live's apt layer was resolved on 2026-10-14 and reused by
+every deploy since. Its base is the `python:3.13-slim` pulled on
+2026-09-19. So Debian's fixes since then have not reached live. They
+arrive all at once, unannounced, when a Dockerfile line above them
+changes or the cache is cleared. The bench showed it the same day: the
+gdk-pixbuf change rebuilt the apt layer, which brought Debian's fixed
+`libbrotli1` (live's is CRITICAL) and a newer `libexpat1` with it.
+
+**The remaining hole, named (Jarrod, 2026-10-29).** Ask "when do OS
+security fixes reach live?" With the lock in place, the answer is
+"whenever the cache evicts", and that is nobody's decision.
+- **It is (2) and (3) together, not the apt line alone.** The base
+  image's own Debian packages carry findings too. Nobody has split the
+  findings between base and apt line. The base's packages move only
+  when `python:3.13-slim` is re-pulled, by the same cache behaviour.
+- **nginx has no apt line.** Its OS fixes come only from re-pulling
+  `nginx:1.29-alpine`.
+- npm, (4), is a different kind of gap, recorded on its own below.
+
+**Two options. They trade the same thing in opposite directions.**
+- **Pin, so that updating is an act.**
+  - What it means: `FROM …@sha256:` for each base, and the apt line
+    resolved against `snapshot.debian.org` at a stated timestamp, for
+    both `debian` and `debian-security`.
+  - What it buys: a build is reproducible. An update is a commit moving
+    the date or digest, with a scan before and after.
+  - The cost: if nobody moves it, fixes stop arriving at all. That is
+    worse than today, when the cache at least evicts eventually.
+  - Smaller points:
+    - Alpine has no snapshot archive, but nginx installs nothing, so its
+      digest is enough.
+    - The snapshot service is slow and rate-limited.
+    - An air-gapped site builds from its own mirror either way.
+- **Re-pull on a stated cadence, so that updating is regular.**
+  - What it means: `docker build --pull --no-cache` on every deploy, or
+    on a schedule.
+  - What it buys: fixes arrive on a known rhythm.
+  - The cost: two builds of one commit differ, and what changed shows
+    only in the scan's diff.
+
+**Recommendation: pin, and move the pin on a stated cadence.**
+- **The age check is what makes the cadence real.** Something must read
+  how old the pin is: for example, `deploy.sh` stating the snapshot
+  date's and each digest's age, and refusing past a stated limit.
+- **This is not a third answer.** It is the first option with a
+  calendar, and it still pays for the act each time.
+- **Without the age check it fails the way the scans did.** A cadence
+  nobody reads is the cache again, under a quieter name. That is the
+  scan item's finding: a signal nobody reads.
+
+Not built.
+
+**The frontend's dependency tree is unexamined (Jarrod, 2026-10-30).**
+This is a different kind of gap from the apt one, and not urgent at
+three tenants.
+- **Not under-counted: never examined.** The Trivy figures were
+  under-counted. This tree is not counted at all, wrongly or otherwise.
+- **The shipped JavaScript carries the packages but not their names.**
+  `deploy/nginx/Dockerfile` runs `npm install` in a `node:24-alpine`
+  build stage, and the final image copies only the built `dist/`. That
+  output carries the packages' code with no `package.json` or lock beside
+  it, so nothing in the image says which packages or versions it holds.
+- **No scan reaches it.**
+  - Trivy scans the final image, where nothing is left to identify.
+  - The build stage is discarded unscanned.
+  - CI's `image` job builds only the backend.
+- **There is nothing to audit against.** With no `package-lock.json`,
+  `npm audit` has no fixed tree, and every build resolves afresh, cached
+  only until `package.json` changes.
+- **Its own item, not a line in the apt decision.** A fix would need:
+  - a committed lock (the open decision in
+    `docs/bench-stack-verification.md`);
+  - a scan of the lock, or of the build stage, kept with the deploy
+    record.
+
+R as written was read as covering more than (1). The scan item said
+that "after R a count could only rise from new advisories". It cannot
+while (2) to (4) float, and it could not while (1) did; that sentence is
+corrected there. So R stays the registry and identity item. "A build of
+commit X is the same in six months" is the lock plus (2) to (4), each
+its own act.
+
 **State (2026-10-09):**
 
 - Live runs images built on the host from one pinned commit
@@ -11792,7 +12274,9 @@ as a conflict, never overwritten by a workbook).
   It never builds nginx.
 - The artifact serving requests is therefore *equivalent* to the one CI
   scanned (same commit, same Dockerfile) but not *identical*. Dependencies
-  resolve at build time, and nginx's `npm install` has no lockfile. CI's
+  resolve at build time, and nginx's `npm install` has no lockfile.
+  (Python's no longer resolve at build time, since 2026-10-28's lock.
+  The base image, apt and npm still do; see above.) CI's
   scan result does not attach to anything that runs.
 
 **The fix:** CI pushes both images to a registry, tagged by commit, and
@@ -12253,34 +12737,179 @@ surfaces a rise. The nginx Dockerfile's base-image comment
 (2026-10-10) says to "re-check with deploy.sh's per-deploy scan";
 nothing did until today.
 
-The counts from every record in `~claude/wingrc-deploys/`. *Rows* are
-package × advisory lines; *unique* counts distinct advisories; C and H
-are CRITICAL and HIGH rows.
+The counts from every record in `~claude/wingrc-deploys/`, as
+*findings / distinct advisories / CRITICAL / HIGH*, all from Trivy's own
+`Total:` lines. *Re-derived 2026-10-28:* the first version of this table
+counted the rendered table's rows, and Trivy merges repeated cells down a
+column, so that undercounted. It is kept below the table for comparison,
+because every C and H figure in it was wrong and the prose quoted it.
 
-| Deploy record | backend rows / unique / C / H | nginx rows / unique / C / H |
+| Deploy record | backend | nginx | backend CRITICAL, named |
+|---|---|---|---|
+| 2026-10-09 `b781f2b` | 296 / 151 / 1 / 72 | 161 / 108 / 2 / 43 | 1: `libxml2` CVE-2026-6653, unreachable |
+| 2026-10-10 `b27e8a6` (nginx base 1.29) | 304 / 153 / 1 / 69 | 179 / 111 / 0 / 44 | 1: the same |
+| 2026-10-14 to 2026-10-18, nine deploys | 303 / 152 / 1 / 69 | 179 / 111 / 0 / 44 | 1: the same |
+| 2026-10-18 `d0d745c` to 2026-10-20 `09aee13`, five deploys | 303 / 152 / 1 / 69 | 181 / 113 / 0 / 45 | 1: the same |
+| **2026-10-26 `d802851`** | **314 / 161 / 4 / 73** | **232 / 139 / 0 / 48** | **4: `libxml2` CVE-2026-6653, unreachable; Python: `brotli`, `certifi` ×2** |
+| 2026-10-27 `9fa9d0e` | 314 / 161 / 4 / 73 | 232 / 139 / 0 / 48 | 4: the same |
+| 2026-10-27 `7d81b4a` (Q.0) | 308 / 156 / 1 / 70 | 232 / 139 / 0 / 48 | 1: `libxml2` CVE-2026-6653, unreachable (the Python ones resolved away) |
+| 2026-10-27 `07bc630` (#64) | 308 / 156 / 1 / 70 | 232 / 139 / 0 / 48 | 1: the same |
+| 2026-10-29 UTC, **no deploy**: live's `07bc630` images rescanned, from JSON | 311 / 164 / 2 / 70 | 232 / 139 / 1 / 47 | 2: `libxml2` CVE-2026-6653, unreachable; `libbrotli1` CVE-2026-111497 (nginx: Alpine's `brotli-libs`, the same CVE) |
+
+**The first version's figures,** *rows / unique / C / H* counted from the
+rendered table, for comparison:
+
+| Deploy record | backend | nginx |
 |---|---|---|
 | 2026-10-09 `b781f2b` | 289 / 151 / 1 / 28 | 161 / 108 / 2 / 11 |
-| 2026-10-10 `b27e8a6` (nginx base 1.29) | 297 / 153 / 1 / 28 | 179 / 111 / 0 / 8 |
-| 2026-10-14 to 2026-10-18, nine deploys | 296 / 152 / 1 / 28 | 179 / 111 / 0 / 8 |
-| 2026-10-18 `d0d745c` to 2026-10-20 `09aee13`, five deploys | 296 / 152 / 1 / 28 | 181 / 113 / 0 / 8 |
-| **2026-10-26 `d802851`** | **308 / 161 / 2 / 29** | **231 / 139 / 0 / 8** |
-| 2026-10-27 `9fa9d0e` | 308 / 161 / 2 / 29 | 231 / 139 / 0 / 8 |
-| 2026-10-27 `7d81b4a` (Q.0) | 301 / 156 / 1 / 29 | 231 / 139 / 0 / 8 |
+| 2026-10-10 `b27e8a6` | 297 / 153 / 1 / 28 | 179 / 111 / 0 / 8 |
+| 2026-10-14 to 2026-10-20 | 296 / 152 / 1 / 28 | 179–181 / 111–113 / 0 / 8 |
+| 2026-10-26, 2026-10-27 `9fa9d0e` | 308 / 161 / 2 / 29 | 231 / 139 / 0 / 8 |
+| 2026-10-27 `7d81b4a`, `07bc630` | 301 / 156 / 1 / 29 | 231 / 139 / 0 / 8 |
+
+- **HIGH was the worst:** backend 28–29 against a real 69–73, and nginx
+  8–11 against 43–48. Where a package has several advisories of the same
+  severity, Trivy prints that severity on the first row only.
+- **CRITICAL** was right except on 10-26 and 10-27 at `9fa9d0e`: 2
+  against 4, because `certifi`'s two installs shared one cell.
+- **Findings** were about 7 low.
+- **Unique** was right throughout. A distinct ID survives a merged cell,
+  because the cell still prints it once.
+- `deploy.sh`'s own "N findings" line used the same row count, so every
+  deploy report until now said 289 to 308 where Trivy had found 296 to
+  314.
+
+**The old figures were wrong, not only unread (Jarrod, 2026-10-29).**
+- **How far off:** HIGH was undercounted by more than half in every
+  record from 2026-10-09 to 2026-10-27:
+  - backend 28 against 69, about 60% low;
+  - nginx 8 against 43, about 80% low.
+- **Cited elsewhere:** other entries quoted these figures:
+  - the 2026-10-14 live deploy;
+  - the 2026-10-26 `d802851` deploy;
+  - the nginx Dockerfile's base-image comment.
+
+  Each now carries a note pointing here.
+- **The connection:** the counter was free to be wrong *because* nothing
+  read it. Anyone comparing "28 HIGH" with the table it came from would
+  have seen a page of HIGH rows. Nobody did, for eighteen days, so a
+  wrong count cost nothing and showed nothing. It was found the first
+  time someone asked the record a specific question: which package is
+  the CRITICAL?
+- **Why this is the strongest case so far:** this is the product's
+  recurring finding, a signal nobody reads, in its strongest form.
+  - The six red CI runs were true signals nobody looked at.
+  - Here the unread signal was also false. Being unread is what let it
+    stay false.
+
+  A record nobody reads does not stay correct by default. Its
+  correctness is unknown, and so is everything that cites it.
+
+**No record kept the JSON, and the scanned images are gone.** Only each
+service's latest image is on the host. So the per-severity figures come
+from each table file's `Total:` lines. Trivy computes those from its data
+per target, so they are its own counts, not a reading of the rendering.
+Nothing finer than per severity can be re-derived; any per-package
+question about an old record needs its table read by eye. **Since
+2026-10-28, `deploy.sh` stores Trivy's JSON as the record**
+(`trivy-<svc>.json`), takes its counts from that, and renders the table
+from the same JSON for reading. `trivy-<svc>.err` keeps whatever Trivy
+printed to stderr.
+
+**The last row moved with no deploy.** The images are the ones scanned on
+10-27; the advisory database changed. Overnight, CVE-2026-111497 (an
+out-of-bounds write in the Brotli decoder) went from HIGH to CRITICAL. It
+sits in both images, through a system library:
+- backend: Debian's `libbrotli1`, fixed in `1.1.0-2+deb13u1`;
+- nginx: Alpine's `brotli-libs`, fixed in `1.2.1-r0`.
+
+Neither build takes the fix, because neither base image is re-pulled
+(item R, input 2). Whether anything reachable decodes Brotli through
+them has not been examined.
 
 2026-10-27's scans are byte-identical to the previous day's, under new
 image IDs (the application layers changed): one day, no new advisory and
 no changed package.
 
 The same day's Q.0 deploy shows the backend down 7 rows, 5 advisories and
-1 CRITICAL, with nginx unchanged. Q.0 changed no dependency, so the drop
-is the base layer or the package index moving under a floating tag. It
-is the first downward step in this table, and the first record whose
-image IDs come from the fixed lookup (#62). Which package moved is not
-answered here.
+1 CRITICAL, with nginx unchanged. (Re-derived: down 6 findings, 5
+advisories and **3** CRITICAL, 314 / 4 to 308 / 1.) It is the first downward step in this
+table, and the first record whose image IDs come from the fixed lookup
+(#62). #64's deploy, the same evening, scanned byte-identical to Q.0's.
+
+*Corrected 2026-10-28.* This paragraph first said the drop was "the base
+layer or the package index moving under a floating tag". **It was
+neither.** The Debian section of the two scans is identical: 301
+advisories, 1 CRITICAL. The whole drop is in the Python section, 13
+advisories (3 CRITICAL) down to 7 (0 CRITICAL), because the build
+resolved newer Python packages:
+- `brotli` 1.2.0 → 1.2.1;
+- `certifi` 2026.10.18 → 2026.10.23;
+- `pypdf` 6.21.1 → 6.21.3.
+
+Q.0 changed no dependency declaration, but `pyproject.toml` declares
+floors only (`fastapi>=0.118`), with no lock file. So every build
+resolves the newest release of every package, and a deploy carries
+whatever was published since the last one. This one also carried
+`anthropic` 1.15.0 → 2.3.0, a major version, and `fastapi` 0.146 →
+0.162, with no change in the repo naming either. This is a third cause
+of drift beside the two below (new advisories, a changed base layer),
+and digest pinning under item R does not freeze it. It is recorded here,
+not acted on.
+
+**How to read the C column:** it was a count of rendered rows, and
+undercounted. The table above is now re-derived from Trivy's totals: 4
+CRITICAL at `9fa9d0e` (1 Debian, 3 Python), 1 at `7d81b4a` and
+`07bc630`.
+
+**The one CRITICAL left (asked 2026-10-28): an OS package with no
+reachable path. Not the base image's, though; our own apt line adds it.**
+- **Package:** Debian's `libxml2`, version
+  `2.12.7+dfsg+really2.9.14-2.1+deb13u3`. Despite the prefix it is
+  upstream 2.9.14 (the `really` convention). `python:3.13-slim` does not
+  contain it. The backend Dockerfile's `apt-get install` line installs
+  `shared-mime-info` beside WeasyPrint's libraries, and `libxml2` comes
+  in as its dependency (`apt-cache rdepends --installed`: only
+  `shared-mime-info`).
+- **Advisory:** CVE-2026-6653, a use-after-free in
+  `xmlParseInternalSubset`, giving denial of service from crafted XML.
+  Affects upstream 2.9.11 up to 2.11.0. NVD scores it 9.8 (CVSS 3.1),
+  which is the CRITICAL Trivy prints; the CNA (Ubuntu) scores it 7.0
+  (CVSS 4.0). **Debian has no fixed version**, so no rebuild clears it.
+  It has been in every record since 2026-10-09: the C column's constant 1.
+- **Nothing that runs loads it.** Checked in live's backend container,
+  2026-10-28:
+  - Of every shared object and executable in the image, the only one
+    linked to `libxml2.so.2` is `/usr/bin/update-mime-database`.
+    `shared-mime-info` runs that at package install, during the build.
+    Pango, Cairo and GDK-Pixbuf, WeasyPrint's native libraries, do not
+    link it.
+  - No process in the backend or worker container has it mapped
+    (`/proc/*/maps`).
+- **The XML WinGRC parses goes elsewhere:**
+  - Uploaded `.docx` files (product document ingestion,
+    `importers/document.py`) go through `python-docx` and `lxml`.
+    `lxml` 6.1.3 bundles its own libxml2, **2.14.6**, outside the
+    affected range, and Trivy's Python section reports nothing against
+    it.
+  - SVG logos go through `defusedxml` over the stdlib's expat
+    (`svg_sanitize.py`). `openpyxl` uses `et_xmlfile`, or `lxml` when it
+    is installed.
+
+  So it is the first case the item describes in the abstract: a
+  CRITICAL row in a record nobody read for eighteen days, which turns
+  out to be an unreachable OS package. Its one route out is ours:
+  whether `shared-mime-info` is needed at all is a question about our
+  apt line, not about the base. That answer was found by reading it,
+  and the record cannot say so by itself. A later change can make it
+  reachable without touching this row: installing `librsvg` (WeasyPrint
+  SVG), or a wheel built against the system libxml2.
 
 In six days the nginx image went 181 → 231 rows (113 → 139 advisories),
-and the backend 296 → 308, with a **second CRITICAL**. Nobody has looked
-at which. A count also mixes two causes the record does not separate:
+and the backend 296 → 308, with a **second CRITICAL**. (Re-derived:
+nginx 181 → 232 findings, backend 303 → 314, and CRITICAL 1 → **4**.) Nobody has looked
+at which. (Answered 2026-10-28, above: it was in the Python packages
+and went with them. The Debian one is `libxml2`, unreachable.) A count also mixes two causes the record does not separate:
 new advisories published against the same packages, and a changed image
 (a rebuilt base layer). The record keeps image IDs, so the second can be
 answered after the fact.
@@ -12295,7 +12924,10 @@ finding is fixed here.**
 - **A baseline, so drift is measurable.** 231 on its own means nothing;
   +50 in six days is a fact. The record would need the previous deploy's
   counts beside its own, by severity and as distinct advisories, and the
-  difference stated.
+  difference stated. The worked example: on 2026-10-29, with no deploy
+  and no code change, CVE-2026-111497 (brotli) went from HIGH to
+  CRITICAL in both images overnight. A count says the images got worse.
+  A baseline says nothing changed but the advisory database.
 - **Who looks, and when.** If the answer is "nobody, deliberately, until
   the product has users", write that here. A deliberate no is a decision;
   the silent no that exists today is a gap.
@@ -12303,7 +12935,12 @@ finding is fixed here.**
   of item R, not a dependent. R is about deploying the identical image CI
   scanned, by digest from a registry. Pinning by digest *freezes* the
   base layer, so after R a count could only rise from new advisories,
-  and moving to a newer base would become a deliberate act. Today
+  and moving to a newer base would become a deliberate act.
+  *Corrected 2026-10-28:* R pins the deployed image, not the
+  Dockerfile's base. Each new build still takes the base tag, the apt
+  archive and, until that day's lock, the Python packages as they then
+  were. So after R a count can still move with every build. Item R now
+  says which input each fix freezes. Today
   `nginx:1.29-alpine` and the backend's base are floating tags, re-pulled
   whenever a build misses the cache. Which of the 10-20 to 10-26 rise
   came from a changed base and which from new advisories is the first
@@ -12721,6 +13358,21 @@ would be lost: `.scratch/`, `Claude outputs/`, `cleanup_yaml.py`,
 `.claude/settings.local.json` and the `.git/info/exclude` lines. So
 would a raw `wingrc_` API token in `.scratch/hit_live_endpoint.py`,
 which needs revoking whether or not a clone happens.
+
+**`.claude/settings.local.json` is the one loss that stops a protection
+without a word (Jarrod, 2026-10-30).** It registers the Bash-tool
+pipefail hook (CLAUDE.md, the pipefail bullet). The script is tracked,
+`.claude/hooks/strict_bash.py`, so a clone carries it; the registration
+is machine-specific and lost. Jarrod's global git ignore covers the
+file, so `git status` does not list it among the untracked files. A
+missing hook looks exactly like a working one until a pipe hides a
+failure, which is the failure the hook exists to catch. After the
+clone:
+1. re-add the registration, whose block is in the script's docstring;
+2. run `false | cat` in Claude's Bash tool and confirm it exits 1.
+
+That check is also in CLAUDE.md, at the start of every session, because
+CLAUDE.md is what a clone carries.
 
 ### X. Publishing a document attaches it as evidence unchosen -- a hard-rule violation, live ✅ BUILT (2026-10-18)
 

@@ -201,13 +201,25 @@ nginx` with that commit stamped in as `WINGRC_BUILD_SHA`, recreates them with
 `status: ok` **and** that commit for the backend. A deploy is done when
 `/health` names the commit you meant to ship, not when the commands exit.
 
-**When the merge being deployed changes `deploy.sh` itself, check it out
-first.** Bash reads a script while it runs, from the file it opened. Git
-writes a new file at the checkout, so the run that does the checkout
-finishes with the *old* script's steps. On 2026-10-27 that would have been
-a wait loop checking a `/health` field the new code had removed: "did not
-become healthy" after five minutes, exit 1 and no record, after a deploy
-that had succeeded. So, after `git fetch origin`, when `git diff HEAD origin/main -- deploy/deploy.sh`
+**When the merge being deployed changes `deploy.sh` itself, the target's
+copy has to be the one that runs.** Bash reads a script while it runs,
+from the file it opened. Git writes a new file at the checkout, so the run
+that does the checkout would finish with the *old* script's steps. On
+2026-10-27 that would have been a wait loop checking a `/health` field the
+new code had removed: "did not become healthy" after five minutes, exit 1
+and no record, after a deploy that had succeeded.
+
+Since 2026-10-28, `deploy.sh` handles this itself. Before its checkout it
+compares its own blob (`HEAD:deploy/deploy.sh`, which is the running copy,
+because the tree is clean) with the target's. When they differ it checks
+out the target and `exec`s the target's `deploy.sh` with the same commit,
+printing `deploy.sh differs at <sha>; running that one`. It sets
+`WINGRC_DEPLOY_REEXEC=1` for that run. A run with that variable set that
+still finds a difference refuses, rather than looping.
+
+**This works only when the copy on the host has the check.** On a host
+whose checkout predates it, check out first by hand. After
+`git fetch origin`, when `git diff HEAD origin/main -- deploy/deploy.sh`
 is not empty:
 
 ```bash
@@ -427,6 +439,43 @@ Stop. Do not patch forward with another migration written under pressure.
 Restore the `pre-deploy-*.dump` from 7a, report exactly what the migration
 did versus what was expected, and wait for a decision before touching it
 again. A half-corrected table is worse than a restored one.
+
+## Python dependencies: the lock file
+
+`backend/requirements.lock` names every Python package the backend image
+installs, its exact version and the hashes of its files. The image and
+both CI jobs install from it with `--no-deps`. The package itself goes in
+after it, with `--no-deps --no-build-isolation`, so nothing outside the
+lock is fetched, the build backend and pip included. A build of one
+commit therefore installs the same packages whenever it runs. If PyPI
+ever stops serving one of those files, the build fails on the missing
+file or the hash; it does not substitute another version.
+
+- **Changing a version** is `make lock UPGRADE="--upgrade-package <name>"`,
+  then committing the diff to `requirements.lock`. That diff is the record
+  of what moved.
+- **Adding or changing a dependency** in `pyproject.toml` needs `make lock`
+  as well. CI's `Lock is current` step re-resolves with the committed lock
+  as its starting point, and fails with the diff when `pyproject.toml` asks
+  for something the lock lacks. `pip check` in the image build catches a
+  missing core dependency the same way.
+- **`make lock` with no `UPGRADE`** keeps every pin `pyproject.toml` still
+  allows, so it never moves a version you did not ask for.
+  `UPGRADE="--upgrade"` moves everything; read the diff before committing.
+
+The lock is universal: one file, with markers for the few packages only
+Windows needs, so a development box installs it too.
+
+**What the lock does not freeze.** These still change between two builds
+of one commit:
+- the base image (`python:3.13-slim`, a floating tag);
+- the Debian packages the Dockerfile's `apt-get install` line resolves;
+- the frontend's npm packages, which have no lock file;
+- in CI, the runner's own Python and the pip that `setup-python` brings.
+  This affects the test environment only, never the image.
+
+`docs/roadmap.md`'s item R says which of these it covers and which it
+does not.
 
 ## Database roles: which credential does what
 
