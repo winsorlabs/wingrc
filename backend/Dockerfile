@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
 FROM postgres:18 AS pgtools
 
 FROM base AS deps
-COPY backend/pyproject.toml ./
+COPY backend/pyproject.toml backend/requirements.lock ./
 # `ai` (anthropic/pypdf/python-docx) must always be installed here, not
 # just when the "ai" connector is actually configured -- extract_text() in
 # importers/document.py calls pypdf/python-docx before the configured
@@ -40,7 +40,22 @@ COPY backend/pyproject.toml ./
 # IntegrationConnection credential is actually configured through
 # Administration (connectors/ai.py, 2026-09-19); nothing here dials out at
 # import time.
-RUN pip install --upgrade pip && pip install ".[dev,ai]"
+#
+# Every version comes from requirements.lock, hash-checked, so a build of
+# one commit installs the same packages whenever it runs (`make lock` and
+# docs/deployment.md's "Python dependencies" say how a version changes).
+# The package itself goes in after with --no-deps, so it can pull nothing
+# the lock does not name, and --no-build-isolation, so its build uses the
+# lock's hatchling rather than fetching the newest. pip is in the lock
+# too, replacing `pip install --upgrade pip`, which took whatever pip was
+# newest at build time. Not the base image's pip either: 26.2.1's vendored
+# certifi carries the compromised emSign roots (GHSA-6q48-6c7w-9gw2), and
+# the bench's scan caught it when the upgrade was first dropped.
+# `pip check` fails the build on a lock that no longer satisfies
+# pyproject.toml's core dependencies.
+RUN pip install --no-deps -r requirements.lock \
+    && pip install --no-deps --no-build-isolation ".[dev,ai]" \
+    && pip check
 
 FROM base AS runtime
 COPY --from=pgtools /usr/lib/postgresql/18/bin/pg_dump /usr/local/bin/pg_dump
