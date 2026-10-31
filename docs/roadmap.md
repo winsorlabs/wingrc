@@ -11477,32 +11477,44 @@ memory, so there are two records, and they are a union, not a contest:
 - the paragraph above is the better record of the original;
 - the drawing below is the better record of what he wants now.
 
-**The drawing is
-[`docs/dashboard-q0-reconstruction-2026-10-27.png`](dashboard-q0-reconstruction-2026-10-27.png)**
-(committed 2026-10-30). Read it with three facts in mind:
-- **It is a reconstruction from memory, not the original sketch.**
-- **It was drawn on 2026-10-27; this file was captured on 2026-10-30.**
-  It is a second screenshot of the drawing open in its editor, not the
-  file sent on the 27th. On 2026-10-31 it was compared with the capture
-  Jarrod sent on 2026-10-27:
-  - The bytes and dimensions differ: 1503x1063 here, 1496x1072 then.
-  - The content is identical, element for element: all six regions,
-    every label, both list scrollbars, and the selection handle on the
-    tasks scrollbar.
-  - The crop is all that differs, which is what re-screenshotting an
-    unchanged drawing produces. The handle was already in the 27th's
-    capture, so it is no sign of an edit.
+**The drawing is in the repo as two captures of the same drawing:**
+- [`docs/dashboard-q0-reconstruction-2026-10-27-as-sent.png`](dashboard-q0-reconstruction-2026-10-27-as-sent.png)
+  (1496x1072): the capture Jarrod sent on 2026-10-27. It came back to
+  this machine as a file on 2026-10-31, and was committed then.
+- [`docs/dashboard-q0-reconstruction-2026-10-27.png`](dashboard-q0-reconstruction-2026-10-27.png)
+  (1503x1063): a second screenshot of the drawing open in its editor,
+  captured and committed 2026-10-30.
 
-  The comparison was made by the reviewer who holds the 27th's capture.
-  That capture is not in the repo.
+Read them with three facts in mind:
+- **They are a reconstruction from memory, not the original sketch.**
+- **The drawing dates from 2026-10-27.** The filenames carry the
+  drawing's date, not each file's.
 - **The original image is lost.** Only the 2026-09-28 paragraph above
-  describes it. The match shows this file is the 10-27 reconstruction.
-  It does not make it the original.
+  describes it.
 
-The chain is: original sketch (lost) → reconstruction drawn 2026-10-27
-→ capture sent 2026-10-27 → this capture, committed 2026-10-30. The
-last two are verified to match. The filename carries the drawing's
-date, not the file's.
+**The two captures match, and anyone can re-check it.**
+- **First comparison, 2026-10-31:** made by the reviewer who then held
+  the 27th's capture, before it was in the repo. Their result: the bytes
+  and dimensions differ, and the content is identical element for
+  element. That means all six regions, every label, both list
+  scrollbars, and the selection handle on the tasks scrollbar. Only the
+  crop differs, which is what re-screenshotting an unchanged drawing
+  produces. The handle was already in the 27th's capture, so it is no
+  sign of an edit.
+- **Re-run as a measurement, 2026-10-31,** with both files committed.
+  The as-sent capture was offset by (21, 5) pixels inside the other, and
+  the 1475x1063 overlap was compared pixel by pixel with Pillow. 11 of
+  1,567,925 pixels differ, all in a 4x4 spot at (1147â€“1150, 106â€“109),
+  the top edge of the Active Users scrollbar. Everything else is
+  identical.
+
+**The chain:** original sketch (lost) â†’ reconstruction drawn
+2026-10-27 â†’ capture sent 2026-10-27 (`-as-sent`) â†’ second capture,
+2026-10-30. The last two are verified to match, and both are here.
+**What the match does not establish:**
+- that either capture is the original sketch;
+- that the as-sent file's bytes are the ones sent on the 27th. That
+  rests on the chain that returned it.
 
 Compare the built screen against the drawing; the table is a
 description of it. The drawing's list titles say "Active"; the built
