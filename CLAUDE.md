@@ -249,6 +249,13 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   branch gets one run per commit before any PR exists, and that run's
   checks are what the PR shows. There is no `pull_request` trigger; it
   only duplicated runs (see `docs/roadmap.md`'s CI-triggers entry).
+- **Python versions come from `backend/requirements.lock`** (since
+  2026-10-28), hashed and installed with `--no-deps` by the image and
+  both CI jobs. Before it, `pyproject.toml`'s floors let every build take
+  the newest release of every package. A version changes only through
+  `make lock` and a committed diff. CI's `Lock is current` step fails when
+  `pyproject.toml` needs a re-lock. The base image, the apt line and npm
+  still float (`docs/deployment.md`, "Python dependencies"; item R).
 - `ruff check` must be clean before merge. B008 is suppressed per-file for
   FastAPI router files (see `backend/pyproject.toml`).
 - Work on branches, small commits. Push after every commit — dev server is a

@@ -1,0 +1,112 @@
+# What Python was actually running on live before the lock froze it.
+#
+# Read 2026-10-28 from live's backend container (wingrc-backend-1) with
+# `pip freeze --all`. The worker container's output is byte-identical.
+#
+#   image commit:   07bc6301dca5991c2d172f674a54bd7aec9f4ba5 (WINGRC_BUILD_SHA, #64)
+#   built:          2026-10-27 17:43 UTC by deploy/deploy.sh
+#   python:         3.13.15 (main, Sep 19 2026, 01:05:27) [GCC 14.2.0]
+#   base image:     python:3.13-slim, as cached on wl-util-1:
+#                   sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b,
+#                   created 2026-09-19
+#
+# Until backend/requirements.lock, nothing in the repo named these
+# versions: pyproject.toml declares floors, and every build installed the
+# newest release of each. The first lock is this set, verified by building
+# it and diffing `pip freeze --all` against this file. The only
+# differences are five build tools the lock adds (editables, hatchling,
+# pathspec, tomlkit, trove-classifiers).
+#
+# One line here is not what runs: `pip==26.2.1`. The running pip is
+# 26.2.2 (`pip --version`). The runtime stage is FROM the base, which has
+# pip 26.2.1, and the deps stage's site-packages are copied over it. That
+# brings 26.2.2's files and dist-info but leaves 26.2.1's dist-info in
+# place, and `pip freeze` reports the first one it finds. The locked image
+# does the same, so the two outputs agree on this line.
+aiosmtpd==1.4.6
+alembic==1.20.1
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anthropic==2.3.0
+anyio==4.15.1
+atpublic==9.0.0
+attrs==26.1.0
+boto3==1.43.119
+botocore==1.43.119
+brotli==1.2.1
+certifi==2026.10.23
+cffi==2.1.1
+charset-normalizer==3.5.2
+click==8.5.0
+cryptography==50.0.2
+cssselect2==0.10.1
+defusedxml==0.7.1
+dnspython==2.9.0
+docstring_parser==0.18.0
+email-validator==2.3.0
+et_xmlfile==2.0.0
+fastapi==0.162.0
+fonttools==4.67.0
+h11==0.16.0
+httpcore2==2.16.0
+httptools==0.9.0
+httpx2==2.16.0
+idna==3.20
+iniconfig==2.3.1
+jiter==0.18.0
+jmespath==1.1.0
+lxml==6.1.3
+Mako==1.4.3
+markdown-it-py==4.2.0
+MarkupSafe==3.0.4
+mdurl==0.1.2
+msal==1.39.0
+openpyxl==3.1.5
+opentelemetry-api==1.45.1
+packaging==26.3
+pillow==13.0.0
+pip==26.2.1
+pluggy==1.7.0
+psycopg==3.3.6
+psycopg-binary==3.3.6
+pycparser==3.12
+pydantic==2.14.1
+pydantic-settings==2.16.1
+pydantic_core==2.50.1
+pydyf==0.13.0
+Pygments==2.21.0
+PyJWT==2.15.1
+PyOTP==2.10.0
+pypdf==6.21.3
+pyphen==0.18.1
+pytest==9.1.1
+python-dateutil==2.9.0.post0
+python-docx==1.2.0
+python-dotenv==1.2.4
+python-multipart==0.0.32
+PyYAML==6.0.3
+requests==2.34.2
+rich==15.0.0
+ruff==0.17.3
+s3transfer==0.19.3
+segno==1.6.6
+shellingham==1.5.4
+six==1.17.0
+sniffio==1.3.1
+SQLAlchemy==2.1.6
+starlette==1.10.0
+tinycss2==1.5.1
+tinyhtml5==2.1.0
+truststore==0.10.5
+typer==0.27.3
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+urllib3==2.8.0
+uvicorn==0.54.0
+uvloop==0.23.0
+watchfiles==1.3.0
+weasyprint==70.0
+webencodings==0.6.1
+websockets==17.3
+wingrc-backend @ file:///app
+zopfli==0.4.3
