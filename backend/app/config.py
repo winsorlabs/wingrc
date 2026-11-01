@@ -97,6 +97,22 @@ class Settings(BaseSettings):
     storage_bucket: str = "evidence"
     storage_region: str = "us-east-1"
 
+    # Local snapshots (snapshots.py, roadmap item S). Same host as the data,
+    # so not a backup: see docs/deployment.md, "Local snapshots".
+    # snapshot_dir is where /health looks for the newest one (the backend
+    # mounts it read-only); `wingrc snapshot-create --dir` writes elsewhere.
+    snapshot_dir: str = "/snapshots"
+    # A daily schedule plus two hours' slack. Older reads `stale` on /health.
+    snapshot_max_age_hours: int = 26
+    # Complete snapshots kept after a new one finishes; older are deleted.
+    snapshot_keep: int = 14
+    # What the kept snapshots plus the new one may occupy. Exceeding it
+    # refuses the new snapshot; nothing is deleted to make room.
+    snapshot_max_total_bytes: int = 5 * 1024**3
+    # Free space the filesystem must still have after the new snapshot, as
+    # a fraction of its size. The database runs on the same disk.
+    snapshot_min_free_fraction: float = 0.10
+
     # Auth: Microsoft Entra ID SSO (optional — omit to disable SSO)
     entra_tenant_id: str | None = None
     entra_client_id: str | None = None
