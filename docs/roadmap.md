@@ -11828,7 +11828,11 @@ Read them with three facts in mind:
     pixel spur at that corner, where it starts or ends;
   - in the 10-30 capture, the corner is a clean curve.
 
-  The pixels cannot say why one stroke end renders differently. So the
+  The pixels cannot say why one stroke end renders differently. One
+  possible reason, a hypothesis that has not been checked:
+  hand-drawn-style diagram tools randomize how rough a stroke looks,
+  and some re-randomize on each render. A second export would then
+  have identical geometry and a slightly different line end. So the
   exact reading is: **every region, label, shape and position is
   identical, and one stroke's end differs by about three pixels.** That
   is not "the drawing is identical" in the strict sense. It changes
