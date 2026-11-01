@@ -127,4 +127,9 @@ bench work.
    own task calls for.
 6. Tear down: `docker compose -p wingrc_verify_<date> down -v` — confirm
    the live `wingrc` project's containers are still running unaffected
-   before and after.
+   before and after. Since item S, a bench stack's backend also gets its
+   own snapshot directory, `/var/lib/wingrc-snapshots/wingrc_verify_<date>`,
+   which `down -v` does not remove because it is a host directory. It is
+   root's, so remove it through a container, for example
+   `docker run --rm -v /var/lib/wingrc-snapshots:/s postgres:18 rm -rf /s/wingrc_verify_<date>`,
+   and check that it is gone. A snapshot taken there holds the bench's data.
