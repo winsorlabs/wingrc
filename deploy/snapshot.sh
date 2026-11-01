@@ -25,5 +25,11 @@ dir="${WINGRC_SNAPSHOT_DIR:-/var/lib/wingrc-snapshots/$project}"
 # root-equivalent, so its members can read them too.
 docker compose run --rm --no-deps -T --user root -v "$dir:/snapshots-rw" --entrypoint sh backend \
   -c 'chown wingrc:wingrc /snapshots-rw && chmod 0700 /snapshots-rw'
-docker compose run --rm --no-deps -T -v "$dir:/snapshots-rw" backend \
+# Retention and the cap come from the environment when set (by name, so
+# compose passes the value); backend/app/config.py has the defaults.
+settings=()
+for v in WINGRC_SNAPSHOT_KEEP WINGRC_SNAPSHOT_MAX_TOTAL_BYTES WINGRC_SNAPSHOT_MIN_FREE_FRACTION; do
+  if [ -n "${!v:-}" ]; then settings+=(-e "$v"); fi
+done
+docker compose run --rm --no-deps -T "${settings[@]}" -v "$dir:/snapshots-rw" backend \
   wingrc snapshot-create --dir /snapshots-rw
