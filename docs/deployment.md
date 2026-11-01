@@ -440,6 +440,118 @@ Restore the `pre-deploy-*.dump` from 7a, report exactly what the migration
 did versus what was expected, and wait for a decision before touching it
 again. A half-corrected table is worse than a restored one.
 
+7a's dump is the database alone. That is enough to undo a migration, which
+never touches the object store. It is not enough to recover a deployment:
+see the next section.
+
+## Local snapshots (not a backup)
+
+**A local snapshot is on the same host as the data. It does not protect
+against losing the host or its disk, ransomware that reaches the host, or
+the snapshot directory being removed.** It covers a bad migration, an
+application bug or CLI run that deletes data, and operator error. Do not
+call it a backup.
+
+### Why both stores, together
+
+Evidence bytes live in MinIO; the database holds their keys. A database
+restored alone renders every attachment as present, with every count
+correct, while none of the bytes exist. Row counts and a recomputed SPRS
+score read only the database, so they pass on that restore (measured: the
+`empty-objects` mutation below). So a snapshot is one set: the dump, every
+object in the bucket, and a manifest tying the two together.
+
+`backend/app/snapshots.py` has the design, including the window between
+the dump and the object copy and how verification tells window effects
+from real loss.
+
+### The encryption key is not in the snapshot
+
+`WINGRC_CREDENTIAL_ENCRYPTION_KEYS` lives in the environment (`.env`).
+Restore both stores without it and every stored connector credential is
+unreadable for good. **Keep a copy of every configured key, by label, in a
+password manager off this host.** The manifest records labels only.
+
+### Taking one
+
+```bash
+cd /path/to/checkout && deploy/snapshot.sh
+```
+
+It writes to `/var/lib/wingrc-snapshots/<compose project>/<id>/`
+(`WINGRC_SNAPSHOT_DIR` overrides). It is a host directory, not a named
+volume, so `docker compose down -v` does not take the snapshots with the
+data. The directory is `0700` and the files `0600`, owned by the image's
+user (uid 10001). Only that uid and root can read them, and on a host where
+the `docker` group is root-equivalent, so can its members. The dumps hold
+every tenant's records in plaintext.
+
+- **Retention:** the newest 14 are kept (`WINGRC_SNAPSHOT_KEEP`), and older
+  ones are deleted only after a new one completes.
+- **The cap:** the kept snapshots plus the new one may use 5 GiB
+  (`WINGRC_SNAPSHOT_MAX_TOTAL_BYTES`). 10% of the filesystem must stay free
+  (`WINGRC_SNAPSHOT_MIN_FREE_FRACTION`), because the database runs on the
+  same disk. **Either shortfall refuses the new snapshot and deletes
+  nothing.** Overwriting the last good snapshot is the worse failure.
+- **Encryption at rest: none, on purpose.** On the same host the key would
+  sit beside the data, so encrypting would be a gesture rather than
+  protection. Encryption becomes real when a copy leaves the host and the
+  key does not; it belongs with an off-host destination.
+
+**Nothing schedules it.** Turning it on is a deliberate step: a cron entry
+for an account in the `docker` group, for example
+`17 3 * * * cd /home/wladmin/dev/wingrc && deploy/snapshot.sh >> $HOME/wingrc-snapshots.log 2>&1`.
+
+### What reads it
+
+`/health` reports `snapshots`: the newest complete one's id and age, and
+`stale` once it is older than 26 hours, a daily schedule plus slack
+(`snapshot_max_age_hours` in `backend/app/config.py`). `none` means no snapshot has been taken, and
+`not configured` that the directory is not mounted. The field never changes
+`status`: a restart does not take a snapshot, and `deploy.sh` waits on
+`status`. Each deploy record includes the `/health` body, so a stopped
+schedule shows at the next deploy at the latest.
+
+### The restore test
+
+```bash
+deploy/restore-test.sh <snapshot-id>
+```
+
+It restores into a throwaway compose project with its own volumes and no
+published ports, using the source's backend image, then runs
+`wingrc snapshot-verify`:
+
+- the schema head matches the manifest;
+- the row counts per table match;
+- SPRS, recomputed for every assessment, matches the source's stored
+  score;
+- every object a row names is fetched from the restored bucket and
+  compared by size and SHA-256;
+- the bucket holds exactly the manifest's objects;
+- every stored credential is decrypted with the configured key, and
+  reported as success or failure only.
+
+It then removes the project. It fails if the volume, container or network
+lists differ from before, or if any key value appears in its record or in
+the snapshot. Records land in `~/wingrc-restore-tests/`. The mutation
+arguments listed in the script's header break a restore on purpose, so that
+each check can be seen to fail.
+
+### Recovering
+
+`wingrc snapshot-restore` writes only to an **empty** database and an empty
+bucket. It refuses anything else, so it cannot overwrite data. To recover:
+
+1. Bring up fresh volumes.
+2. Run `snapshot-restore`, then `snapshot-verify`.
+3. Set `wingrc_app`'s password again. It is a cluster role, not in the
+   dump; the restore creates the role without one, as migration 0016 does.
+4. Point the stack at the restored volumes.
+
+The first live restore test is Jarrod's to watch (`docs/roadmap.md`, item
+S).
+
 ## Python dependencies: the lock file
 
 `backend/requirements.lock` names every Python package the backend image

@@ -1108,5 +1108,103 @@ def views() -> None:
         typer.echo(f"{v.id:<28} {','.join(v.control_ids):<26} {v.title}")
 
 
+@app.command(name="snapshot-create")
+def snapshot_create_cmd(
+    dir: Path = typer.Option(..., "--dir", help="Snapshot root, mounted read-write"),
+) -> None:
+    """Take a local snapshot: the database and the object store as one set
+    (snapshots.py). Not a backup -- same host as the data. Reads only.
+
+    Exit 1 on refusal or failure, leaving earlier snapshots untouched.
+    Exit 3 when the snapshot completed but rows already named objects the
+    store did not hold (`missing_at_snapshot` in its manifest).
+    """
+    from . import snapshots
+    from .config import get_settings
+    from .storage import get_storage_client
+
+    s = get_settings()
+    try:
+        result = snapshots.create(
+            dir,
+            storage=get_storage_client(),
+            keep=s.snapshot_keep,
+            max_total_bytes=s.snapshot_max_total_bytes,
+            min_free_fraction=s.snapshot_min_free_fraction,
+            log=typer.echo,
+        )
+    except snapshots.SnapshotError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(code=1) from e
+    typer.echo(
+        f"snapshot {result['id']}: {result['tables']} tables, {result['rows']} rows, "
+        f"{result['objects']} objects, {result['bytes']} bytes -> {result['path']}"
+    )
+    if result["labels_in_use_not_configured"]:
+        typer.echo(
+            "WARNING: credentials are stored under key label(s) "
+            f"{result['labels_in_use_not_configured']} that this environment does not configure",
+            err=True,
+        )
+    if result["missing_at_snapshot"]:
+        typer.echo(
+            f"rows name {len(result['missing_at_snapshot'])} object(s) the store did not hold "
+            "when copied; listed in the manifest as missing_at_snapshot",
+            err=True,
+        )
+        raise typer.Exit(code=3)
+
+
+@app.command(name="snapshot-restore")
+def snapshot_restore_cmd(
+    path: Path = typer.Argument(..., help="One snapshot directory"),
+    skip_objects: bool = typer.Option(
+        False, "--skip-objects", help="Mutation check only: leave the bucket empty"
+    ),
+) -> None:
+    """Restore a snapshot into an EMPTY database and bucket; refuses anything
+    else, so it cannot overwrite data. Then run snapshot-verify."""
+    from . import snapshots
+    from .storage import get_storage_client
+
+    try:
+        snapshots.restore(
+            path, storage=get_storage_client(), restore_objects=not skip_objects, log=typer.echo
+        )
+    except snapshots.SnapshotError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(code=1) from e
+
+
+@app.command(name="snapshot-verify")
+def snapshot_verify_cmd(
+    path: Path = typer.Argument(..., help="The snapshot directory that was restored"),
+) -> None:
+    """Check a restored database and bucket against the snapshot's manifest:
+    schema head, row counts, SPRS recomputed, every object a row names
+    fetched and compared, and every stored credential decrypted (reported
+    as success or failure only). Exit 1 if any check fails."""
+    from . import snapshots
+    from .storage import get_storage_client
+
+    try:
+        checks = snapshots.verify(path, storage=get_storage_client())
+    except snapshots.SnapshotError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(code=1) from e
+    for c in checks:
+        word = {True: "PASS", False: "FAIL", None: "NOT RUN"}[c.ok]
+        typer.echo(f"{word:<8} {c.name}: {c.detail}")
+        for p in c.problems[:20]:
+            typer.echo(f"           {p}")
+        if len(c.problems) > 20:
+            typer.echo(f"           ... and {len(c.problems) - 20} more")
+    failed = [c.name for c in checks if c.ok is False]
+    verdict = f"FAILED ({', '.join(failed)})" if failed else "restored set matches"
+    typer.echo(f"verdict: {verdict}")
+    if failed:
+        raise typer.Exit(code=1)
+
+
 if __name__ == "__main__":
     app()
