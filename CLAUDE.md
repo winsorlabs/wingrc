@@ -358,12 +358,14 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
     precedent is what is declined. Do not re-propose it as an obvious
     improvement. Machine-specific registration stays in
     `settings.local.json`, and the check stays Claude's first call.
-  - **Until this is on `main`, the registration points at an identical
-    copy in `~/.claude/hooks/`.** On a branch without the file, `py` exits
-    2 (measured), and the hooks documentation says a PreToolUse exit of 2
-    blocks the call, so every Bash command would be refused. Once every
-    branch has it, point the registration at the tracked file. A branch
-    from before then fails loudly, not silently.
+  - **Since 2026-10-31 the registration points at the tracked file.**
+    Until #66 merged it pointed at an identical copy in
+    `~/.claude/hooks/`, now retired. Moving the registration was checked:
+    with only the tracked copy present, `false | cat` still exits 1. On
+    a branch from before #66, the file is missing and `py` exits 2
+    (measured). The hooks documentation says a PreToolUse exit of 2
+    blocks the call, so every Bash command would be refused: a loud
+    failure, not a silent one.
   - **Pipes: caught.** `false | cat` now ends with exit 1, which the tool
     reports as a failure.
   - **`;` chains: not caught, and no prefix can catch them.** The tool
