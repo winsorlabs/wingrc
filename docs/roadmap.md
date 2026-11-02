@@ -14543,7 +14543,9 @@ those words:
 - **`coverage_basis = assists`:** partial, or a capability only. **At
   activation it is credited exactly like `customer_system`.** The loop
   excludes only `platform_only`, so `assists` is not a softer claim
-  there, and the legend must not suggest it is.
+  there, and the legend must not suggest it is. The gap itself is its own
+  entry ("`coverage_basis = assists` is credited exactly like
+  `customer_system`"), and the legend's wording is not its fix.
 - **`classification`:** `provider_satisfies`, `shared` or
   `customer_owns`. Coverage basis is disabled when the answer is
   `customer_owns`.
@@ -14574,63 +14576,111 @@ it wrong because they never asked "on whose systems?"
 
 #### What activation actually does (settled 2026-11-02; the gate)
 
-The brief that queued this entry asked whether a bulk-accepted row can
-move a control toward met. `OrgProduct`'s docstring says control states
-are updated, and the hard rule says candidates are never auto-met. Both
-are true. Here is what the code does, read rather than assumed:
+**Bulk accept's actual exposure: responsibility is written at
+activation, with no per-tenant confirmation, and printed for an
+assessor.** `_run_loop` sets `control_state.responsibility` from the
+classifications of every contributor
+(`resolve_contributor_responsibility`) the moment the product goes
+active. The bundle's `ssp/05_customer_responsibility_matrix.html` prints
+every objective's `responsibility` and names each contributing product,
+**at any status**, `pending_evidence` included. The consolidated SSP PDF
+carries the same matrix (`bundle_service.py:_crm_body` draws both).
+
+So a wrong `provider_satisfies` row is in an assessor-facing document
+the moment the tool is active. It tells the assessor the MSP's tool
+covers a control it does not, and nothing between the wizard and the
+bundle asks anyone. **Bulk accept bulk-accepts responsibility claims,
+which an assessor reads as stated.** It does not bulk-accept compliance
+status.
+
+**Second: the step from `pending_evidence` to `met` is one unchecked
+choice.** A wrong row also leaves its objectives one click from `met`,
+with the wrong party named responsible, because nothing checks for
+evidence before `met`. That is its own entry, "The rule that nothing is
+met without evidence has no code behind it". It is the smaller exposure
+here, because it still needs a person to choose `met`.
+
+**What the code does, in full** (`ca4b78d`, read rather than assumed):
 
 - **Which rows count.** `_run_loop` takes the tenant's pinned baseline
   version and drops every row that is `customer_owns` or
   `platform_only`. `provider_satisfies` and `shared` remain, under
-  either `customer_system` or `assists`.
+  either `customer_system` or `assists`. The two are treated alike: see
+  "`coverage_basis = assists` is credited exactly like
+  `customer_system`".
 - **Status.** For each remaining row's objectives, a product that is the
   objective's first contributor sets it to `pending_evidence`,
   whatever it was before (`assessment.py:contributor_added_status`). A
   later contributor leaves the status alone. **Activation never sets
   `met`.** It writes a `control_state_history` row saying which product
   did it.
-- **Responsibility.** `control_state.responsibility` is set at once,
-  from the classifications of every contributor
-  (`resolve_contributor_responsibility`). No person confirms it per
-  tenant.
 - **Evidence tasks.** The rows' evidence specs become evidence tasks
   (`_fanout_evidence_tasks`): provider evidence asked of the MSP.
-- **`candidate_state` decides nothing at activation.** The wizard asks
-  for it on every row and the database stores it, but no activation or
-  assessment path reads it (a grep of `backend/app`, 2026-11-02). One of
-  the eleven columns is a decision with no effect. Whether it stays is
-  the plan doc's call.
 - **The SPRS score.** `pending_evidence` deducts exactly as `not_met`
-  does, so activation never raises the score. It can lower it. An
-  objective a person set to `met` or `not_applicable`, with no
-  contributor yet, goes to `pending_evidence` when a first contributor
-  arrives. That was observed here and not examined further; it is not
-  this item's subject.
-
-**So, in the brief's terms:** bulk accept does not bulk-accept
-compliance status. **It does bulk-accept responsibility claims, which an
-assessor reads as stated.** The bundle's
-`ssp/05_customer_responsibility_matrix.html` prints every objective's
-`responsibility` and names each contributing product, whatever the
-objective's status. The consolidated SSP PDF carries the same matrix
-(`bundle_service.py:_crm_body` draws both). A wrong
-`provider_satisfies` row tells the assessor the MSP's tool covers a
-control it does not, from the moment the product is activated.
-
-**The step from `pending_evidence` to `met` is one unchecked choice.**
-`routers/assessments.py:patch_control_state` accepts `met` with no
-evidence check, and so does `ObjectiveRow.tsx`'s status menu. The hard
-rule that nothing is met without confirmed config and attached evidence
-is held by the person choosing, not by code. A wrong bulk-accepted row
-leaves its objectives one click from `met`, with the wrong party named
-responsible. That is smaller than bulk-accepting `met`, and larger than
-"it only ever creates candidates". This gap was found while settling
-the question. It is recorded here and not fixed, and it is a decision
-for Jarrod in its own right.
+  does, so activation never raises the score. It can lower it, because
+  "whatever it was before" includes a status a person set by hand. That
+  is its own entry, "Activating a tool overwrites a status a person set",
+  and the one to look at first.
+- **`candidate_state` decides nothing.** It is this slice's first act,
+  below.
 
 **"At scale" is literal.** A product baseline is reference data shared
 across orgs (layer 1). One bulk-accepted mapping is what every tenant
 that activates the tool gets, pinned at activation.
+
+#### The slice's first act: delete `candidate_state`
+
+**A deletion, not a redesign.** It is one of the eleven columns Jarrod
+named, asked on every row, and it returns nothing. Removing it is a gain
+in navigability with no design question attached.
+
+Confirmed nothing reads it to decide anything (2026-11-02, `0f38dd4`):
+
+- **Activation and assessment:** `_run_loop` filters on `classification`
+  and `coverage_basis` only. No engine path or scheduler reads
+  `candidate_state`. The only router that touches it is the admin edit
+  route, which loads and saves it for the wizard.
+- **The bundle:** `bundle_service.py` and `render.py` never mention it.
+  The CRM, SSP and manifest do not show it.
+- **Screens:** only `ToolImportWizard.tsx` (the column, and a default of
+  `pending_evidence` on a new row), with `lib/baseline.ts`'s value list
+  and `types.ts`'s field. `ToolDetailPanel.tsx` does not show it.
+- **Plan docs:** `PLAN-gui-restructure.md` lists it among the wizard's
+  enum values, and this file's wizard entries describe the dropdown.
+  Nothing describes it as deciding anything.
+- **What does touch it:**
+  - the importers validate it;
+  - `importers/document.py` overwrites whatever the model said with a
+    value derived from `classification` (`not_satisfied_by_product` for
+    `customer_owns`, otherwise `pending_evidence`);
+  - `seeds/baselines.py` and the edit route write it;
+  - `backend/baselines/rocketcyber.yaml` carries it on 17 rows;
+  - a CHECK constraint on `baseline_control`.
+
+**It does harm as well as nothing.**
+
+- **It can contradict the classification.** Everywhere the code sets
+  it, it is a function of `classification`. The wizard alone lets a
+  person set it independently, so a row can read `provider_satisfies`
+  and `not_satisfied_by_product` at once.
+- **A change to it alone writes a new baseline version.** The version
+  diff counts it (`baseline_import.py`), so editing a field that decides
+  nothing produces a version every tenant is then offered a move to
+  (item P).
+
+**What deleting it takes:**
+
+- the wizard column, `lib/baseline.ts`'s list and the `types.ts`
+  fields;
+- the API models in `routers/admin_products.py`;
+- the importers' validation and derivation, `baseline.py`'s
+  `CandidateState`, and the key in `rocketcyber.yaml`;
+- the version diff's comparison;
+- a migration dropping the column and its CHECK constraint.
+
+The migration drops a column on immutable version rows, which is safe
+only because nothing reads it, and that is this section's evidence.
+Re-run the grep when the slice starts.
 
 #### Making bulk accept safe
 
@@ -14749,8 +14799,185 @@ question with Heimdal. The final wording is the plan doc's, not this
 entry's. What this entry fixes is that the headers ask questions.
 
 **Out of scope here:** any scaffolding, any column added in
-anticipation, and the met-without-evidence gap above, which is a
-separate decision.
+anticipation, and the three entries below it, each its own decision: the
+overwrite of a status a person set, the met-without-evidence rule, and
+`assists`.
+
+### Activating a tool overwrites a status a person set -- look at this first
+
+**Found 2026-11-02, settling the Tool Import wizard's gate. Not fixed.**
+Of the four records filed that day (this one, the met-without-evidence
+rule, `assists`, and `candidate_state`), Jarrod's reviewer would look at
+this one first.
+
+**What happens.** A person sets an objective to `met` or
+`not_applicable` by hand, through the status menu on the assessment
+board. No tool covers it yet. Later a tool is activated whose baseline
+covers it. That tool is the objective's first contributor, and
+`assessment.py:contributor_added_status` sets the status to
+`pending_evidence` from whatever it was. The SPRS score is recomputed
+and falls by the control's weight. The same happens to `inherited`,
+`partial` and `needs_review`, and on a baseline version move that brings
+in a control the tenant had no contributor for (`engine.py`,
+`move_org_product_version`).
+
+**What it leaves on record:**
+
+- `control_state_history` gets a row reading "Magic loop: X activated",
+  from the person's status to `pending_evidence`;
+- the audit log gets one `org_product.activate` row, which names neither
+  the statuses it changed nor the score;
+- the person's earlier choice is still in its own `control_state.update`
+  audit row, but the objective no longer says it.
+
+**Two things this is.**
+
+- **Today's state rewriting yesterday's record,** which the product
+  names as an invariant (CLAUDE.md, "Product invariants"). A tool's
+  arrival is today's state. A person's `met` or `not_applicable` was a
+  judgement recorded yesterday. Activation replaces the judgement rather
+  than asking about it.
+- **"Adding a security tool lowered my score."** That is the kind of
+  behaviour that makes people stop believing the number. Nobody expects
+  coverage arriving to cost points. If the score moves for a reason
+  nobody can see on screen, the next move is distrusted too, including
+  the right ones.
+
+**Is it deliberate? The evidence says inherited, not chosen.**
+
+- **The stated design is narrower than the code.** CLAUDE.md's magic loop
+  section says activation flips objectives `not_met → pending_evidence`.
+  The code does it from any status.
+- **The guard was scoped to what was observed.** Before 2026-09-16
+  `_run_loop` overwrote status unconditionally. The multi-tool slice found
+  a second product's activation regressing a `met` objective, and fixed
+  it by checking for a prior contributor, because that was how the
+  observed case had become `met`. A `met` set by a person, with no
+  contributor, was not the observed case, and the entry does not mention
+  it.
+- **The docstring says the first-contributor branch preserves the old
+  behaviour.** `contributor_added_status` says a first contributor's
+  result is "identical to today's single-product magic-loop behavior".
+  That is the same blind overwrite the docstring, further on, calls a
+  defect.
+- **Only one case is tested.** `test_first_contributor_sets_pending_evidence`
+  covers `not_met`. Nothing tests `met`, `not_applicable` or `inherited`
+  meeting a first contributor, in either direction.
+- **The codebase's own answer elsewhere is `needs_review`.** When a
+  prior judgement may be stale, deactivation and reactivation use
+  `needs_review`, not `pending_evidence`: "MSP must re-confirm".
+
+**Is there a defensible reason?** Weighed, not dismissed:
+
+- **For a hand-set `met`:** there is a case that a tool's arrival is new
+  information. The evidence behind the old `met` may describe a different
+  implementation, and the tool brings evidence tasks of its own. That
+  argues for asking the person, which is `needs_review`, and for showing
+  the tool's tasks. It does not argue for dropping the judgement to
+  `pending_evidence` and taking the points.
+- **For `not_applicable`:** a tool covering a control does not make it
+  applicable. No reason found.
+
+**Nothing proposed yet.** The design question is what activation does
+with an objective that has a human judgement and no contributor. Leaving
+it alone, `needs_review`, or asking at activation are all possible, and
+the choice is Jarrod's. Whatever it is, the score and the screen should
+say why they moved.
+
+### The rule that nothing is met without evidence has no code behind it
+
+**Found 2026-11-02. Recorded, not scoped.** CLAUDE.md's first hard rule
+says: "Nothing is 'met' without confirmed config + attached evidence."
+**No code holds it.**
+
+- `routers/assessments.py:patch_control_state` accepts `met` for any
+  objective with no evidence check;
+- `ObjectiveRow.tsx`'s status menu offers it the same way;
+- `routers/evidence.py`'s module docstring says none of its endpoints
+  modify `control_state.status`. The multi-tool entry in this file calls
+  evidence sufficiency "a pure human judgment call, gated by nothing". So
+  it was known in two places and stated as enforced in a third.
+
+**The finding is the gap between the stated rule and the code, not a
+missing check.** A rule read as enforced is relied on: a reviewer
+reading CLAUDE.md, or an assessor told how WinGRC works, would assume
+the code stops a `met` with nothing attached. Until someone decides,
+CLAUDE.md's rule now says it is held by the person marking it.
+
+**The options, for whoever picks it up:**
+
+- **Enforce:** refuse `met` with no live evidence link;
+- **Warn at the moment of marking:** allow it, and say plainly that
+  nothing is attached;
+- **Restate the rule to match reality:** `met` is a person's assertion,
+  and evidence is how it is supported, not a precondition.
+
+**Legitimate cases where the evidence does not live in WinGRC:**
+
+- `customer_owns` objectives, whose evidence is the customer's and may
+  never be uploaded here;
+- a control satisfied by a policy or procedure held elsewhere;
+- an assessor's observation or interview.
+
+Enforcing blindly would push people to attach placeholder evidence to
+get past the check. That is the evidence sprawl the product exists to
+avoid, and worse, because the placeholder looks like evidence. Whoever
+picks this up decides which option, and for which cases. This entry's
+job is only to stop the rule reading as enforced when it isn't.
+
+**Related:** the Tool Import wizard entry, where a wrong bulk-accepted
+row leaves objectives one unchecked click from `met`.
+
+### `coverage_basis = assists` is credited exactly like `customer_system`
+
+**Found 2026-11-02. Not fixed, and not to be fixed inside the Tool
+Import wizard.** There are three values and two behaviours. `_run_loop`
+excludes only `platform_only`. An `assists` row gets the same
+`pending_evidence`, the same `responsibility`, the same evidence tasks
+and the same line in the CRM as a `customer_system` row. Nothing an
+assessor reads says the coverage was partial.
+
+**Where the difference shows at all:**
+
+- `models.py`'s comment and the wizard's dropdown, which describe it as
+  "partial/capability-only";
+- `assists_count` on `GET …/assessments/{id}/products`
+  (`routers/assessments.py`), which no screen draws (a grep of `frontend/src`, 2026-11-02).
+
+The one committed baseline, `rocketcyber.yaml`, uses no `assists` rows.
+How many rows on live carry it has not been checked; that is a read, and
+the first step for whoever picks this up.
+
+**Two readings, and what each would cost.**
+
+1. **The distinction is real and unimplemented.** `assists` should
+   behave differently: the CRM saying the tool assists rather than
+   covers, perhaps no provider evidence task, perhaps a responsibility
+   no stronger than `shared`.
+   - **Cost:** decide what "partial" means at activation and in the CRM
+     and SSP, then build it in `_run_loop` and the renderers.
+   - Existing `assists` rows start behaving differently on their next
+     activation, which is a visible change for every tenant using them.
+   - It also overlaps with `classification = shared`, which already
+     says the provider does part and the customer does the rest. Two
+     axes expressing "partial" is a design question in its own right.
+2. **The value invites a weaker claim that the system treats as full
+   coverage.** Someone unsure picks `assists` because it sounds modest.
+   The system then credits it in full, and the record says the hedge was
+   made.
+   - **Cost:** remove the value, and move each existing row to
+     `customer_system` with `shared`, or to `platform_only`, decided per
+     row by a person, never by a migration's default.
+   - Baseline rows are immutable (item P), so that is a new version of
+     every product with an `assists` row, and a version move for every
+     tenant pinned to one.
+
+**What must not happen:** the legend's wording being the only thing
+between a person and this gap. The Tool Import wizard entry tells the
+legend not to suggest `assists` is softer. That stops the wizard making
+it worse; it does not fix it. A person who picked `assists` last month,
+or an AI recommendation that picks it next month, gets full credit
+either way.
 
 ## Sequencing
 
