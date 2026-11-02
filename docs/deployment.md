@@ -501,6 +501,25 @@ every tenant's records in plaintext.
 **Nothing schedules it.** Turning it on is a deliberate step: a cron entry
 for an account in the `docker` group, for example
 `17 3 * * * cd /home/wladmin/dev/wingrc && deploy/snapshot.sh >> $HOME/wingrc-snapshots.log 2>&1`.
+On a deployment where snapshots are being turned on, add it in the same
+session as the deploy (see the banner, below).
+
+**The stale limit and the retention count assume that schedule is daily,
+and nothing connects them to it.** The limit is a constant, 50 hours, not
+derived from the schedule. The schedule is a line in the host's crontab,
+which the backend reading the snapshot directory cannot see. Change the
+cron line, and change these two with it:
+
+- **`WINGRC_SNAPSHOT_MAX_AGE_HOURS`** (default 50), in the host `.env`:
+  two intervals plus two hours. Left at 50, a weekly schedule leaves the
+  banner red for most of every week, and an hourly one lets two days of
+  missed runs pass unflagged. `docker-compose.yml` passes it to the
+  backend; recreate the backend after changing it.
+- **`WINGRC_SNAPSHOT_KEEP`** (default 14), on the cron line itself
+  (`WINGRC_SNAPSHOT_KEEP=14 deploy/snapshot.sh …`): `snapshot.sh` reads
+  it from its own environment, not from `.env`. It is a count of
+  snapshots, not days. At daily it keeps two weeks; at hourly, fourteen
+  hours.
 
 ### What reads it, and who is told
 
@@ -515,7 +534,7 @@ It reads `stale` once the newest is older than **50 hours**
 runs plus two hours. One missed run is a blip: the newest is then just
 under 48 hours old when the next run starts. Two missed runs is a stopped
 job. The two hours are for the run itself. If the schedule changes,
-change the limit with it.
+change the limit with it, as above.
 
 **msp_admin sees a red banner on every screen** when the reader says
 `stale`, `none`, `invalid` (dated in the future: check the clock) or
@@ -524,7 +543,10 @@ hourly (`GET /admin/scheduled-jobs/snapshots`). It is quiet for `ok`, and
 for `not configured`, a deployment with no snapshot directory mounted.
 `none` raises it too, because no snapshot is the state the alarm exists
 for. On a deployment that has not turned snapshots on yet, it shows from
-the deploy until the first one.
+the deploy until the first one. **Keep that window short: turn the
+schedule on in the same session as the deploy.** A red banner people
+expect is a red banner they stop reading, and this one exists for the day
+it is not expected.
 
 **What it does not do: page anyone.** Like the TLS banner, it reaches
 whoever signs in as msp_admin. There is no mail relay by design, and
