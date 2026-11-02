@@ -113,17 +113,29 @@ def complete_snapshots(root: Path) -> list[tuple[str, datetime, Path]]:
 
 
 def status(root: Path, max_age_hours: int, now: datetime) -> dict:
-    """What /health reports: the newest complete snapshot's age against the
-    schedule. A scheduled job that quietly stops leaves nothing behind to
-    say so; this reads the result instead of trusting the schedule.
+    """The age reader: the newest complete snapshot's age against the
+    schedule, for /health and for msp_admin's banner (`attention`). A
+    scheduled job that quietly stops leaves nothing behind to say so; this
+    reads the result instead of trusting the schedule.
+
+    **Only a finished set counts** (complete_snapshots): a directory named
+    as an id that holds a manifest. A `.partial` directory, or an id with
+    no manifest because the write died before the last step, is ignored,
+    so a half-written snapshot can never read as fresh.
 
     `ok` and `stale` compare the newest id's time with `now`. `none` means
     the directory is there and holds no finished set. `not configured`
     means the directory is not mounted at all, and `unreadable` that it is
     there but cannot be listed. An id dated more than an hour ahead of
     `now` reads `invalid`, because a clock that is wrong would otherwise
-    hide staleness.
+    hide staleness. `attention` is true for every status but `ok` and
+    `not configured` (tests/test_snapshots.py holds both claims).
     """
+    out = _status(root, max_age_hours, now)
+    return {**out, "attention": out["status"] not in ("ok", "not configured")}
+
+
+def _status(root: Path, max_age_hours: int, now: datetime) -> dict:
     base: dict = {"max_age_hours": max_age_hours}
     if not root.is_dir():
         return {**base, "status": "not configured", "detail": f"{root} is not mounted"}

@@ -10,6 +10,12 @@ GET /admin/scheduled-jobs  Every registered job: name, interval, last run
 GET /admin/scheduled-jobs/tls-expiry
                             The served certificates' expiry, from the last
                             successful tls_expiry_check -- the banner's data.
+GET /admin/scheduled-jobs/snapshots
+                            The newest local snapshot's age (snapshots.py,
+                            item S) -- the same banner's second alarm. Not
+                            a job: snapshots are taken by a host cron, and
+                            the backend reads its own read-only mount when
+                            asked, so there is no reading to go stale.
 
 Deployment-wide, not org-scoped -- job_run carries no org_id (see
 models.py:JobRun). Gated to msp_admin only, matching admin_users.py's
@@ -23,13 +29,14 @@ sync jobs, whose visibility might belong closer to Integrations instead.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import tls_expiry
+from .. import snapshots, tls_expiry
 from ..auth import require_role
 from ..config import get_settings
 from ..db import get_session
@@ -124,3 +131,23 @@ def tls_expiry_status(db: Session = Depends(get_session)) -> TlsExpiryOut:
         now=datetime.now(UTC),
     )
     return TlsExpiryOut(window_days=tls_expiry.WINDOW_DAYS, **out)
+
+
+class SnapshotStatusOut(BaseModel):
+    status: str  # ok | stale | none | invalid | unreadable | not configured
+    attention: bool
+    max_age_hours: int
+    newest: str | None = None
+    age_hours: float | None = None
+    count: int | None = None
+    detail: str | None = None
+
+
+@router.get("/snapshots", response_model=SnapshotStatusOut)
+def snapshot_status() -> SnapshotStatusOut:
+    settings = get_settings()
+    return SnapshotStatusOut(
+        **snapshots.status(
+            Path(settings.snapshot_dir), settings.snapshot_max_age_hours, datetime.now(UTC)
+        )
+    )

@@ -102,8 +102,12 @@ class Settings(BaseSettings):
     # snapshot_dir is where /health looks for the newest one (the backend
     # mounts it read-only); `wingrc snapshot-create --dir` writes elsewhere.
     snapshot_dir: str = "/snapshots"
-    # A daily schedule plus two hours' slack. Older reads `stale` on /health.
-    snapshot_max_age_hours: int = 26
+    # Older reads `stale` on /health and raises msp_admin's banner. Two
+    # daily runs plus two hours: one missed run is a blip and leaves the
+    # newest at most 48 hours old when the next one starts; two missed is
+    # a stopped job. The two hours are for the run itself. Change it with
+    # the schedule.
+    snapshot_max_age_hours: int = 50
     # Complete snapshots kept after a new one finishes; older are deleted.
     snapshot_keep: int = 14
     # What the kept snapshots plus the new one may occupy. Exceeding it

@@ -502,15 +502,37 @@ every tenant's records in plaintext.
 for an account in the `docker` group, for example
 `17 3 * * * cd /home/wladmin/dev/wingrc && deploy/snapshot.sh >> $HOME/wingrc-snapshots.log 2>&1`.
 
-### What reads it
+### What reads it, and who is told
 
-`/health` reports `snapshots`: the newest complete one's id and age, and
-`stale` once it is older than 26 hours, a daily schedule plus slack
-(`snapshot_max_age_hours` in `backend/app/config.py`). `none` means no snapshot has been taken, and
-`not configured` that the directory is not mounted. The field never changes
-`status`: a restart does not take a snapshot, and `deploy.sh` waits on
-`status`. Each deploy record includes the `/health` body, so a stopped
-schedule shows at the next deploy at the latest.
+The age reader counts **only finished snapshots**: a directory named as an
+id that holds a manifest. A write that dies partway leaves a `.partial`
+directory, or at worst an id with no manifest, and both are ignored, so a
+half-written snapshot never reads as fresh (`tests/test_snapshots.py`, and
+on the bench below).
+
+It reads `stale` once the newest is older than **50 hours**
+(`snapshot_max_age_hours` in `backend/app/config.py`). That is two daily
+runs plus two hours. One missed run is a blip: the newest is then just
+under 48 hours old when the next run starts. Two missed runs is a stopped
+job. The two hours are for the run itself. If the schedule changes,
+change the limit with it.
+
+**msp_admin sees a red banner on every screen** when the reader says
+`stale`, `none`, `invalid` (dated in the future: check the clock) or
+`unreadable`. It is the TLS certificate banner's path, beside it, refreshed
+hourly (`GET /admin/scheduled-jobs/snapshots`). It is quiet for `ok`, and
+for `not configured`, a deployment with no snapshot directory mounted.
+`none` raises it too, because no snapshot is the state the alarm exists
+for. On a deployment that has not turned snapshots on yet, it shows from
+the deploy until the first one.
+
+**What it does not do: page anyone.** Like the TLS banner, it reaches
+whoever signs in as msp_admin. There is no mail relay by design, and
+nothing else is sent.
+
+`/health` carries the same reading as `snapshots`, and each deploy record
+holds the `/health` body. The field never changes `status`: a restart does
+not take a snapshot, and `deploy.sh` waits on `status`.
 
 ### The restore test
 
@@ -534,9 +556,15 @@ published ports, using the source's backend image, then runs
 
 It then removes the project. It fails if the volume, container or network
 lists differ from before, or if any key value appears in its record or in
-the snapshot. Records land in `~/wingrc-restore-tests/`. The mutation
-arguments listed in the script's header break a restore on purpose, so that
-each check can be seen to fail.
+the snapshot. **Its record lands beside the deploy records**, in
+`~/wingrc-deploys/<UTC>-restore-test-<id>/` (`WINGRC_DEPLOY_RECORD_DIR`
+overrides), with `restore-test.txt` in `deploy.txt`'s shape: commit, time,
+user, snapshot, each step's exit and the verdict. One directory then
+answers what has been done to this host. The mutation arguments listed in
+the script's header break a restore on purpose, so that each check can be
+seen to fail. `no-manifest` restores a set with its manifest removed, as a
+write that died before the last step would leave it, and passes only if
+the restore refuses.
 
 ### Recovering
 

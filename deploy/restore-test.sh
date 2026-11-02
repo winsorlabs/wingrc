@@ -18,6 +18,8 @@
 #   score-changed       every control_state flipped        -> SPRS
 #   schema-head         alembic_version changed            -> schema head
 #   not-empty           restored twice into one database   -> restore refuses
+#   no-manifest         the set without its manifest, as a
+#                       write that died before the last step -> restore refuses
 #   mismatched-dump:<other-id>     this set, other's dump    -> restore refuses
 #   mismatched-objects:<other-id>  this set, other's objects -> restore refuses
 #
@@ -25,9 +27,11 @@
 # volumes and network, and publishes no ports. It runs the source's backend
 # image, never a rebuild. Run from the checkout whose stack took the
 # snapshot (COMPOSE_PROJECT_NAME for a stack started with -p). The record,
-# including the volume and container lists from before and after, lands in
-# ~/wingrc-restore-tests/. No key value is printed or written; the record
-# and the snapshot are grepped for each one before the verdict.
+# including the volume and container lists from before and after, lands
+# beside deploy.sh's records ($WINGRC_DEPLOY_RECORD_DIR, ~/wingrc-deploys),
+# as <time>-restore-test-<id>/restore-test.txt, so one directory answers
+# what has been done to this host. No key value is printed or written; the
+# record and the snapshot are grepped for each one before the verdict.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -36,7 +40,7 @@ id="${1:?usage: deploy/restore-test.sh <snapshot-id> [mutation]}"
 mutation="${2:-}"
 case "$mutation" in
   "" | empty-objects | missing-object | corrupt-object | wrong-key | row-deleted \
-    | score-changed | schema-head | not-empty | mismatched-dump:?* | mismatched-objects:?*) ;;
+    | score-changed | schema-head | not-empty | no-manifest | mismatched-dump:?*     | mismatched-objects:?*) ;;
   *) echo "unknown mutation: $mutation" >&2; exit 2 ;;
 esac
 
@@ -45,7 +49,7 @@ project="$(docker compose config --format json \
 dir="${WINGRC_SNAPSHOT_DIR:-/var/lib/wingrc-snapshots/$project}"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 test_project="wingrc_restoretest_$(printf '%s' "$stamp" | tr 'A-Z' 'a-z')"
-record="${WINGRC_RESTORE_RECORD_DIR:-$HOME/wingrc-restore-tests}/$stamp-$id${mutation:+-${mutation%%:*}}"
+record="${WINGRC_DEPLOY_RECORD_DIR:-$HOME/wingrc-deploys}/$stamp-restore-test-$id${mutation:+-${mutation%%:*}}"
 mkdir -p "$record"
 chmod 0700 "$record"
 echo "restore test of $id from $project${mutation:+, mutation $mutation}; record: $record"
@@ -104,6 +108,11 @@ case "$mutation" in
       swap="rm -rf /snapshots-rw/$hybrid/objects && cp -a /snapshots-rw/$other/objects /snapshots-rw/$hybrid/objects"
     fi
     src_rw "test -d /snapshots-rw/$other && cp -a /snapshots-rw/$id /snapshots-rw/$hybrid && $swap"
+    target="/snapshots/$hybrid"
+    ;;
+  no-manifest)
+    hybrid=".mutation-$stamp"
+    src_rw "cp -a /snapshots-rw/$id /snapshots-rw/$hybrid && rm /snapshots-rw/$hybrid/manifest.json"
     target="/snapshots/$hybrid"
     ;;
 esac
@@ -205,15 +214,20 @@ case "$mutation" in
   score-changed) expect_fail SPRS ;;
   schema-head) expect_fail "schema head" ;;
   not-empty) expect_refused "the target database is not empty" ;;
+  no-manifest) expect_refused ".* has no manifest.json; it is not a finished snapshot" ;;
   mismatched-*) expect_refused "the set does not match its manifest" ;;
 esac
 
+# deploy.txt's shape: one line per fact, then the supporting files.
 {
+  echo "restore test of a local snapshot, into $test_project (removed)"
+  echo "commit:   $(git rev-parse HEAD 2>/dev/null || echo unknown)"
+  echo "ran:      $stamp by $(id -un)"
   echo "snapshot: $id ($project)"
   echo "mutation: ${mutation:-none}"
   echo "restore:  exit $restore_rc"
   echo "verify:   exit $verify_rc"
   echo "verdict:  $verdict"
   for r in "${reasons[@]}"; do echo "  $r"; done
-} | tee "$record/verdict.txt"
+} | tee "$record/restore-test.txt"
 [ "$verdict" = pass ]

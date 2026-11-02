@@ -65,6 +65,67 @@ def test_status_ignores_a_newer_partial(tmp_path):
     assert snapshots.status(tmp_path, 26, NOW)["status"] == "stale"
 
 
+def _died_before_the_manifest(root: Path, at: datetime) -> Path:
+    """What a write that failed partway leaves if the rename had happened:
+    an id-named directory with a dump and objects and no manifest. Its
+    mtime is the newest in the directory."""
+    d = root / snapshots.snapshot_id(at)
+    (d / snapshots.OBJECTS / "org" / "evidence").mkdir(parents=True)
+    (d / snapshots.DUMP).write_bytes(b"PGDMP partial")
+    (d / snapshots.OBJECTS / "org" / "evidence" / "a.pdf").write_bytes(b"%PDF")
+    return d
+
+
+def test_status_ignores_a_newer_set_with_no_manifest(tmp_path):
+    """The age reader counts only finished sets. A newer directory with
+    every file but the manifest, and the newest mtime, must not make a
+    stopped schedule read fresh."""
+    good = _finished(tmp_path, NOW - timedelta(hours=60))
+    bad = _died_before_the_manifest(tmp_path, NOW - timedelta(minutes=5))
+    (tmp_path / (snapshots.snapshot_id(NOW) + snapshots.PARTIAL_SUFFIX)).mkdir()
+    assert bad.stat().st_mtime >= good.stat().st_mtime, "fixture must make the bad set newest"
+    s = snapshots.status(tmp_path, 50, NOW)
+    assert s["status"] == "stale"
+    assert s["newest"] == good.name
+    assert s["count"] == 1
+    assert s["attention"] is True
+
+
+def test_restore_refuses_a_set_with_no_manifest(tmp_path):
+    """Refused before the storage or the database is touched: `storage` is
+    None here, and restore would raise on it if it got that far."""
+    bad = _died_before_the_manifest(tmp_path, NOW)
+    with pytest.raises(SnapshotError, match="has no manifest.json; it is not a finished"):
+        snapshots.restore(bad, storage=None)
+
+
+@pytest.mark.parametrize(
+    ("make", "expected"),
+    [
+        (lambda root: None, "not configured"),
+        (lambda root: root.mkdir(), "none"),
+        (lambda root: (root.mkdir(), _finished(root, NOW - timedelta(hours=2))), "ok"),
+        (lambda root: (root.mkdir(), _finished(root, NOW - timedelta(hours=51))), "stale"),
+        (lambda root: (root.mkdir(), _finished(root, NOW + timedelta(hours=3))), "invalid"),
+    ],
+)
+def test_attention_for_every_status_but_ok_and_not_configured(tmp_path, make, expected):
+    root = tmp_path / "snapshots"
+    make(root)
+    s = snapshots.status(root, 50, NOW)
+    assert s["status"] == expected
+    assert s["attention"] is (expected not in ("ok", "not configured"))
+
+
+def test_the_default_threshold_is_two_daily_runs_and_the_run_itself():
+    """One missed daily run leaves the newest just under 48 hours old when
+    the next starts; the run takes minutes. Two missed runs must fire."""
+    from app.config import Settings
+
+    limit = Settings.model_fields["snapshot_max_age_hours"].default
+    assert 48 < limit <= 50
+
+
 def test_status_invalid_when_dated_in_the_future(tmp_path):
     _finished(tmp_path, NOW + timedelta(hours=3))
     assert snapshots.status(tmp_path, 26, NOW)["status"] == "invalid"

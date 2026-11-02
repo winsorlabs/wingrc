@@ -196,3 +196,54 @@ def test_tls_expiry_without_an_https_public_url_is_quiet(admin_client, monkeypat
     ))
     body = admin_client.get(_TLS_URL).json()
     assert body["configured"] is False and body["attention"] is False
+
+
+# â”€â”€ GET /admin/scheduled-jobs/snapshots: the banner's second alarm â”€â”€â”€â”€â”€â”€â”€â”€
+
+_SNAP_URL = "/admin/scheduled-jobs/snapshots"
+
+
+def _snapshot_dir(monkeypatch, root):
+    from types import SimpleNamespace
+
+    from app.routers import scheduled_jobs
+
+    monkeypatch.setattr(scheduled_jobs, "get_settings", lambda: SimpleNamespace(
+        snapshot_dir=str(root), snapshot_max_age_hours=50,
+    ))
+
+
+def _finished_snapshot(root, age):
+    from app import snapshots
+
+    d = root / snapshots.snapshot_id(datetime.now(UTC) - age)
+    d.mkdir(parents=True)
+    (d / snapshots.MANIFEST).write_text("{}")
+
+
+@pytest.mark.parametrize("role", ["msp_engineer", "consultant_admin", "customer_poc"])
+def test_snapshot_status_is_msp_admin_only(db_session, role):
+    assert _client_as(db_session, role).get(_SNAP_URL).status_code == 403
+
+
+def test_snapshot_status_stale_needs_attention(admin_client, monkeypatch, tmp_path):
+    _finished_snapshot(tmp_path, timedelta(hours=60))
+    _snapshot_dir(monkeypatch, tmp_path)
+    body = admin_client.get(_SNAP_URL).json()
+    assert body["status"] == "stale" and body["attention"] is True
+    assert body["max_age_hours"] == 50 and body["count"] == 1
+
+
+def test_snapshot_status_none_needs_attention(admin_client, monkeypatch, tmp_path):
+    _snapshot_dir(monkeypatch, tmp_path)
+    body = admin_client.get(_SNAP_URL).json()
+    assert body["status"] == "none" and body["attention"] is True
+
+
+def test_snapshot_status_fresh_or_not_mounted_is_quiet(admin_client, monkeypatch, tmp_path):
+    _finished_snapshot(tmp_path, timedelta(hours=2))
+    _snapshot_dir(monkeypatch, tmp_path)
+    assert admin_client.get(_SNAP_URL).json()["attention"] is False
+    _snapshot_dir(monkeypatch, tmp_path / "absent")
+    body = admin_client.get(_SNAP_URL).json()
+    assert body["status"] == "not configured" and body["attention"] is False
