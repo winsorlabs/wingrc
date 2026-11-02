@@ -4191,6 +4191,11 @@ documentation (not sales or marketing slicks) and determine what controls
 could be covered." Attached documents come first; web research
 supplements them, and can never override what they say.
 
+*Forward reference (2026-11-02):* the planned entry "The Tool Import
+wizard: each row a decision a person can make" extends this research to
+a recommendation on every row, with bulk accept. §0 holds there: when
+the research and the CRM disagree, both are shown and the CRM wins.
+
 **§0 — the rule, non-negotiable, enforced in code:** web content may
 propose additional coverage; it may never override a disclaim in the
 vendor's CRM. This is the same discipline as the evidence-minimization
@@ -14459,6 +14464,270 @@ state. The candidates are the evidence section, the bundle picker, the
 document approval and review states, and the onboarding approval queue.
 This item is the rule going forward, so the next slice inherits it rather
 than rediscovering it.
+
+### The Tool Import wizard: each row a decision a person can make -- not built, queued behind S
+
+**Not built, and no scaffolding.** This is a planned entry only. When it
+is picked up it gets its own plan doc and its own prompt. One thing gates
+it: **what the magic loop does with `classification` and
+`coverage_basis` when a product goes active.** That was settled on
+2026-11-02 by reading the code at `ca4b78d`, below. Read
+`engine.py:_run_loop` again when this is picked up. The risk assessment
+here is only as true as that answer, and the loop has changed before.
+
+**The request (Jarrod, 2026-11-02).** The wizard's review step
+(`ToolImportWizard.tsx`) is a table of eleven columns:
+
+- Control(s)
+- Source
+- Classification
+- Note
+- Provider contribution
+- Customer action
+- Scope note
+- Coverage basis
+- Candidate state
+- Objectives
+- Evidence
+
+Every row carries at least two real decisions, repeated for every
+control a tool touches. His words: it is difficult to navigate, and each
+line should be easier to decide. He asked for three things:
+
+- clearer column wording;
+- a decision legend with a worked example;
+- a recommendation on each row, from AI research of the vendor's
+  documentation and the CRM context, with its reasoning.
+
+**The legend is his worked example.** In his words:
+
+> If you know Heimdal runs scheduled scans etc, then that line in the
+> CRM should indicate this satisfies the Protected Endpoints and is
+> therefore not this platform only, whereas if we are talking SSO into
+> Heimdal that is obviously only for the platform and does nothing for
+> in-scope endpoints.
+
+That maps exactly onto the product's own vocabulary, and the legend uses
+those words:
+
+- **`coverage_basis = customer_system`:** the vendor's coverage applies
+  on the customer's CUI systems. Heimdal scanning the customer's
+  endpoints.
+- **`coverage_basis = platform_only`:** coverage exists only on the
+  vendor's own platform. SSO into the Heimdal console. This is excluded
+  from activation: it is vendor self-attestation, not coverage of the
+  customer's systems (CLAUDE.md's hard rule).
+- **`coverage_basis = assists`:** partial, or a capability only. **At
+  activation it is credited exactly like `customer_system`.** The loop
+  excludes only `platform_only`, so `assists` is not a softer claim
+  there, and the legend must not suggest it is.
+- **`classification`:** `provider_satisfies`, `shared` or
+  `customer_owns`. Coverage basis is disabled when the answer is
+  `customer_owns`.
+
+Build the legend from the example, not from a definition of each value.
+Nobody gets this wrong because they can't read "platform_only". They get
+it wrong because they never asked "on whose systems?"
+
+**Jarrod's four decisions.**
+
+- **Bulk accept, with exceptions flagged.** An "accept all
+  recommendations" control. The rows it holds back are reviewed one at a
+  time. The point is that most rows of a mapping are not hard, and
+  deciding them one by one is what makes the wizard hard to get through.
+- **The primary case is a tool with no existing mapping.** Every row is
+  a fresh decision with nothing to compare it against. Design for that
+  case. Handle the review of an existing mapping, but don't optimise for
+  it.
+- **Progressive disclosure.** Show the columns the decision turns on, and
+  let everything else expand per row. Note, Provider contribution,
+  Customer action and Scope note are reading material for one row at a
+  time, not eleven columns at once.
+- **When the research and the CRM disagree, show both, loudly, and the
+  CRM wins.** This is the rule already enforced in code: web content may
+  propose coverage but may never override a disclaim in the vendor's
+  CRM (`importers/research.py`'s module docstring; this file's "AI
+  research of vendor platform documentation" entry).
+
+#### What activation actually does (settled 2026-11-02; the gate)
+
+The brief that queued this entry asked whether a bulk-accepted row can
+move a control toward met. `OrgProduct`'s docstring says control states
+are updated, and the hard rule says candidates are never auto-met. Both
+are true. Here is what the code does, read rather than assumed:
+
+- **Which rows count.** `_run_loop` takes the tenant's pinned baseline
+  version and drops every row that is `customer_owns` or
+  `platform_only`. `provider_satisfies` and `shared` remain, under
+  either `customer_system` or `assists`.
+- **Status.** For each remaining row's objectives, a product that is the
+  objective's first contributor sets it to `pending_evidence`,
+  whatever it was before (`assessment.py:contributor_added_status`). A
+  later contributor leaves the status alone. **Activation never sets
+  `met`.** It writes a `control_state_history` row saying which product
+  did it.
+- **Responsibility.** `control_state.responsibility` is set at once,
+  from the classifications of every contributor
+  (`resolve_contributor_responsibility`). No person confirms it per
+  tenant.
+- **Evidence tasks.** The rows' evidence specs become evidence tasks
+  (`_fanout_evidence_tasks`): provider evidence asked of the MSP.
+- **`candidate_state` decides nothing at activation.** The wizard asks
+  for it on every row and the database stores it, but no activation or
+  assessment path reads it (a grep of `backend/app`, 2026-11-02). One of
+  the eleven columns is a decision with no effect. Whether it stays is
+  the plan doc's call.
+- **The SPRS score.** `pending_evidence` deducts exactly as `not_met`
+  does, so activation never raises the score. It can lower it. An
+  objective a person set to `met` or `not_applicable`, with no
+  contributor yet, goes to `pending_evidence` when a first contributor
+  arrives. That was observed here and not examined further; it is not
+  this item's subject.
+
+**So, in the brief's terms:** bulk accept does not bulk-accept
+compliance status. **It does bulk-accept responsibility claims, which an
+assessor reads as stated.** The bundle's
+`ssp/05_customer_responsibility_matrix.html` prints every objective's
+`responsibility` and names each contributing product, whatever the
+objective's status. The consolidated SSP PDF carries the same matrix
+(`bundle_service.py:_crm_body` draws both). A wrong
+`provider_satisfies` row tells the assessor the MSP's tool covers a
+control it does not, from the moment the product is activated.
+
+**The step from `pending_evidence` to `met` is one unchecked choice.**
+`routers/assessments.py:patch_control_state` accepts `met` with no
+evidence check, and so does `ObjectiveRow.tsx`'s status menu. The hard
+rule that nothing is met without confirmed config and attached evidence
+is held by the person choosing, not by code. A wrong bulk-accepted row
+leaves its objectives one click from `met`, with the wrong party named
+responsible. That is smaller than bulk-accepting `met`, and larger than
+"it only ever creates candidates". This gap was found while settling
+the question. It is recorded here and not fixed, and it is a decision
+for Jarrod in its own right.
+
+**"At scale" is literal.** A product baseline is reference data shared
+across orgs (layer 1). One bulk-accepted mapping is what every tenant
+that activates the tool gets, pinned at activation.
+
+#### Making bulk accept safe
+
+**Jarrod chose bulk accept, on tools with no existing mapping,
+deliberately.** Together they mean an AI's guess becomes a recorded
+decision at scale, with nothing to compare it against. This section says
+how that is made safe; it does not reopen the choice.
+
+**The error is asymmetric, and the design follows it.**
+
+- **Recommending `platform_only` when the truth is `customer_system`
+  loses coverage.** That is annoying, visible and recoverable: the
+  objective stays `not_met` and somebody notices.
+- **Recommending `customer_system` when the truth is `platform_only`
+  claims coverage the vendor never provides.** That claim reaches an
+  assessor through the CRM page above.
+- **So `provider_satisfies` with `customer_system`, the highest-
+  consequence combination the wizard can produce, is never bulk-accepted
+  without a cited source** from the vendor's own documentation.
+- **A recommendation with no source found is held back by definition,**
+  not by a confidence score.
+- **The column's default is the dangerous value.**
+  `baseline_control.coverage_basis` defaults to `customer_system` in the
+  model and the database. Today the importer requires an answer for
+  every row that isn't `customer_owns`, so the default never decides
+  one. A bulk path must keep that requirement and never fall back on the
+  default.
+
+**What is held back: a closed list, not a threshold.** "Exceptions
+flagged" means these rows and no others:
+
+1. the research and the CRM disagree (the CRM's value stands, and both
+   are shown);
+2. no source was found (defined in the research section below);
+3. `customer_system` is recommended for a control where the vendor's
+   documentation describes only its own platform;
+4. the recommendation would change an existing value rather than fill an
+   empty one;
+5. `provider_satisfies` with `customer_system`, without a cited vendor
+   documentation source (the asymmetry above).
+
+Add to this list deliberately, by editing it with a reason, never by
+tuning a number. A threshold means whatever the implementer felt like
+that day.
+
+**Provenance survives, permanently, per row.** The precedent is
+`Product.ai_generated_at` and `ai_generated_model`, which a later
+re-import never clears. Follow it at row level. Every accepted row
+records:
+
+- that it was AI-recommended, by which model, and when;
+- whether it was accepted in bulk or individually, and by whom;
+- the sources cited.
+
+The point is that an assessor, or Jarrod in six months, can tell a
+human-chosen classification from a bulk-accepted one. If that difference
+isn't visible, bulk accept is indistinguishable from diligence, and the
+record stops being honest.
+
+**Today none of that survives at row level.** `ControlEntry.source`
+lives in the draft and the review table only. `baseline_control` has no
+column for it. Once applied, all that survives is the product-level
+`source_docs` list and the fetched pages as `ProductDocument` rows. So
+row-level provenance needs a schema change. That is the plan doc's to
+design, and no column is added now. `baseline_control` rows are
+immutable once written, a new version for each import that changes a
+mapping (item P), so a row's provenance belongs to its version.
+
+**AI-generated says so, permanently, with the hallucination warning.**
+The rule for practitioner notes and for an AI-generated baseline
+mapping applies here too (`ToolDetailPanel.tsx`: "AI-generated baseline
+mapping -- not vendor-authoritative content"). A recommendation is not
+exempt because it landed in a dropdown instead of a text field.
+
+#### Research, and what it may read
+
+**Jarrod's standing rule:** AI researches each product through its
+online platform documentation, not sales or marketing material. This is
+the feature that acts on it. Most of the machinery exists:
+
+- `importers/research.py` asks for official platform and admin
+  documentation, explicitly "NOT sales pages, marketing brochures, blog
+  posts, or press releases";
+- an admin approves each URL before anything is fetched;
+- each page is analysed in its own call, so a claim's source is stamped
+  in code, not taken from the model;
+- `merge_research()` refuses, in code, to let a page upgrade a CRM
+  disclaim.
+
+What changes is scope. Research today proposes coverage the CRM does not
+mention. A recommendation on every row means research also speaks to
+rows the CRM already covers. Where the two differ, that is held-back
+case 1: both are shown, and the CRM's value stands.
+
+**Sources are stored per row and shown,** so a reader can check the
+claim rather than trust it.
+
+**No source found** means any of these, and each routes the row to
+individual review:
+
+- the documentation is paywalled or behind a login;
+- there is no documentation;
+- the documentation contradicts itself;
+- the only page found is sales or marketing material.
+
+#### Column wording
+
+The headers today are the product's internal vocabulary. The wizard's
+job is to ask a question, not to name a field:
+
+- "On whose systems?" decides coverage basis;
+- "Who is responsible?" decides classification.
+
+The enum value is shown as the answer, and the legend answers each
+question with Heimdal. The final wording is the plan doc's, not this
+entry's. What this entry fixes is that the headers ask questions.
+
+**Out of scope here:** any scaffolding, any column added in
+anticipation, and the met-without-evidence gap above, which is a
+separate decision.
 
 ## Sequencing
 
