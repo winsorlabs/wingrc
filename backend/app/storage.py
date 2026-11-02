@@ -241,6 +241,23 @@ class MinIOClient(StorageClient):
         resp = self._s3.get_object(Bucket=self._bucket, Key=key)
         return resp["Body"].iter_chunks(chunk_size=chunk_size)  # type: ignore[no-any-return]
 
+    def list_objects(self) -> Iterator[tuple[str, int]]:
+        """Every object in the bucket as (key, size). For snapshots.py only:
+        a snapshot copies the whole bucket, not just the keys rows name."""
+        pages = self._s3.get_paginator("list_objects_v2").paginate(Bucket=self._bucket)
+        for page in pages:
+            for obj in page.get("Contents", []):
+                yield obj["Key"], obj["Size"]
+
+    def open_object(self, key: str) -> tuple[Iterator[bytes], str | None]:
+        """(chunks, content type) for one object; raises if it is absent."""
+        resp = self._s3.get_object(Bucket=self._bucket, Key=key)
+        return resp["Body"].iter_chunks(chunk_size=_DEFAULT_CHUNK_SIZE), resp.get("ContentType")
+
+    @property
+    def bucket(self) -> str:
+        return self._bucket
+
 
 @lru_cache(maxsize=1)
 def _build_client() -> StorageClient:

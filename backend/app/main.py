@@ -10,6 +10,7 @@ scoped to any one org).
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from . import health as component_health
+from . import snapshots
 from .audit import set_current_ip
 from .auth import CurrentUser, get_client_ip, get_current_user
 from .catalog import ALL_VIEWS
@@ -189,7 +191,17 @@ def health(request: Request, response: Response, db: Session = Depends(get_sessi
             "or it predates the naming"
         ),
     }
-    detail: dict = {"status": "ok", "app": settings.app_name, "version": "0.1.0"}
+    # The newest local snapshot's age (snapshots.status). Reported, never a
+    # readiness condition: a restart does not take a snapshot, and deploys
+    # wait on `status`.
+    detail: dict = {
+        "status": "ok",
+        "app": settings.app_name,
+        "version": "0.1.0",
+        "snapshots": snapshots.status(
+            Path(settings.snapshot_dir), settings.snapshot_max_age_hours, datetime.now(UTC)
+        ),
+    }
 
     def _components() -> dict:
         return {

@@ -23,6 +23,7 @@ import { ListLibraryPanel } from "./components/ListLibraryPanel";
 import { SideNav } from "./components/SideNav";
 import { SprsSubmissionsPanel } from "./components/SprsSubmissionsPanel";
 import { SystemDescriptionForm } from "./components/SystemDescriptionForm";
+import { SnapshotBanner } from "./components/SnapshotBanner";
 import { TlsExpiryBanner } from "./components/TlsExpiryBanner";
 import { UsersPanel } from "./components/UsersPanel";
 import { useAuth } from "./hooks/useAuth";
@@ -230,6 +231,7 @@ export function App() {
         <div className="read-only-banner">Read-only access — assessor role.</div>
       )}
       {canSeeScheduledJobs(user.role) && <TlsExpiryBanner />}
+      {canSeeScheduledJobs(user.role) && <SnapshotBanner />}
 
       {screen === "orgs" && (
         <OrgPicker
