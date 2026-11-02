@@ -50,6 +50,9 @@ Violating these produces incorrect assessments. Enforce them in every review.
 - **Candidates, never auto-met.** Imports and document ingestion *propose*; an
   engineer confirms. Nothing is "met" without confirmed config + attached
   evidence. An automated feed must never silently move the audit boundary.
+  **Held by the person marking it, not by code (2026-11-02):** nothing
+  checks for evidence before `met`. See `docs/roadmap.md`'s "The rule
+  that nothing is met without evidence has no code behind it".
   Status transitions: magic loop → `pending_evidence`; human confirms → `met`.
   Never skip `pending_evidence`.
 
@@ -594,7 +597,9 @@ writeup.
   it as stated. `assists` is credited like `customer_system`, and
   `candidate_state` is not read. That is the gate for bulk-accepting AI
   recommendations of these values: `docs/roadmap.md`'s "The Tool Import
-  wizard: each row a decision a person can make"
+  wizard: each row a decision a person can make". "Any prior status"
+  includes one a person set: "Activating a tool overwrites a status a
+  person set", the same file
 
 **Baseline versioning** (migration 0054, `models.py:ProductBaselineVersion`):
 `BaselineControl` rows are immutable once created — an import that actually
