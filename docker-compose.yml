@@ -126,6 +126,12 @@ services:
       # reset-dev's pre-flight pg_dump (cli.py) writes here -- a named
       # volume, so backups survive a container recreate/rebuild.
       - backend_backups:/backups
+      # Local snapshots (deploy/snapshot.sh), read-only: /health reports
+      # the newest one's age, and only `wingrc snapshot-create`, run on its
+      # own, writes. A host directory, not a named volume, so that
+      # `down -v` cannot take the snapshots with the data. One per compose
+      # project, so a bench stack never reads or writes live's.
+      - ${WINGRC_SNAPSHOT_DIR:-/var/lib/wingrc-snapshots/${COMPOSE_PROJECT_NAME}}:/snapshots:ro
 
   # The job scheduler's worker process (scheduler.py) -- same image as
   # backend, different command, so scheduled jobs (currently: expiring

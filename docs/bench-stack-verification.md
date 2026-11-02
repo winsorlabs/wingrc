@@ -127,4 +127,16 @@ bench work.
    own task calls for.
 6. Tear down: `docker compose -p wingrc_verify_<date> down -v` — confirm
    the live `wingrc` project's containers are still running unaffected
-   before and after.
+   before and after. Since item S, a bench stack's backend also gets its
+   own snapshot directory, `/var/lib/wingrc-snapshots/wingrc_verify_<date>`,
+   which `down -v` does not remove because it is a host directory. It is
+   root's, so remove it through a container, for example
+   `docker run --rm -v /var/lib/wingrc-snapshots:/s postgres:18 rm -rf /s/wingrc_verify_<date>`,
+   and check that it is gone. A snapshot taken there holds the bench's data.
+   **A helper container from an image that declares a `VOLUME`
+   (`postgres:18` does) leaves an anonymous volume unless it is run with
+   `--rm`.** `docker run -d` followed by `docker rm -f` without `-v` leaves
+   one. On 2026-11-02, item S's disk-full test left three this way, empty
+   and unused; the before-and-after volume list is what caught them.
+   Compare the whole `docker volume ls` before and after, not only the
+   bench project's names.

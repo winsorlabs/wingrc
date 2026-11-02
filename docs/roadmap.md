@@ -12299,7 +12299,267 @@ at all.
 
 Either makes "equivalent" stop being good enough.
 
-### S. Backup, retention and restore-test policy for WinGRC's own deployment
+### S. Local snapshots and an exercised restore (built and bench-verified 2026-11-01, alarm and partial writes 2026-11-02; not enabled on live)
+
+**Status: built on the bench; live is untouched.** Nothing in this slice
+has run against live: no dump, no restore, no schedule. Enabling it on
+live is its own step, and needs Jarrod's go-ahead after he has read the PR.
+He watches the first live restore test.
+
+**Jarrod's decisions (2026-11-01), both deliberate:**
+
+- **Same host, accepted explicitly.** The destination is not off-host and
+  not cloud. So this is **not a backup**, and nothing calls it one: it is
+  a *local snapshot*.
+  - **Protects against:** a bad migration, an application bug that
+    deletes data, a destructive CLI run, operator error. This product has
+    produced that failure: the evidence-lifecycle slice found three
+    hard-delete paths in shipped code, and the objective's old ✕
+    destroyed stored bytes.
+  - **Does not protect against:** losing the host, disk failure,
+    ransomware that reaches the host, or the snapshot directory being
+    removed. The 2026-09-23 orphaned volume shows how easily storage comes
+    and goes on that host.
+- **No stopgap.** Live has had no copy of any kind since 2026-10-09 (below),
+  and he chose to leave it so until this lands rather than run an interim
+  dump. That was a decision, not an oversight.
+
+**Jarrod's task, by key label, off-host:** record every configured
+`WINGRC_CREDENTIAL_ENCRYPTION_KEYS` key in a password manager that is not on
+wl-util-1. A perfect restore of both stores without the key leaves every
+stored connector credential unreadable for good. The key is in the
+environment, not in the database or the snapshot. It costs one action, and
+it is the difference between "the host died" and "the host died and the
+credentials are gone forever". The labels are in each snapshot's
+manifest; the values are never written anywhere by this slice.
+
+**The finding: a database-only restore is hollow, and this entry's own
+check would have passed it.** There are two stores. Evidence bytes are in
+MinIO, and the database holds their keys. Restore the database alone and
+every objective shows its evidence attached, every bundle lists its
+artifacts, every count is right, and none of the bytes exist. The check
+this entry originally proposed (row counts and `recompute_sprs`) reads only
+the database. On the bench it **passed** that restore. That is the
+`empty-objects` mutation below: row counts PASS, SPRS PASS, object bytes
+FAIL.
+
+**What was built:**
+
+- **`backend/app/snapshots.py`** and the CLI commands `snapshot-create`,
+  `snapshot-restore` and `snapshot-verify`. A snapshot is one set: a
+  `pg_dump` taken inside an exported Postgres snapshot, every object in
+  the bucket, and a `manifest.json` written last. The manifest records
+  the schema head, per-table row counts and each assessment's stored SPRS
+  score, all read in that same database snapshot, plus the size and
+  SHA-256 of the dump and of every object.
+  - The set is built as `<id>.partial` and renamed when complete.
+  - A restore refuses a set whose files do not match its manifest, so the
+    manifest is what stops a mismatched pair.
+  - A restore refuses any target database or bucket that is not empty, so
+    it cannot overwrite data.
+- **`deploy/snapshot.sh`** takes a snapshot. **`deploy/restore-test.sh`**
+  is the restore test, plus the mutation check.
+- **`/health` reports `snapshots`, and msp_admin gets a banner** when they
+  are stale (2026-11-02, below).
+- **`docs/deployment.md`, "Local snapshots (not a backup)"**, is the
+  operator's page.
+
+**The consistency window.** The dump comes first and the object copy after
+it; on the bench they were seconds apart. Every upload path stores the
+bytes before committing the row, so a row in the dump names an object that
+already exists, and the later copy finds it.
+
+- **Objects written during the window** are copied with no row naming
+  them. Verification reports them as unreferenced, not as failures.
+- **A delete during the window** is the one exception: a logo replaced,
+  or a product document deleted, after the dump. The dump then names an
+  object the copy no longer finds. `snapshot-create` checks every key the
+  dump's rows name against what it copied, records any it did not find
+  as `missing_at_snapshot`, and exits 3.
+- **Telling them apart.** Verification reports a `missing_at_snapshot` key
+  as missing *when the snapshot was taken*. A key lost by the restore is
+  reported as "the restored bucket has no such object". The two
+  conditions have different messages.
+
+**Every check was seen failing (bench, 2026-11-01, `wingrc_verify_s`,
+synthetic data only).** Each mutation broke a restore of snapshot
+`20261101T214424Z` on purpose. The harness passes a mutation only if the
+targeted check fails.
+
+| Mutation | What broke | Result |
+|---|---|---|
+| `empty-objects` | database restored, bucket left empty | object bytes FAIL (all 9 named keys), object set FAIL; row counts PASS, SPRS PASS |
+| `missing-object` | one evidence object deleted after restore | object bytes FAIL, naming that key |
+| `corrupt-object` | every byte of a 1-byte object flipped, same size | object bytes FAIL on SHA-256 |
+| `wrong-key` | verified with a freshly generated Fernet key | credentials FAIL (`liongard`, label `dev`); all else PASS |
+| `row-deleted` | one `audit_log` row deleted | row counts FAIL (`audit_log` 1 vs 2) |
+| `score-changed` | every `control_state` flipped met/not met | SPRS FAIL (-133 vs -189, -68 vs -188) |
+| `schema-head` | `alembic_version` set to `mutated` | schema head FAIL |
+| `not-empty` | restored twice into one database | second restore refused (281 relations, schema `auth`) |
+| `mismatched-dump` | this set with the next snapshot's `db.dump` | restore refused: the dump does not match the manifest |
+| `mismatched-objects` | this set with the next snapshot's objects | restore refused: 10 objects not in the manifest |
+
+The harness's own checks were broken the same way, using edited copies of
+the script that were not committed:
+
+- **Teardown removed:** the restore-test verdict FAILED, with 3 volumes, 2
+  containers and a network in `state.diff`. They were then removed by
+  hand.
+- **A key value written into the record:** FAILED on the record's key
+  grep.
+- **A key value planted in the snapshot directory:** FAILED on the
+  snapshot's key grep.
+
+The unmutated restore test passed with every check PASS, and the volume,
+container and network lists before and after were identical.
+
+**The cap.** All three refusals left the existing snapshots byte-identical,
+checked by size and manifest hash before and after:
+
+- a 1 MB cap: refused;
+- 90% of the disk required to stay free: refused (8.4 GB free on
+  wl-util-1's 43 GB root);
+- the lock held by another process: refused.
+
+`WINGRC_SNAPSHOT_KEEP=2` rotated out the oldest only after the new
+snapshot was complete.
+
+**The disk filling partway through a write: exercised 2026-11-02.** On
+2026-11-01 this was reasoned through, not observed. The free-space
+estimate is conservative (20 MB estimated against 6.7 MB written), so the
+cap alone never lets a write run out of room, and something else has to
+fill the disk at the same time. On the bench the snapshot went to a
+200 MB tmpfs volume. A second container waited for a `.partial`
+directory to appear and filled the volume with `dd`.
+
+- **What happened:** the dump (408 KB) was written, then the object copy
+  hit `OSError: [Errno 28] No space left on device`, and
+  `snapshot-create` exited 1.
+- **What it left:** nothing. The handler removed the `.partial`
+  directory. The earlier snapshot in the same volume still passed
+  `validate_set`, all 10 objects, and the age reader named it.
+- **Recovery:** with the fill removed, the next run completed normally.
+- **The other path:** a dump that fails partway, rather than the object
+  copy, leaves its `.partial` until the next run removes it. That was not
+  forced. A `.partial` is never read as a snapshot, as the next paragraph
+  shows.
+
+**A partial write cannot be restored, and cannot fool the age reader
+(2026-11-02).** The manifest is written last, after every byte is
+fsynced, and the set is renamed from `.partial` only after that. A write
+that dies leaves a `.partial` directory. If the rename could somehow
+happen without the manifest, it would leave an id with no manifest. Both
+cases were confirmed, not assumed:
+
+- **Restore refuses it.** The new `no-manifest` mutation restores a copy
+  of a set with only its manifest removed: `refusing: … has no
+  manifest.json; it is not a finished snapshot`, before the database or
+  the bucket is touched. The harness check was itself broken once: with
+  the manifest kept, the same run FAILED with "expected the restore to
+  refuse".
+- **The age reader ignores it.** It counts only a directory named as an
+  id that holds a manifest. It never reads directory mtimes or the newest
+  file. On the bench the good snapshot was renamed 60 hours back. A copy
+  with every file but the manifest was planted as the newest id with the
+  newest mtime, beside two `.partial` directories. `/health` read
+  `stale`, age 60.0, naming the backdated snapshot, count 1.
+  `tests/test_snapshots.py` holds the same case. Removing the manifest
+  condition from `complete_snapshots` fails it, and the `none` test too.
+
+**What the age reader does.** `/health`'s `snapshots` field reports the
+newest complete snapshot's id and age. It reads `none` when the directory
+has no finished set, and `not configured` when the directory is not
+mounted.
+
+- **Proven by backdating:** the bench read `ok` at age 0.0, then `stale`
+  at 30.0 hours after both snapshots were renamed 30 hours back. That was
+  against the first limit, 26 hours. Against 50 it read `stale` at 60.0
+  (2026-11-02).
+- **It never changes `status`.** `deploy.sh` waits on `status`, and a
+  restart takes no snapshot.
+
+**Who is told: msp_admin, by the TLS banner's path (2026-11-02).** As
+first built, the reader had no reader. `/health` said `stale`, and the
+only people to see it were whoever opened `/health` and whoever read the
+next deploy record. That is a cadence with nothing watching it, the shape
+rejected for the apt pin and the one that let six red CI runs pass
+unnoticed. So the alarm now goes where the TLS expiry alarm goes, a path
+proven on live in both directions (2026-10-17). It is a red banner for
+msp_admin on every screen, beside the TLS one, fed by
+`GET /admin/scheduled-jobs/snapshots`.
+
+- **It fires on** `stale`, `none`, `invalid` and `unreadable`. It is quiet
+  for `ok`, and for `not configured`, a deployment with no snapshot
+  directory mounted. `snapshots.status()` carries the rule as
+  `attention`. A test holds every case, and narrowing the rule to `stale`
+  alone fails it.
+- **It is not a job.** The TLS check is a worker job because its reading
+  is a network fetch. Snapshots are taken by a host cron, and the backend
+  reads its own read-only mount on each request, so the alarm has no
+  reading of its own that could go stale.
+- **The threshold is 50 hours: two daily runs plus two hours.** One
+  missed run is a blip, and it leaves the newest just under 48 hours old
+  when the next run starts. Two missed runs is a stopped job. The two
+  hours are for the run itself, so a slow run after one miss does not
+  fire. A test pins the default between 48 and 50. It was 26 hours, which
+  would have fired on every single missed run.
+- **`none` fires too,** because no snapshot is the state the alarm exists
+  for. **On live it will show from the deploy of this slice until the
+  first snapshot.** That is true, and it is a third deploy effect to
+  expect.
+- **What it does not do: page anyone.** Like the TLS banner, it reaches
+  whoever signs in as msp_admin. There is no mail relay by design.
+
+**Permissions.** The snapshot directory is
+`/var/lib/wingrc-snapshots/<project>/`, mode `0700`, files `0600`, owned
+by the image's uid 10001. That uid and root can read the dumps, and so can
+the `docker` group, which is root-equivalent on that host. It is a host
+directory rather than a named volume, so `docker compose down -v` cannot
+remove the snapshots along with the data.
+
+**Encryption at rest: none.** On the same host the key would sit beside
+the data, so encrypting would be a gesture. It becomes real with an
+off-host copy whose key stays elsewhere.
+
+**No key value appears anywhere:** not in output, logs, manifests or test
+fixtures. The restore test greps its record and the snapshot for every
+configured key value, and fails on a match or on a grep error. The unit
+test that carries a key uses compose's public dev key and asserts it does
+not reach the labels.
+
+**Not done, deliberately:**
+
+- live enablement (the cron line is in `docs/deployment.md` and not
+  installed);
+- the first live restore test, which Jarrod watches;
+- an off-host copy;
+- any alarm beyond the msp_admin banner.
+
+**The restore test's record is filed with the deploy records
+(2026-11-02).** It used to go to `~/wingrc-restore-tests/`, a place only
+its author knew. It now goes to `~/wingrc-deploys/<UTC>-restore-test-<id>/`,
+beside `deploy.sh`'s `<UTC>-<sha>/`. Its `restore-test.txt` is in
+`deploy.txt`'s shape:
+
+- commit, time and user;
+- the snapshot;
+- each step's exit;
+- the verdict.
+
+One directory answers "what has been done to this host". A record nobody
+else could find is how the 2026-09-23 orphaned volume survived. Taking a
+snapshot writes no record there: the snapshot directory is its own record,
+and a daily entry would bury the deploys.
+
+**The restore writes no audit row, and that stands (reviewed
+2026-11-02).** Its target is empty by construction. More to the point, the
+verification *is* a comparison of the restored database against its
+source: the row count of every table, the schema head, every SPRS score.
+A restore that wrote a row could not be compared against its source, and
+that comparison is the verification. Its record is the restore test's
+directory, above.
+
+#### History: the entry as first written
 
 **WinGRC's own production database has no defined backup, retention, or
 restore-test policy.** It holds two tenants' compliance records.

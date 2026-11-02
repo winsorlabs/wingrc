@@ -22,6 +22,7 @@ vi.mock("./api", () => ({
     getAssessments: vi.fn(),
     listIntegrations: vi.fn(),
     getTlsExpiry: vi.fn(),
+    getSnapshotStatus: vi.fn(),
   },
   getCachedAssessmentId: vi.fn(),
   setCachedAssessmentId: vi.fn(),

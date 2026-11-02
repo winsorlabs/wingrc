@@ -1257,6 +1257,18 @@ export interface TlsExpiry {
   certs: TlsCert[];
 }
 
+// Mirrors backend/app/routers/scheduled_jobs.py's SnapshotStatusOut: the
+// newest local snapshot's age, read when asked (snapshots.py, item S).
+export interface SnapshotStatus {
+  status: "ok" | "stale" | "none" | "invalid" | "unreadable" | "not configured";
+  attention: boolean;
+  max_age_hours: number;
+  newest: string | null;
+  age_hours: number | null;
+  count: number | null;
+  detail: string | null;
+}
+
 export interface MembershipGrantResult {
   user_id: string;
   org_id: string;
