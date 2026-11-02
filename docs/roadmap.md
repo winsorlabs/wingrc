@@ -12294,7 +12294,7 @@ at all.
 
 Either makes "equivalent" stop being good enough.
 
-### S. Local snapshots and an exercised restore (built and bench-verified 2026-11-01; not enabled on live)
+### S. Local snapshots and an exercised restore (built and bench-verified 2026-11-01, alarm and partial writes 2026-11-02; not enabled on live)
 
 **Status: built on the bench; live is untouched.** Nothing in this slice
 has run against live: no dump, no restore, no schedule. Enabling it on
@@ -12354,7 +12354,8 @@ FAIL.
     it cannot overwrite data.
 - **`deploy/snapshot.sh`** takes a snapshot. **`deploy/restore-test.sh`**
   is the restore test, plus the mutation check.
-- **`/health` reports `snapshots`.**
+- **`/health` reports `snapshots`, and msp_admin gets a banner** when they
+  are stale (2026-11-02, below).
 - **`docs/deployment.md`, "Local snapshots (not a backup)"**, is the
   operator's page.
 
@@ -12416,25 +12417,93 @@ checked by size and manifest hash before and after:
 - the lock held by another process: refused.
 
 `WINGRC_SNAPSHOT_KEEP=2` rotated out the oldest only after the new
-snapshot was complete. **Not exercised:** the disk filling up partway
-through a write. The free-space estimate is conservative (20 MB estimated
-against 6.7 MB written), so that case needs something else filling the
-disk at the same time. The cleanup on that path removes the `.partial`
-directory; this was reasoned through, not observed.
+snapshot was complete.
+
+**The disk filling partway through a write: exercised 2026-11-02.** On
+2026-11-01 this was reasoned through, not observed. The free-space
+estimate is conservative (20 MB estimated against 6.7 MB written), so the
+cap alone never lets a write run out of room, and something else has to
+fill the disk at the same time. On the bench the snapshot went to a
+200 MB tmpfs volume. A second container waited for a `.partial`
+directory to appear and filled the volume with `dd`.
+
+- **What happened:** the dump (408 KB) was written, then the object copy
+  hit `OSError: [Errno 28] No space left on device`, and
+  `snapshot-create` exited 1.
+- **What it left:** nothing. The handler removed the `.partial`
+  directory. The earlier snapshot in the same volume still passed
+  `validate_set`, all 10 objects, and the age reader named it.
+- **Recovery:** with the fill removed, the next run completed normally.
+- **The other path:** a dump that fails partway, rather than the object
+  copy, leaves its `.partial` until the next run removes it. That was not
+  forced. A `.partial` is never read as a snapshot, as the next paragraph
+  shows.
+
+**A partial write cannot be restored, and cannot fool the age reader
+(2026-11-02).** The manifest is written last, after every byte is
+fsynced, and the set is renamed from `.partial` only after that. A write
+that dies leaves a `.partial` directory. If the rename could somehow
+happen without the manifest, it would leave an id with no manifest. Both
+cases were confirmed, not assumed:
+
+- **Restore refuses it.** The new `no-manifest` mutation restores a copy
+  of a set with only its manifest removed: `refusing: … has no
+  manifest.json; it is not a finished snapshot`, before the database or
+  the bucket is touched. The harness check was itself broken once: with
+  the manifest kept, the same run FAILED with "expected the restore to
+  refuse".
+- **The age reader ignores it.** It counts only a directory named as an
+  id that holds a manifest. It never reads directory mtimes or the newest
+  file. On the bench the good snapshot was renamed 60 hours back. A copy
+  with every file but the manifest was planted as the newest id with the
+  newest mtime, beside two `.partial` directories. `/health` read
+  `stale`, age 60.0, naming the backdated snapshot, count 1.
+  `tests/test_snapshots.py` holds the same case. Removing the manifest
+  condition from `complete_snapshots` fails it, and the `none` test too.
 
 **What the age reader does.** `/health`'s `snapshots` field reports the
-newest complete snapshot's id and age. It reads `stale` past 26 hours, a
-daily schedule plus slack. It reads `none` when the directory has no
-finished set, and `not configured` when the directory is not mounted.
+newest complete snapshot's id and age. It reads `none` when the directory
+has no finished set, and `not configured` when the directory is not
+mounted.
 
 - **Proven by backdating:** the bench read `ok` at age 0.0, then `stale`
-  at 30.0 hours after both snapshots were renamed 30 hours back.
+  at 30.0 hours after both snapshots were renamed 30 hours back. That was
+  against the first limit, 26 hours. Against 50 it read `stale` at 60.0
+  (2026-11-02).
 - **It never changes `status`.** `deploy.sh` waits on `status`, and a
   restart takes no snapshot.
-- **Who reads it:** deploy records carry the body, so a stopped schedule
-  shows at the next deploy at the latest. Nothing pages anyone sooner. A
-  notification from the worker when snapshots go stale is the follow-up
-  if that is too slow.
+
+**Who is told: msp_admin, by the TLS banner's path (2026-11-02).** As
+first built, the reader had no reader. `/health` said `stale`, and the
+only people to see it were whoever opened `/health` and whoever read the
+next deploy record. That is a cadence with nothing watching it, the shape
+rejected for the apt pin and the one that let six red CI runs pass
+unnoticed. So the alarm now goes where the TLS expiry alarm goes, a path
+proven on live in both directions (2026-10-17). It is a red banner for
+msp_admin on every screen, beside the TLS one, fed by
+`GET /admin/scheduled-jobs/snapshots`.
+
+- **It fires on** `stale`, `none`, `invalid` and `unreadable`. It is quiet
+  for `ok`, and for `not configured`, a deployment with no snapshot
+  directory mounted. `snapshots.status()` carries the rule as
+  `attention`. A test holds every case, and narrowing the rule to `stale`
+  alone fails it.
+- **It is not a job.** The TLS check is a worker job because its reading
+  is a network fetch. Snapshots are taken by a host cron, and the backend
+  reads its own read-only mount on each request, so the alarm has no
+  reading of its own that could go stale.
+- **The threshold is 50 hours: two daily runs plus two hours.** One
+  missed run is a blip, and it leaves the newest just under 48 hours old
+  when the next run starts. Two missed runs is a stopped job. The two
+  hours are for the run itself, so a slow run after one miss does not
+  fire. A test pins the default between 48 and 50. It was 26 hours, which
+  would have fired on every single missed run.
+- **`none` fires too,** because no snapshot is the state the alarm exists
+  for. **On live it will show from the deploy of this slice until the
+  first snapshot.** That is true, and it is a third deploy effect to
+  expect.
+- **What it does not do: page anyone.** Like the TLS banner, it reaches
+  whoever signs in as msp_admin. There is no mail relay by design.
 
 **Permissions.** The snapshot directory is
 `/var/lib/wingrc-snapshots/<project>/`, mode `0700`, files `0600`, owned
@@ -12459,11 +12528,31 @@ not reach the labels.
   installed);
 - the first live restore test, which Jarrod watches;
 - an off-host copy;
-- a stale-snapshot notification.
+- any alarm beyond the msp_admin banner.
 
-**The restore writes no audit row.** Its target is empty by construction,
-and the restored database must equal its source. Its record is the
-restore test's record directory.
+**The restore test's record is filed with the deploy records
+(2026-11-02).** It used to go to `~/wingrc-restore-tests/`, a place only
+its author knew. It now goes to `~/wingrc-deploys/<UTC>-restore-test-<id>/`,
+beside `deploy.sh`'s `<UTC>-<sha>/`. Its `restore-test.txt` is in
+`deploy.txt`'s shape:
+
+- commit, time and user;
+- the snapshot;
+- each step's exit;
+- the verdict.
+
+One directory answers "what has been done to this host". A record nobody
+else could find is how the 2026-09-23 orphaned volume survived. Taking a
+snapshot writes no record there: the snapshot directory is its own record,
+and a daily entry would bury the deploys.
+
+**The restore writes no audit row, and that stands (reviewed
+2026-11-02).** Its target is empty by construction. More to the point, the
+verification *is* a comparison of the restored database against its
+source: the row count of every table, the schema head, every SPRS score.
+A restore that wrote a row could not be compared against its source, and
+that comparison is the verification. Its record is the restore test's
+directory, above.
 
 #### History: the entry as first written
 
