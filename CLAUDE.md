@@ -587,6 +587,14 @@ writeup.
 - Re-activation after deactivation restores archived tasks/links; restored states
   go to `needs_review` (not `pending_evidence`) — MSP must re-confirm prior
   artifacts are still current
+- What `classification` and `coverage_basis` do at activation, read from
+  the code 2026-11-02. A first contributor sets `pending_evidence` from
+  any prior status, a later one leaves status alone, and nothing sets
+  `met`. `responsibility` is written at once, and the bundle's CRM prints
+  it as stated. `assists` is credited like `customer_system`, and
+  `candidate_state` is not read. That is the gate for bulk-accepting AI
+  recommendations of these values: `docs/roadmap.md`'s "The Tool Import
+  wizard: each row a decision a person can make"
 
 **Baseline versioning** (migration 0054, `models.py:ProductBaselineVersion`):
 `BaselineControl` rows are immutable once created — an import that actually
