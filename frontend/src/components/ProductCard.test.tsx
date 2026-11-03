@@ -168,7 +168,7 @@ describe("ProductCard activation", () => {
     const dialog = await screen.findByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText("What AC.L2-3.1.2[a] becomes"), { target: { value: "keep" } });
     expect(api.previewActivation).toHaveBeenLastCalledWith("o", "a", "p", [{ control_state_id: "cs1", choice: "keep" }]);
-    expect(within(dialog).getByText("Working out the score for these choicesâ€¦")).toBeTruthy();
+    expect(within(dialog).getByText("Working out the score for these choices…")).toBeTruthy();
     expect(within(dialog).getByRole("button", { name: "Activate Heimdal" })).toHaveProperty("disabled", true);
     answer(preview([judged({ choice: "keep", becomes: "met" })], 104, 104));
     await within(dialog).findByText("SPRS stays at 104.");
