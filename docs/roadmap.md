@@ -12312,12 +12312,23 @@ read that crontab; its first run is seen instead as
 restore test.
 
 **The schedule depends on the live checkout (recorded 2026-11-03).** The
-nightly run is `deploy/snapshot.sh` from `/home/wladmin/dev/wingrc`, so
-a deploy that leaves that checkout in a state nobody intended stops the
-snapshots too, as 2026-10-07 and 2026-10-26 left it. The only signal is
-the banner, up to 50 hours later: a failed run writes only to `wladmin`'s
-`~/wingrc-snapshots.log`. Not a fix, only so that a broken deploy's reach
-is known in advance.
+nightly run is `deploy/snapshot.sh` from `/home/wladmin/dev/wingrc`. No
+deploy has yet left the checkout in a state that would stop the
+snapshot; this records the coupling before it matters, not a failure
+that happened. What would stop it:
+
+- **a `docker-compose.yml` that does not parse,** from conflict markers or
+  a bad hand edit: the script's first step is `docker compose config`;
+- **`deploy/snapshot.sh` itself broken or missing,** the same way;
+- **a deploy or rollback to a commit before #74,** which has neither the
+  script nor the backend's `snapshot-create` command;
+- **the checkout moved, re-cloned elsewhere or made unreadable to
+  `wladmin`,** so the cron line's `cd` fails.
+
+A dirty tree matters only when it touches those two files. The only
+signal is the banner, up to 50 hours later: a failed run writes only to
+`wladmin`'s `~/wingrc-snapshots.log`. Not a fix, only so that a broken
+deploy's reach is known in advance.
 
 **Jarrod's decisions (2026-11-01), both deliberate:**
 
