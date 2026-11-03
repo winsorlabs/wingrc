@@ -59,7 +59,7 @@ def _product(db_session, d, name: str, objectives=("b",)) -> Product:
     p.current_version_id = v.id
     db_session.add(BaselineControl(
         product_id=p.id, baseline_version_id=v.id, control_id=d["ctrl"].id,
-        objectives=list(objectives), classification="shared", candidate_state="pending_evidence",
+        objectives=list(objectives), classification="shared",
     ))
     db_session.add(OrgProduct(org_id=d["org"].id, product_id=p.id, status="candidate"))
     db_session.flush()

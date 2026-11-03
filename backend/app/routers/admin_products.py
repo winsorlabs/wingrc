@@ -149,7 +149,6 @@ class BaselineControlOut(BaseModel):
     objectives: list[str]
     classification: str
     coverage_basis: str
-    candidate_state: str
     provider_contribution: str | None
     customer_action: str | None
     note: str | None
@@ -268,7 +267,6 @@ class ControlEntryOut(BaseModel):
     control: list[str]
     classification: str | None
     coverage_basis: str | None
-    candidate_state: str | None
     objectives: list[str]
     provider_contribution: str | None
     customer_action: str | None
@@ -511,7 +509,6 @@ def get_product_detail(
                 objectives=bc.objectives or [],
                 classification=bc.classification,
                 coverage_basis=bc.coverage_basis,
-                candidate_state=bc.candidate_state,
                 provider_contribution=bc.provider_contribution,
                 customer_action=bc.customer_action,
                 note=bc.note,
@@ -768,7 +765,6 @@ def _control_rows_out(rows: list) -> list[ControlEntryOut]:
             control=r.control,
             classification=r.classification,
             coverage_basis=r.coverage_basis,
-            candidate_state=r.candidate_state,
             objectives=r.objectives,
             provider_contribution=r.provider_contribution,
             customer_action=r.customer_action,

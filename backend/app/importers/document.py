@@ -37,7 +37,6 @@ from typing import Any
 from ..ai.base import AIProvider
 from ..baseline import (
     BaselineEntry,
-    CandidateState,
     Classification,
     ControlEntry,
     EvidenceSpec,
@@ -127,7 +126,6 @@ Return ONLY a JSON object — no markdown fences, no prose, just JSON:
       "evidence": [
         {"artifact": "Portal user/role list", "type": "export", "kb": "KB article"}
       ],
-      "candidate_state": "pending_evidence",
       "note": "optional note",
       "scope_note": "optional scope clarification"
     },
@@ -136,7 +134,6 @@ Return ONLY a JSON object — no markdown fences, no prose, just JSON:
       "objectives": [],
       "classification": "customer_owns",
       "evidence": [],
-      "candidate_state": "not_satisfied_by_product",
       "note": "Reason the product disclaims these controls."
     }
   ]
@@ -317,14 +314,12 @@ def _apply_evidence_minimization(entry: ControlEntry) -> ControlEntry:
     """Hard-enforce minimization rules regardless of what the AI produced.
 
     This is the code-level guarantee that customer_owns controls never carry
-    evidence specs or the wrong candidate_state — even if the model ignores
-    the prompt instruction.
+    evidence specs — even if the model ignores the prompt instruction.
     """
     if entry.classification == Classification.CUSTOMER_OWNS:
         return ControlEntry(
             control=entry.control,
             classification=entry.classification,
-            candidate_state=CandidateState.NOT_SATISFIED_BY_PRODUCT,
             objectives=entry.objectives,
             provider_contribution=None,
             customer_action=None,
@@ -337,7 +332,6 @@ def _apply_evidence_minimization(entry: ControlEntry) -> ControlEntry:
     return ControlEntry(
         control=entry.control,
         classification=entry.classification,
-        candidate_state=CandidateState.PENDING_EVIDENCE,
         objectives=entry.objectives,
         provider_contribution=entry.provider_contribution,
         customer_action=entry.customer_action,
@@ -362,9 +356,6 @@ def _parse_control(raw: dict[str, Any]) -> ControlEntry:
     entry = ControlEntry(
         control=raw["control"],
         classification=cls,
-        candidate_state=CandidateState(
-            raw.get("candidate_state", "pending_evidence")
-        ),
         objectives=[str(o) for o in raw.get("objectives", [])],
         provider_contribution=raw.get("provider_contribution"),
         customer_action=raw.get("customer_action"),

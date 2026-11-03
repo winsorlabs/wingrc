@@ -132,12 +132,10 @@ def ref(db_session: Session, fake_msp_admin) -> dict:
     bc_ac = BaselineControl(
         product_id=product.id, baseline_version_id=version.id, control_id=ac.id,
         objectives=["a"], classification="shared",
-        candidate_state="pending_evidence",
     )
     bc_ia = BaselineControl(
         product_id=product.id, baseline_version_id=version.id, control_id=ia.id,
         objectives=["a"], classification="customer_owns",
-        candidate_state="not_satisfied_by_product",
     )
     db_session.add_all([bc_ac, bc_ia])
     db_session.flush()

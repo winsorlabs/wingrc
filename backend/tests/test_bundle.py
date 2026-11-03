@@ -902,7 +902,7 @@ def test_bundle_lists_evidence_a_deactivation_archived_as_archived(
     product.current_version_id = version.id
     db_session.add(BaselineControl(
         product_id=product.id, baseline_version_id=version.id, control_id=d["ctrl"].id,
-        objectives=["b"], classification="shared", candidate_state="pending_evidence",
+        objectives=["b"], classification="shared",
     ))
     db_session.add(OrgProduct(org_id=d["org"].id, product_id=product.id, status="candidate"))
     db_session.flush()
@@ -1646,7 +1646,7 @@ def _seed_contributor(db_session, *, org, ctrl, cs, product_key: str, classifica
     bc = BaselineControl(
         product_id=product.id, baseline_version_id=version.id, control_id=ctrl.id,
         objectives=["a"],
-        classification=classification, candidate_state="pending_evidence",
+        classification=classification,
     )
     db_session.add(bc)
     db_session.flush()

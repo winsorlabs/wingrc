@@ -18,7 +18,6 @@ import pytest
 from app.ai.base import AIProvider
 from app.baseline import (
     BaselineEntry,
-    CandidateState,
     Classification,
     ControlEntry,
     EvidenceSpec,
@@ -58,11 +57,6 @@ def _crm_entry(
     return ControlEntry(
         control=[control],
         classification=classification,
-        candidate_state=(
-            CandidateState.NOT_SATISFIED_BY_PRODUCT
-            if classification == Classification.CUSTOMER_OWNS
-            else CandidateState.PENDING_EVIDENCE
-        ),
         objectives=["a"],
         note=note,
     )
@@ -74,7 +68,6 @@ def _web_entry(
     return ControlEntry(
         control=[control],
         classification=classification,
-        candidate_state=CandidateState.PENDING_EVIDENCE,
         objectives=["a"],
         source=source,
     )
@@ -291,7 +284,6 @@ def test_ingest_web_page_applies_evidence_minimization():
     )
     au = entries[0]
     assert au.evidence == [EvidenceSpec(artifact="Audit log export", type="export", kb=None)]
-    assert au.candidate_state == CandidateState.PENDING_EVIDENCE
 
 
 def test_ingest_web_page_rejects_oversized_page():

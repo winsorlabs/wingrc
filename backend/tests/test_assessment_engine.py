@@ -13,12 +13,17 @@ Design being tested (see assessment.py for full rationale):
 
 from __future__ import annotations
 
+import pytest
+
 from app.assessment import (
+    ACTIVATION_DEFAULTS,
+    JUDGED_STATUSES,
     SPRS_MAX,
     ControlStatus,
     Responsibility,
     compute_sprs,
     contributor_added_status,
+    is_judgement_in_question,
     magic_loop_updates,
     resolve_contributor_responsibility,
 )
@@ -364,6 +369,64 @@ def test_additional_contributor_leaves_pending_evidence_alone():
         contributor_added_status("pending_evidence", is_first_contributor=False)
         == "pending_evidence"
     )
+
+
+# Every starting status, for a first contributor, with each answer and with
+# none (nobody asked). Until 2026-11-03 only not_met was tested, and a first
+# contributor set pending_evidence from any status.
+_FIRST_CONTRIBUTOR = [
+    # (status, choice, expected)
+    ("not_met", None, "pending_evidence"),
+    ("pending_evidence", None, "pending_evidence"),
+    ("needs_review", None, "needs_review"),
+    ("met", None, "needs_review"),
+    ("met", "keep", "met"),
+    ("met", "needs_review", "needs_review"),
+    ("partial", None, "needs_review"),
+    ("partial", "keep", "partial"),
+    ("partial", "needs_review", "needs_review"),
+    ("not_applicable", None, "needs_review"),
+    ("not_applicable", "keep", "not_applicable"),
+    ("not_applicable", "needs_review", "needs_review"),
+    ("inherited", None, "needs_review"),
+    ("inherited", "keep", "inherited"),
+    ("inherited", "needs_review", "needs_review"),
+]
+
+
+@pytest.mark.parametrize("status,choice,expected", _FIRST_CONTRIBUTOR)
+def test_first_contributor_every_status(status, choice, expected):
+    assert contributor_added_status(status, True, choice) == expected
+
+
+def test_every_status_is_in_the_first_contributor_table():
+    assert {s for s, _, _ in _FIRST_CONTRIBUTOR} == set(ControlStatus), (
+        "a status missing here is a status whose first-contributor outcome nobody decided"
+    )
+
+
+@pytest.mark.parametrize("status", list(ControlStatus))
+@pytest.mark.parametrize("choice", [None, "keep", "needs_review"])
+def test_additional_contributor_never_changes_any_status(status, choice):
+    assert contributor_added_status(status, False, choice) == status
+
+
+def test_nobody_asked_never_sets_pending_evidence_over_a_judgement():
+    for status in JUDGED_STATUSES:
+        assert contributor_added_status(status, True, None) != "pending_evidence"
+
+
+def test_judged_statuses_and_defaults():
+    assert JUDGED_STATUSES == {"met", "partial", "not_applicable", "inherited"}
+    assert ACTIVATION_DEFAULTS == {
+        "met": "needs_review",
+        "partial": "needs_review",
+        "not_applicable": "keep",
+        "inherited": "keep",
+    }
+    for status in ControlStatus:
+        assert is_judgement_in_question(status, True) == (status in JUDGED_STATUSES)
+        assert is_judgement_in_question(status, False) is False
 
 
 # ---------------------------------------------------------------------------

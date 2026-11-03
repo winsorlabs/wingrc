@@ -30,11 +30,14 @@ from sqlalchemy.orm import Session
 
 from . import evidence_links
 from .assessment import (
+    ACTIVATION_DEFAULTS,
+    ActivationChoice,
     ControlStatus,
     OrgProductStatus,
     Responsibility,
     compute_sprs,
     contributor_added_status,
+    is_judgement_in_question,
     magic_loop_updates,
     resolve_contributor_responsibility,
 )
@@ -60,6 +63,12 @@ from .models import (
     RaciAssignment,
     SprsSnapshot,
 )
+
+
+class ActivationJudgementsChanged(Exception):
+    """The judged objectives at confirm are not the ones the person was
+    shown, or one moved since: they approved a change that is no longer the
+    one that would happen."""
 
 
 def recompute_sprs(session: Session, assessment_id: uuid.UUID) -> int:
@@ -214,7 +223,12 @@ def start_assessment(
             # bad row can't break every other product's magic loop on
             # assessment creation.
             continue
-        _run_loop(session, org_id, op.product_id, op.baseline_version_id, assessment.id)
+        # Nobody is asked here, and nothing is judged yet: every state was
+        # seeded not_met just above (tests/test_activation_judgement.py).
+        _run_loop(
+            session, org_id, op.product_id, op.baseline_version_id, assessment.id,
+            path="start_assessment",
+        )
 
     recompute_sprs(session, assessment.id)
     return assessment
@@ -497,8 +511,20 @@ def activate_org_product(
     product_id: uuid.UUID,
     assessment_id: uuid.UUID,
     configuration_notes: str | None = None,
+    decisions: dict[uuid.UUID, tuple[str, str]] | None = None,
 ) -> dict:
     """Mark a product active and fire the magic loop for one assessment.
+
+    Judged objectives (Jarrod, 2026-11-03: ask at activation): where this
+    product would be the first contributor to an objective a person judged
+    (assessment.JUDGED_STATUSES), decisions carries their answer, keyed by
+    control_state id, as (the status they were shown, ActivationChoice).
+    It must name exactly the judged objectives, each still at the status
+    shown, or ActivationJudgementsChanged is raised before anything is
+    committed: a person approves the change they saw, not a later one.
+    decisions=None means nobody was asked (an API call that sends none),
+    and every judged objective goes to needs_review. See
+    activation_preview for the screen's side.
 
     On re-activation after a prior deactivation:
       - Archived evidence tasks are restored (na→open; collected stays collected).
@@ -563,25 +589,8 @@ def activate_org_product(
     session.flush()
 
     product = session.get(Product, product_id)
-    log_event(
-        session,
-        org_id=org_id,
-        action="org_product.activate",
-        entity_type="org_product",
-        entity_id=op.id,
-        before_value={"status": previous_status},
-        after_value={
-            "status": OrgProductStatus.ACTIVE,
-            "baseline_version_id": str(target_version_id),
-        },
-        context={
-            "via": "product_activation",
-            "reactivation": not is_first_activation,
-            "product_key": product.key if product else None,
-            "product_name": product.name if product else str(product_id),
-            "assessment_id": str(assessment_id),
-        },
-    )
+    assessment_row = session.get(Assessment, assessment_id)
+    sprs_before = assessment_row.sprs_score if assessment_row is not None else None
     reactivation_ctx: dict = {
         "via": "product_reactivation",
         "product_name": product.name if product else str(product_id),
@@ -649,7 +658,21 @@ def activate_org_product(
 
     session.flush()
 
-    result = _run_loop(session, org_id, product_id, target_version_id, assessment_id)
+    result = _run_loop(
+        session,
+        org_id,
+        product_id,
+        target_version_id,
+        assessment_id,
+        decisions={cs_id: choice for cs_id, (_, choice) in decisions.items()}
+        if decisions is not None
+        else None,
+        expected=(
+            {cs_id: shown for cs_id, (shown, _) in decisions.items()}
+            if decisions is not None
+            else None
+        ),
+    )
 
     # States that regained archived evidence need human re-confirmation, not pending.
     if restored_cs_ids:
@@ -689,8 +712,107 @@ def activate_org_product(
         session.add_all(restore_history)
         session.flush()
 
-    recompute_sprs(session, assessment_id)
+    sprs_after = recompute_sprs(session, assessment_id)
+    log_event(
+        session,
+        org_id=org_id,
+        action="org_product.activate",
+        entity_type="org_product",
+        entity_id=op.id,
+        before_value={"status": previous_status, "sprs_score": sprs_before},
+        after_value={
+            "status": OrgProductStatus.ACTIVE,
+            "baseline_version_id": str(target_version_id),
+            "sprs_score": sprs_after,
+            "judged": result["judged"],
+        },
+        context={
+            "via": "product_activation",
+            "reactivation": not is_first_activation,
+            "asked": decisions is not None,
+            "product_key": product.key if product else None,
+            "product_name": product.name if product else str(product_id),
+            "assessment_id": str(assessment_id),
+        },
+    )
     return result
+
+
+def activation_preview(
+    session: Session,
+    org_id: uuid.UUID,
+    product_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    choices: dict[uuid.UUID, str] | None = None,
+) -> dict:
+    """What activating this product would do to the objectives a person
+    judged, and to the score, for the activation screen.
+
+    Computed by running activate_org_product itself inside a savepoint and
+    rolling it back, twice: once to find the judged objectives, once with
+    the choices (each one given, else ACTIVATION_DEFAULTS) to read the
+    score they would produce. So the screen states only a result the real
+    path computed. The caller must roll the request back as well: the
+    savepoints undo the writes, and the request writes nothing else.
+
+    Returns {"sprs_now", "sprs_after", "objectives"}; objectives is empty
+    when nothing is judged, and sprs_after is then the plain activation's.
+    """
+    assessment = session.get(Assessment, assessment_id)
+    if assessment is None:
+        raise ValueError(f"Assessment {assessment_id} not found")
+    sprs_now = assessment.sprs_score
+
+    savepoint = session.begin_nested()
+    try:
+        found = activate_org_product(session, org_id, product_id, assessment_id)
+        sprs_after = session.get(Assessment, assessment_id).sprs_score
+    finally:
+        savepoint.rollback()
+
+    judged = [(uuid.UUID(j["control_state_id"]), j["from"]) for j in found["judged"]]
+    if not judged:
+        return {"sprs_now": sprs_now, "sprs_after": sprs_after, "objectives": []}
+
+    given = choices or {}
+    resolved = {
+        cs_id: (shown, given.get(cs_id) or ACTIVATION_DEFAULTS[shown])
+        for cs_id, shown in judged
+    }
+    savepoint = session.begin_nested()
+    try:
+        activate_org_product(session, org_id, product_id, assessment_id, decisions=resolved)
+        sprs_after = session.get(Assessment, assessment_id).sprs_score
+    finally:
+        savepoint.rollback()
+
+    described = {
+        cs_id: (control_key, objective_key, text)
+        for cs_id, control_key, objective_key, text in session.execute(
+            select(
+                ControlState.id, Control.control_id,
+                AssessmentObjective.objective_key, AssessmentObjective.text,
+            )
+            .join(AssessmentObjective, ControlState.objective_id == AssessmentObjective.id)
+            .join(Control, AssessmentObjective.control_id == Control.id)
+            .where(ControlState.id.in_(list(resolved)))
+        )
+    }
+    objectives = []
+    for cs_id, (shown, choice) in resolved.items():
+        control_key, objective_key, text = described[cs_id]
+        objectives.append({
+            "control_state_id": str(cs_id),
+            "control_id": control_key,
+            "objective_key": objective_key,
+            "objective_text": text,
+            "status": shown,
+            "default": str(ACTIVATION_DEFAULTS[shown]),
+            "choice": str(choice),
+            "becomes": contributor_added_status(shown, True, choice),
+        })
+    objectives.sort(key=lambda o: (o["control_id"], o["objective_key"], o["control_state_id"]))
+    return {"sprs_now": sprs_now, "sprs_after": sprs_after, "objectives": objectives}
 
 
 # ---------------------------------------------------------------------------
@@ -730,6 +852,9 @@ def _run_loop(
     product_id: uuid.UUID,
     baseline_version_id: uuid.UUID,
     assessment_id: uuid.UUID,
+    decisions: dict[uuid.UUID, str] | None = None,
+    path: str = "activation",
+    expected: dict[uuid.UUID, str] | None = None,
 ) -> dict:
     """Core magic-loop logic: update states, write history, seed tasks.
 
@@ -740,6 +865,14 @@ def _run_loop(
     baseline_version_id pin -- the ONE version's claims this run evaluates,
     never "whatever the product's current version happens to be." Callers
     resolve the pin before calling this; it is never re-derived here.
+
+    decisions: a person's answer per judged objective (control_state id ->
+    ActivationChoice), given only when someone was asked. None means
+    nobody was, and every judged objective goes to needs_review
+    (assessment.contributor_added_status). path names the caller, for the
+    record when nobody was asked. expected, given with decisions, is the
+    status each was shown at: the judged set must be exactly its keys,
+    each still at that status, or ActivationJudgementsChanged is raised.
     """
     product = session.get(Product, product_id)
     if product is None:
@@ -756,7 +889,7 @@ def _run_loop(
     ).all()
 
     if not baseline_controls:
-        return {"objectives_updated": 0, "tasks_created": 0}
+        return {"objectives_updated": 0, "tasks_created": 0, "judged": []}
 
     assessment = session.get(Assessment, assessment_id)
     if assessment is None:
@@ -804,7 +937,7 @@ def _run_loop(
     # --- pure function: what THIS product's own baseline claims ---
     updates = magic_loop_updates(entries, objective_lookup)
     if not updates:
-        return {"objectives_updated": 0, "tasks_created": 0}
+        return {"objectives_updated": 0, "tasks_created": 0, "judged": []}
 
     # --- pre-load existing control_states to avoid N+1 ---
     updated_obj_ids = {uuid.UUID(u["objective_id"]) for u in updates}
@@ -846,6 +979,8 @@ def _run_loop(
     # --- apply updates + write history ---
     history_rows: list[ControlStateHistory] = []
     new_contributor_rows: list[ControlStateContributor] = []
+    judged_outcomes: list[dict] = []
+    judged_seen: set[uuid.UUID] = set()
     objectives_updated = 0
 
     for upd in updates:
@@ -877,9 +1012,31 @@ def _run_loop(
         )
         all_classifications = [c for _, c in current_contributors] + [bc.classification]
 
-        state.status = contributor_added_status(prev_status, not had_prior_contributors)
+        judged = is_judgement_in_question(prev_status, not had_prior_contributors)
+        if judged:
+            judged_seen.add(state.id)
+        if judged and expected is not None and expected.get(state.id) != prev_status:
+            raise ActivationJudgementsChanged(
+                "An objective you were asked about has changed, or a new one needs "
+                "asking. Nothing was activated; review it again."
+            )
+        choice = decisions.get(state.id) if judged and decisions is not None else None
+        if choice is not None and choice not in set(ActivationChoice):
+            raise ValueError(f"Unknown choice {choice!r}")
+        state.status = contributor_added_status(prev_status, not had_prior_contributors, choice)
         state.responsibility = resolve_contributor_responsibility(all_classifications)
 
+        if judged:
+            reason = _judged_reason(product.name, prev_status, state.status, choice, path)
+            judged_outcomes.append(
+                _record_judged(
+                    session, org_id, assessment_id, product, state, prev_status, choice, path
+                )
+            )
+        elif had_prior_contributors:
+            reason = f"Contributor added: {product.name} (also covers this control)"
+        else:
+            reason = f"Magic loop: {product.name} activated"
         history_rows.append(
             ControlStateHistory(
                 control_state_id=state.id,
@@ -887,14 +1044,16 @@ def _run_loop(
                 new_status=state.status,
                 previous_responsibility=prev_resp,
                 new_responsibility=state.responsibility,
-                change_reason=(
-                    f"Magic loop: {product.name} activated"
-                    if not had_prior_contributors
-                    else f"Contributor added: {product.name} (also covers this control)"
-                ),
+                change_reason=reason,
             )
         )
         objectives_updated += 1
+
+    if expected is not None and set(expected) != judged_seen:
+        raise ActivationJudgementsChanged(
+            "An objective you were asked about has changed, or a new one needs "
+            "asking. Nothing was activated; review it again."
+        )
 
     session.add_all(new_contributor_rows)
     session.add_all(history_rows)
@@ -910,7 +1069,72 @@ def _run_loop(
         objective_lookup=objective_lookup,
         existing_states=existing_states,
     )
-    return {"objectives_updated": objectives_updated, "tasks_created": tasks_created}
+    return {
+        "objectives_updated": objectives_updated,
+        "tasks_created": tasks_created,
+        "judged": judged_outcomes,
+    }
+
+
+_PATH_LABELS = {
+    "activation": "an activation with no one asked",
+    "start_assessment": "a new assessment's activations",
+    "baseline_version_move": "a baseline version move",
+}
+
+
+def _judged_reason(
+    product_name: str, prev: str, new: str, choice: str | None, path: str
+) -> str:
+    """The history line for a judged objective a product just joined:
+    whether a person decided it at activation, or a path where nobody is
+    asked applied the default."""
+    if choice is not None:
+        outcome = f"kept {prev}" if new == prev else f"set {new} over {prev}"
+        return f"Asked at {product_name}'s activation: {outcome}, chosen by a person"
+    return (
+        f"{product_name} now covers this, in {_PATH_LABELS.get(path, path)}: "
+        f"{new} over {prev}, the default when nobody is asked"
+    )
+
+
+def _record_judged(
+    session: Session,
+    org_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    product: Product,
+    state: ControlState,
+    prev_status: str,
+    choice: str | None,
+    path: str,
+) -> dict:
+    """Audit a judged objective's outcome: as the person's decision when
+    they were asked (the row's actor is them), or as the default and the
+    path that applied it when nobody was."""
+    decided_by = "person" if choice is not None else "default"
+    log_event(
+        session,
+        org_id=org_id,
+        action="control_state.update",
+        entity_type="control_state",
+        entity_id=state.id,
+        before_value={"status": prev_status},
+        after_value={"status": state.status},
+        context={
+            "via": "product_activation_judgement",
+            "decided_by": decided_by,
+            "decided_at": "activation" if choice is not None else path,
+            "choice": choice,
+            "product_name": product.name,
+            "assessment_id": str(assessment_id),
+        },
+    )
+    return {
+        "control_state_id": str(state.id),
+        "from": prev_status,
+        "to": state.status,
+        "decided_by": decided_by,
+    }
 
 
 def _fanout_evidence_tasks(
@@ -1545,8 +1769,23 @@ def move_org_product_version(
                     )
                 )
                 all_classes = [cls for _, _, cls in current] + [new_bc.classification]
+                # Nobody is asked on a move: a judged objective goes to
+                # needs_review, as every claim the move changes does.
                 cs.status = contributor_added_status(prev_status, not had_prior)
                 cs.responsibility = resolve_contributor_responsibility(all_classes)
+                if is_judgement_in_question(prev_status, not had_prior):
+                    reason = _judged_reason(
+                        product.name, prev_status, cs.status, None, "baseline_version_move"
+                    )
+                    _record_judged(
+                        session, org_id, assessment_id, product, cs, prev_status, None,
+                        "baseline_version_move",
+                    )
+                else:
+                    reason = (
+                        f"Version move ({from_number}->{to_number}): {product.name} "
+                        "now covers this"
+                    )
                 history_rows.append(
                     ControlStateHistory(
                         control_state_id=cs.id,
@@ -1554,10 +1793,7 @@ def move_org_product_version(
                         new_status=cs.status,
                         previous_responsibility=prev_resp,
                         new_responsibility=cs.responsibility,
-                        change_reason=(
-                            f"Version move ({from_number}->{to_number}): {product.name} "
-                            "now covers this"
-                        ),
+                        change_reason=reason,
                     )
                 )
                 bcs_needing_fanout[ctrl_id] = new_bc

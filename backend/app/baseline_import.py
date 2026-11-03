@@ -44,7 +44,6 @@ from .seeds.baselines import _seed_product, normalize_product_key
 
 _VALID_CLASSIFICATIONS = frozenset({"provider_satisfies", "shared", "customer_owns"})
 _VALID_COVERAGE_BASES = frozenset({"customer_system", "platform_only", "assists"})
-_VALID_CANDIDATE_STATES = frozenset({"pending_evidence", "not_satisfied_by_product"})
 _VALID_EVIDENCE_TYPES = frozenset({"screenshot", "export", "document", "link", "policy"})
 
 # A live compliance claim this re-import would disturb the justification
@@ -277,16 +276,6 @@ def validate_structured(
                         row_index=idx, field="coverage_basis",
                     )
                 )
-        candidate_state = entry.get("candidate_state", "not_satisfied_by_product")
-        if candidate_state not in _VALID_CANDIDATE_STATES:
-            problems.append(
-                ValidationProblem(
-                    f"controls[{idx}].candidate_state {candidate_state!r} must be one of "
-                    f"{sorted(_VALID_CANDIDATE_STATES)}.",
-                    row_index=idx, field="candidate_state",
-                )
-            )
-
         objectives = entry.get("objectives") or []
         if not isinstance(objectives, list) or not all(isinstance(o, str) for o in objectives):
             problems.append(
@@ -414,7 +403,6 @@ class ControlEntryDraft:
     control: list[str]
     classification: str | None
     coverage_basis: str | None
-    candidate_state: str | None
     objectives: list[str] = field(default_factory=list)
     provider_contribution: str | None = None
     customer_action: str | None = None
@@ -576,9 +564,6 @@ def build_preview(
         )
         if not isinstance(coverage_basis, str):
             coverage_basis = None
-        candidate_state = entry.get("candidate_state", "not_satisfied_by_product")
-        if not isinstance(candidate_state, str):
-            candidate_state = None
         objectives = entry.get("objectives") or []
         if not isinstance(objectives, list):
             objectives = []
@@ -599,7 +584,6 @@ def build_preview(
                 control=list(ctrl_ids),
                 classification=classification,
                 coverage_basis=coverage_basis,
-                candidate_state=candidate_state,
                 objectives=objectives,
                 provider_contribution=provider_contribution,
                 customer_action=customer_action,
@@ -647,8 +631,6 @@ def build_preview(
                 diffs["classification"] = (existing.classification, classification)
             if existing.coverage_basis != coverage_basis:
                 diffs["coverage_basis"] = (existing.coverage_basis, coverage_basis)
-            if existing.candidate_state != candidate_state:
-                diffs["candidate_state"] = (existing.candidate_state, candidate_state)
             if sorted(existing.objectives or []) != sorted(objectives):
                 diffs["objectives"] = (existing.objectives, objectives)
             if (existing.provider_contribution or None) != (provider_contribution or None):

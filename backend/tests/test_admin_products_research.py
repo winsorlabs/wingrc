@@ -120,14 +120,13 @@ def _seed_product(db_session, *, disclaimed_control: bool = False) -> dict:
         product_id=product.id, baseline_version_id=version.id, control_id=ctrl.id,
         objectives=["a"],
         classification="shared", coverage_basis="customer_system",
-        candidate_state="pending_evidence",
     )
     db_session.add(bc)
     if disclaimed_control:
         bc_ia = BaselineControl(
             product_id=product.id, baseline_version_id=version.id, control_id=disclaimed_ctrl.id,
             objectives=["a"],
-            classification="customer_owns", candidate_state="not_satisfied_by_product",
+            classification="customer_owns",
             note="Customer's IdP owns identity.",
         )
         db_session.add(bc_ia)

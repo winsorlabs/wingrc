@@ -195,7 +195,6 @@ def tied_fixture(db_session):
         bc = BaselineControl(
             product_id=p.id, baseline_version_id=v.id, control_id=ctrl.id,
             objectives=["a"], classification="shared", coverage_basis="customer_system",
-            candidate_state="pending_evidence",
         )
         db_session.add(bc)
         db_session.flush()

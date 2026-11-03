@@ -381,6 +381,8 @@ NOT_REACHING_A_WRITE: dict[tuple[str, str], str] = {
         "writes nothing by design: suggests URLs to research",
     ("POST", "/orgs/{org_id}/imports/workbook/dry-run"):
         "writes nothing by design: a dry run of a scope workbook import",
+    ("POST", "/orgs/{org_id}/assessments/{assessment_id}/products/{product_id}/activation-preview"):
+        "writes nothing by design: runs the activation in a savepoint and rolls the request back",
     ("POST", "/auth/mfa/enroll"):
         "writes nothing by design: holds a pending secret in the state cookie until confirm",
     ("POST", "/auth/mfa/reenroll"):

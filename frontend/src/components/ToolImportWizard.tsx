@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import { CANDIDATE_STATES, CLASSIFICATIONS, COVERAGE_BASES, EVIDENCE_TYPES } from "../lib/baseline";
+import { CLASSIFICATIONS, COVERAGE_BASES, EVIDENCE_TYPES } from "../lib/baseline";
 import type {
   BaselineControlDraft,
   BaselineEvidenceDraft,
@@ -79,7 +79,6 @@ function productDetailToDraft(
       control: [bc.control_id],
       classification: bc.classification,
       coverage_basis: bc.coverage_basis,
-      candidate_state: bc.candidate_state,
       objectives: bc.objectives,
       provider_contribution: bc.provider_contribution,
       customer_action: bc.customer_action,
@@ -434,7 +433,6 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
         control: [],
         classification: null,
         coverage_basis: null,
-        candidate_state: "pending_evidence",
         objectives: [],
         provider_contribution: null,
         customer_action: null,
@@ -663,7 +661,6 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
                       <th>Customer action</th>
                       <th>Scope note</th>
                       <th>Coverage basis</th>
-                      <th>Candidate state</th>
                       <th>Objectives</th>
                       <th>Evidence</th>
                     </tr>
@@ -674,7 +671,6 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
                       const rowFlagged = rowHasAnyProblem(idx);
                       const covProblem = rowProblem(idx, "coverage_basis");
                       const clsProblem = rowProblem(idx, "classification");
-                      const cstProblem = rowProblem(idx, "candidate_state");
                       const controlProblem = rowProblem(idx, "control");
                       const objProblem = rowProblem(idx, "objectives");
                       const evProblem = rowProblem(idx, "evidence");
@@ -777,20 +773,6 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
                             ) : (
                               covProblem && <div className="field-problem-hint">{covProblem.message}</div>
                             )}
-                          </td>
-                          <td>
-                            <select
-                              aria-label={`Candidate state for row ${idx}`}
-                              className={cstProblem ? "field-needs-decision" : undefined}
-                              value={row.candidate_state ?? ""}
-                              onChange={(e) => updateControlField(idx, "candidate_state", e.target.value || null)}
-                            >
-                              <option value="">-- select --</option>
-                              {CANDIDATE_STATES.map((c) => (
-                                <option key={c} value={c}>{c}</option>
-                              ))}
-                            </select>
-                            {cstProblem && <div className="field-problem-hint">{cstProblem.message}</div>}
                           </td>
                           <td>
                             <input

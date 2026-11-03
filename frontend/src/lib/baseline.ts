@@ -22,10 +22,4 @@ export const COVERAGE_BASIS_LABELS: Record<string, string> = {
   assists: "Assists",
 };
 
-export const CANDIDATE_STATES = ["pending_evidence", "not_satisfied_by_product"] as const;
-export const CANDIDATE_STATE_LABELS: Record<string, string> = {
-  pending_evidence: "Pending evidence",
-  not_satisfied_by_product: "Not satisfied by product",
-};
-
 export const EVIDENCE_TYPES = ["screenshot", "export", "document", "link", "policy"] as const;

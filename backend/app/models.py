@@ -524,10 +524,6 @@ class BaselineControl(Base):
             name="ck_baseline_control_classification",
         ),
         CheckConstraint(
-            "candidate_state IN ('pending_evidence', 'not_satisfied_by_product')",
-            name="ck_baseline_control_candidate_state",
-        ),
-        CheckConstraint(
             "coverage_basis IN ('customer_system', 'platform_only', 'assists')",
             name="ck_baseline_control_coverage_basis",
         ),
@@ -550,7 +546,6 @@ class BaselineControl(Base):
         JSONB, server_default=text("'[]'::jsonb")
     )
     classification: Mapped[str] = mapped_column(String(30))
-    candidate_state: Mapped[str] = mapped_column(String(40))
     provider_contribution: Mapped[str | None] = mapped_column(Text)
     customer_action: Mapped[str | None] = mapped_column(Text)
     note: Mapped[str | None] = mapped_column(Text)

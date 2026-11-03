@@ -1,6 +1,7 @@
-import { useState } from "react";
-import { api } from "../api";
-import type { ProductRow } from "../types";
+import { useRef, useState } from "react";
+import { ApiError, api } from "../api";
+import type { ActivationChoice, ActivationPreview, ProductRow } from "../types";
+import { ActivationAsk } from "./ActivationAsk";
 
 interface Props {
   product: ProductRow;
@@ -21,18 +22,99 @@ export function ProductCard({ product, others, orgId, assessmentId, canWrite, on
   const [replacedBy, setReplacedBy] = useState("");
   const [movingVersion, setMovingVersion] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ask, setAsk] = useState<ActivationPreview | null>(null);
+  const [choices, setChoices] = useState<Record<string, ActivationChoice>>({});
+  const [scoring, setScoring] = useState(false);
+  const [askError, setAskError] = useState<string | null>(null);
+  // Only the latest choice's score is shown; an earlier answer arriving
+  // late is dropped.
+  const scoreRequest = useRef(0);
 
+  // Activation asks first (2026-11-03): the preview names the objectives a
+  // person judged that this tool would change. None, and it activates at
+  // once; some, and ActivationAsk shows them until the person activates or
+  // cancels. Only activateProduct writes.
   async function handleActivate() {
     setActivating(true);
     setError(null);
     try {
-      await api.activateProduct(orgId, assessmentId, product.id);
-      onActivated();
+      const preview = await api.previewActivation(orgId, assessmentId, product.id);
+      if (preview.objectives.length === 0) {
+        await api.activateProduct(orgId, assessmentId, product.id, []);
+        onActivated();
+        return;
+      }
+      setChoices(Object.fromEntries(preview.objectives.map((o) => [o.control_state_id, o.choice])));
+      setAskError(null);
+      setAsk(preview);
     } catch (e: unknown) {
       setError((e as Error).message);
     } finally {
       setActivating(false);
     }
+  }
+
+  async function handleChoose(controlStateId: string, choice: ActivationChoice) {
+    const next = { ...choices, [controlStateId]: choice };
+    setChoices(next);
+    const asked = ++scoreRequest.current;
+    setScoring(true);
+    try {
+      const preview = await api.previewActivation(
+        orgId,
+        assessmentId,
+        product.id,
+        Object.entries(next).map(([id, c]) => ({ control_state_id: id, choice: c }))
+      );
+      if (asked === scoreRequest.current) setAsk(preview);
+    } catch (e: unknown) {
+      if (asked === scoreRequest.current) setAskError((e as Error).message);
+    } finally {
+      if (asked === scoreRequest.current) setScoring(false);
+    }
+  }
+
+  async function handleConfirm() {
+    if (!ask) return;
+    setActivating(true);
+    setAskError(null);
+    try {
+      await api.activateProduct(
+        orgId,
+        assessmentId,
+        product.id,
+        ask.objectives.map((o) => ({
+          control_state_id: o.control_state_id,
+          shown_status: o.status,
+          choice: choices[o.control_state_id] ?? o.choice,
+        }))
+      );
+      setAsk(null);
+      onActivated();
+    } catch (e: unknown) {
+      if (e instanceof ApiError && e.status === 409) {
+        // What they were shown has changed; nothing was activated. Ask
+        // again from the server's current answer.
+        setAskError(e.message);
+        try {
+          const fresh = await api.previewActivation(orgId, assessmentId, product.id);
+          setChoices(Object.fromEntries(fresh.objectives.map((o) => [o.control_state_id, o.choice])));
+          setAsk(fresh.objectives.length > 0 ? fresh : null);
+        } catch {
+          // The refusal above stays on screen.
+        }
+      } else {
+        setAskError((e as Error).message);
+      }
+    } finally {
+      setActivating(false);
+    }
+  }
+
+  function handleCancel() {
+    scoreRequest.current++;
+    setScoring(false);
+    setAsk(null);
   }
 
   async function handleDeactivate() {
@@ -173,6 +255,19 @@ export function ProductCard({ product, others, orgId, assessmentId, canWrite, on
         )}
         {error && <span className="product-card-error">{error}</span>}
       </div>
+      {ask && (
+        <ActivationAsk
+          productName={product.name}
+          preview={ask}
+          choices={choices}
+          scoring={scoring}
+          busy={activating}
+          error={askError}
+          onChoose={handleChoose}
+          onConfirm={handleConfirm}
+          onCancel={handleCancel}
+        />
+      )}
     </div>
   );
 }

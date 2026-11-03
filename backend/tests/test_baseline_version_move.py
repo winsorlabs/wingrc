@@ -116,17 +116,16 @@ def ref(db_session: Session) -> dict:
 
     v1_ac = BaselineControl(
         product_id=product.id, baseline_version_id=v1.id, control_id=ac.id,
-        objectives=["a", "b"], classification="shared", candidate_state="pending_evidence",
+        objectives=["a", "b"], classification="shared",
         provider_contribution="v1 AC text",
     )
     v1_au = BaselineControl(
         product_id=product.id, baseline_version_id=v1.id, control_id=au.id,
-        objectives=["a"], classification="provider_satisfies", candidate_state="pending_evidence",
+        objectives=["a"], classification="provider_satisfies",
     )
     v1_ia = BaselineControl(
         product_id=product.id, baseline_version_id=v1.id, control_id=ia.id,
         objectives=["a"], classification="customer_owns",
-        candidate_state="not_satisfied_by_product",
     )
     db_session.add_all([v1_ac, v1_au, v1_ia])
     db_session.flush()
@@ -158,17 +157,15 @@ def ref(db_session: Session) -> dict:
     v2_ac = BaselineControl(
         product_id=product.id, baseline_version_id=v2.id, control_id=ac.id,
         objectives=["a", "b"], classification="provider_satisfies",
-        candidate_state="pending_evidence",
         provider_contribution="v2 AC text",
     )
     v2_sc = BaselineControl(
         product_id=product.id, baseline_version_id=v2.id, control_id=sc.id,
-        objectives=["a"], classification="provider_satisfies", candidate_state="pending_evidence",
+        objectives=["a"], classification="provider_satisfies",
     )
     v2_ia = BaselineControl(
         product_id=product.id, baseline_version_id=v2.id, control_id=ia.id,
         objectives=["a"], classification="customer_owns",
-        candidate_state="not_satisfied_by_product",
     )
     db_session.add_all([v2_ac, v2_sc, v2_ia])
     db_session.flush()
