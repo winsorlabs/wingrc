@@ -12299,12 +12299,25 @@ at all.
 
 Either makes "equivalent" stop being good enough.
 
-### S. Local snapshots and an exercised restore (built and bench-verified 2026-11-01, alarm and partial writes 2026-11-02; not enabled on live)
+### S. Local snapshots and an exercised restore (built and bench-verified 2026-11-01, alarm and partial writes 2026-11-02; on live 2026-11-03, restore not yet tested there)
 
-**Status: built on the bench; live is untouched.** Nothing in this slice
-has run against live: no dump, no restore, no schedule. Enabling it on
-live is its own step, and needs Jarrod's go-ahead after he has read the PR.
-He watches the first live restore test.
+**Status: on live since 2026-11-03; the restore is not yet tested
+there.** Deployed at `d0e040a` on Jarrod's go-ahead. The first two
+snapshots were taken by hand that night, one by Jarrod and one by Claude
+(`20261103T025845Z`, `20261103T030437Z`), and `/health` read `ok`. The
+schedule is a line in `wladmin`'s crontab (`17 3 * * *`, host time UTC),
+his choice of account, installed by him. The `claude` account cannot
+read that crontab; its first run is seen instead as
+`20261103T031703Z`, the third snapshot. He watches the first live
+restore test.
+
+**The schedule depends on the live checkout (recorded 2026-11-03).** The
+nightly run is `deploy/snapshot.sh` from `/home/wladmin/dev/wingrc`, so
+a deploy that leaves that checkout in a state nobody intended stops the
+snapshots too, as 2026-10-07 and 2026-10-26 left it. The only signal is
+the banner, up to 50 hours later: a failed run writes only to `wladmin`'s
+`~/wingrc-snapshots.log`. Not a fix, only so that a broken deploy's reach
+is known in advance.
 
 **Jarrod's decisions (2026-11-01), both deliberate:**
 
@@ -12552,8 +12565,6 @@ not reach the labels.
 
 **Not done, deliberately:**
 
-- live enablement (the cron line is in `docs/deployment.md` and not
-  installed);
 - the first live restore test, which Jarrod watches;
 - an off-host copy;
 - any alarm beyond the msp_admin banner.

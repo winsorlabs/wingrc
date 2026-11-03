@@ -201,6 +201,12 @@ nginx` with that commit stamped in as `WINGRC_BUILD_SHA`, recreates them with
 `status: ok` **and** that commit for the backend. A deploy is done when
 `/health` names the commit you meant to ship, not when the commands exit.
 
+**A deploy that leaves the checkout broken stops the snapshots too.** The
+nightly snapshot runs `deploy/snapshot.sh` from this checkout ("Local
+snapshots" below). If a deploy leaves it in a state nobody intended, as
+2026-10-07 and 2026-10-26 did, the schedule fails with it. Nothing says
+so except the msp_admin banner, up to 50 hours later.
+
 **When the merge being deployed changes `deploy.sh` itself, the target's
 copy has to be the one that runs.** Bash reads a script while it runs,
 from the file it opened. Git writes a new file at the checkout, so the run
