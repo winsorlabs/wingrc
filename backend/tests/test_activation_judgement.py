@@ -29,6 +29,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import audit
 from app.assessment import JUDGED_STATUSES, ControlStatus
 from app.auth import get_current_user
 from app.db import get_session
@@ -189,10 +190,19 @@ def test_asked_every_judged_status_both_answers(db_session, w, status, choice):
     assert "chosen by a person" in hist.change_reason
 
 
-def test_asked_records_the_person_and_the_score(db_session, w, fake_msp_admin):
-    from app.audit import set_current_actor
+@pytest.fixture
+def as_person(fake_msp_admin):
+    """The request's actor, as auth sets it, reset afterwards: a ContextVar
+    left set leaks into every later test in the thread."""
+    a = audit._current_actor.set(str(fake_msp_admin.id))
+    t = audit._current_actor_type.set("user")
+    yield fake_msp_admin
+    audit._current_actor.reset(a)
+    audit._current_actor_type.reset(t)
 
-    set_current_actor(str(fake_msp_admin.id), "user")
+
+def test_asked_records_the_person_and_the_score(db_session, w, as_person):
+    fake_msp_admin = as_person
     _set_by_hand(db_session, w, "c2a", "met")
     assert w["a"].sprs_score == 104, "fixture: c2 met by hand must lift 101 to 104"
     cs_id = w["s"]["c2a"].id
