@@ -14643,8 +14643,10 @@ here, because it still needs a person to choose `met`.
   `customer_system`".
 - **Status.** For each remaining row's objectives, a product that is the
   objective's first contributor sets it to `pending_evidence`,
-  whatever it was before (`assessment.py:contributor_added_status`). A
-  later contributor leaves the status alone. **Activation never sets
+  whatever it was before (`assessment.py:contributor_added_status`).
+  Since 2026-11-03 a judged status is asked about instead, or goes to
+  `needs_review` where nobody is asked. A later contributor leaves the
+  status alone. **Activation never sets
   `met`.** It writes a `control_state_history` row saying which product
   did it.
 - **Evidence tasks.** The rows' evidence specs become evidence tasks
@@ -14654,14 +14656,28 @@ here, because it still needs a person to choose `met`.
   "whatever it was before" includes a status a person set by hand. That
   is its own entry, "Activating a tool overwrites a status a person set",
   and the one to look at first.
-- **`candidate_state` decides nothing.** It is this slice's first act,
-  below.
+- **`candidate_state` decided nothing.** Deleted 2026-11-03, ahead of
+  this slice (below).
 
 **"At scale" is literal.** A product baseline is reference data shared
 across orgs (layer 1). One bulk-accepted mapping is what every tenant
 that activates the tool gets, pinned at activation.
 
-#### The slice's first act: delete `candidate_state`
+#### The slice's first act: delete `candidate_state` -- done 2026-11-03
+
+**Done with the activation fix, migration 0072.** The read-check was
+re-run first (`git grep`, 2026-11-03): the importers, the seed, the
+admin edit route, the wizard, `lib/baseline.ts`, `types.ts`,
+`rocketcyber.yaml` and the CHECK constraint, as listed below, and
+nothing else. No wizard draft is stored anywhere: a draft lives in the
+browser tab until it is applied. So the one draft that can still carry
+the key is a tab open across the deploy, and the server ignores the key
+rather than refusing it
+(`test_a_file_still_carrying_candidate_state_imports_as_a_noop`: the
+file validates and writes no new version). On a
+restored copy of live (snapshot `20261103T031703Z`) the migration left
+103 baseline rows and 4 versions as they were, and both SPRS scores
+(-199, -204) recomputed unchanged. The record as written before it:
 
 **A deletion, not a redesign.** It is one of the eleven columns Jarrod
 named, asked on every row, and it returns nothing. Removing it is a gain
@@ -14836,9 +14852,10 @@ anticipation, and the three entries below it, each its own decision: the
 overwrite of a status a person set, the met-without-evidence rule, and
 `assists`.
 
-### Activating a tool overwrites a status a person set -- look at this first
+### Activating a tool overwrites a status a person set -- fixed 2026-11-03: activation asks
 
-**Found 2026-11-02, settling the Tool Import wizard's gate. Not fixed.**
+**Found 2026-11-02, settling the Tool Import wizard's gate. Fixed
+2026-11-03; the fix is the last part of this entry.**
 Of the four records filed that day (this one, the met-without-evidence
 rule, `assists`, and `candidate_state`), Jarrod's reviewer would look at
 this one first.
@@ -14911,11 +14928,101 @@ in a control the tenant had no contributor for (`engine.py`,
 - **For `not_applicable`:** a tool covering a control does not make it
   applicable. No reason found.
 
-**Nothing proposed yet.** The design question is what activation does
-with an objective that has a human judgement and no contributor. Leaving
-it alone, `needs_review`, or asking at activation are all possible, and
-the choice is Jarrod's. Whatever it is, the score and the screen should
-say why they moved.
+**Jarrod's decision (2026-11-03): ask at activation.** When activating
+a tool would change an objective a person judged, the person is shown
+what is about to change and decides. Until that day this paragraph said
+nothing was proposed; it is kept below as written.
+
+> Nothing proposed yet. The design question is what activation does
+> with an objective that has a human judgement and no contributor.
+> Leaving it alone, `needs_review`, or asking at activation are all
+> possible, and the choice is Jarrod's. Whatever it is, the score and
+> the screen should say why they moved.
+
+#### What was built (2026-11-03)
+
+**Judged** means a first contributor meeting `met`, `partial`,
+`not_applicable` or `inherited` (`assessment.JUDGED_STATUSES`).
+`needs_review` is not asked about, because every answer leaves it
+`needs_review`. `not_met` and `pending_evidence` are the designed flow.
+
+**Every path that reaches `contributor_added_status`, and what each does:**
+
+| Path | Triggered by | A person present? | A judged objective |
+|---|---|---|---|
+| Activation, from the Tools panel | a person, `ProductCard`'s Activate | yes | asked: keep, or needs review |
+| Activation, by API with no `decisions` | an API token or a script | no | `needs_review` |
+| Reactivation after deactivation | the same two, through `activate_org_product` | as above | as above |
+| Baseline version move, a newly covered control | a person, "Move to vN" | yes, but not asked | `needs_review` |
+| `start_assessment`, for tools already active | a new assessment | n/a | none can exist: every state is seeded `not_met` first |
+
+No CLI command, scheduled job, sync or import reaches it (`git grep`,
+2026-11-03): `_run_loop` has three callers, and the version move is the
+only other caller of the status rule.
+
+**Where nobody is asked: `needs_review`.** It defers the question rather
+than answering it. It neither destroys the judgement nor silently keeps
+one that may be stale, and it is what deactivation and reactivation
+already do with a prior judgement. The version move is triggered by a
+person, so it could ask; it does not yet, and sets `needs_review`, as
+it already does for every claim a move changes.
+
+**The defaults on the screen, and why:**
+
+| Status | Default | Why |
+|---|---|---|
+| `met` | needs review | the tool is new information and brings evidence tasks of its own |
+| `partial` | needs review | the tool may complete it; a person should say so. It deducts either way |
+| `not_applicable` | keep | no reason was found that a tool covering a control makes it applicable |
+| `inherited` | keep | who satisfies the control does not change because a tool now runs |
+
+**One screen** (`ActivationAsk.tsx`) lists only the judged objectives,
+each with its status now and what it becomes, and the score. The score
+is the server's: the preview (`POST .../activation-preview`) runs the
+activation in a savepoint and rolls it back, once to find the judged
+objectives and once with the choices, and the request is rolled back as
+well. Each change of choice asks again, and Activate waits until the
+score shown is the one for the choices shown.
+
+**Cancel: activation does not happen.** Only the activate POST writes.
+A cancel, Escape, a click outside, a closed tab and a dropped connection
+all leave the product inactive and every status as it was. Answers
+that no longer match what is judged at confirm (a status changed, a
+judged objective added or gone) are refused with a 409 before anything
+commits, and the screen asks again.
+
+**The record names who decided.** A judged objective writes a
+`control_state.update` audit row: `decided_by: person`, the choice, and
+the person as actor when they answered; `decided_by: default` and the
+path when nobody was asked. Its history line says "Asked at X's
+activation: kept met, chosen by a person", or "...the default when
+nobody is asked", never "Magic loop" for a judgement.
+`org_product.activate` now carries the score before and after, whether
+anyone was asked, and every judged objective's from, to and decider.
+
+**The score, asserted** (`tests/test_activation_judgement.py`, a
+three-control fixture at 110 - 9 = 101): with AC.L2-3.1.2 (weight 3) met
+by hand, 104. The old code took it to `pending_evidence`, 101. Asked
+and kept, 104; asked and sent to review, or nobody asked, 101. The
+preview's stated score equals the score after confirming.
+
+**Bench (2026-11-03, `wingrc_verify_aa`, a restored copy of live).**
+Winsorlabs' assessment, with seven objectives set by hand, at -201:
+- RocketCyber: five asked (two met and one partial default to review,
+  inherited and not applicable to keep), AU.L2-3.3.8[a]'s needs_review
+  not asked. "SPRS stays at -201": each control has other objectives
+  still not met.
+- Datto RMM: its one objective, MA.L2-3.7.1[a] met. "SPRS goes from -201
+  to -204 (down 3)" by default; kept, it stayed -201.
+- Cancel and Escape: no `org_product`, no contributor, no audit row, every
+  status and the score as they were, read from the database.
+- Confirming: the statuses chosen, an audit row per judged objective
+  with the bench user as actor, and the activation row's score.
+- Mutation: with `inherited` dropped from the judged set, 4 database
+  tests and 4 pure ones went red. It also showed that the asked-path
+  test drew its cases from the set under test, so they shrank with it
+  and could not fail; they are now named literally.
+- Full suite 2022 passed; vitest 493; `tsc -b` and the build clean.
 
 ### The rule that nothing is met without evidence has no code behind it
 

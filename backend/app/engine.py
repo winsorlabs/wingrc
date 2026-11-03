@@ -752,8 +752,9 @@ def activation_preview(
     rolling it back, twice: once to find the judged objectives, once with
     the choices (each one given, else ACTIVATION_DEFAULTS) to read the
     score they would produce. So the screen states only a result the real
-    path computed. The caller must roll the request back as well: the
-    savepoints undo the writes, and the request writes nothing else.
+    path computed (test_preview_states_the_score_the_activation_then_gives).
+    The caller must roll the request back as well: the savepoints undo the
+    writes, and the request writes nothing else (test_preview_writes_nothing).
 
     Returns {"sprs_now", "sprs_after", "objectives"}; objectives is empty
     when nothing is judged, and sprs_after is then the plain activation's.

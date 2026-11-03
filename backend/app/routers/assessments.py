@@ -695,7 +695,9 @@ def preview_activation(
     set of answers gives (engine.activation_preview). Writes nothing: the
     request is rolled back whatever happens, so a closed tab, a cancel or
     a dropped connection leaves the product inactive and every status as
-    it was. Activation happens only on the activate POST."""
+    it was. Activation happens only on the activate POST. Held by
+    tests/test_activation_judgement.py's
+    test_api_cancel_leaves_everything_as_it_was and test_preview_writes_nothing."""
     assessment = session.get(Assessment, assessment_id)
     if assessment is None or assessment.org_id != org_id:
         raise HTTPException(status_code=404, detail="Assessment not found")
