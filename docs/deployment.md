@@ -616,8 +616,9 @@ bucket. It refuses anything else, so it cannot overwrite data. To recover:
    dump; the restore creates the role without one, as migration 0016 does.
 4. Point the stack at the restored volumes.
 
-The first live restore test is Jarrod's to watch (`docs/roadmap.md`, item
-S).
+The restore test has run on live once, on 2026-11-03, and passed
+(`docs/roadmap.md`, item S). These four recovery steps have not been run on
+live.
 
 ## Python dependencies: the lock file
 
