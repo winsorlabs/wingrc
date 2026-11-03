@@ -73,7 +73,8 @@ export function ActivationAsk({
         </h2>
         <p>
           {productName} covers {n === 1 ? "it" : "these"}, and {n === 1 ? "it was" : "each was"} set by a person.
-          Choose what each becomes. Nothing changes until you activate; Cancel leaves {productName} inactive.
+          Choose what {n === 1 ? "it" : "each"} becomes. Nothing changes until you activate; Cancel leaves{" "}
+          {productName} inactive.
         </p>
         <div className="activation-ask-rows">
           <table>
