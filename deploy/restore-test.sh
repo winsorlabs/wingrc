@@ -23,6 +23,16 @@
 #   mismatched-dump:<other-id>     this set, other's dump    -> restore refuses
 #   mismatched-objects:<other-id>  this set, other's objects -> restore refuses
 #
+#   WINGRC_RESTORE_PROBE=<file.sql> deploy/restore-test.sh <snapshot-id>
+#
+# A probe asks the restored copy a question: the file's SQL runs in the
+# throwaway database after verification, so it cannot change a check's
+# result, with default_transaction_read_only on. That is a guard against
+# a mistake, not a boundary: a probe can turn it off, and would then write
+# to a copy that is about to be removed. Its output is the record's
+# probe.txt, so the record may then hold tenant rows; the record directory
+# is 0700. A probe that errors fails the verdict.
+#
 # Writes only to the throwaway stack, which gets its own compose project,
 # volumes and network, and publishes no ports. It runs the source's backend
 # image, never a rebuild. Run from the checkout whose stack took the
@@ -43,6 +53,10 @@ case "$mutation" in
     | score-changed | schema-head | not-empty | no-manifest | mismatched-dump:?*     | mismatched-objects:?*) ;;
   *) echo "unknown mutation: $mutation" >&2; exit 2 ;;
 esac
+probe="${WINGRC_RESTORE_PROBE:-}"
+if [ -n "$probe" ] && [ ! -r "$probe" ]; then
+  echo "WINGRC_RESTORE_PROBE: cannot read $probe" >&2; exit 2
+fi
 
 project="$(docker compose config --format json \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')"
@@ -139,6 +153,7 @@ cli backend wingrc snapshot-restore "$target" "${restore_args[@]}" > "$record/re
 cat "$record/restore.txt"
 
 verify_rc=skipped
+probe_rc=none
 if [ "$restore_rc" -eq 0 ]; then
   py() { cli backend python -c "$1" >> "$record/mutation.txt" 2>&1; }
   sql() { tc exec -T db psql -v ON_ERROR_STOP=1 -U wingrc -d wingrc -c "$1" >> "$record/mutation.txt" 2>&1; }
@@ -163,6 +178,14 @@ if [ "$restore_rc" -eq 0 ]; then
     cli backend wingrc snapshot-verify "$target" > "$record/verify.txt" 2>&1 || verify_rc=$?
   fi
   cat "$record/verify.txt"
+  if [ -n "$probe" ]; then
+    cp "$probe" "$record/probe.sql"
+    probe_rc=0
+    tc exec -T -e PGOPTIONS='-c default_transaction_read_only=on' db \
+      psql -X -v ON_ERROR_STOP=1 -U wingrc -d wingrc < "$record/probe.sql" \
+      > "$record/probe.txt" 2>&1 || probe_rc=$?
+    cat "$record/probe.txt"
+  fi
 fi
 
 cleanup
@@ -187,6 +210,10 @@ rc=0
 printf '%s\n' "$keys" | grep -v '^$' \
   | docker compose run --rm --no-deps -T --entrypoint sh backend -c "grep -rqF -f - /snapshots/$id" || rc=$?
 [ "$rc" -eq 1 ] || { verdict=fail; reasons+=("key check on the snapshot: grep exit $rc (0 = a key value is in it)"); }
+
+if [ -n "$probe" ] && [ "$probe_rc" != 0 ] && [ "$probe_rc" != none ]; then
+  verdict=fail; reasons+=("the probe exited $probe_rc (probe.txt)")
+fi
 
 expect_fail() {  # a verify check that must have failed
   if [ "$verify_rc" = 0 ] || [ "$verify_rc" = skipped ] || ! grep -q "^FAIL     $1:" "$record/verify.txt"; then
@@ -227,6 +254,7 @@ esac
   echo "mutation: ${mutation:-none}"
   echo "restore:  exit $restore_rc"
   echo "verify:   exit $verify_rc"
+  echo "probe:    ${probe:+$probe, }${probe:+exit }$probe_rc"
   echo "verdict:  $verdict"
   for r in "${reasons[@]}"; do echo "  $r"; done
 } | tee "$record/restore-test.txt"

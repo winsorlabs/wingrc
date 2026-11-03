@@ -12383,6 +12383,17 @@ FAIL.
     it cannot overwrite data.
 - **`deploy/snapshot.sh`** takes a snapshot. **`deploy/restore-test.sh`**
   is the restore test, plus the mutation check.
+  - **A probe (2026-11-03):** `WINGRC_RESTORE_PROBE=<file.sql>` runs a
+    read-only query in the restored copy after verification, into the
+    record's `probe.txt`. Added for the first live restore test, which
+    has to show the deleted rows themselves, not a count one higher. On
+    the bench (`wingrc_verify_probe`), four runs of one snapshot: no
+    probe passed as before (`probe: none`); a reading probe returned its
+    rows and passed; `DELETE FROM control` was refused ("cannot execute
+    DELETE in a read-only transaction") and failed the verdict; a query
+    on a missing table failed it. Each run's `state.diff` was empty.
+    Read-only is a default a probe could turn off, so it guards against a
+    mistake, not a hostile probe.
 - **`/health` reports `snapshots`, and msp_admin gets a banner** when they
   are stale (2026-11-02, below).
 - **`docs/deployment.md`, "Local snapshots (not a backup)"**, is the

@@ -592,7 +592,16 @@ overrides), with `restore-test.txt` in `deploy.txt`'s shape: commit, time,
 user, snapshot, each step's exit and the verdict. One directory then
 answers what has been done to this host. The mutation arguments listed in
 the script's header break a restore on purpose, so that each check can be
-seen to fail. `no-manifest` restores a set with its manifest removed, as a
+seen to fail.
+
+**To look inside the restored copy**, name a SQL file:
+`WINGRC_RESTORE_PROBE=find.sql deploy/restore-test.sh <snapshot-id>`. It
+runs in the throwaway database after verification, so it cannot change a
+check's result, with `default_transaction_read_only` on. That is a guard
+against a mistake, not a boundary: a probe that turns it off writes to a
+copy about to be removed. The output is the record's `probe.txt`, so the
+record may then hold tenant rows. A probe that errors, a refused write
+included, fails the verdict. `no-manifest` restores a set with its manifest removed, as a
 write that died before the last step would leave it, and passes only if
 the restore refuses.
 
