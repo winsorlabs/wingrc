@@ -126,6 +126,27 @@ def test_the_default_threshold_is_two_daily_runs_and_the_run_itself():
     assert 48 < limit <= 50
 
 
+def test_compose_passes_the_threshold_through_with_the_same_default():
+    """The setting only reaches the container through docker-compose.yml, so
+    an operator who changes the schedule can set it in the host .env. The
+    compose default is a second copy of config.py's, held equal here."""
+    import re
+
+    import yaml
+
+    from app.config import Settings
+
+    compose = Path(__file__).resolve().parents[2] / "docker-compose.yml"
+    if not compose.exists():
+        pytest.skip("docker-compose.yml is outside this tree (the backend image); CI runs this")
+    env = yaml.safe_load(compose.read_text(encoding="utf-8"))["x-backend-env"]
+    value = env.get("WINGRC_SNAPSHOT_MAX_AGE_HOURS")
+    assert value is not None, "the backend never sees WINGRC_SNAPSHOT_MAX_AGE_HOURS"
+    m = re.fullmatch(r"\$\{WINGRC_SNAPSHOT_MAX_AGE_HOURS:-(\d+)\}", value)
+    assert m, f"expected a host .env override with a default, got {value!r}"
+    assert int(m.group(1)) == Settings.model_fields["snapshot_max_age_hours"].default
+
+
 def test_status_invalid_when_dated_in_the_future(tmp_path):
     _finished(tmp_path, NOW + timedelta(hours=3))
     assert snapshots.status(tmp_path, 26, NOW)["status"] == "invalid"

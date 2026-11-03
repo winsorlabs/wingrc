@@ -105,8 +105,10 @@ class Settings(BaseSettings):
     # Older reads `stale` on /health and raises msp_admin's banner. Two
     # daily runs plus two hours: one missed run is a blip and leaves the
     # newest at most 48 hours old when the next one starts; two missed is
-    # a stopped job. The two hours are for the run itself. Change it with
-    # the schedule.
+    # a stopped job. The two hours are for the run itself. A constant, not
+    # derived: the schedule is a host cron line this process cannot read.
+    # A different schedule sets WINGRC_SNAPSHOT_MAX_AGE_HOURS beside it
+    # (docker-compose.yml passes it through).
     snapshot_max_age_hours: int = 50
     # Complete snapshots kept after a new one finishes; older are deleted.
     snapshot_keep: int = 14

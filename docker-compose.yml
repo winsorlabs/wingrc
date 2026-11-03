@@ -57,6 +57,12 @@ x-backend-env: &backend-env
   # unset, storing/reading any integration credential is refused
   # outright rather than falling back to plaintext.
   WINGRC_CREDENTIAL_ENCRYPTION_KEYS: ${WINGRC_CREDENTIAL_ENCRYPTION_KEYS:-dev:DFKuK2mEIJpixerxDMGU5xyQQwpWQBZxCFjOaZKjNSs=}
+  # Item S: hours before the newest local snapshot reads stale and raises
+  # msp_admin's banner. Set for a daily schedule; the schedule is a host
+  # cron line the backend cannot read, so a different schedule needs this
+  # set beside it in the host .env (docs/deployment.md, "Local snapshots").
+  # The default must equal config.py's (tests/test_snapshots.py).
+  WINGRC_SNAPSHOT_MAX_AGE_HOURS: ${WINGRC_SNAPSHOT_MAX_AGE_HOURS:-50}
   PYTHONPATH: /app
 
 services:

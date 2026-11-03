@@ -12443,6 +12443,12 @@ directory to appear and filled the volume with `dd`.
   copy, leaves its `.partial` until the next run removes it. That was not
   forced. A `.partial` is never read as a snapshot, as the next paragraph
   shows.
+- **What the test itself left: three anonymous volumes.** The helper
+  containers came from `postgres:18`, which declares a `VOLUME`, and ran
+  without `--rm`. That is a small echo of the 2026-09-23 orphaned volume
+  this item was written around. The difference is that the before-and-after
+  volume list caught them on its first real outing, and the report said so.
+  Removing them was left to Jarrod.
 
 **A partial write cannot be restored, and cannot fool the age reader
 (2026-11-02).** The manifest is written last, after every byte is
@@ -12503,10 +12509,27 @@ msp_admin on every screen, beside the TLS one, fed by
   hours are for the run itself, so a slow run after one miss does not
   fire. A test pins the default between 48 and 50. It was 26 hours, which
   would have fired on every single missed run.
+- **It is a constant, not derived from the schedule (reviewed
+  2026-11-02).** The schedule is a host crontab line, and the backend
+  reading the directory cannot see it. Deriving it from the spacing of
+  past snapshots was rejected, because a hand-run snapshot shortens the
+  spacing and would make the next gap look like a stopped job. So the
+  connection is written down beside the cron line in `docs/deployment.md`:
+  a weekly schedule at 50 hours is a banner red all week, and an hourly
+  one is a banner that never fires. The retention count, 14 snapshots, is
+  tied to the schedule the same way.
+- **Until this review the limit could not be changed without a
+  rebuild.** `docker-compose.yml` never passed
+  `WINGRC_SNAPSHOT_MAX_AGE_HOURS` to the backend, so setting it in the
+  host `.env` did nothing. It is passed through now, with a default that a
+  test holds equal to `config.py`'s.
 - **`none` fires too,** because no snapshot is the state the alarm exists
   for. **On live it will show from the deploy of this slice until the
   first snapshot.** That is true, and it is a third deploy effect to
-  expect.
+  expect. Jarrod's reviewer agreed it should: an alarm that waits to be
+  enabled never fires if enabling is forgotten. **But the window should be
+  short, with the schedule turned on in the same session as the deploy,**
+  because a red banner people expect is one they stop reading.
 - **What it does not do: page anyone.** Like the TLS banner, it reaches
   whoever signs in as msp_admin. There is no mail relay by design.
 
