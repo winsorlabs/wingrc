@@ -172,7 +172,10 @@ def test_nobody_asked_is_recorded_as_the_default(db_session, w):
 # -- activation, asked -----------------------------------------------------
 
 
-@pytest.mark.parametrize("status", sorted(JUDGED_STATUSES))
+# Named here, not taken from JUDGED_STATUSES: a case list drawn from the
+# set under test shrinks with it, so dropping a status would drop its cases
+# instead of failing them (seen by mutation on the bench, 2026-11-03).
+@pytest.mark.parametrize("status", ["inherited", "met", "not_applicable", "partial"])
 @pytest.mark.parametrize("choice", ["keep", "needs_review"])
 def test_asked_every_judged_status_both_answers(db_session, w, status, choice):
     _set_by_hand(db_session, w, "c2a", status)
