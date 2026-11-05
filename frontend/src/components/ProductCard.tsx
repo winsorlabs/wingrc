@@ -14,7 +14,8 @@ interface Props {
   onActivated: () => void;
   onDeactivated: () => void;
   // Called with what a version move set to needs_review, for the panel to
-  // say once; the card itself is remounted by the reload that follows.
+  // say once. Given, it replaces onActivated after a move: App's
+  // onActivated closes the panel, which would take the summary with it.
   onVersionMoved?: (productName: string, result: MoveVersionResult) => void;
 }
 
@@ -151,8 +152,8 @@ export function ProductCard({
         throw new Error("No current version found for this product.");
       }
       const result = await api.moveProductVersion(orgId, assessmentId, product.id, target.id);
-      onVersionMoved?.(product.name, result);
-      onActivated();
+      if (onVersionMoved) onVersionMoved(product.name, result);
+      else onActivated();
     } catch (e: unknown) {
       setError((e as Error).message);
     } finally {

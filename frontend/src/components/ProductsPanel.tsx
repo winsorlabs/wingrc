@@ -38,6 +38,14 @@ export function ProductsPanel({ orgId, assessmentId, canWrite, onClose, onActiva
     onActivated();
   }
 
+  // A move stays on this panel, so its summary can be read: the reload
+  // refreshes the cards, and the parent is not told (its onActivated
+  // leaves the panel).
+  function handleVersionMoved(productName: string, result: MoveVersionResult) {
+    setMoved({ productName, result });
+    load();
+  }
+
   function handleDeactivated() {
     load();
     onDeactivated();
@@ -84,7 +92,7 @@ export function ProductsPanel({ orgId, assessmentId, canWrite, onClose, onActiva
                 canWrite={canWrite}
                 onActivated={handleActivated}
                 onDeactivated={handleDeactivated}
-                onVersionMoved={(productName, result) => setMoved({ productName, result })}
+                onVersionMoved={handleVersionMoved}
               />
             ))}
           </div>

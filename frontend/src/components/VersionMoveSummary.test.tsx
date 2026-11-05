@@ -84,13 +84,17 @@ describe("ProductsPanel after a version move", () => {
       { id: "v2", version_number: 2, is_current: true } as never,
     ]);
     vi.mocked(api.moveProductVersion).mockResolvedValue(result([row({})]));
+    // App's onActivated leaves the Tools panel, which would unmount the
+    // summary before anyone read it (seen on the bench, 2026-11-05).
+    const onActivated = vi.fn();
     render(
-      <ProductsPanel orgId="o" assessmentId="a" canWrite onClose={vi.fn()} onActivated={vi.fn()} onDeactivated={vi.fn()} />,
+      <ProductsPanel orgId="o" assessmentId="a" canWrite onClose={vi.fn()} onActivated={onActivated} onDeactivated={vi.fn()} />,
     );
     fireEvent.click(await screen.findByRole("button", { name: "Move to v2" }));
     await waitFor(() => expect(api.getProducts).toHaveBeenCalledTimes(2));
     await screen.findByText(/· v2/);
     expect(screen.getByRole("status").textContent).toContain("One objective was set to Needs Review:");
+    expect(onActivated).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByRole("status")).toBeNull();
   });
