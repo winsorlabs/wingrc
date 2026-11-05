@@ -157,6 +157,18 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   test proves nothing"`. A bare assert on the setup fails as if the
   product were wrong (519d894's red run; `docs/roadmap.md`'s list
   version cause entry).
+- **A test naming a rule's cases writes them out itself.** A test
+  whose parameters come from the same list the implementation reads
+  cannot fail when that list is wrong: it shrinks with it. It looks more
+  thorough than a written-out list, and it is weaker. The mutation check
+  is to remove a case from the implementation and watch the test go
+  red, not quiet. Iterating a whole enum (`list(ControlStatus)`) is the
+  input domain, not the rule's cases, and is fine. This is not the
+  self-matching check below: that one cannot tell itself from its
+  subject, and this one is *made of* its subject. 2026-11-03: the
+  activation test took its asked cases from `JUDGED_STATUSES`, and
+  dropping `inherited` dropped its case (`docs/roadmap.md`'s activation
+  entry).
 - **A status check must not identify its subject by a pattern its own
   invocation can match.** A process-list grep for a script name
   (`pgrep -f renew.sh`, `ps … | grep "[r]enew.sh"` inside an
@@ -589,7 +601,9 @@ writeup.
   about on one screen, with a default per status; every path where
   nobody is asked sets `needs_review` (2026-11-03,
   `assessment.contributor_added_status`; `docs/roadmap.md`'s "Activating
-  a tool overwrites a status a person set")
+  a tool overwrites a status a person set"). A baseline version move
+  does not ask; it says afterwards which objectives it set to
+  `needs_review` and why (2026-11-05, `set_to_needs_review`)
 - `coverage_basis == 'platform_only'` is excluded — vendor self-coverage never
   credits the customer's CUI environment
 - SPRS recomputed as part of this too — see the complete call-site list above
