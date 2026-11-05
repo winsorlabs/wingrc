@@ -26,7 +26,6 @@ from app.ai.base import AIProvider
 from app.ai.none_ import NullProvider
 from app.baseline import BaselineEntry as _BaselineEntry
 from app.baseline import (
-    CandidateState,
     Classification,
     ControlEntry,
     EvidenceSpec,
@@ -82,7 +81,6 @@ def test_ia_family_is_customer_owns():
     assert ia_entries, "IA family entry must be present in rocketcyber.yaml"
     for ia in ia_entries:
         assert ia.classification == Classification.CUSTOMER_OWNS
-        assert ia.candidate_state == CandidateState.NOT_SATISFIED_BY_PRODUCT
         assert ia.evidence == [], (
             "customer_owns must carry no evidence specs"
         )
@@ -99,7 +97,6 @@ def test_ac_l2_3_1_8_is_customer_owns():
     )
     assert ac_8 is not None
     assert ac_8.classification == Classification.CUSTOMER_OWNS
-    assert ac_8.candidate_state == CandidateState.NOT_SATISFIED_BY_PRODUCT
     assert ac_8.evidence == []
 
 
@@ -190,14 +187,12 @@ def test_minimization_strips_evidence_from_customer_owns():
     dirty = ControlEntry(
         control="IA.L2-3.5.1",
         classification=Classification.CUSTOMER_OWNS,
-        candidate_state=CandidateState.PENDING_EVIDENCE,  # wrong — must be corrected
         evidence=[EvidenceSpec(artifact="Something", type="screenshot")],
         provider_contribution="Provider says...",
         customer_action="Customer does...",
     )
     clean = _apply_evidence_minimization(dirty)
     assert clean.evidence == []
-    assert clean.candidate_state == CandidateState.NOT_SATISFIED_BY_PRODUCT
     assert clean.provider_contribution is None
     assert clean.customer_action is None
 
@@ -207,14 +202,12 @@ def test_minimization_preserves_shared_evidence():
     entry = ControlEntry(
         control="AC.L2-3.1.2",
         classification=Classification.SHARED,
-        candidate_state=CandidateState.PENDING_EVIDENCE,
         evidence=[ev],
         provider_contribution="RBAC.",
         customer_action="Assign roles.",
     )
     result = _apply_evidence_minimization(entry)
     assert result.evidence == [ev]
-    assert result.candidate_state == CandidateState.PENDING_EVIDENCE
     assert result.provider_contribution == "RBAC."
 
 
@@ -223,12 +216,10 @@ def test_minimization_preserves_provider_satisfies_evidence():
     entry = ControlEntry(
         control="AU.L2-3.3.1",
         classification=Classification.PROVIDER_SATISFIES,
-        candidate_state=CandidateState.PENDING_EVIDENCE,
         evidence=[ev],
     )
     result = _apply_evidence_minimization(entry)
     assert result.evidence == [ev]
-    assert result.candidate_state == CandidateState.PENDING_EVIDENCE
 
 
 # ---------------------------------------------------------------------------
@@ -515,7 +506,6 @@ _STUB_AI_RESPONSE = json.dumps({
                     "kb": "Configuring the Syslog Collector",
                 }
             ],
-            "candidate_state": "pending_evidence",
         },
         {
             "control": "AC.L2-3.1.1",
@@ -526,7 +516,6 @@ _STUB_AI_RESPONSE = json.dumps({
             "evidence": [
                 {"artifact": "KaseyaOne SSO config", "type": "screenshot"}
             ],
-            "candidate_state": "pending_evidence",
         },
         {
             # Model misbehaves and adds evidence for customer_owns —
@@ -538,7 +527,9 @@ _STUB_AI_RESPONSE = json.dumps({
             "evidence": [
                 {"artifact": "Bad artifact the model added", "type": "screenshot"}
             ],
-            "candidate_state": "pending_evidence",  # also wrong
+            # A key nothing reads since migration 0072: an old draft still
+            # carrying it is ignored, not refused.
+            "candidate_state": "pending_evidence",
         },
     ],
 })
@@ -578,7 +569,6 @@ def test_ingest_pipeline_au_provider_satisfies():
 
     au = next(c for c in entry.controls if c.control == "AU.L2-3.3.1")
     assert au.classification == Classification.PROVIDER_SATISFIES
-    assert au.candidate_state == CandidateState.PENDING_EVIDENCE
     assert len(au.evidence) == 1
     assert au.evidence[0].kb == "Configuring the Syslog Collector"
 
@@ -595,7 +585,6 @@ def test_ingest_pipeline_ia_minimization_enforced():
 
     ia = next(c for c in entry.controls if isinstance(c.control, list))
     assert ia.classification == Classification.CUSTOMER_OWNS
-    assert ia.candidate_state == CandidateState.NOT_SATISFIED_BY_PRODUCT
     assert ia.evidence == [], "Code-level enforcement must have stripped this"
     assert ia.provider_contribution is None
     assert ia.customer_action is None
@@ -675,7 +664,6 @@ def test_control_entry_coverage_basis_round_trips_through_yaml_dict():
             ControlEntry(
                 control="AC.L2-3.1.1",
                 classification=Classification.SHARED,
-                candidate_state=CandidateState.PENDING_EVIDENCE,
                 coverage_basis="platform_only",
             )
         ],
@@ -695,7 +683,6 @@ def test_control_entry_coverage_basis_omitted_when_unset():
             ControlEntry(
                 control="AC.L2-3.1.1",
                 classification=Classification.SHARED,
-                candidate_state=CandidateState.PENDING_EVIDENCE,
             )
         ],
     )

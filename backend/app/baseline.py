@@ -5,9 +5,9 @@ for engineer review. Nothing here is "met" until the customer's configuration
 is confirmed and evidence is attached.
 
 Evidence-minimization invariant — enforced here, not left to the AI:
-  customer_owns       → no evidence specs, candidate_state = not_satisfied_by_product
-  provider_satisfies  → evidence specs present, candidate_state = pending_evidence
-  shared              → evidence specs present, candidate_state = pending_evidence
+  customer_owns       → no evidence specs
+  provider_satisfies  → evidence specs present
+  shared              → evidence specs present
 
 The YAML loader applies this invariant when reading hand-authored YAML too, so
 a typo in an author-written file never silently credits a disclaimed control.
@@ -29,11 +29,6 @@ class Classification(StrEnum):
     CUSTOMER_OWNS = "customer_owns"
 
 
-class CandidateState(StrEnum):
-    PENDING_EVIDENCE = "pending_evidence"
-    NOT_SATISFIED_BY_PRODUCT = "not_satisfied_by_product"
-
-
 @dataclass
 class EvidenceSpec:
     artifact: str
@@ -52,7 +47,6 @@ class ControlEntry:
 
     control: str | list[str]
     classification: Classification
-    candidate_state: CandidateState
     objectives: list[str] = field(default_factory=list)
     provider_contribution: str | None = None
     customer_action: str | None = None
@@ -148,7 +142,6 @@ def _parse_control_entry(raw: dict[str, Any]) -> ControlEntry:
         return ControlEntry(
             control=raw["control"],
             classification=cls,
-            candidate_state=CandidateState.NOT_SATISFIED_BY_PRODUCT,
             objectives=[str(o) for o in raw.get("objectives", [])],
             evidence=[],
             note=raw.get("note"),
@@ -166,9 +159,6 @@ def _parse_control_entry(raw: dict[str, Any]) -> ControlEntry:
     return ControlEntry(
         control=raw["control"],
         classification=cls,
-        candidate_state=CandidateState(
-            raw.get("candidate_state", "pending_evidence")
-        ),
         objectives=[str(o) for o in raw.get("objectives", [])],
         provider_contribution=raw.get("provider_contribution"),
         customer_action=raw.get("customer_action"),
@@ -240,7 +230,6 @@ def to_yaml_dict(entry: BaselineEntry) -> dict[str, Any]:
         cd: dict[str, Any] = {
             "control": c.control,
             "classification": c.classification.value,
-            "candidate_state": c.candidate_state.value,
         }
         if c.objectives:
             cd["objectives"] = c.objectives

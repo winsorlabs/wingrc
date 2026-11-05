@@ -77,7 +77,6 @@ function makeControlRow(overrides: Partial<BaselineControlDraft> = {}): Baseline
     control: ["AC.L2-3.1.1"],
     classification: "provider_satisfies",
     coverage_basis: null,
-    candidate_state: "pending_evidence",
     objectives: ["a"],
     provider_contribution: null,
     customer_action: null,
@@ -112,7 +111,6 @@ function makeProductDetail(overrides: Partial<ProductDetail> = {}): ProductDetai
         objectives: ["a"],
         classification: "provider_satisfies",
         coverage_basis: "customer_system",
-        candidate_state: "pending_evidence",
         provider_contribution: null,
         customer_action: null,
         note: null,
@@ -132,7 +130,7 @@ describe("ToolImportWizard — invalid file", () => {
         problems: [
           "Unknown control id: 3.99.99",
           "Evidence spec on a customer_owns row for 3.14.6",
-          "candidate_state 'bogus' is not valid",
+          "coverage_basis 'bogus' is not valid",
         ],
       })
     );
@@ -144,7 +142,7 @@ describe("ToolImportWizard — invalid file", () => {
     await screen.findByText(/3 problems/);
     expect(screen.getByText(/Unknown control id/)).toBeTruthy();
     expect(screen.getByText(/Evidence spec on a customer_owns row/)).toBeTruthy();
-    expect(screen.getByText(/candidate_state 'bogus'/)).toBeTruthy();
+    expect(screen.getByText(/coverage_basis 'bogus'/)).toBeTruthy();
     expect(screen.getByRole("button", { name: /Apply Import/ })).toHaveProperty("disabled", true);
     expect(api.applyBaselineImport).not.toHaveBeenCalled();
   });
@@ -265,8 +263,8 @@ describe("ToolImportWizard — generate from vendor documents (per-control table
     // Editing a field after the last successful check must re-block Apply
     // -- otherwise Apply could submit a `yaml` that no longer matches
     // what's on screen.
-    fireEvent.change(screen.getByRole("combobox", { name: "Candidate state for row 0" }), {
-      target: { value: "not_satisfied_by_product" },
+    fireEvent.change(screen.getByRole("combobox", { name: "Classification for row 0" }), {
+      target: { value: "shared" },
     });
     expect(screen.getByRole("button", { name: /Apply Import/ })).toHaveProperty("disabled", true);
   });

@@ -42,7 +42,6 @@ controls:
     evidence:
       - { artifact: "KaseyaOne SSO enabled + bound to customer IdP", type: screenshot, kb: "Enabling SSO Login with KaseyaOne" }
       - { artifact: "Portal user/role list", type: export, kb: "Identity and Access Management" }
-    candidate_state: pending_evidence
 
   - control: AC.L2-3.1.2
     objectives: [a, b]
@@ -52,7 +51,6 @@ controls:
     customer_action: "Assign users to roles per operational need."
     evidence:
       - { artifact: "Portal role assignments", type: screenshot, kb: "Identity and Access Management" }
-    candidate_state: pending_evidence
 
   - control: AC.L2-3.1.5
     objectives: [a, b, c, d]
@@ -60,13 +58,11 @@ controls:
     coverage_basis: platform_only
     provider_contribution: "RBAC supports least privilege; portal use designated a security function."
     customer_action: "Identify privileged accounts; assign per least privilege."
-    candidate_state: pending_evidence
 
   - control: AC.L2-3.1.8
     objectives: [a, b]
     classification: customer_owns
     note: "Logon attempt limits are enforced by the customer IdP. RocketCyber supplies SSO only."
-    candidate_state: not_satisfied_by_product
 
   - control: AC.L2-3.1.11
     objectives: [a, b]
@@ -76,7 +72,6 @@ controls:
     customer_action: "Set the inactivity threshold value."
     evidence:
       - { artifact: "Session timeout configuration", type: screenshot, kb: "Identity and Access Management" }
-    candidate_state: pending_evidence
 
   # ---- Awareness & Training ----
   - control: AT.L2-3.2.2
@@ -87,7 +82,6 @@ controls:
     customer_action: "Define security roles, assign personnel, ensure training completion."
     evidence:
       - { artifact: "RocketCyber KB / training references", type: link, kb: "RocketCyber KB Home" }
-    candidate_state: pending_evidence
 
   # ---- Audit & Accountability: RocketCyber is the authoritative tool (MSP baseline) ----
   - control: AU.L2-3.3.1
@@ -99,14 +93,12 @@ controls:
     evidence:
       - { artifact: "Defined event types + captured fields", type: screenshot, kb: "Configuring the Syslog Collector" }
       - { artifact: "Retention policy (>= 1 year)", type: screenshot, kb: "Configuring the Syslog Collector" }
-    candidate_state: pending_evidence
 
   - control: AU.L2-3.3.2
     objectives: [a, b]
     classification: provider_satisfies
     coverage_basis: customer_system
     provider_contribution: "Records include user identifiers, timestamps, contextual metadata (user-to-action traceability)."
-    candidate_state: pending_evidence
 
   - control: AU.L2-3.3.3
     objectives: [a, b, c]
@@ -114,7 +106,6 @@ controls:
     coverage_basis: customer_system
     provider_contribution: "Annual review of portal event types; updates configuration on findings."
     customer_action: "Define and run periodic review of agent-captured event types (Audit Log Process Review Procedure)."
-    candidate_state: pending_evidence
 
   - control: AU.L2-3.3.8
     objectives: [a, b, c, d, e, f]
@@ -122,7 +113,6 @@ controls:
     coverage_basis: customer_system
     provider_contribution: "RBAC + encryption, write-once + integrity checks, retention/privilege controls on portal logs."
     customer_action: "Protect customer-side/system-generated logs equivalently."
-    candidate_state: pending_evidence
 
   # ---- Configuration Management ----
   - control: CM.L2-3.4.2
@@ -133,7 +123,6 @@ controls:
     customer_action: "Establish and enforce the security configuration (this baseline doc is the artifact)."
     evidence:
       - { artifact: "RocketCyber baseline doc (this document)", type: document }
-    candidate_state: pending_evidence
 
   # ---- Identification & Authentication: CUSTOMER IdP owns these. DO NOT CREDIT. ----
   - control: [IA.L2-3.5.1, IA.L2-3.5.2, IA.L2-3.5.3, IA.L2-3.5.4, IA.L2-3.5.5, IA.L2-3.5.6, IA.L2-3.5.7, IA.L2-3.5.8, IA.L2-3.5.9, IA.L2-3.5.10, IA.L2-3.5.11]
@@ -144,7 +133,6 @@ controls:
       history, reuse, identifier lifecycle, or transmission protection — the
       customer's identity source does. These are routed to whichever product
       actually owns identity (e.g., Entra ID / DUO), NOT credited to RocketCyber.
-    candidate_state: not_satisfied_by_product
 
   # ---- Incident Response: RocketCyber is the SOC (MSP baseline) ----
   - control: IR.L2-3.6.1
@@ -156,7 +144,6 @@ controls:
     evidence:
       - { artifact: "Managed SOC service description / SOC coverage", type: document, kb: "Managed SOC Overview" }
       - { artifact: "Sample incident ticket with analyst notes (sanitized)", type: export }
-    candidate_state: pending_evidence
 
   # ---- Maintenance ----
   - control: MA.L2-3.7.1
@@ -165,7 +152,6 @@ controls:
     coverage_basis: platform_only
     provider_contribution: "Auto-updates the agent as lifecycle management."
     customer_action: "Maintain the host (OS patching, host-level security)."
-    candidate_state: pending_evidence
 
   # ---- System & Communications Protection ----
   - control: SC.L2-3.13.15
@@ -174,7 +160,6 @@ controls:
     coverage_basis: platform_only
     provider_contribution: "Secure, authenticated comms agent<->portal and customer<->portal."
     customer_action: "None unless integrating third-party systems/proxies."
-    candidate_state: pending_evidence
 
   # ---- System & Information Integrity: monitoring is RocketCyber (MSP baseline) ----
   - control: SI.L2-3.14.1
@@ -183,7 +168,6 @@ controls:
     coverage_basis: platform_only
     provider_contribution: "Identifies/reports/remediates flaws in the agent on defined SLAs; auto-updates agent."
     customer_action: "Identify/report/remediate flaws in host systems on own timelines."
-    candidate_state: pending_evidence
 
   - control: SI.L2-3.14.6
     objectives: [a, b, c]
@@ -194,7 +178,6 @@ controls:
     evidence:
       - { artifact: "Agent coverage list (all in-scope CUI assets reporting)", type: export, kb: "Managed SOC Overview" }
       - { artifact: "FortiGate -> RocketCyber syslog integration", type: screenshot, kb: "Firewall Integration" }
-    candidate_state: pending_evidence
 
 # Roll-up the engine produces for the assessment view:
 summary:

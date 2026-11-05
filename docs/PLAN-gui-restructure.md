@@ -924,7 +924,8 @@ its own versioning design (see the hazard below).
 - **Import** (`POST /admin/products/import/dry-run` then `.../import/apply`)
   — `backend/app/baseline_import.py`'s `validate()` collects every problem
   in the file in one pass (unknown control ids, bad
-  classification/coverage_basis/candidate_state/evidence_type enum values,
+  classification/coverage_basis/evidence_type enum values (candidate_state
+  until migration 0072 dropped it, 2026-11-03),
   malformed objective keys, and the minimization invariant —
   `classification == customer_owns` rows may never carry evidence specs).
   Dry-run shows a diff (new product vs. changed/unchanged controls on an

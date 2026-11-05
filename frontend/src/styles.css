@@ -2484,3 +2484,45 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .list-history[open] > summary { margin-bottom: 0.4rem; }
 /* Deactivation asks what replaces the product, optionally (2026-10-19). */
 .product-deactivate-form { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; width: 100%; font-size: 0.8rem; }
+
+/* â”€â”€ Activation asks before it changes a judgement (2026-11-03) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+   Text sits on --surface only, with the status badges' own measured
+   pairs; the overlay is behind the box, never behind text. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0 0 0 / 0.35);
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.activation-ask {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0 0 0 / 0.18);
+  width: min(46rem, 100%);
+  max-height: calc(100vh - 2rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 1rem 1.25rem;
+  font-size: 0.85rem;
+}
+.activation-ask h2 { font-size: 1rem; font-weight: 600; margin: 0; }
+.activation-ask p { margin: 0; }
+.activation-ask-rows { overflow-y: auto; min-height: 0; border: 1px solid var(--border); border-radius: 4px; }
+.activation-ask-rows table { width: 100%; border-collapse: collapse; }
+.activation-ask-rows th {
+  position: sticky; top: 0; background: var(--surface); text-align: left;
+  font-weight: 600; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border);
+}
+.activation-ask-rows td { padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+.activation-ask-rows tr:last-child td { border-bottom: none; }
+.activation-ask-key { font-weight: 600; white-space: nowrap; }
+.activation-ask-text { color: var(--muted); font-size: 0.8rem; }
+.activation-ask-rows select { font-size: 0.8rem; }
+.activation-ask-score { font-weight: 600; }
+.activation-ask-actions { display: flex; gap: 0.5rem; }

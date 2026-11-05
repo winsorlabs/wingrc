@@ -920,7 +920,6 @@ export interface BaselineControlItem {
   // self-attestation on its own infrastructure, not customer-system
   // coverage. Render this value distinctly; see engine.py's own comment.
   coverage_basis: string;
-  candidate_state: string;
   provider_contribution: string | null;
   customer_action: string | null;
   note: string | null;
@@ -1040,7 +1039,6 @@ export interface BaselineControlDraft {
   control: string[];
   classification: string | null;
   coverage_basis: string | null;
-  candidate_state: string | null;
   objectives: string[];
   provider_contribution: string | null;
   customer_action: string | null;
@@ -1862,4 +1860,42 @@ export interface TagRemovalCheck {
   removable: boolean;
   reason: "last_tag" | "evidence" | null;
   links: RestingLink[];
+}
+
+// Activation asks before it overwrites a judgement (2026-11-03): the
+// objectives a person judged that a tool would be the first to cover.
+export type ActivationChoice = "keep" | "needs_review";
+
+export interface JudgedObjective {
+  control_state_id: string;
+  control_id: string;
+  objective_key: string;
+  objective_text: string;
+  status: string;
+  default: ActivationChoice;
+  choice: ActivationChoice;
+  becomes: string;
+}
+
+export interface ActivationPreview {
+  sprs_now: number | null;
+  sprs_after: number | null;
+  objectives: JudgedObjective[];
+}
+
+export interface JudgedDecision {
+  control_state_id: string;
+  shown_status: string;
+  choice: ActivationChoice;
+}
+
+export interface ActivationResult {
+  objectives_updated: number;
+  tasks_created: number;
+  judged: {
+    control_state_id: string;
+    status_before: string;
+    status_after: string;
+    decided_by: "person" | "default";
+  }[];
 }

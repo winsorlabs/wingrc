@@ -124,7 +124,6 @@ def ref(db_session: Session) -> dict:
         control_id=ac.id,
         objectives=["a", "b"],
         classification="shared",
-        candidate_state="pending_evidence",
         provider_contribution="Portal provides RBAC for access control.",
         customer_action="Assign roles and review access quarterly.",
     )
@@ -134,7 +133,6 @@ def ref(db_session: Session) -> dict:
         control_id=ia.id,
         objectives=["a"],
         classification="customer_owns",
-        candidate_state="not_satisfied_by_product",
         note="Test Portal does not manage identity. Customer IdP owns IA.",
     )
     db_session.add_all([bc_ac, bc_ia])

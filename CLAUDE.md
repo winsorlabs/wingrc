@@ -583,7 +583,13 @@ triggered it. Both fixes landed the same day; see
 writeup.
 
 **Magic loop** (`engine.py:_run_loop`, pure function in `assessment.py`):
-- Activating a product → objectives it covers flip `not_met → pending_evidence`
+- Activating a product → objectives it covers flip `not_met → pending_evidence`.
+  An objective a person judged (`met`, `partial`, `not_applicable`,
+  `inherited`) that the product would be the first to cover is asked
+  about on one screen, with a default per status; every path where
+  nobody is asked sets `needs_review` (2026-11-03,
+  `assessment.contributor_added_status`; `docs/roadmap.md`'s "Activating
+  a tool overwrites a status a person set")
 - `coverage_basis == 'platform_only'` is excluded — vendor self-coverage never
   credits the customer's CUI environment
 - SPRS recomputed as part of this too — see the complete call-site list above
@@ -591,15 +597,15 @@ writeup.
   go to `needs_review` (not `pending_evidence`) — MSP must re-confirm prior
   artifacts are still current
 - What `classification` and `coverage_basis` do at activation, read from
-  the code 2026-11-02. A first contributor sets `pending_evidence` from
-  any prior status, a later one leaves status alone, and nothing sets
+  the code 2026-11-02. A first contributor sets `pending_evidence` (a
+  judged status since 2026-11-03: the person's answer, or
+  `needs_review`), a later one leaves status alone, and nothing sets
   `met`. `responsibility` is written at once, and the bundle's CRM prints
-  it as stated. `assists` is credited like `customer_system`, and
-  `candidate_state` is not read. That is the gate for bulk-accepting AI
-  recommendations of these values: `docs/roadmap.md`'s "The Tool Import
-  wizard: each row a decision a person can make". "Any prior status"
-  includes one a person set: "Activating a tool overwrites a status a
-  person set", the same file
+  it as stated. `assists` is credited like `customer_system`.
+  `candidate_state` was never read, and migration 0072 dropped it. That
+  is the gate for bulk-accepting AI recommendations of these values:
+  `docs/roadmap.md`'s "The Tool Import wizard: each row a decision a
+  person can make"
 
 **Baseline versioning** (migration 0054, `models.py:ProductBaselineVersion`):
 `BaselineControl` rows are immutable once created — an import that actually

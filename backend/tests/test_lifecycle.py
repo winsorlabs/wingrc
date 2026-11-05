@@ -363,13 +363,11 @@ def test_full_tenant_lifecycle(client: TestClient, db_session, storage, catalog)
         BaselineControl(
             product_id=datto.id, baseline_version_id=datto_v1.id, control_id=au_331.id,
             objectives=["a", "b", "c", "d", "e", "f"], classification="shared",
-            candidate_state="pending_evidence",
             provider_contribution="RMM-deployed agents feed event data into the SOC stack.",
         ),
         BaselineControl(
             product_id=datto.id, baseline_version_id=datto_v1.id, control_id=cm_341.id,
             objectives=["a", "b"], classification="provider_satisfies",
-            candidate_state="pending_evidence",
             provider_contribution="RMM enforces the approved software/configuration baseline.",
         ),
     ])

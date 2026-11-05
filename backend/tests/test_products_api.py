@@ -171,7 +171,6 @@ def _seed_rocketcyber(
         control_id=au_ctrl.id,
         objectives=["a"],
         classification="provider_satisfies",
-        candidate_state="pending_evidence",
         provider_contribution="RocketCyber generates and retains audit records.",
     )
     # IA: RocketCyber explicitly disclaims identity management
@@ -181,7 +180,6 @@ def _seed_rocketcyber(
         control_id=ia_ctrl.id,
         objectives=["a"],
         classification="customer_owns",
-        candidate_state="not_satisfied_by_product",
         note="RocketCyber does NOT identify users; customer IdP owns the IA family.",
     )
     db_session.add_all([bc_au, bc_ia])
@@ -418,13 +416,11 @@ def test_platform_only_controls_excluded_from_activation(client, db_session, fak
         product_id=product.id, baseline_version_id=version.id, control_id=au_ctrl.id,
         objectives=["a"],
         classification="provider_satisfies", coverage_basis="customer_system",
-        candidate_state="pending_evidence",
     )
     bc_ac = BaselineControl(
         product_id=product.id, baseline_version_id=version.id, control_id=ac_ctrl.id,
         objectives=["a"],
         classification="provider_satisfies", coverage_basis="platform_only",
-        candidate_state="pending_evidence",
     )
     db_session.add_all([bc_au, bc_ac])
     db_session.flush()
@@ -504,24 +500,21 @@ def test_coverage_basis_counts_in_product_list(client, db_session, fake_msp_admi
         product_id=product.id, baseline_version_id=version.id, control_id=ctrls[0].id,
         objectives=["a"],
         classification="provider_satisfies", coverage_basis="customer_system",
-        candidate_state="pending_evidence",
     ))
     db_session.add(BaselineControl(
         product_id=product.id, baseline_version_id=version.id, control_id=ctrls[1].id,
         objectives=["a"],
         classification="provider_satisfies", coverage_basis="customer_system",
-        candidate_state="pending_evidence",
     ))
     db_session.add(BaselineControl(
         product_id=product.id, baseline_version_id=version.id, control_id=ctrls[2].id,
         objectives=["a"],
         classification="provider_satisfies", coverage_basis="platform_only",
-        candidate_state="pending_evidence",
     ))
     db_session.add(BaselineControl(
         product_id=product.id, baseline_version_id=version.id, control_id=ctrls[3].id,
         objectives=["a"],
-        classification="customer_owns", candidate_state="not_satisfied_by_product",
+        classification="customer_owns",
     ))
     db_session.flush()
 

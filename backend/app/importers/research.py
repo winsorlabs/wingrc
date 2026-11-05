@@ -54,7 +54,6 @@ from typing import Any
 from ..ai.base import AIProvider
 from ..baseline import (
     BaselineEntry,
-    CandidateState,
     Classification,
     ControlEntry,
     EvidenceSpec,
@@ -223,8 +222,8 @@ def suggest_documentation_urls(
 
 def _parse_web_control(raw: dict[str, Any], *, source_url: str) -> ControlEntry | None:
     """Like document.py:_parse_control, but for the web-research schema
-    (no candidate_state/coverage_basis in the model's own output -- those
-    are derived/left-unset exactly as the document pipeline already does)
+    (no coverage_basis in the model's own output -- it is left unset
+    exactly as the document pipeline already does)
     and with `source` ALWAYS assigned here, in code, to the exact URL this
     page was fetched from -- never read from the model's JSON, so a
     reviewer's per-claim attribution can never be spoofed by confused or
@@ -252,7 +251,6 @@ def _parse_web_control(raw: dict[str, Any], *, source_url: str) -> ControlEntry 
     entry = ControlEntry(
         control=raw["control"],
         classification=cls,
-        candidate_state=CandidateState.PENDING_EVIDENCE,
         objectives=[str(o) for o in raw.get("objectives", [])],
         provider_contribution=raw.get("provider_contribution"),
         customer_action=raw.get("customer_action"),

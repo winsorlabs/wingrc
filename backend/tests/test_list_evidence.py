@@ -546,7 +546,7 @@ def _product_covering(db_session, w, control_key) -> Product:
     db_session.add(BaselineControl(
         product_id=product.id, baseline_version_id=version.id,
         control_id=w["controls"][control_key].id, objectives=["a", "b"],
-        classification="shared", candidate_state="pending_evidence",
+        classification="shared",
     ))
     db_session.add(OrgProduct(org_id=w["org"], product_id=product.id, status="candidate"))
     db_session.flush()

@@ -105,13 +105,13 @@ def overlap_ref(db_session: Session) -> dict:
     bc_a = BaselineControl(
         product_id=product_a.id, baseline_version_id=version_a.id, control_id=ctrl.id,
         objectives=["a"],
-        classification="provider_satisfies", candidate_state="pending_evidence",
+        classification="provider_satisfies",
         provider_contribution="Product A fully manages this.",
     )
     bc_b = BaselineControl(
         product_id=product_b.id, baseline_version_id=version_b.id, control_id=ctrl.id,
         objectives=["a"],
-        classification="shared", candidate_state="pending_evidence",
+        classification="shared",
         provider_contribution="Product B assists.",
         customer_action="Customer reviews Product B's alert triage weekly.",
     )
@@ -379,7 +379,7 @@ def _three_product_ref(db_session: Session) -> dict:
         db_session.flush()
         bc = BaselineControl(
             product_id=p.id, baseline_version_id=pv.id, control_id=ctrl.id, objectives=["a"],
-            classification="provider_satisfies", candidate_state="pending_evidence",
+            classification="provider_satisfies",
         )
         db_session.add(bc)
         op = OrgProduct(org_id=org.id, product_id=p.id, status="candidate")

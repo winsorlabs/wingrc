@@ -273,22 +273,82 @@ def resolve_contributor_responsibility(classifications: list[str]) -> str:
     )
 
 
-def contributor_added_status(current_status: str, is_first_contributor: bool) -> str:
+class ActivationChoice(StrEnum):
+    """A person's answer, at activation, for one judged objective."""
+
+    KEEP = "keep"
+    NEEDS_REVIEW = "needs_review"
+
+
+# Statuses a person sets by judgement, which a tool's arrival must not
+# decide alone (Jarrod, 2026-11-03: ask at activation). needs_review is
+# not here: every answer leaves it needs_review, so there is nothing to
+# ask. not_met and pending_evidence are the designed flow, not a judgement
+# a tool could overturn.
+JUDGED_STATUSES = frozenset({
+    ControlStatus.MET,
+    ControlStatus.PARTIAL,
+    ControlStatus.NOT_APPLICABLE,
+    ControlStatus.INHERITED,
+})
+
+# The activation screen's default per judged status:
+#   met            -> needs_review: the tool is new information and brings
+#                     evidence tasks of its own, so re-confirming is honest.
+#   partial        -> needs_review: the tool may complete what was partial;
+#                     a person should say so. It deducts either way.
+#   not_applicable -> keep: no reason was found that a tool covering a
+#                     control makes it applicable.
+#   inherited      -> keep: who satisfies the control does not change
+#                     because a tool now runs in the environment.
+ACTIVATION_DEFAULTS: dict[str, ActivationChoice] = {
+    ControlStatus.MET: ActivationChoice.NEEDS_REVIEW,
+    ControlStatus.PARTIAL: ActivationChoice.NEEDS_REVIEW,
+    ControlStatus.NOT_APPLICABLE: ActivationChoice.KEEP,
+    ControlStatus.INHERITED: ActivationChoice.KEEP,
+}
+
+
+def is_judgement_in_question(current_status: str, is_first_contributor: bool) -> bool:
+    """Whether a product joining this objective would decide a person's
+    judgement: it is the first contributor, and the status is judged."""
+    return is_first_contributor and current_status in JUDGED_STATUSES
+
+
+def contributor_added_status(
+    current_status: str,
+    is_first_contributor: bool,
+    choice: str | None = None,
+) -> str:
     """Resolve control_state.status when a product is added as a contributor.
 
-    A brand-new (first-ever) contributor sets status=pending_evidence --
-    identical to today's single-product magic-loop behavior. An ADDITIONAL
-    contributor onto an objective that already has one never changes
-    status: adding a second tool's coverage is not a reason to un-verify
-    what a human already confirmed (met stays met; pending_evidence,
-    partial, and needs_review are equally left alone). Before this
-    function existed, engine.py:_run_loop unconditionally overwrote status
-    to pending_evidence on every activation regardless of the objective's
-    current state -- confirmed live on a bench stack (2026-09-16) to
-    silently regress an already-met, evidenced objective back to
-    pending_evidence the moment a second overlapping product activated.
-    This function is what replaces that blind overwrite.
+    An ADDITIONAL contributor onto an objective that already has one never
+    changes status: adding a second tool's coverage is not a reason to
+    un-verify what a human already confirmed. Before 2026-09-16 _run_loop
+    overwrote status to pending_evidence on every activation, which
+    regressed a met objective the moment a second overlapping product
+    activated (confirmed on a bench stack).
+
+    A FIRST contributor:
+      - not_met / pending_evidence -> pending_evidence, the designed flow;
+      - needs_review -> needs_review, which every answer would give;
+      - a judged status (JUDGED_STATUSES) -> the person's choice: keep it,
+        or needs_review. With no choice, which is every path where nobody
+        is asked, needs_review: it defers the judgement rather than
+        destroying it or silently keeping one that may now be stale.
+
+    Until 2026-11-03 a first contributor set pending_evidence from any
+    status, a hand-set met or not_applicable included (docs/roadmap.md,
+    "Activating a tool overwrites a status a person set").
+    Every starting status, both ways, is held by
+    tests/test_assessment_engine.py's contributor_added_status tests.
     """
-    if is_first_contributor:
-        return ControlStatus.PENDING_EVIDENCE
-    return current_status
+    if not is_first_contributor:
+        return current_status
+    if current_status == ControlStatus.NEEDS_REVIEW:
+        return ControlStatus.NEEDS_REVIEW
+    if current_status in JUDGED_STATUSES:
+        if choice == ActivationChoice.KEEP:
+            return current_status
+        return ControlStatus.NEEDS_REVIEW
+    return ControlStatus.PENDING_EVIDENCE

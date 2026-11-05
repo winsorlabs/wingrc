@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
@@ -38,7 +39,9 @@ from ..audit import log_event
 from ..auth import CurrentUser, require_org_access, require_write
 from ..db import get_session
 from ..engine import (
+    ActivationJudgementsChanged,
     activate_org_product,
+    activation_preview,
     complete_assessment,
     copy_forward_raci,
     deactivate_org_product,
@@ -129,13 +132,59 @@ class AssessmentOut(BaseModel):
     raci_copy_forward: RaciCopyForwardOut | None = None
 
 
+class JudgedDecisionIn(BaseModel):
+    control_state_id: uuid.UUID
+    # The status the person was shown; a mismatch at confirm refuses.
+    shown_status: str
+    choice: Literal["keep", "needs_review"]
+
+
 class ActivateIn(BaseModel):
     configuration_notes: str | None = None
+    # Absent: nobody was asked, and every judged objective goes to
+    # needs_review. Present (even empty): the person's answer for exactly
+    # the judged objectives the preview showed (engine.activate_org_product).
+    decisions: list[JudgedDecisionIn] | None = None
+
+
+class JudgedOutcomeOut(BaseModel):
+    control_state_id: uuid.UUID
+    # "from"/"to" are the engine's keys; renamed here to stay valid Python.
+    status_before: str
+    status_after: str
+    decided_by: Literal["person", "default"]
 
 
 class ActivateOut(BaseModel):
     objectives_updated: int
     tasks_created: int
+    judged: list[JudgedOutcomeOut] = []
+
+
+class PreviewChoiceIn(BaseModel):
+    control_state_id: uuid.UUID
+    choice: Literal["keep", "needs_review"]
+
+
+class ActivationPreviewIn(BaseModel):
+    choices: list[PreviewChoiceIn] = []
+
+
+class JudgedObjectiveOut(BaseModel):
+    control_state_id: uuid.UUID
+    control_id: str
+    objective_key: str
+    objective_text: str
+    status: str
+    default: Literal["keep", "needs_review"]
+    choice: Literal["keep", "needs_review"]
+    becomes: str
+
+
+class ActivationPreviewOut(BaseModel):
+    sprs_now: int | None
+    sprs_after: int | None
+    objectives: list[JudgedObjectiveOut]
 
 
 class ProductOut(BaseModel):
@@ -586,6 +635,11 @@ def activate_product(
     if assessment is None or assessment.org_id != org_id:
         raise HTTPException(status_code=404, detail="Assessment not found")
 
+    decisions = (
+        {d.control_state_id: (d.shown_status, d.choice) for d in body.decisions}
+        if body.decisions is not None
+        else None
+    )
     try:
         result = activate_org_product(
             session,
@@ -593,7 +647,11 @@ def activate_product(
             product_id=product_id,
             assessment_id=assessment_id,
             configuration_notes=body.configuration_notes,
+            decisions=decisions,
         )
+    except ActivationJudgementsChanged as e:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
         # G.9: activate_org_product raises ValueError for "not found" and
         # "not published" -- translated to a real 4xx here rather than an
@@ -606,7 +664,53 @@ def activate_product(
         session.rollback()
         raise HTTPException(status_code=404, detail=str(e)) from e
     session.commit()
-    return ActivateOut(**result)
+    return ActivateOut(
+        objectives_updated=result["objectives_updated"],
+        tasks_created=result["tasks_created"],
+        judged=[
+            JudgedOutcomeOut(
+                control_state_id=j["control_state_id"],
+                status_before=j["from"],
+                status_after=j["to"],
+                decided_by=j["decided_by"],
+            )
+            for j in result["judged"]
+        ],
+    )
+
+
+@router.post(
+    "/assessments/{assessment_id}/products/{product_id}/activation-preview",
+    response_model=ActivationPreviewOut,
+)
+def preview_activation(
+    org_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    product_id: uuid.UUID,
+    body: ActivationPreviewIn = ActivationPreviewIn(),
+    session: Session = Depends(get_session),
+) -> ActivationPreviewOut:
+    """The activation screen's question: which objectives a person judged
+    this product would decide, with the default answer and the score each
+    set of answers gives (engine.activation_preview). Writes nothing: the
+    request is rolled back whatever happens, so a closed tab, a cancel or
+    a dropped connection leaves the product inactive and every status as
+    it was. Activation happens only on the activate POST. Held by
+    tests/test_activation_judgement.py's
+    test_api_cancel_leaves_everything_as_it_was and test_preview_writes_nothing."""
+    assessment = session.get(Assessment, assessment_id)
+    if assessment is None or assessment.org_id != org_id:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    try:
+        preview = activation_preview(
+            session, org_id, product_id, assessment_id,
+            choices={c.control_state_id: c.choice for c in body.choices},
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    finally:
+        session.rollback()
+    return ActivationPreviewOut(**preview)
 
 
 @router.get(

@@ -186,7 +186,6 @@ def _seed_scenario(db_session, *, org_id: uuid.UUID) -> dict:
         control_id=ctrl.id,
         objectives=["a"],
         classification="provider_satisfies",
-        candidate_state="pending_evidence",
         coverage_basis="customer_system",
     )
     bc_inactive = BaselineControl(
@@ -195,7 +194,6 @@ def _seed_scenario(db_session, *, org_id: uuid.UUID) -> dict:
         control_id=ctrl.id,
         objectives=["a"],
         classification="provider_satisfies",
-        candidate_state="pending_evidence",
         coverage_basis="customer_system",
     )
     db_session.add_all([bc_active, bc_inactive])

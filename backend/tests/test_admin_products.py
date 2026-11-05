@@ -118,7 +118,6 @@ controls:
     objectives: [a]
     classification: provider_satisfies
     coverage_basis: customer_system
-    candidate_state: pending_evidence
     evidence:
       - {{artifact: "Config export", type: export}}
 """.encode()
@@ -150,7 +149,6 @@ def _seed_product(db_session, *, published: bool = False) -> Product:
         objectives=["a"],
         classification="provider_satisfies",
         coverage_basis="customer_system",
-        candidate_state="pending_evidence",
     )
     db_session.add(bc)
     db_session.flush()
@@ -342,7 +340,6 @@ def _valid_structured_body(key: str, control_id: str) -> dict:
                 "control": control_id,
                 "objectives": ["a"],
                 "classification": "provider_satisfies",
-                "candidate_state": "pending_evidence",
                 "evidence": [{"artifact": "Config export", "type": "export"}],
                 # coverage_basis deliberately omitted -- the case this
                 # endpoint exists to surface row-by-row.
@@ -416,7 +413,6 @@ def test_dry_run_structured_blank_control_field_still_returns_the_row(admin_clie
             # one id, just one that happens not to resolve).
             "control": [],
             "classification": None,
-            "candidate_state": "pending_evidence",
             "objectives": [],
             "evidence": [],
         }
@@ -604,7 +600,6 @@ controls:
     objectives: [a]
     classification: provider_satisfies
     coverage_basis: customer_system
-    candidate_state: pending_evidence
     provider_contribution: "Updated provider contribution text."
     evidence:
       - {{artifact: "Config export", type: export}}
@@ -646,6 +641,28 @@ def test_noop_reimport_leaves_is_published_untouched(admin_client, db_session):
         "a byte-identical reimport must not disturb an already-published "
         "product's publish state"
     )
+
+
+def test_a_file_still_carrying_candidate_state_imports_as_a_noop(admin_client, db_session):
+    """Migration 0072 dropped candidate_state. A YAML written before it, or
+    a wizard tab open across the deploy, still sends the key: it is
+    ignored, the file validates, and no new version is written."""
+    product = _seed_product(db_session, published=True)
+    bc = db_session.scalars(
+        select(BaselineControl).where(BaselineControl.product_id == product.id)
+    ).first()
+    ctrl_row = db_session.get(Control, bc.control_id)
+    yaml_bytes = _valid_yaml(product.key, ctrl_row.control_id).replace(
+        b"    classification:",
+        b"    candidate_state: not_satisfied_by_product\n    classification:",
+    )
+    assert b"candidate_state" in yaml_bytes, "fixture must carry the old key or this proves nothing"
+    r = admin_client.post(
+        "/admin/products/import/apply",
+        files={"file": ("old.yaml", yaml_bytes, "application/x-yaml")},
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["version_created"] is False
 
 
 def test_reimport_with_unchanged_evidence_keeps_spec_id_and_task_link(admin_client, db_session):
@@ -735,7 +752,6 @@ controls:
     objectives: [a]
     classification: provider_satisfies
     coverage_basis: customer_system
-    candidate_state: pending_evidence
     evidence:
       - {{artifact: "A totally different export", type: export}}
 """.encode()
@@ -819,7 +835,6 @@ def test_dropped_control_is_shown_removed_excluded_from_new_activations_and_orph
     objectives: [a]
     classification: provider_satisfies
     coverage_basis: customer_system
-    candidate_state: pending_evidence
     evidence:
       - {{artifact: "Config export", type: export}}
 """
@@ -828,7 +843,6 @@ def test_dropped_control_is_shown_removed_excluded_from_new_activations_and_orph
     objectives: [a]
     classification: provider_satisfies
     coverage_basis: customer_system
-    candidate_state: pending_evidence
 """
         return f"""
 product:
@@ -1137,7 +1151,6 @@ def _stub_ingest_response(control_id: str) -> str:
                 "provider_contribution": "Does the thing.",
                 "customer_action": "Configure the thing.",
                 "evidence": [{"artifact": "Config export", "type": "export"}],
-                "candidate_state": "pending_evidence",
             }
         ],
     })

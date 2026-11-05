@@ -12,7 +12,7 @@ export const STATUSES = [
   { value: "needs_review", label: "Needs Review" },
 ] as const;
 
-const STATUS_CLASS: Record<string, string> = {
+export const STATUS_CLASS: Record<string, string> = {
   met: "badge-met",
   not_met: "badge-not-met",
   partial: "badge-partial",

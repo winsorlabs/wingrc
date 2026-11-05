@@ -1,4 +1,4 @@
-import type { ApiTokenRow, ArchivedEvidenceSection, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, EnvironmentData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, SnapshotStatus, TlsExpiry, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent, AdoptResult, TakeTemplateResult, ListEvidenceCandidate, ListEvidenceLink, ListEvidenceStatus, ListLinkEvent, TagRemovalCheck, DocumentEvidenceCandidate, DocumentTagsAdded } from "./types";
+import type { ActivationChoice, ActivationPreview, ActivationResult, JudgedDecision, ApiTokenRow, ArchivedEvidenceSection, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, EnvironmentData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, SnapshotStatus, TlsExpiry, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent, AdoptResult, TakeTemplateResult, ListEvidenceCandidate, ListEvidenceLink, ListEvidenceStatus, ListLinkEvent, TagRemovalCheck, DocumentEvidenceCandidate, DocumentTagsAdded } from "./types";
 
 const BASE = "/api";
 
@@ -316,10 +316,36 @@ export const api = {
   getProducts: (orgId: string, assessmentId: string) =>
     req<ProductRow[]>(`/orgs/${orgId}/assessments/${assessmentId}/products`),
 
-  activateProduct: (orgId: string, assessmentId: string, productId: string) =>
-    req<{ objectives_updated: number; tasks_created: number }>(
+  // decisions: the person's answer for exactly the judged objectives the
+  // preview showed. The screen always sends it, [] when nothing was judged;
+  // leaving it out means nobody was asked, and the server sends every
+  // judged objective to needs_review. A 409 means what they were shown has
+  // changed: nothing was activated.
+  activateProduct: (
+    orgId: string,
+    assessmentId: string,
+    productId: string,
+    decisions: JudgedDecision[]
+  ) =>
+    send<ActivationResult>(
       `/orgs/${orgId}/assessments/${assessmentId}/products/${productId}/activate`,
-      { method: "POST", body: JSON.stringify({}) }
+      "POST",
+      { decisions }
+    ),
+
+  // What activating would do to objectives a person judged, and the score
+  // those choices give, computed by the server running the activation and
+  // rolling it back. Writes nothing.
+  previewActivation: (
+    orgId: string,
+    assessmentId: string,
+    productId: string,
+    choices: { control_state_id: string; choice: ActivationChoice }[] = []
+  ) =>
+    send<ActivationPreview>(
+      `/orgs/${orgId}/assessments/${assessmentId}/products/${productId}/activation-preview`,
+      "POST",
+      { choices }
     ),
 
   // replacedBy: what the person says replaces it, or null. Never inferred.
