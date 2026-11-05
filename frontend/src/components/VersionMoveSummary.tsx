@@ -12,16 +12,17 @@ import { STATUS_CLASS, STATUSES } from "./ObjectiveRow";
 
 const LABEL: Record<string, string> = Object.fromEntries(STATUSES.map((s) => [s.value, s.label]));
 
-function why(r: MovedToReview, productName: string, to: number): string {
+// The first line names the product; each reason names only the version.
+function why(r: MovedToReview, to: number): string {
   switch (r.why) {
     case "no_longer_covered":
       return r.still_covered
-        ? `v${to} of ${productName} no longer covers it. Another tool still does.`
-        : `v${to} of ${productName} no longer covers it.`;
+        ? `v${to} no longer covers it. Another tool still does.`
+        : `v${to} no longer covers it.`;
     case "mapping_changed":
-      return `v${to} changes how ${productName} covers this control.`;
+      return `v${to} covers this control differently.`;
     case "judged_newly_covered":
-      return `v${to} of ${productName} now covers it, and a person had set it. A move does not ask, so it needs review.`;
+      return `v${to} now covers it, and a person had set it. A move does not ask, so it needs review.`;
     default:
       return r.why;
   }
@@ -60,7 +61,7 @@ export function VersionMoveSummary({
                 {r.control_id}[{r.objective_key}]
               </span>{" "}
               was <span className={`badge ${STATUS_CLASS[r.status_before] ?? ""}`}>{LABEL[r.status_before] ?? r.status_before}</span>.{" "}
-              {why(r, productName, result.to_version)}
+              {why(r, result.to_version)}
             </li>
           ))}
         </ul>

@@ -52,10 +52,10 @@ describe("VersionMoveSummary", () => {
     expect(box.textContent).toContain("Moved Datto RMM from v1 to v2. 4 objectives were set to Needs Review:");
     const items = screen.getAllByRole("listitem").map((li) => li.textContent);
     expect(items).toEqual([
-      "AC.L2-3.1.1[a] was Pending Evidence. v2 changes how Datto RMM covers this control.",
-      "AC.L2-3.1.2[a] was Met. v2 of Datto RMM now covers it, and a person had set it. A move does not ask, so it needs review.",
-      "AU.L2-3.3.1[a] was Pending Evidence. v2 of Datto RMM no longer covers it. Another tool still does.",
-      "AU.L2-3.3.2[a] was Pending Evidence. v2 of Datto RMM no longer covers it.",
+      "AC.L2-3.1.1[a] was Pending Evidence. v2 covers this control differently.",
+      "AC.L2-3.1.2[a] was Met. v2 now covers it, and a person had set it. A move does not ask, so it needs review.",
+      "AU.L2-3.3.1[a] was Pending Evidence. v2 no longer covers it. Another tool still does.",
+      "AU.L2-3.3.2[a] was Pending Evidence. v2 no longer covers it.",
     ]);
     expect(box.textContent).toContain("2 new evidence tasks were created.");
   });
