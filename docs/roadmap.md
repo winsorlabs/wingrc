@@ -12299,17 +12299,92 @@ at all.
 
 Either makes "equivalent" stop being good enough.
 
-### S. Local snapshots and an exercised restore (built and bench-verified 2026-11-01, alarm and partial writes 2026-11-02; on live 2026-11-03, restore not yet tested there)
+### S. Local snapshots and an exercised restore (built and bench-verified 2026-11-01, alarm and partial writes 2026-11-02; on live 2026-11-03, first live restore test the same day)
 
-**Status: on live since 2026-11-03; the restore is not yet tested
-there.** Deployed at `d0e040a` on Jarrod's go-ahead. The first two
+**Status: on live since 2026-11-03, and restored from there once, with
+Jarrod watching (below).** Deployed at `d0e040a` on Jarrod's go-ahead. The first two
 snapshots were taken by hand that night, one by Jarrod and one by Claude
 (`20261103T025845Z`, `20261103T030437Z`), and `/health` read `ok`. The
 schedule is a line in `wladmin`'s crontab (`17 3 * * *`, host time UTC),
 his choice of account, installed by him. The `claude` account cannot
 read that crontab; its first run is seen instead as
-`20261103T031703Z`, the third snapshot. He watches the first live
-restore test.
+`20261103T031703Z`, the third snapshot.
+
+**The first live restore test (2026-11-03, 14:41 UTC, Jarrod
+watching).** Run at `75fb484` as built, with a probe (#79) to show the
+rows themselves. Record:
+`~claude/wingrc-deploys/20261103T144114Z-restore-test-20261103T031703Z/`.
+
+- **The subject: two deletions Jarrod made on live that afternoon.** An
+  edit to list `3-10-1a-phys-access-own` (Acme MSP) removing its
+  `Visitor` row, at 12:39:30.65 UTC, and the asset `ASSET-0003` deleted
+  from scope, at 12:41:03.19 UTC. Both times are from live's audit log.
+- **The ordering, shown, not assumed.** Snapshot `20261103T031703Z` (the
+  first cron run) dumped the database at 03:17:03.74 and finished its
+  object copy at 03:17:04.04, by its manifest's `window`: 9 h 22 m before
+  the first deletion. The host and database clocks read the same second.
+  No snapshot falls between it and the deletions.
+- **Did the deletions destroy anything? One did, one did not.**
+  - **The list row: nothing destroyed.** The edit wrote version 4; version
+    3, holding the row, is still on live. Restoring it shows the snapshot
+    captured that morning's state, not that lost data came back.
+  - **The asset: destroyed.** `DELETE /scope/{id}` is `session.delete`.
+    Live keeps only the audit row's type and key; every attribute was
+    gone. This is the subject that tests recovery.
+- **Every check, with its number:**
+  - schema head `0071_evidence_archive_cause`, as recorded: PASS;
+  - row counts, 61 tables and 4,101 rows, each table as recorded: PASS;
+  - SPRS recomputed for both assessments against the stored scores (the
+    manifest's -199 and -204): PASS;
+  - object bytes, 13 keys named by rows, each fetched and compared by
+    SHA-256: PASS;
+  - object set, exactly the manifest's 25: PASS;
+  - credentials, 3 decrypted under key label
+    `prod-wl-util-1-2026-09-11`: PASS;
+  - no key value in the record or the snapshot: PASS.
+- **The rows found in the restored copy:**
+  - `ASSET-0003`, id `25769d52-b463-48fa-a559-24c216bc8641`, Acme MSP: a
+    `device`, `SPA`, active and in boundary, from
+    `authorized-entities.example.xlsx`, with all 18 of its attributes.
+    One row with that key. The values are in the record's `probe.txt`,
+    not here: the repository is public.
+  - the list's versions 1 to 3 and no version 4; version 3 holds both
+    rows, the removed `Visitor` row among them.
+- **Cleanup, by comparison.** Volumes, containers and networks were
+  listed before and after, by the script and by hand, and both
+  comparisons were empty. The snapshot directory was unchanged: the
+  same three ids, the same three manifest hashes, the same 82 files, the
+  same hash over all of them. Live's containers kept running throughout.
+- **Live was not restored over.** `ASSET-0003` stays deleted and the list
+  stays at version 4 unless a person re-adds them in the app.
+
+**What it proved:** a snapshot the schedule took restores whole into an
+empty database and bucket on this host, every check passes on production
+data, and a row the application hard-deleted can be read back from it
+in full, nine hours later.
+
+**What it did not prove:**
+
+- **Recovery of live.** The procedure in `docs/deployment.md`,
+  "Recovering" (fresh volumes, `wingrc_app`'s password, pointing the stack
+  at them) has never been run. Nor has putting one row back: that is a
+  person re-entering it in the app.
+- **Anything off this host.** Same host, same disk, as decided.
+- **Loss bounded by the schedule.** A recovery from this snapshot would
+  have lost everything after 03:17, the deletions included; daily
+  snapshots mean up to a day.
+- **Recovery without the key.** The key was present. Its loss is the
+  `wrong-key` mutation's bench result, not a live one.
+- **The list case proved capture, not recovery,** because nothing about it
+  was destroyed.
+
+**Found on the way: 12 objects no row names.** They are in the snapshot
+because they are in live's bucket, and they predate it by weeks, so they
+are not window effects. Eleven are under Acme MSP's `evidence/` prefix,
+with no `evidence` row and no audit row for their ids; one is a product
+document uploaded 2026-09-15 whose row is gone. That fits the delete
+paths that removed rows and kept bytes before 2026-10-19, but the cause
+is not established. A read, for whoever picks it up.
 
 **The schedule depends on the live checkout (recorded 2026-11-03).** The
 nightly run is `deploy/snapshot.sh` from `/home/wladmin/dev/wingrc`. No
@@ -12587,7 +12662,7 @@ not reach the labels.
 
 **Not done, deliberately:**
 
-- the first live restore test, which Jarrod watches;
+- recovery of live itself, the procedure in `docs/deployment.md`;
 - an off-host copy;
 - any alarm beyond the msp_admin banner.
 
@@ -12659,7 +12734,11 @@ No database copy of any kind now exists on that host. That is the correct
 state for ad-hoc deploy dumps and the wrong state for a production system;
 this item is what fixes it.
 
-**The restore has never been exercised. Not once, by anyone.**
+**The restore has never been exercised. Not once, by anyone.** True
+from this entry's first writing until 2026-11-03, 14:41 UTC: the first
+live restore test, above, restored a scheduled snapshot of production
+into a throwaway project and read a hard-deleted row back from it. Live
+itself has still never been recovered from a snapshot.
 
 ### T. The list export carries what the list is for, and who owns it ✅ DONE (2026-10-17, with L.4)
 
