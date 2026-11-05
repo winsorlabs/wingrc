@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { ProductRow } from "../types";
+import type { MoveVersionResult, ProductRow } from "../types";
 import { ProductCard } from "./ProductCard";
+import { VersionMoveSummary } from "./VersionMoveSummary";
 
 interface Props {
   orgId: string;
@@ -16,6 +17,9 @@ export function ProductsPanel({ orgId, assessmentId, canWrite, onClose, onActiva
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The last version move's summary, shown until dismissed or the panel
+  // closes. Held here because the reload after a move remounts the cards.
+  const [moved, setMoved] = useState<{ productName: string; result: MoveVersionResult } | null>(null);
 
   function load() {
     setLoading(true);
@@ -52,6 +56,14 @@ export function ProductsPanel({ orgId, assessmentId, canWrite, onClose, onActiva
           Activate a tool to pre-populate covered objectives as pending evidence.
         </div>
 
+        {moved && (
+          <VersionMoveSummary
+            productName={moved.productName}
+            result={moved.result}
+            onDismiss={() => setMoved(null)}
+          />
+        )}
+
         {loading ? (
           <div className="loading">Loading products&#x2026;</div>
         ) : error ? (
@@ -72,6 +84,7 @@ export function ProductsPanel({ orgId, assessmentId, canWrite, onClose, onActiva
                 canWrite={canWrite}
                 onActivated={handleActivated}
                 onDeactivated={handleDeactivated}
+                onVersionMoved={(productName, result) => setMoved({ productName, result })}
               />
             ))}
           </div>

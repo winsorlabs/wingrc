@@ -30,7 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit
-from app.assessment import JUDGED_STATUSES, ControlStatus
+from app.assessment import ControlStatus
 from app.auth import get_current_user
 from app.db import get_session
 from app.engine import (
@@ -355,13 +355,70 @@ def test_version_move_every_starting_status(db_session, w, status):
         "not_met": "pending_evidence", "pending_evidence": "pending_evidence",
     }.get(status, "needs_review")
     assert _status(db_session, w["s"]["c2a"]) == expected
-    if status in JUDGED_STATUSES:
+    if status in ("met", "partial", "not_applicable", "inherited"):
         row = db_session.scalars(select(AuditLog).where(
             AuditLog.entity_id == w["s"]["c2a"].id,
             AuditLog.action == "control_state.update",
             AuditLog.context["decided_at"].astext == "baseline_version_move",
         )).one()
         assert row.context["decided_by"] == "default"
+
+
+def _move_fixture(db_session, w, c2a_status):
+    """R v1 claims c1 (shared) and c3; v2 reclassifies c1, drops c3 and adds
+    c2. Q also covers c3, so c3 stays covered after the move."""
+    r, _ = _product(db_session, w["fw"], "tool-r", {
+        w["c1"]: (["a", "b"], "shared"), w["c3"]: (["a"], "shared"),
+    })
+    activate_org_product(db_session, w["org"].id, r.id, w["a"].id)
+    activate_org_product(db_session, w["org"].id, w["q"].id, w["a"].id)
+    v2 = ProductBaselineVersion(product_id=r.id, version_number=2)
+    db_session.add(v2)
+    db_session.flush()
+    db_session.add_all([
+        BaselineControl(product_id=r.id, baseline_version_id=v2.id, control_id=w["c1"].id,
+                        objectives=["a", "b"], classification="provider_satisfies"),
+        BaselineControl(product_id=r.id, baseline_version_id=v2.id, control_id=w["c2"].id,
+                        objectives=["a"], classification="shared"),
+    ])
+    db_session.flush()
+    _set_by_hand(db_session, w, "c2a", c2a_status)
+    return move_org_product_version(db_session, w["org"].id, r.id, w["a"].id, v2.id)
+
+
+def _moved_to_review(result):
+    return [(r["control_id"], r["objective_key"], r["status_before"], r["why"],
+             r["still_covered"]) for r in result["set_to_needs_review"]]
+
+
+def test_version_move_tells_what_it_set_to_needs_review_and_why(db_session, w):
+    result = _move_fixture(db_session, w, "met")
+    assert (result["from_version"], result["to_version"]) == (1, 2)
+    assert _moved_to_review(result) == [
+        ("AC.L2-3.1.1", "a", "pending_evidence", "mapping_changed", False),
+        ("AC.L2-3.1.1", "b", "pending_evidence", "mapping_changed", False),
+        ("AC.L2-3.1.2", "a", "met", "judged_newly_covered", False),
+        ("AU.L2-3.3.1", "a", "pending_evidence", "no_longer_covered", True),
+    ]
+    assert result["set_to_needs_review"][2]["objective_text"] == "c2[a] text"
+    # The list is the history the move wrote: every row it took to
+    # needs_review, and nothing else.
+    to_review = set(db_session.scalars(select(ControlStateHistory.control_state_id).join(
+        ControlState, ControlStateHistory.control_state_id == ControlState.id,
+    ).where(ControlState.assessment_id == w["a"].id,
+            ControlStateHistory.new_status == "needs_review")).all())
+    assert to_review == {r["control_state_id"] for r in result["set_to_needs_review"]}
+
+
+def test_version_move_does_not_list_what_went_to_pending_evidence(db_session, w):
+    result = _move_fixture(db_session, w, "not_met")
+    assert _status(db_session, w["s"]["c2a"]) == "pending_evidence", (
+        "fixture must bring c2 in as a newly covered, unjudged objective"
+    )
+    assert ("AC.L2-3.1.2", "a") not in {
+        (r["control_id"], r["objective_key"]) for r in result["set_to_needs_review"]
+    }
+    assert len(result["set_to_needs_review"]) == 3
 
 
 # -- through the API: the screen's two calls, and a cancel -----------------
