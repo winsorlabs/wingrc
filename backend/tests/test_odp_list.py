@@ -18,7 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app import list_adoption, list_library, odp_template
+from app import list_adoption, list_evidence, list_library, odp_template
 from app.auth import get_current_user
 from app.db import get_session
 from app.main import app
@@ -138,12 +138,46 @@ def test_the_list_says_what_it_is_and_what_it_is_not():
     assert "03.01.20.b, 03.04.06.b, 03.13.10, 03.16.01" in d
 
 
-def test_an_unfilled_odp_list_counts_as_populated():
-    # A finding, held as it stands: is_populated looks for fill-in tokens
-    # and an empty cell is none, so a copy with no value defined would be
-    # offered as evidence wherever it is tagged. The list ships untagged,
-    # so it is offered nowhere yet (docs/roadmap.md, "The ODP list").
-    assert list_library.is_populated(odp_template.build_content()["rows"])
+def test_an_odp_list_is_populated_only_when_every_value_is_defined():
+    # It was a finding (2026-11-05): with no fill-in token anywhere, an
+    # unfilled copy read as populated. The DoD value is reference text and
+    # is nobody's entry, so a row with only that has nothing entered.
+    c = odp_template.build_content()
+    cols, refs, rows = c["columns"], c["reference_columns"], c["rows"]
+    ours = cols.index(odp_template.OURS_COL)
+
+    def with_ours(values):
+        return [r[:ours] + [v] + r[ours + 1:] for r, v in zip(rows, values, strict=True)]
+
+    assert not list_library.is_populated(rows, cols, refs)
+    assert list_library.unentered_rows(rows, cols, refs) == 80
+    one = with_ours(["60 days"] + [""] * 79)
+    assert not list_library.is_populated(one, cols, refs)
+    assert list_library.unentered_rows(one, cols, refs) == 79
+    assert list_library.is_populated(with_ours(["60 days"] * 80), cols, refs)
+    # A stated absence is an entry; a fill-in token and whitespace are not.
+    assert list_library.is_populated(
+        with_ours(["[PLACEHOLDER - not applicable here]"] + ["60 days"] * 79), cols, refs
+    )
+    assert not list_library.is_populated(with_ours(["[DATE]"] + ["60 days"] * 79), cols, refs)
+    assert not list_library.is_populated(with_ours(["  "] + ["60 days"] * 79), cols, refs)
+    # Read without its reference columns, the same rows look filled: the
+    # columns argument is what makes the rule right, so it must be passed.
+    assert list_library.is_populated(rows), (
+        "the DoD text must count as entered when no column is named reference, "
+        "or this test proves nothing about the reference columns"
+    )
+
+
+def test_an_unfilled_odp_copy_says_why_it_is_not_offered():
+    c = odp_template.build_content()
+    v = SimpleNamespace(
+        rows=c["rows"], columns=c["columns"], reference_columns=c["reference_columns"]
+    )
+    d = SimpleNamespace(is_template=False)
+    assert list_evidence.not_offered_reason(d, v) == (
+        "nothing entered in Our defined value yet (80 of 80 rows)"
+    )
 
 
 def _base(columns, rows, refs):

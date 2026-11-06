@@ -15476,6 +15476,43 @@ case before the list is tagged: for a list with reference columns,
 decision for Jarrod. `test_an_unfilled_odp_list_counts_as_populated`
 holds today's behaviour, so the change will show.
 
+**Fixed 2026-11-06, as its own slice, before the list is tagged.** Jarrod:
+the rule asked "are the template markers gone?" as a proxy for "has a
+person entered content?", and the proxy breaks for any list that never
+had markers. It is the second time `is_populated` has been in the
+confident-signal family; the first was its exact match, which missed
+`[CUSTOMER_NAME]` (L.7's entry).
+
+- **The rule now:** a list has rows; every row has something entered in a
+  cell a person may edit; and no row is a template example. "Entered"
+  means not blank and carrying no fill-in token (`list_library.is_entered`).
+  A reference column is the template source's text, never anyone's entry,
+  so it does not count. `[PLACEHOLDER - reason]` counts, because a stated
+  absence is a statement. It is how a parameter deliberately left unset
+  is written, so the list can still be complete.
+- **Every row, not some.** A copy with 1 of 80 values defined is not
+  offered. A mostly-empty ODP list offered as evidence is the case the
+  brief named.
+- **What else it governs**, read from the code. Its one reader is
+  `list_evidence.not_offered_reason`, which decides three things: the
+  objective's candidates, the link refusal, and the list page's "offered"
+  status. The screens' notices and badges read `example_rows` directly.
+  The router now also returns `unentered_rows`, and the ODP page's
+  "N of 80 defined" is computed from it rather than counted again in the
+  browser, so the page and the offer rule cannot disagree.
+- **Reach beyond the ODP list:** an ordinary list with a wholly blank row
+  is no longer offered, and says "nothing entered yet (1 of N rows)". No
+  existing link is touched: the rule gates new links, and a link stays on
+  its version. Whether live has such a list was not read: wl-util-1 was
+  unreachable on 2026-11-06. Read it before deploying.
+- **The placeholder legend is shown only when a cell carries one of its
+  markers.** On the ODP list it taught a vocabulary that was not on the
+  screen, beside a column where empty means "not yet defined".
+- **Held by:** `test_an_odp_list_is_populated_only_when_every_value_is_defined`,
+  the written-out cases in `test_list_adoption.py`, and the reason
+  sentences in `test_list_evidence.py`. Removing the new clause from
+  `is_populated` turned four tests red.
+
 #### Where it lives
 
 - **Template content:** a template list (`is_template`) in the MSP's org,

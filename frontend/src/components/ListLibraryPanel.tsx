@@ -49,6 +49,7 @@ import {
   changeCounts,
   distributionText,
   exampleRowsText,
+  unenteredRowsText,
   tagAuthor,
   updateAvailableText,
   columnLossWarning,
@@ -159,6 +160,14 @@ function CellText({ value }: { value: string }) {
     );
   }
   return value ? <>{value}</> : <span className="list-cell-empty">—</span>;
+}
+
+// Whether any cell is drawn as a marker by CellText. The legend explains
+// those markers, so on a list with none it would teach a vocabulary that
+// is not on the screen -- beside the ODP list's empty cells, which mean
+// "not yet defined", something else again.
+function hasMarkers(rows: string[][]): boolean {
+  return rows.some((r) => r.some((v) => PLACEHOLDER_REASON.test(v) || FILL_IN.test(v)));
 }
 
 // A list with reference columns (the ODP list, migration 0073): the
@@ -661,8 +670,8 @@ function LibraryListView({
   const refCols = new Set(shown.reference_columns ?? []);
   const hasRefs = refCols.size > 0;
   const colClass = (c: string) => (!hasRefs ? undefined : refCols.has(c) ? "list-col-ref" : "list-col-ours");
-  const ours = hasRefs ? columns.map((c, i) => (refCols.has(c) ? -1 : i)).filter((i) => i >= 0) : [];
-  const defined = hasRefs ? shown.rows.filter((r) => ours.some((i) => r[i]?.trim())).length : 0;
+  // The server's count, so the page and the offer rule cannot disagree.
+  const defined = hasRefs ? shown.rows.length - shown.unentered_rows : 0;
 
   return (
     <div className="contacts-panel list-library-detail">
@@ -880,6 +889,10 @@ function LibraryListView({
       {!detail.is_template && !isOld && exampleRowsText(base.example_rows, base.rows.length) && (
         <p className="doc-notice">{exampleRowsText(base.example_rows, base.rows.length)}</p>
       )}
+      {!detail.is_template && !isOld && !hasRefs && base.example_rows === 0 &&
+        unenteredRowsText(base.unentered_rows, base.rows.length) && (
+          <p className="doc-notice">{unenteredRowsText(base.unentered_rows, base.rows.length)}</p>
+        )}
 
       {isOld && (
         <p className="doc-notice">
@@ -968,6 +981,9 @@ function LibraryListView({
           Only {columns.filter((c) => !refCols.has(c)).join(", ")} is yours: it is the value in force here.{" "}
           {columns.filter((c) => refCols.has(c)).join(", ")} come from the template&apos;s source and are reference
           only; they cannot be edited here.
+          {!detail.is_template && defined < shown.rows.length && (
+            <> It can be offered as evidence only once every value is defined.</>
+          )}
         </p>
       )}
 
@@ -1132,12 +1148,14 @@ function LibraryListView({
         </div>
       )}
 
-      <div className="contact-sub list-legend">
+      {hasMarkers(shown.rows) && (
+        <div className="contact-sub list-legend">
         <span className="list-cell-placeholder">[PLACEHOLDER - reason]</span> is known absent for the stated
         reason; <span className="list-cell-example">[PLACEHOLDER]</span>, or another fill-in such
         as <span className="list-cell-example">[CUSTOMER_NAME]</span>, marks a template example to replace; —
         is empty.
-      </div>
+        </div>
+      )}
 
       {/* Reference about the rows: read once, so under them. */}
       {detail.adopted_from && (
@@ -1603,6 +1621,13 @@ export function ListLibraryPanel({
                               {e.library.example_rows} example row{e.library.example_rows === 1 ? "" : "s"} to fill in
                             </span>
                           )}
+                          {e.library && !e.library.is_template && e.library.example_rows === 0 &&
+                            e.library.unentered_rows > 0 && (
+                              <span className="affiliation-badge">
+                                {e.library.unentered_rows} row{e.library.unentered_rows === 1 ? "" : "s"} with nothing
+                                entered
+                              </span>
+                            )}
                           {e.library && e.library.adopted_copies > 0 && (
                             <span className="affiliation-badge">
                               adopted by {e.library.adopted_copies} org{e.library.adopted_copies === 1 ? "" : "s"}

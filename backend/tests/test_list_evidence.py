@@ -106,6 +106,9 @@ def test_why_a_list_is_not_offered_is_said_in_words():
         "still showing template examples (1 of 2 rows)"
     )
     assert "template" in list_evidence.not_offered_reason(_def(template=True), _V(REAL_ROWS))
+    assert list_evidence.not_offered_reason(_def(), _V([REAL_ROWS[0], ["", "", ""]])) == (
+        "nothing entered yet (1 of 2 rows)"
+    )
 
 
 def test_the_decision_is_is_populateds_not_a_second_rule(monkeypatch):
@@ -114,9 +117,9 @@ def test_the_decision_is_is_populateds_not_a_second_rule(monkeypatch):
     assert list_evidence.not_offered_reason(_def(), _V(EXAMPLE_ROWS)) is not None, (
         "fixture must be unpopulated or this test proves nothing"
     )
-    monkeypatch.setattr(list_evidence, "is_populated", lambda rows: True)
+    monkeypatch.setattr(list_evidence, "is_populated", lambda *a: True)
     assert list_evidence.not_offered_reason(_def(), _V(EXAMPLE_ROWS)) is None
-    monkeypatch.setattr(list_evidence, "is_populated", lambda rows: False)
+    monkeypatch.setattr(list_evidence, "is_populated", lambda *a: False)
     assert list_evidence.not_offered_reason(_def(), _V(REAL_ROWS)) is not None
 
 

@@ -127,9 +127,10 @@ def adopt(
     session: Session, org_id: uuid.UUID, snap: TemplateSnap, saved_by: str
 ) -> ListDefinition:
     """The copy: definition, rows and tags as the template has them now.
-    The rows are the template's examples (fill-in tokens), so the copy
-    starts unfinished and is not populated (`list_library.is_populated`)
-    until the org fills it in -- no second mechanism."""
+    The rows are the template's examples (fill-in tokens), or cells left
+    for the org to enter, so the copy starts unfinished and is not
+    populated (`list_library.is_populated`) until the org fills it in --
+    no second mechanism."""
     existing = existing_copy(session, org_id, snap.list_id)
     if existing is not None:
         raise AlreadyAdopted(existing)

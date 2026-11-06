@@ -1597,6 +1597,8 @@ export interface LibraryListSummary {
   has_changelog: boolean;
   // Rows still carrying a fill-in token, [PLACEHOLDER] or [CUSTOMER_NAME] (backend list_library.is_populated).
   example_rows: number;
+  // Rows with nothing entered where a person may edit (backend list_library.unentered_rows).
+  unentered_rows: number;
   adopted_from: AdoptedFrom | null;
   adopted_copies: number; // a template's copies, in every org
 }
@@ -1714,6 +1716,8 @@ export interface LibraryListVersion {
   saved_by: string | null;
   cause: VersionCause;
   example_rows: number;
+  // Rows with nothing entered where a person may edit (backend list_library.unentered_rows).
+  unentered_rows: number;
 }
 
 export interface LibraryListMerge {

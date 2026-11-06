@@ -48,7 +48,7 @@ from sqlalchemy.orm import Session
 
 from . import evidence_links
 from .audit import log_event
-from .list_library import example_rows, is_populated
+from .list_library import example_rows, is_populated, unentered_rows
 from .models import (
     Assessment,
     AssessmentObjective,
@@ -78,12 +78,24 @@ def not_offered_reason(definition: ListDefinition, version: ListVersion | None) 
     if definition.is_template:
         return "a template: its rows are examples"
     rows = version.rows if version is not None else []
-    if is_populated(rows):
+    columns = list(getattr(version, "columns", None) or [])
+    refs = list(getattr(version, "reference_columns", None) or [])
+    if is_populated(rows, columns, refs):
         return None
     if not rows:
         return "it has no rows yet"
-    n, total = example_rows(rows), len(rows)
-    return f"still showing template examples ({n} of {total} row{'' if total == 1 else 's'})"
+    total = len(rows)
+
+    def of(n: int) -> str:
+        return f"{n} of {total} row{'' if total == 1 else 's'}"
+
+    if n := example_rows(rows):
+        return f"still showing template examples ({of(n)})"
+    n = unentered_rows(rows, columns, refs)
+    own = [c for c in columns if c not in refs]
+    if refs and len(own) == 1:
+        return f"nothing entered in {own[0]} yet ({of(n)})"
+    return f"nothing entered yet ({of(n)})"
 
 
 def drift_text(linked_version: int, current_version: int) -> str | None:
