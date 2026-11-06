@@ -310,18 +310,32 @@ interface ConflictState {
 /** Where this list is evidence, and whether it can be (L.4). A link stays
  * on the version it named; the list moving on is said, not fixed here --
  * an objective's evidence is where a link is moved forward. */
-function ListAsEvidence({ status, isTemplate }: { status: ListEvidenceStatus; isTemplate: boolean }) {
+function ListAsEvidence({
+  status,
+  isTemplate,
+  practices,
+}: {
+  status: ListEvidenceStatus;
+  isTemplate: boolean;
+  practices: number;
+}) {
   if (isTemplate && status.links.length === 0) return null;
   const drifted = status.links.filter((l) => l.drift);
   return (
     <section className="list-evidence" aria-label="As evidence">
       {status.offered ? (
-        status.links.length === 0 && (
+        status.links.length === 0 &&
+        (practices === 0 ? (
+          <p className="field-hint">
+            Offered as evidence nowhere yet: an objective is offered a list only for a practice the list is tagged
+            with, and this one has none.
+          </p>
+        ) : (
           <p className="field-hint">
             Offered as evidence for the practices above. Nothing is attached until someone attaches it from an
             objective&apos;s evidence.
           </p>
-        )
+        ))
       ) : (
         <p className="field-hint">Not offered as evidence: {status.not_offered}.</p>
       )}
@@ -737,8 +751,10 @@ function LibraryListView({
             </strong>{" "}
             It appears under each of them and is kept once.
           </p>
-        ) : (
+        ) : detail.control_keys.length === 1 ? (
           <p>Serves one practice.</p>
+        ) : (
+          <p>Serves no practice yet.</p>
         )}
         <span className="list-practices">
           {detail.control_keys.map((k) => (
@@ -796,7 +812,7 @@ function LibraryListView({
         {tagError && <div className="form-error">{tagError}</div>}
       </section>
 
-      {asEvidence && <ListAsEvidence status={asEvidence} isTemplate={detail.is_template} />}
+      {asEvidence && <ListAsEvidence status={asEvidence} isTemplate={detail.is_template} practices={detail.control_keys.length} />}
 
       {/* Actionable first, then the rows: the rows are what this page is for (L.8). */}
       {detail.adopted_from && (detail.adopted_from.update_available || takeError) && (

@@ -828,6 +828,15 @@ describe("a list with reference columns", () => {
     expect(screen.getByText("Guidance, not a specified value")).toBeTruthy();
   });
 
+  it("says an untagged list serves no practice and is offered nowhere, not 'one practice'", async () => {
+    vi.mocked(api.listEvidenceStatus).mockResolvedValue({ offered: true, not_offered: null, links: [] } as never);
+    await openOdp();
+    expect(screen.getByText("Serves no practice yet.")).toBeTruthy();
+    expect(screen.queryByText("Serves one practice.")).toBeNull();
+    expect(await screen.findByText(/Offered as evidence nowhere yet/)).toBeTruthy();
+    expect(screen.queryByText(/Offered as evidence for the practices above/)).toBeNull();
+  });
+
   it("counts a filled value, and shows it rather than the placeholder", async () => {
     await openOdp(version(2, [
       ["03.01.01.f.02", "g", "60 days", "at most 90 days"],
