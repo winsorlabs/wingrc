@@ -15299,6 +15299,207 @@ that is checked against the authoritative text before any code moves,
 and a change would move live scores, so it would be its own slice with
 a dry run per assessment. Nothing changed.
 
+### The ODP list: Rev 3's organization-defined parameters, as a template -- built 2026-11-05
+
+**What Jarrod asked for.** A list of the organization-defined parameters
+(ODPs) in NIST SP 800-171 Rev 3, four columns, seeded as template content,
+which a tenant adopts and fills in. Built on branch `odp-list`; migration
+0073.
+
+#### What the source actually is: DoD policy, not NIST's list
+
+`docs/reference/OrgDefinedParmsNISTSP800-171.pdf` is a **Department of
+Defense CIO memorandum**:
+- **Title:** "Department of Defense Organization-Defined Parameters for
+  National Institute of Standards and Technology Special Publication
+  800-171 Revision 3".
+- **Signed:** 10 April 2025 by David W. McKeown, Performing the Duties of
+  the Deputy DoD CIO for Cybersecurity and DoD Chief Information Security
+  Officer.
+- **Cleared for open publication:** 15 April 2025, by the DoD Office of
+  Prepublication and Security Review. The stamp is an image on page 1,
+  read by eye.
+- **SHA-256:** `fd83ecf4e0998f0b29d5e6f222e7364ce67eb6fdedb5ac4f34ec4310ba495916`,
+  53 pages.
+
+It defines **DoD policy values** for Rev 3's ODPs, "in preparation to
+implement reference (a) as the minimum requirement for contractors". So
+the DoD column is not "what Rev 3 says you must define". It is **the
+value DoD will require**, which is the column's whole worth. The list's
+own text says so, and so does the screen.
+
+#### The four columns, and why two of them are verbatim
+
+| # | Column | Source | Editable |
+|---|---|---|---|
+| 1 | ODP identifier | the memo's tables, verbatim | no |
+| 2 | What this parameter sets (AI-written) | `seeds/odp_glosses.yaml`, authored | no |
+| 3 | Our defined value | the organization | **yes** |
+| 4 | DoD value under Rev 3 (reference only) | the memo's tables, verbatim | no |
+
+- **Columns 1 and 4 are never paraphrased.** A DoD-mandated value
+  reworded is a changed requirement, and a reader acts on it. Both come
+  from `seeds/odp_dod_rev3.json`, which `scripts/odp/extract_odp.py`
+  writes from the committed PDF and reproduces byte for byte (`--check`).
+- **Column 2 is the only place plain language is written.** It explains
+  what each parameter decides and never restates the requirement or the
+  value. It is AI-written, and that travels with the list: the column's
+  own name says "(AI-written)", and the list's description carries the
+  warning ("may contain errors, omissions or misreadings"). The
+  description is in every export and bundle (`render.py`'s "What goes
+  here"). No gloss needed to fall back to the verbatim assignment text.
+- **Column 3 is the live one.** The screen's test was that someone who
+  has never seen it cannot take the reference for the answer. What
+  carries it:
+  - each header says which it is in words: "Yours to define · the value
+    in force here" under column 3, and "Reference · cannot be edited
+    here" under the others;
+  - an empty cell of ours reads **"Not yet defined"**, never a dash;
+  - only column 3 takes input when editing, with no add, remove or
+    rename;
+  - a line above the table counts what is defined ("0 of 80 defined. Only
+    Our defined value is yours...");
+  - colour as well, never alone: a blue tint and rules on column 3, grey
+    on the rest, all measured (`styles.css`).
+
+#### No mapping to Rev 2 practice numbers (Jarrod's decision)
+
+Jarrod cut it, 2026-11-05: Rev 2 leaves these values to the organization,
+so there is nothing to reconcile. The identifiers stay as the memo prints
+them and are never translated into Rev 2 practice numbers. **Do not
+reintroduce it.**
+
+What follows from that: `ListControlTag` tags a *list* to practices, not a
+row, so tagging this list to the practices where ODPs get defined uses
+the existing mechanism and never needed a row mapping. **Tagging is not
+in this slice, because it did not fall out for free.** Choosing which
+Rev 2 practices the list serves is a judgment, since Rev 3's section
+numbers are not Rev 2's practices. Tagging is also what makes a list
+offered as evidence, which reaches the `is_populated` finding below.
+
+#### The extraction (`scripts/odp/`)
+
+- **From the tables, not a regex.** The tables have horizontal rules
+  only, so columns are split by word position against each table's own
+  header row.
+- **80 ODPs**, from 51 tables. Jarrod's regex count of 80 is confirmed by
+  the tables. The tables hold 81 physical rows: 03.03.01.a's value runs
+  over a page break, and the second half arrives as a row with no
+  identifier. The extractor appends it.
+- **Four are guidance, not a value**, as the memo states: 03.01.20.b,
+  03.04.06.b, 03.13.10 and 03.16.01. Each value begins "Guidance:". The
+  screen tags them "Guidance, not a specified value", and the
+  description names them. The count is four.
+- **The memo differs from itself twice**, both checked by eye and both
+  the document's, not the extraction's:
+  - 03.01.08.b's table quotes only the assignment nested inside the
+    requirement's selection;
+  - 03.12.05.a's table prints "nondisclosure", the requirement text
+    "non-disclosure".
+- **Footnote marks** (¹ "Significant", ² "External Service Providers")
+  are kept as superscripts, not merged into the word ("significant1").
+  The footnotes are in the list's description.
+- **The line-joining rule was checked, not assumed.** A line ending in a
+  hyphen joins the next with nothing between. All 52 line-end hyphens
+  fall at a real compound, none mid-word, so Word was not hyphenating.
+  Every assignment text equals the requirement text's own marker, a
+  second copy of the same words.
+- **Spot-checked by eye:** 21 rows on 10 pages, including the longest
+  values (03.01.05.b.01, 03.16.03.a, 03.03.01.a across its page break)
+  and the shortest identifier (03.16.01). Ten of them are held in
+  `test_odp_list.py` as strings typed from the rendered page.
+
+#### Reference columns: a mechanism, because "not editable" had none
+
+Until now any role that could edit a list's rows could edit any cell, so
+"columns 1, 2 and 4 are not editable" would have been a style. Migration
+0073 adds `list_version.reference_columns`, the columns no edit may
+change:
+- **The edit route refuses** a version that changes a reference cell,
+  adds, removes or reorders rows, or changes the columns
+  (`list_library.reference_change`). Only `wingrc lists-seed-odp` writes
+  them in the template.
+- **Taking a newer template version** brings the template's reference
+  cells, so a revised DoD value arrives, and keeps the copy's own values,
+  matched by the first reference column, the ODP identifier
+  (`list_adoption.reference_rows`). A value under an ODP the template
+  dropped is counted, and the update has to name the edit it replaces.
+
+This is one new mechanism. §4's "no new mechanism" holds for where the
+list lives.
+
+#### Column 3 ships empty
+
+It is **not** pre-filled with the DoD value. A pre-filled parameter reads
+as "we have defined this" when nobody has. Empty means undefined, the
+true state of a new tenant.
+
+**An empty cell is neither placeholder.** `[PLACEHOLDER]` marks a
+template example to replace. `[PLACEHOLDER - reason]` marks a value
+knowably absent, with its reason. An unset ODP is neither illustrative
+nor absent-for-a-reason: it is not yet defined, and the screen says so in
+those words.
+
+#### Finding: an unfilled ODP list counts as populated
+
+`list_library.is_populated` is "has rows, and none carries a fill-in
+token". The ODP list has 80 rows and no tokens, so **a copy with no value
+defined counts as populated** and would be offered as evidence wherever
+it is tagged. It ships untagged, so it is offered nowhere yet. **This is
+not worked around.** Pre-filling column 3 with `[PLACEHOLDER]` would make
+the rule say "unpopulated", but it would also mark undefined parameters
+as template examples, which they are not. The rule needs to learn the
+case before the list is tagged: for a list with reference columns,
+"populated" plausibly means its own columns are filled. That is a
+decision for Jarrod. `test_an_unfilled_odp_list_counts_as_populated`
+holds today's behaviour, so the change will show.
+
+#### Where it lives
+
+- **Template content:** a template list (`is_template`) in the MSP's org,
+  written by `wingrc lists-seed-odp --org-id <msp>`. It is dry-run by
+  default and writes an audit row per write. A person's edit of the
+  template is a conflict, left alone unless named exactly, as
+  `lists-import` does.
+- **Tenants adopt it** through L.7's existing path.
+- **Whole-list versioning is right here.** Editing one value writes a
+  version of the whole list. For a register that is noise; for
+  parameters it is the answer to the assessor's question, "what were all
+  our defined values on the date of that assessment".
+
+**Jarrod's open question, not decided here:** should templates be pushed
+from administration to tenants, rather than pulled by each tenant
+adopting them? The ODP list is the first template every tenant needs, so
+it is where the question bites. It is not otherwise recorded in this
+file.
+
+#### The limitation, recorded, not solved: rows have no identity
+
+Nothing can link to a single parameter. An implementation statement
+saying "per our defined timeout" stays prose. That is acceptable for this
+slice, and it is the thing to revisit if parameters ever need to be
+referenced.
+
+#### Defining is not implementing
+
+This list, tagged to practices and offered as evidence, evidences that a
+value was **defined**, never that it is **enforced**. "We define the
+timeout as 15 minutes" and "the timeout is 15 minutes on every in-scope
+system" are different claims, and only the second satisfies a control.
+
+This is the third instance of one idea in this product:
+- `platform_only` versus `customer_system`: coverage of the vendor's own
+  platform is not coverage of the customer's systems (CLAUDE.md's hard
+  rule);
+- `assists`: partial coverage, credited like full ("`coverage_basis =
+  assists` is credited exactly like `customer_system`", below);
+- a defined parameter, which is not a satisfied control.
+
+The list states what it evidences, in its own description: "This list
+evidences that a value was defined. It is not evidence that the value is
+enforced on any system." Nothing treats it as a satisfied control: a
+linked list changes no control status or score (L.4).
+
 ### The rule that nothing is met without evidence has no code behind it
 
 **Found 2026-11-02. Recorded, not scoped.** CLAUDE.md's first hard rule
