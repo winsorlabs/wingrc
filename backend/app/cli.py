@@ -830,6 +830,78 @@ def lists_import_cmd(
         session.close()
 
 
+@app.command(name="lists-seed-odp")
+def lists_seed_odp_cmd(
+    org_id: str = typer.Option(
+        ..., help="The MSP's org, where templates live. Required: there is no default."
+    ),
+    apply: bool = typer.Option(False, help="Write it (default: dry-run only)"),
+    overwrite_edit: str | None = typer.Option(
+        None, help="Replace a person's edit of the template: odp-dod-rev3@vN, as the dry run says."
+    ),
+) -> None:
+    """Write the ODP list template (odp_template.py) into the MSP's org from
+    the committed extraction of the DoD memo. Dry-run by default.
+
+    Creates the template, writes a new version when the extraction or the
+    glosses changed, and otherwise writes nothing. A version a person saved
+    is a conflict: left alone unless that exact edit is named. `--org-id`
+    is required for the reason `lists-import` gives: a command that writes
+    templates names its target, and prints the org's name before acting.
+    """
+    import uuid as _uuid
+
+    from . import odp_template
+    from .models import Organization
+    from .rls import set_current_org
+
+    if overwrite_edit and not apply:
+        typer.echo("--overwrite-edit only means something with --apply", err=True)
+        raise typer.Exit(2)
+    session = SessionLocal()
+    try:
+        try:
+            target = _uuid.UUID(org_id)
+        except ValueError:
+            typer.echo(f"--org-id {org_id!r} is not a UUID", err=True)
+            raise typer.Exit(2) from None
+        set_current_org(session, target)
+        org = session.get(Organization, target)
+        if org is None:
+            typer.echo(f"No organization {target}", err=True)
+            raise typer.Exit(2)
+        typer.echo(f"Target org: {org.name} ({target}){' -- WRITING' if apply else ''}")
+        fixture = odp_template.load_fixture()
+        guidance = odp_template.guidance_rows(fixture)
+        typer.echo(
+            f"Source: {fixture['source']['file']} (SHA-256 {fixture['source']['sha256'][:12]}...), "
+            f"{len(fixture['rows'])} ODPs, {len(guidance)} given as guidance: {', '.join(guidance)}"
+        )
+        p = odp_template.plan(session, target)
+        typer.echo(f"  {odp_template.LIST_KEY}: {p.action}"
+                   + (f" ({', '.join(p.changed)})" if p.changed else ""))
+        if p.action == "conflict":
+            who = (p.current.provenance or {}).get("saved_by") or "a person"
+            typer.echo(
+                f"  CONFLICT: {p.edit_ref} was saved by {who}. "
+                f"{'Left as it is.' if apply and not overwrite_edit else ''}"
+                f" To replace it, re-run with --apply --overwrite-edit {p.edit_ref}."
+            )
+        if not apply:
+            typer.echo("Dry-run only. Re-run with --apply to write.")
+            return
+        try:
+            v = odp_template.apply(session, target, p, overwrite_edit)
+        except odp_template.SeedRefused as e:
+            session.rollback()
+            typer.echo(f"Refused: {e}", err=True)
+            raise typer.Exit(2) from None
+        session.commit()
+        typer.echo(f"Wrote version {v.version_number}." if v else "Nothing to write.")
+    finally:
+        session.close()
+
+
 @app.command(name="review-cycles-detach-unattested")
 def review_cycles_detach_unattested_cmd(
     org_id: str = typer.Option(
