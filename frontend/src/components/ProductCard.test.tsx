@@ -81,12 +81,12 @@ function judged(over: Partial<JudgedObjective>): JudgedObjective {
   return {
     control_state_id: "cs1", control_id: "AC.L2-3.1.2", objective_key: "a",
     objective_text: "Transactions are limited.", status: "met", default: "needs_review",
-    choice: "needs_review", becomes: "needs_review", ...over,
+    choice: "needs_review", becomes: "needs_review", practice_deducts_now: false, ...over,
   };
 }
 
-function preview(objectives: JudgedObjective[], now = 104, after = 101): ActivationPreview {
-  return { sprs_now: now, sprs_after: after, objectives };
+function preview(objectives: JudgedObjective[], now = 104, after = 101, starting: string[] = []): ActivationPreview {
+  return { sprs_now: now, sprs_after: after, objectives, practices_starting: starting };
 }
 
 function mountInactive() {
@@ -118,7 +118,7 @@ describe("ProductCard activation", () => {
         judged({}),
         judged({ control_state_id: "cs2", objective_key: "b", status: "not_applicable", default: "keep",
                  choice: "keep", becomes: "not_applicable" }),
-      ]),
+      ], 104, 101, ["AC.L2-3.1.2"]),
     );
     const onActivated = mountInactive();
     fireEvent.click(screen.getByRole("button", { name: "Activate" }));
@@ -130,7 +130,7 @@ describe("ProductCard activation", () => {
       .toBe("needs_review");
     expect((within(dialog).getByLabelText("What AC.L2-3.1.2[b] becomes") as HTMLSelectElement).value)
       .toBe("keep");
-    expect(within(dialog).getByText("SPRS goes from 104 to 101 (down 3).")).toBeTruthy();
+    expect(within(dialog).getByText("SPRS goes from 104 to 101 (down 3): AC.L2-3.1.2 would score as not met.")).toBeTruthy();
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(api.activateProduct).not.toHaveBeenCalled();
@@ -155,6 +155,41 @@ describe("ProductCard activation", () => {
     expect(within(dialog).getByRole("heading").textContent).toBe(
       "Activating Heimdal would change an objective you judged",
     );
+  });
+
+  // The two screenshots of 2026-11-03 read side by side: one downgrade cost
+  // 3 points, three cost none. The reason is per practice, and the server's.
+  it("says why the score stays: the practices already score as not met", async () => {
+    vi.mocked(api.previewActivation).mockResolvedValue(
+      preview([
+        judged({ control_state_id: "1", control_id: "AU.L2-3.3.1", practice_deducts_now: true }),
+        judged({ control_state_id: "2", control_id: "AU.L2-3.3.1", objective_key: "b", practice_deducts_now: true }),
+        judged({ control_state_id: "3", control_id: "AU.L2-3.3.2", status: "partial", practice_deducts_now: true }),
+        judged({ control_state_id: "4", control_id: "IR.L2-3.6.1", status: "inherited", default: "keep",
+                 choice: "keep", becomes: "inherited", practice_deducts_now: true }),
+      ], -201, -201),
+    );
+    mountInactive();
+    fireEvent.click(screen.getByRole("button", { name: "Activate" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(
+      "SPRS stays at -201: AU.L2-3.3.1 and AU.L2-3.3.2 already score as not met.",
+    )).toBeTruthy();
+  });
+
+  it("names what costs points and what already did, when both happen", async () => {
+    vi.mocked(api.previewActivation).mockResolvedValue(
+      preview([
+        judged({ control_state_id: "1", control_id: "AU.L2-3.3.1", practice_deducts_now: true }),
+        judged({ control_state_id: "2", control_id: "MA.L2-3.7.1" }),
+      ], -201, -204, ["MA.L2-3.7.1"]),
+    );
+    mountInactive();
+    fireEvent.click(screen.getByRole("button", { name: "Activate" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(
+      "SPRS goes from -201 to -204 (down 3): MA.L2-3.7.1 would score as not met. AU.L2-3.3.1 already does.",
+    )).toBeTruthy();
   });
 
   it("asks the server for the score of a new choice, and waits for it before activating", async () => {

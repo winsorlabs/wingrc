@@ -571,7 +571,10 @@ Full model set: `Framework → Control → AssessmentObjective → ControlState`
 **SPRS scoring** (`assessment.py:compute_sprs`): groups objectives by control,
 applies worst-objective-wins rollup per control, deducts weight for any
 non-passing control (statuses: `not_met`, `partial`, `pending_evidence`,
-`needs_review`). `met`, `inherited`, `not_applicable` do not deduct.
+`needs_review`, and `not_applicable`). `met` and `inherited` do not
+deduct. That `not_applicable` deducts is tested; whether CMMC scores it
+as met is open (`docs/roadmap.md`, "The score treats not applicable as
+not met").
 `engine.py:recompute_sprs` is the single write path for
 `assessment.sprs_score` — every mutation that can change a control's status
 routes through it: assessment creation (`start_assessment`), every product

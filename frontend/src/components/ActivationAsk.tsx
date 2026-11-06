@@ -18,11 +18,31 @@ import { STATUS_CLASS, STATUSES } from "./ObjectiveRow";
 
 const LABEL: Record<string, string> = Object.fromEntries(STATUSES.map((s) => [s.value, s.label]));
 
-function scoreLine(now: number | null, after: number | null): string {
+function names(keys: string[]): string {
+  return keys.length < 2 ? keys.join("") : `${keys.slice(0, -1).join(", ")} and ${keys[keys.length - 1]}`;
+}
+
+// The number and its reason, both the server's (Jarrod, 2026-11-05: a
+// score that moves for one downgrade and not for three looks arbitrary).
+// SPRS deducts per practice, so a downgrade costs nothing where the
+// practice already loses its points.
+function scoreLine(preview: ActivationPreview): string {
+  const { sprs_now: now, sprs_after: after } = preview;
   if (now === null || after === null) return "";
-  if (after === now) return `SPRS stays at ${now}.`;
+  const already = [
+    ...new Set(preview.objectives.filter((o) => o.becomes !== o.status && o.practice_deducts_now).map((o) => o.control_id)),
+  ].sort();
+  if (after === now) {
+    if (already.length === 0) return `SPRS stays at ${now}.`;
+    return `SPRS stays at ${now}: ${names(already)} already ${already.length === 1 ? "scores" : "score"} as not met.`;
+  }
   const by = Math.abs(after - now);
-  return `SPRS goes from ${now} to ${after} (${after > now ? "up" : "down"} ${by}).`;
+  let line = `SPRS goes from ${now} to ${after} (${after > now ? "up" : "down"} ${by})`;
+  line += after < now && preview.practices_starting.length > 0
+    ? `: ${names(preview.practices_starting)} would score as not met.`
+    : ".";
+  if (already.length > 0) line += ` ${names(already)} already ${already.length === 1 ? "does" : "do"}.`;
+  return line;
 }
 
 export function ActivationAsk({
@@ -127,7 +147,7 @@ export function ActivationAsk({
           </table>
         </div>
         <p className="activation-ask-score" aria-live="polite">
-          {scoring ? "Working out the score for these choices…" : scoreLine(preview.sprs_now, preview.sprs_after)}
+          {scoring ? "Working out the score for these choices…" : scoreLine(preview)}
         </p>
         {error && <div className="doc-notice doc-notice-error">{error}</div>}
         <div className="activation-ask-actions">

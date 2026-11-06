@@ -179,12 +179,14 @@ class JudgedObjectiveOut(BaseModel):
     default: Literal["keep", "needs_review"]
     choice: Literal["keep", "needs_review"]
     becomes: str
+    practice_deducts_now: bool
 
 
 class ActivationPreviewOut(BaseModel):
     sprs_now: int | None
     sprs_after: int | None
     objectives: list[JudgedObjectiveOut]
+    practices_starting: list[str]
 
 
 class ProductOut(BaseModel):

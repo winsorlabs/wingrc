@@ -1875,12 +1875,16 @@ export interface JudgedObjective {
   default: ActivationChoice;
   choice: ActivationChoice;
   becomes: string;
+  /** Its practice already loses its points, so a downgrade here costs nothing. */
+  practice_deducts_now: boolean;
 }
 
 export interface ActivationPreview {
   sprs_now: number | null;
   sprs_after: number | null;
   objectives: JudgedObjective[];
+  /** Practices that lose their points only after these choices. */
+  practices_starting: string[];
 }
 
 export interface JudgedDecision {
