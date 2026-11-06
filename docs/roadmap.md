@@ -15133,6 +15133,37 @@ designed flow. The list is held to the history the move writes:
 `test_version_move_tells_what_it_set_to_needs_review_and_why` requires
 every `needs_review` history row and nothing else.
 
+#### The score says why (2026-11-05)
+
+**Jarrod, on the two screenshots side by side:** one Met to Needs Review
+cost 3 points, and three downgrades (two Met, one Partial) cost nothing.
+Both were right, but the screen gave no way to know it, and read
+together they looked arbitrary. The entry exists because the score moved
+for reasons nobody could see; a number without its reason fixed half
+of that.
+
+**The cause, checked before it was written.** SPRS deducts per practice:
+a practice loses its whole weight when any objective is not `met` or
+`inherited` (`assessment.deducting_controls`, which `compute_sprs` now
+calls). On that bench, AU.L2-3.3.1 has objectives [a] to [f], and only
+[a] and [b] were set to Met, so it already lost its 5. AU.L2-3.3.2[a]
+was Partial, which deducts by itself. MA.L2-3.7.1's one objective was
+Met, so its practice scored, and the downgrade cost its 3.
+
+**What it says now.** The preview reads which practices deduct before,
+and again inside the savepoint after the choices
+(`engine.activation_preview`): each objective carries
+`practice_deducts_now`, and `practices_starting` names the practices
+that lose their points only after these choices. The client writes:
+- "SPRS stays at -201: AU.L2-3.3.1 and AU.L2-3.3.2 already score as not
+  met."
+- "SPRS goes from -201 to -204 (down 3): MA.L2-3.7.1 would score as not
+  met." with "AU.L2-3.3.1 already does." when both happen.
+
+A kept objective is not named; nothing about it changed.
+`test_preview_says_which_practices_already_deduct` holds both fields to
+the run that computes the score.
+
 ### The version move could ask, as activation does -- not started
 
 **Recorded 2026-11-05. Not warranted yet.** Since the move now says
@@ -15219,6 +15250,54 @@ time someone needs it. For the three cases:
 - **A log** is read before anything recreates its container.
 - **Screenshots** go in an artifact, which can be reviewed from
   anywhere.
+
+### Mojibake from a shell heredoc: where the check stops -- recorded 2026-11-05
+
+**The cause, each time:** UTF-8 text passed through a Windows code page
+on wl-dt26 and was written back, so each non-ASCII character became two
+or three (an em dash as `U+00E2 U+20AC U+201D`). The instances:
+- **2026-10-31:** 611628a's roadmap entry and the memory index. These
+  led to CI's `No mojibake` step (c28c563).
+- **2026-11-03:** `ProductCard.test.tsx`'s ellipsis, found by a failing
+  test on the bench before it was pushed (the flake entry above).
+- **2026-11-05:** the screenshot artifact's captions ("1366" and "768"
+  around a broken times sign, and a broken minus before 201), and again
+  in two memory files, one of them a line written that day. Jarrod
+  found the artifact's; the memory files were found looking for more.
+
+**Where the check stops.** It is worth knowing, not worth another check:
+- **Tracked files only.** An artifact, a memory file, a PR body or a
+  scratch script is none, and the artifact's came from a scratch script.
+- **Two signatures only:** the en or em dash and the arrow, the two seen
+  when it was written. The artifact's times sign (`U+00C3 U+2014`) and
+  minus (`U+00E2 U+02C6 U+2019`) are neither, so a tracked file carrying
+  them would also pass.
+
+**What did not catch it: reading it.** The Git Bash terminal decodes the
+damaged text back, so a damaged file printed with `grep` or Python can
+look right. The scratch script's captions printed as a correct times
+sign and minus, and the code points showed the damage. Check code points
+(`ord`), not what the terminal shows. The page now also declares its
+charset and carries character references, so it reads the same however
+it is decoded.
+
+### The score treats not applicable as not met, and CLAUDE.md said it did not -- recorded 2026-11-05
+
+**Found while checking the activation dialog's score reason.**
+`compute_sprs` satisfies a practice only when every objective is `met`
+or `inherited`, so `not_applicable` deducts. That is deliberate and
+tested since the first engine commit (4f87cfd,
+`test_sprs_not_applicable_counts_as_unmet`: "the assessor must justify
+scoping out"). CLAUDE.md said since 2026-07-11 that `not_applicable`
+does not deduct. CLAUDE.md now states what the code does.
+
+**The open question is which is correct, and it is not settled here.**
+My understanding is that the CMMC scoring rule (32 CFR 170.24) scores a
+not-applicable objective as met. If so, every tenant with an N/A
+objective is scored low by that practice's weight. By the hard rule,
+that is checked against the authoritative text before any code moves,
+and a change would move live scores, so it would be its own slice with
+a dry run per assessment. Nothing changed.
 
 ### The rule that nothing is met without evidence has no code behind it
 

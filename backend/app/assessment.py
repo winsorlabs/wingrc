@@ -168,19 +168,29 @@ def compute_sprs(
     {met, inherited}. Any other status causes the full sprs_weight to deduct.
     Controls with no objectives in the lookup are skipped.
     """
+    deducting = deducting_controls(objectives_by_control, objective_statuses)
+    return SPRS_MAX - sum(w for c, w in control_weights.items() if c in deducting)
+
+
+def deducting_controls(
+    objectives_by_control: dict[str, list[str]],
+    objective_statuses: dict[str, str],
+) -> set[str]:
+    """The controls compute_sprs deducts: any objective not met or inherited.
+
+    Shared with the activation screen, which says which practices already
+    deduct when a downgrade leaves the score where it was.
+    """
     _satisfied: set[str] = {ControlStatus.MET, ControlStatus.INHERITED}
-    deductions = 0
-    for control_id, weight in control_weights.items():
-        objectives = objectives_by_control.get(control_id, [])
-        if not objectives:
-            continue
-        all_satisfied = all(
+    return {
+        control_id
+        for control_id, objectives in objectives_by_control.items()
+        if objectives
+        and not all(
             objective_statuses.get(obj_id, ControlStatus.NOT_MET) in _satisfied
             for obj_id in objectives
         )
-        if not all_satisfied:
-            deductions += weight
-    return SPRS_MAX - deductions
+    }
 
 
 def magic_loop_updates(

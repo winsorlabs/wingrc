@@ -9,6 +9,10 @@ import type { SnapshotStatus } from "../types";
 
 const REFRESH_MS = 60 * 60 * 1000;
 
+// msp_admin need not be the operator, or have the repo: the banner says
+// who acts, and names the operator's page last (Jarrod, 2026-11-05).
+const OPERATOR_PAGE = "The operator's page is \"Local snapshots\" in docs/deployment.md.";
+
 export function snapshotBannerLines(s: SnapshotStatus): string[] {
   if (!s.attention) return [];
   switch (s.status) {
@@ -16,10 +20,13 @@ export function snapshotBannerLines(s: SnapshotStatus): string[] {
       return [
         `The newest local snapshot, ${s.newest}, is ${Math.floor(s.age_hours ?? 0)} hours old ` +
           `(limit ${s.max_age_hours}); the snapshot job may have stopped. ` +
-          "See docs/deployment.md, \"Local snapshots\".",
+          `Whoever runs this server should check it. ${OPERATOR_PAGE}`,
       ];
     case "none":
-      return ["There is no local snapshot of this deployment. See docs/deployment.md, \"Local snapshots\"."];
+      return [
+        "There is no local snapshot of this deployment. Whoever runs this server should set up " +
+          `or check the snapshot job. ${OPERATOR_PAGE}`,
+      ];
     case "invalid":
       return ["The newest local snapshot is dated in the future; check the host's clock."];
     default:
