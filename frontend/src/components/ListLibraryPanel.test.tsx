@@ -78,7 +78,7 @@ function summary(over: Partial<LibraryListSummary>): LibraryListSummary {
   return {
     id: "x", list_key: "x", title: "x", is_template: true, source_ref: null, projection_view_id: null,
     control_keys: [], version_number: 1, column_count: 2, row_count: 1, updated_at: WHEN, saved_by: null,
-    cause: "first_import", merged_from: [], has_changelog: false, example_rows: 0, adopted_from: null,
+    cause: "first_import", merged_from: [], has_changelog: false, example_rows: 0, unentered_rows: 0, adopted_from: null,
     adopted_copies: 0, ...over,
   };
 }
@@ -103,7 +103,7 @@ function version(n: number, rows: string[][], over: Partial<LibraryListVersion> 
     id: `v${n}`, version_number: n, title: "Risk Register", description: "Identified risks", responsible: null,
     review_cadence: "Annually", columns: ["Risk ID", "Status"], reference_columns: [], rows, provenance: {},
     created_at: WHEN,
-    saved_by: null, cause: "first_import", example_rows: 0, ...over,
+    saved_by: null, cause: "first_import", example_rows: 0, unentered_rows: 0, ...over,
   };
 }
 
@@ -661,6 +661,8 @@ describe("adopting templates (L.7)", () => {
     expect(update.compareDocumentPosition(rows) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(rows.compareDocumentPosition(where) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByText(/All 2 rows are still the template's examples, with a fill-in/)).toBeTruthy();
+    // Its cells carry the markers, so the legend explaining them is shown.
+    expect(screen.getByText(/marks a template example to replace/)).toBeTruthy();
     expect(within(openHistorySync()).getByText(
       /Copied by Ada Adopter from the template Risk Register at version 1 on 2026-10-10\./,
     )).toBeTruthy();
@@ -799,7 +801,7 @@ describe("a list with reference columns", () => {
   const odp = version(1, [
     ["03.01.01.f.02", "How long an account can sit unused.", "", "at most 90 days"],
     ["03.16.01", "Which principles guide building it.", "", "Guidance: At a minimum, documentation."],
-  ], { title: "Organization-Defined Parameters", columns: COLS, reference_columns: REFS });
+  ], { title: "Organization-Defined Parameters", columns: COLS, reference_columns: REFS, unentered_rows: 2 });
 
   async function openOdp(current = odp) {
     vi.mocked(api.listLibrary).mockResolvedValue([summary({ id: "odp", title: "Organization-Defined Parameters" })]);
@@ -841,7 +843,7 @@ describe("a list with reference columns", () => {
     await openOdp(version(2, [
       ["03.01.01.f.02", "g", "60 days", "at most 90 days"],
       ["03.16.01", "g", "", "Guidance: x"],
-    ], { columns: COLS, reference_columns: REFS }));
+    ], { columns: COLS, reference_columns: REFS, unentered_rows: 1 }));
     expect(screen.getByLabelText("Which column is yours").textContent).toMatch(/^1 of 2 defined\./);
     expect(screen.getByText("60 days")).toBeTruthy();
     expect(screen.getAllByText("Not yet defined")).toHaveLength(1);
@@ -869,5 +871,32 @@ describe("a list with reference columns", () => {
         "v1", "",
       ),
     );
+  });
+
+  it("shows no placeholder legend on a list with none of its markers", async () => {
+    await openOdp();
+    expect(screen.queryByText(/marks a template example to replace/)).toBeNull();
+    expect(screen.queryByText(/is known absent for the stated/)).toBeNull();
+  });
+
+  it("says a copy is offered only once every value is defined, and stops saying it when they are", async () => {
+    await openOdp();
+    expect(screen.getByLabelText("Which column is yours").textContent).toMatch(
+      /It can be offered as evidence only once every value is defined\.$/,
+    );
+    cleanup();
+    await openOdp(version(2, [
+      ["03.01.01.f.02", "g", "60 days", "at most 90 days"],
+      ["03.16.01", "g", "Per our SDLC standard", "Guidance: x"],
+    ], { columns: COLS, reference_columns: REFS, unentered_rows: 0 }));
+    expect(screen.getByLabelText("Which column is yours").textContent).toMatch(/^2 of 2 defined\./);
+    expect(screen.queryByText(/only once every value is defined/)).toBeNull();
+  });
+
+  it("says when a list without reference columns has a row with nothing entered", async () => {
+    await openOdp(version(2, [["2026-10-01", "A. Visitor"], ["", ""]], { unentered_rows: 1 }));
+    expect(screen.getByText(
+      "1 of 2 rows have nothing entered. A list counts as filled in, and can be offered as evidence, only when every row has something entered.",
+    )).toBeTruthy();
   });
 });

@@ -66,6 +66,15 @@ def test_populated_means_rows_and_none_of_them_an_example():
     assert not list_library.is_populated(
         [["2026-10-01", "A", "B"], ["Acme", "[CUSTOMER_NAME] SOC", ""]]
     )
+    # Entered content, not only no markers (2026-11-06): a row with
+    # nothing in it is not content, and a stated absence is.
+    assert not list_library.is_populated([["2026-10-01", "A", "B"], ["", " ", ""]])
+    assert list_library.is_populated([["2026-10-01", "", ""], ["", "B", ""]])
+    assert list_library.is_populated([["[PLACEHOLDER - not collected]", "", ""]])
+    # A reference column is never anyone's entry.
+    cols, refs = ["ID", "Ours"], ["ID"]
+    assert not list_library.is_populated([["03.01.01", ""]], cols, refs)
+    assert list_library.is_populated([["03.01.01", "90 days"]], cols, refs)
 
 
 def test_a_copy_never_shares_its_templates_key():

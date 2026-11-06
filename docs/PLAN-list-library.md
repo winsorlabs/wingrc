@@ -349,7 +349,9 @@ table is settled that way. **And it must offer only populated lists,
 using `list_library.is_populated`** (defined in L.7 from section 5's
 recommendation: rows, none still carrying an uppercase fill-in token such
 as `[PLACEHOLDER]` or `[CUSTOMER_NAME]`) -- not a
-second rule.
+second rule. *Since 2026-11-06 it also asks that every row has something
+entered in a column a person may edit (the ODP list never had markers;
+`docs/roadmap.md`, "The ODP list").*
 
 **L.5 — review cadence.** Read from the template's row 5, reusing N.3's
 notifier rather than building a second one. Deliberately after L.3/L.4:

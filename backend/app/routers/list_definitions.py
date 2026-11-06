@@ -113,6 +113,8 @@ class ListSummaryOut(BaseModel):
     merged_from: list[str]
     has_changelog: bool
     example_rows: int
+    # Rows with nothing entered where a person may edit (list_library.unentered_rows).
+    unentered_rows: int
     adopted_from: AdoptedFromOut | None = None
     adopted_copies: int = 0  # a template's copies, in every org
 
@@ -136,6 +138,8 @@ class ListVersionOut(BaseModel):
     # Rows still carrying a fill-in token such as [PLACEHOLDER] or
     # [CUSTOMER_NAME] (list_library.is_populated).
     example_rows: int
+    # Rows with nothing entered where a person may edit (list_library.unentered_rows).
+    unentered_rows: int
 
 
 class MergeColumnOut(BaseModel):
@@ -263,6 +267,9 @@ def _version_out(v: ListVersion, cause: str) -> ListVersionOut:
         rows=[list(r) for r in v.rows], provenance=v.provenance or {},
         created_at=v.created_at, saved_by=_saved_by(v), cause=cause,
         example_rows=list_library.example_rows(v.rows),
+        unentered_rows=list_library.unentered_rows(
+            v.rows, v.columns, v.reference_columns or []
+        ),
     )
 
 
@@ -333,6 +340,9 @@ def list_definitions(
                 merged_from=list((v.provenance or {}).get("merged_from") or []),
                 has_changelog=bool((v.provenance or {}).get("changelogs")),
                 example_rows=list_library.example_rows(v.rows),
+                unentered_rows=list_library.unentered_rows(
+                    v.rows, v.columns, v.reference_columns or []
+                ),
                 adopted_from=_adopted_from(d, history, heads),
                 adopted_copies=sum(x.copies for x in spread.get(d.id, [])),
             )

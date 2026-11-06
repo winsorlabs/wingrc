@@ -431,6 +431,15 @@ export function distributionText(dist: TemplateDistribution[]): string | null {
   return `Adopted by ${total} org${total === 1 ? "" : "s"}: ${parts.join(", ")}.${own}`;
 }
 
+/** A list whose rows have no fill-in left, but some row has nothing entered
+ * (backend list_library.unentered_rows). Not for a list with reference
+ * columns: its own notice counts what is defined. */
+export function unenteredRowsText(unentered: number, rowCount: number): string | null {
+  if (unentered === 0) return null;
+  const which = unentered === rowCount ? (rowCount === 1 ? "Its row has" : `All ${rowCount} rows have`) : `${unentered} of ${rowCount} rows have`;
+  return `${which} nothing entered. A list counts as filled in, and can be offered as evidence, only when every row has something entered.`;
+}
+
 /** Why a list is not yet filled in (backend list_library.is_populated). */
 export function exampleRowsText(exampleRows: number, rowCount: number): string | null {
   if (exampleRows === 0) return null;

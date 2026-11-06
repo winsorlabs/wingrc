@@ -136,14 +136,48 @@ def example_rows(rows: Sequence[Sequence[str]]) -> int:
     return sum(1 for r in rows if is_example_row(r))
 
 
-def is_populated(rows: Sequence[Sequence[str]]) -> bool:
-    """PLAN section 5's definition, stated once: a list with rows, none of
-    which is still a template's example. Only a populated list may be
-    offered as evidence -- list_evidence.not_offered_reason uses this, and
-    nothing restates it (L.4). An adopted copy starts unpopulated because
-    its rows are the template's examples, and becomes a candidate when the
-    org has filled them in."""
-    return bool(rows) and example_rows(rows) == 0
+def is_entered(cell: str) -> bool:
+    """A person put a value here: not blank, and no fill-in token left.
+    `[PLACEHOLDER - reason]` is entered -- a stated absence is a statement."""
+    return bool(cell.strip()) and not EXAMPLE_TOKEN.search(cell)
+
+
+def unentered_rows(
+    rows: Sequence[Sequence[str]],
+    columns: Sequence[str] = (),
+    reference_columns: Sequence[str] = (),
+) -> int:
+    """Rows with nothing entered in any cell a person may edit. A reference
+    column (migration 0073) is the template source's text, never anyone's
+    entry, so it does not count: an ODP row with its DoD value and no
+    value of ours has nothing entered."""
+    refs = {columns.index(c) for c in reference_columns if c in columns}
+    return sum(
+        1 for r in rows
+        if not any(is_entered(cell) for i, cell in enumerate(r) if i not in refs)
+    )
+
+
+def is_populated(
+    rows: Sequence[Sequence[str]],
+    columns: Sequence[str] = (),
+    reference_columns: Sequence[str] = (),
+) -> bool:
+    """PLAN section 5's definition, stated once: a list with rows, every one
+    of which has content a person entered, and none of which is still a
+    template's example. Only a populated list may be offered as evidence --
+    list_evidence.not_offered_reason uses this, and nothing restates it
+    (L.4; `tests/test_list_evidence.py`'s flip test holds that).
+
+    It asks for presence of entered content, not absence of markers
+    (2026-11-06). Absence of markers was a proxy that held only for lists
+    that began with them: the ODP list has no marker anywhere, so an
+    unfilled copy read as populated (`tests/test_odp_list.py`)."""
+    return (
+        bool(rows)
+        and example_rows(rows) == 0
+        and unentered_rows(rows, columns, reference_columns) == 0
+    )
 
 
 def import_cause(
