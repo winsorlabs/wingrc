@@ -15652,6 +15652,64 @@ linked list changes no control status or score (L.4).
 - **Teardown:** the host's lists match their before-lists; live was
   untouched.
 
+### Snapshot retention kept about 7 of 14, while saying it kept 14 -- fixed 2026-11-06
+
+**Found 2026-11-06**, taking the snapshot before the #81–#88 deploy. The
+run printed `rotated out 20261103T025845Z (retention keeps 14)` while only
+7 snapshots existed.
+
+**The cause:** `snapshots.plan_space` kept
+`existing[len(existing) - (keep - 1):]`. Below `keep - 1` snapshots the
+start is negative, Python counts it from the end, and the "kept" list
+came out short. With `keep=14` and *n* already present:
+- **n ≤ 6:** nothing rotated.
+- **n from 7 to 12:** 2n − 13 rotated. At 7, one went; at 8, three.
+- **n ≥ 13:** correct.
+
+So a deployment settles at about 7 surviving snapshots, not 14, from the
+seventh one on. The cap check had the same defect: it counted the bytes
+of the short list, not the snapshots that actually stay.
+
+**What was lost, and what was not:**
+- **Restore points, not data.** A snapshot is a copy. The database and
+  object store it copied were never touched.
+- **Exactly one so far: `20261103T025845Z`**, Jarrod's first, taken by
+  hand. It was deleted at 14:00:57 UTC on 2026-11-06 by the run taken
+  before the deploy. This is reconstructed from the ids and the
+  arithmetic, because no snapshot log was readable. The cron's log path
+  in `docs/deployment.md` does not exist on the host. The runs before it
+  started with 3, 4, 5 and 6 snapshots and rotated none, and the 7 on
+  disk match `/health`'s count of 7 before the run.
+- **Not recoverable.** `rmtree`, same host, no other copy.
+- **Bounded:** under the bug, a deployment keeps about 7. It would have
+  started losing one or more every night from the next run on.
+
+**Correction to the premise as briefed:** the brief said the first
+nightly run after 2026-11-03 was already deleting one a night. It was
+not. Rotation only starts once 7 exist, which on live was the 2026-11-06
+14:00 run. The point it was making stands, though: the run said
+**"retention keeps 14"**. That was true about configuration (`keep` was
+14) and false about behaviour (it kept 7). The log line printed the
+setting, never the outcome, so it could not show the difference.
+
+**The fix:** clamp the start at zero. `test_plan_rotates_only_beyond_keep_at_every_count`
+writes out the counts 0, 1, 7, 8, 12, 13, 14 and 15, with the expected
+rotation for each, rather than deriving them from `keep`.
+`test_plan_counts_every_kept_snapshot_against_the_cap_below_keep` holds
+the cap's half. Against the old line, 7, 8, 12 and the cap case fail,
+while 0, 1, 13, 14 and 15 pass on both, as they should. Every other
+computed slice index in `snapshots.py` was grepped. There is one other
+slice, `_first`'s `problems[:n]`, which starts at zero. The same pattern
+elsewhere, `document_diff.py`'s `run[len(run) - trail:]`, is reached only
+when the run is longer than `lead + trail + 1`, so its start cannot go
+negative.
+
+**The log line now says what the run did.** It counts the finished sets
+on disk after rotation, beside the setting:
+`8 snapshot(s) kept (keep is 14)`. The count is read from the directory,
+not from the plan, so it reports the outcome even if the plan is wrong
+again.
+
 ### The rule that nothing is met without evidence has no code behind it
 
 **Found 2026-11-02. Recorded, not scoped.** CLAUDE.md's first hard rule
