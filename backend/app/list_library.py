@@ -58,7 +58,9 @@ from .models import (
     ListVersion,
 )
 
-CONTENT_FIELDS = ("title", "description", "responsible", "review_cadence", "columns", "rows")
+CONTENT_FIELDS = (
+    "title", "description", "responsible", "review_cadence", "columns", "reference_columns", "rows",
+)
 
 
 def content_of(version: ListVersion) -> dict:
@@ -68,8 +70,34 @@ def content_of(version: ListVersion) -> dict:
         "responsible": version.responsible or "",
         "review_cadence": version.review_cadence or "",
         "columns": list(version.columns),
+        "reference_columns": list(version.reference_columns or []),
         "rows": [list(r) for r in version.rows],
     }
+
+
+def reference_change(base: ListVersion, columns: list[str], rows: list[list[str]]) -> str | None:
+    """Why an edit may not be saved over `base`, or None. A version that
+    names reference columns (migration 0073) keeps its columns, its rows'
+    count and order, and every cell in those columns: they come from the
+    template's source, and only the command that writes the template, or a
+    copy taking a newer template version, writes them. Held by
+    test_odp_list.py's test_an_edit_cannot_change_a_reference_cell."""
+    refs = list(base.reference_columns or [])
+    if not refs:
+        return None
+    if columns != list(base.columns):
+        return "This list's columns come from its template and cannot be changed here."
+    if len(rows) != len(base.rows):
+        return "This list's rows come from its template: rows cannot be added or removed here."
+    at = [list(base.columns).index(c) for c in refs]
+    for i, (mine, theirs) in enumerate(zip(rows, base.rows, strict=True)):
+        for c in at:
+            if mine[c] != theirs[c]:
+                return (
+                    f"Row {i + 1}'s {base.columns[c]} is reference text from the template's "
+                    "source and cannot be changed here."
+                )
+    return None
 
 
 # Why a list version exists. Stored on every version written from
@@ -170,6 +198,7 @@ def _planned_content(s: SheetResult) -> dict:
         "responsible": s.responsible,
         "review_cadence": s.review_cadence,
         "columns": list(s.columns),
+        "reference_columns": [],
         "rows": [list(r) for r in s.rows],
     }
 
@@ -190,7 +219,10 @@ def create_version(
         org_id=definition.org_id,
         version_number=next_number,
         provenance=provenance,
-        **{k: content[k] for k in CONTENT_FIELDS},
+        **{k: content[k] for k in CONTENT_FIELDS if k != "reference_columns"},
+        # Only the ODP template names any (migration 0073); every other
+        # writer's content may leave it out.
+        reference_columns=list(content.get("reference_columns", [])),
     )
     session.add(version)
     session.flush()

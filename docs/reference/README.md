@@ -71,3 +71,8 @@ applies to what is read from it.
 
 | File | Title | Publisher | Version / date | Source URL | Retrieved | SHA-256 |
 |---|---|---|---|---|---|---|
+| `OrgDefinedParmsNISTSP800-171.pdf` | Department of Defense Organization-Defined Parameters for National Institute of Standards and Technology Special Publication 800-171 Revision 3 | DoD CIO; memorandum signed by David W. McKeown, Performing the Duties of the Deputy DoD CIO for Cybersecurity | Signed 10 April 2025; cleared for open publication 15 April 2025 (DoD Office of Prepublication and Security Review, stamp on page 1); 53 pages | Not recorded: supplied by Jarrod, committed 2026-11-05 | 2026-11-05 | `fd83ecf4e0998f0b29d5e6f222e7364ce67eb6fdedb5ac4f34ec4310ba495916` |
+
+Data derived from the ODP memo: `backend/app/seeds/odp_dod_rev3.json`
+(by `scripts/odp/extract_odp.py`), which the ODP list template cites
+(`backend/app/odp_template.py`).

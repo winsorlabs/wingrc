@@ -161,6 +161,35 @@ function CellText({ value }: { value: string }) {
   return value ? <>{value}</> : <span className="list-cell-empty">—</span>;
 }
 
+// A list with reference columns (the ODP list, migration 0073): the
+// template's source writes those, and the remaining column is the
+// organization's own -- the value in force. The screen has to make that
+// unmistakable to someone who has never seen it, so the difference is
+// carried in words as well as colour: each header says which it is, an
+// empty cell of ours says "Not yet defined", and only ours takes input.
+const GUIDANCE = "Guidance:";
+
+function RefCell({ value }: { value: string }) {
+  return (
+    <>
+      {value.startsWith(GUIDANCE) && <span className="list-guidance-tag">Guidance, not a specified value</span>}
+      <span className="list-cell-ref-text">{value}</span>
+    </>
+  );
+}
+
+function OursCell({ value }: { value: string }) {
+  return value ? <>{value}</> : <span className="list-cell-undefined">Not yet defined</span>;
+}
+
+function ColumnRole({ reference }: { reference: boolean }) {
+  return reference ? (
+    <span className="list-col-role">Reference · cannot be edited here</span>
+  ) : (
+    <span className="list-col-role list-col-role-ours">Yours to define · the value in force here</span>
+  );
+}
+
 function PracticeChips({
   keys,
   onPick,
@@ -281,18 +310,32 @@ interface ConflictState {
 /** Where this list is evidence, and whether it can be (L.4). A link stays
  * on the version it named; the list moving on is said, not fixed here --
  * an objective's evidence is where a link is moved forward. */
-function ListAsEvidence({ status, isTemplate }: { status: ListEvidenceStatus; isTemplate: boolean }) {
+function ListAsEvidence({
+  status,
+  isTemplate,
+  practices,
+}: {
+  status: ListEvidenceStatus;
+  isTemplate: boolean;
+  practices: number;
+}) {
   if (isTemplate && status.links.length === 0) return null;
   const drifted = status.links.filter((l) => l.drift);
   return (
     <section className="list-evidence" aria-label="As evidence">
       {status.offered ? (
-        status.links.length === 0 && (
+        status.links.length === 0 &&
+        (practices === 0 ? (
+          <p className="field-hint">
+            Offered as evidence nowhere yet: an objective is offered a list only for a practice the list is tagged
+            with, and this one has none.
+          </p>
+        ) : (
           <p className="field-hint">
             Offered as evidence for the practices above. Nothing is attached until someone attaches it from an
             objective&apos;s evidence.
           </p>
-        )
+        ))
       ) : (
         <p className="field-hint">Not offered as evidence: {status.not_offered}.</p>
       )}
@@ -615,6 +658,11 @@ function LibraryListView({
     (draftCols.some((c) => !c.name.trim()) ||
       new Set(draftCols.map((c) => c.name.trim().toLowerCase())).size !== draftCols.length);
   const history = historyEntries(versions.length ? versions : [base], tagEvents, linkEvents);
+  const refCols = new Set(shown.reference_columns ?? []);
+  const hasRefs = refCols.size > 0;
+  const colClass = (c: string) => (!hasRefs ? undefined : refCols.has(c) ? "list-col-ref" : "list-col-ours");
+  const ours = hasRefs ? columns.map((c, i) => (refCols.has(c) ? -1 : i)).filter((i) => i >= 0) : [];
+  const defined = hasRefs ? shown.rows.filter((r) => ours.some((i) => r[i]?.trim())).length : 0;
 
   return (
     <div className="contacts-panel list-library-detail">
@@ -703,8 +751,10 @@ function LibraryListView({
             </strong>{" "}
             It appears under each of them and is kept once.
           </p>
-        ) : (
+        ) : detail.control_keys.length === 1 ? (
           <p>Serves one practice.</p>
+        ) : (
+          <p>Serves no practice yet.</p>
         )}
         <span className="list-practices">
           {detail.control_keys.map((k) => (
@@ -762,7 +812,7 @@ function LibraryListView({
         {tagError && <div className="form-error">{tagError}</div>}
       </section>
 
-      {asEvidence && <ListAsEvidence status={asEvidence} isTemplate={detail.is_template} />}
+      {asEvidence && <ListAsEvidence status={asEvidence} isTemplate={detail.is_template} practices={detail.control_keys.length} />}
 
       {/* Actionable first, then the rows: the rows are what this page is for (L.8). */}
       {detail.adopted_from && (detail.adopted_from.update_available || takeError) && (
@@ -787,7 +837,9 @@ function LibraryListView({
                 <div aria-label="What taking it changes">
                   <p>
                     Taking template version {take.to_template_version} writes a new version of this list.{" "}
-                    {take.rows_from === "copy"
+                    {take.rows_from === "copy" && hasRefs
+                      ? `This org's own values are kept, matched by ${columns.find((c) => refCols.has(c))}; the reference columns come from the template.`
+                      : take.rows_from === "copy"
                       ? "This org's rows are kept, matched to the template's columns by name."
                       : "Its rows are still the template's examples, so the new examples replace them."}
                     {take.columns_added.length > 0 && ` Columns added: ${take.columns_added.join(", ")}.`}
@@ -908,10 +960,21 @@ function LibraryListView({
       {notice && <p className="doc-notice doc-notice-warn">{notice}</p>}
       {error && <div className="form-error">{error}</div>}
 
+      {hasRefs && (
+        <p className="doc-notice list-ref-notice" aria-label="Which column is yours">
+          <strong>
+            {defined} of {shown.rows.length} defined.
+          </strong>{" "}
+          Only {columns.filter((c) => !refCols.has(c)).join(", ")} is yours: it is the value in force here.{" "}
+          {columns.filter((c) => refCols.has(c)).join(", ")} come from the template&apos;s source and are reference
+          only; they cannot be edited here.
+        </p>
+      )}
+
       <ListRowsTable title={shown.title} rowCount={shown.rows.length} columnCount={columns.length}>
         <thead>
           <tr>
-            {editing && draftCols && canDefine
+            {editing && draftCols && canDefine && !hasRefs
               ? draftCols.map((c, i) => (
                   <th key={i}>
                     <input
@@ -933,8 +996,9 @@ function LibraryListView({
                   </th>
                 ))
               : columns.map((c) => (
-              <th key={c}>
+              <th key={c} className={colClass(c)}>
                 {c}
+                {hasRefs && <ColumnRole reference={refCols.has(c)} />}
                 {addedByMerge.has(c) && (
                   <span
                     className="list-merge-col"
@@ -946,39 +1010,54 @@ function LibraryListView({
                 )}
               </th>
             ))}
-            {editing && <th aria-label="Row actions" />}
+            {editing && !hasRefs && <th aria-label="Row actions" />}
           </tr>
         </thead>
         <tbody>
           {rows
             ? rows.map((r, i) => (
                 <tr key={i} className={r.origin === null ? "list-row-new" : undefined}>
-                  {r.cells.map((cell, c) => (
-                    <td key={c}>
-                      <input
-                        aria-label={`${columns[c]}, row ${i + 1}`}
-                        value={cell}
-                        onChange={(e) => setCell(i, c, e.target.value)}
-                      />
+                  {r.cells.map((cell, c) =>
+                    hasRefs && refCols.has(columns[c]) ? (
+                      <td key={c} className="list-col-ref">
+                        <RefCell value={cell} />
+                      </td>
+                    ) : (
+                      <td key={c} className={colClass(columns[c])}>
+                        <input
+                          aria-label={`${columns[c]}, row ${i + 1}`}
+                          placeholder={hasRefs ? "Not yet defined" : undefined}
+                          value={cell}
+                          onChange={(e) => setCell(i, c, e.target.value)}
+                        />
+                      </td>
+                    ),
+                  )}
+                  {!hasRefs && (
+                    <td>
+                      <button
+                        type="button"
+                        className="btn-ghost btn-sm"
+                        aria-label={`Remove row ${i + 1}`}
+                        onClick={() => setDraft((d) => d && d.filter((_, k) => k !== i))}
+                      >
+                        Remove
+                      </button>
                     </td>
-                  ))}
-                  <td>
-                    <button
-                      type="button"
-                      className="btn-ghost btn-sm"
-                      aria-label={`Remove row ${i + 1}`}
-                      onClick={() => setDraft((d) => d && d.filter((_, k) => k !== i))}
-                    >
-                      Remove
-                    </button>
-                  </td>
+                  )}
                 </tr>
               ))
             : shown.rows.map((r, i) => (
                 <tr key={i}>
                   {r.map((cell, c) => (
-                    <td key={c}>
-                      <CellText value={cell} />
+                    <td key={c} className={colClass(columns[c])}>
+                      {!hasRefs ? (
+                        <CellText value={cell} />
+                      ) : refCols.has(columns[c]) ? (
+                        <RefCell value={cell} />
+                      ) : (
+                        <OursCell value={cell} />
+                      )}
                     </td>
                   ))}
                 </tr>
@@ -989,14 +1068,16 @@ function LibraryListView({
 
       {editing && (
         <div className="list-edit-bar">
-          <button
-            type="button"
-            className="btn-ghost btn-sm"
-            onClick={() => setDraft((d) => d && [...d, { origin: null, cells: columns.map(() => "") }])}
-          >
-            + Add row
-          </button>
-          {canDefine && (
+          {!hasRefs && (
+            <button
+              type="button"
+              className="btn-ghost btn-sm"
+              onClick={() => setDraft((d) => d && [...d, { origin: null, cells: columns.map(() => "") }])}
+            >
+              + Add row
+            </button>
+          )}
+          {canDefine && !hasRefs && (
             <button type="button" className="btn-ghost btn-sm" onClick={addColumn}>
               + Add column
             </button>

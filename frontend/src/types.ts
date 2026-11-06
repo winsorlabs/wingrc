@@ -1682,6 +1682,9 @@ export interface LibraryListVersion {
   responsible: string | null;
   review_cadence: string | null;
   columns: string[];
+  // Columns no edit may change, from the template's source (migration
+  // 0073): the ODP list's identifier, gloss and DoD value. Empty otherwise.
+  reference_columns: string[];
   rows: string[][];
   provenance: {
     via?: string;

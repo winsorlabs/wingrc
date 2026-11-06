@@ -47,7 +47,9 @@ from .models import ListDefinition, ListVersion
 
 CAUSE = "adopted_from_template"
 TAG_VIA = "template_adoption"
-DEFINITION_FIELDS = ("title", "description", "responsible", "review_cadence", "columns")
+DEFINITION_FIELDS = (
+    "title", "description", "responsible", "review_cadence", "columns", "reference_columns",
+)
 
 
 @dataclass(frozen=True)
@@ -192,6 +194,9 @@ def plan_update(session: Session, copy: ListDefinition, snap: TemplateSnap) -> U
     person_changed = [f for f in DEFINITION_FIELDS if mine[f] != base[f]]
     if mine["rows"] == base["rows"]:
         rows, rows_from, dropped = [list(r) for r in theirs["rows"]], "template", 0
+    elif theirs["reference_columns"]:
+        rows, dropped = reference_rows(mine, theirs)
+        rows_from = "copy"
     else:
         at = {c: i for i, c in enumerate(mine["columns"])}
         rows = [[r[at[c]] if c in at else "" for c in theirs["columns"]] for r in mine["rows"]]
@@ -211,6 +216,33 @@ def plan_update(session: Session, copy: ListDefinition, snap: TemplateSnap) -> U
         tag_add=tag_add, tag_remove=tag_remove,
         edit=current if (person_changed or dropped) else None,
     )
+
+
+def reference_rows(mine: dict, theirs: dict) -> tuple[list[list[str]], int]:
+    """A list with reference columns, moved onto a newer template version:
+    the template's rows, in its order, with its reference cells (a revised
+    DoD value arrives); every other cell kept from the copy's row with the
+    same key, the first reference column (the ODP identifier). A copy row
+    whose key the template dropped is not carried, and its filled cells are
+    counted, so the update must name the edit it replaces."""
+    refs = theirs["reference_columns"]
+    key = next(c for c in theirs["columns"] if c in refs)
+    at = {c: i for i, c in enumerate(mine["columns"])}
+    by_key = {r[at[key]]: r for r in mine["rows"]} if key in at else {}
+    their_key = theirs["columns"].index(key)
+    rows = []
+    for r in theirs["rows"]:
+        old = by_key.get(r[their_key])
+        rows.append([
+            r[i] if c in refs or old is None or c not in at else old[at[c]]
+            for i, c in enumerate(theirs["columns"])
+        ])
+    kept = {r[their_key] for r in theirs["rows"]}
+    own = [i for c, i in at.items() if c not in refs]
+    dropped = sum(
+        1 for k, r in by_key.items() if k not in kept for i in own if r[i].strip()
+    )
+    return rows, dropped
 
 
 def take_update(

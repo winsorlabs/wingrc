@@ -101,7 +101,8 @@ const VIEW: ListViewSummary = {
 function version(n: number, rows: string[][], over: Partial<LibraryListVersion> = {}): LibraryListVersion {
   return {
     id: `v${n}`, version_number: n, title: "Risk Register", description: "Identified risks", responsible: null,
-    review_cadence: "Annually", columns: ["Risk ID", "Status"], rows, provenance: {}, created_at: WHEN,
+    review_cadence: "Annually", columns: ["Risk ID", "Status"], reference_columns: [], rows, provenance: {},
+    created_at: WHEN,
     saved_by: null, cause: "first_import", example_rows: 0, ...over,
   };
 }
@@ -784,5 +785,89 @@ describe("as evidence (L.4)", () => {
     });
     expect(section.textContent).toContain("FY26 L2: RA.L2-3.11.1[a], version 1");
     expect(section.textContent).toContain(drift);
+  });
+});
+
+// The ODP list (migration 0073's reference columns): someone who has never
+// seen the screen cannot take the DoD's value for the organization's own.
+describe("a list with reference columns", () => {
+  const COLS = [
+    "ODP identifier", "What this parameter sets (AI-written)", "Our defined value",
+    "DoD value under Rev 3 (reference only)",
+  ];
+  const REFS = [COLS[0], COLS[1], COLS[3]];
+  const odp = version(1, [
+    ["03.01.01.f.02", "How long an account can sit unused.", "", "at most 90 days"],
+    ["03.16.01", "Which principles guide building it.", "", "Guidance: At a minimum, documentation."],
+  ], { title: "Organization-Defined Parameters", columns: COLS, reference_columns: REFS });
+
+  async function openOdp(current = odp) {
+    vi.mocked(api.listLibrary).mockResolvedValue([summary({ id: "odp", title: "Organization-Defined Parameters" })]);
+    vi.mocked(api.listViews).mockResolvedValue([]);
+    vi.mocked(api.getListImportReport).mockResolvedValue({ recorded_at: null, not_imported: [], not_ingested: [] });
+    vi.mocked(api.getLibraryList).mockResolvedValue(
+      detail(current, { id: "odp", list_key: "odp-dod-rev3", is_template: false, control_keys: [] }),
+    );
+    vi.mocked(api.getLibraryListVersions).mockResolvedValue([current]);
+    render(<ListLibraryPanel orgId="org" canWrite canDefine />);
+    fireEvent.click(await screen.findByRole("button", { name: "Organization-Defined Parameters" }));
+    return screen.findByRole("button", { name: "Edit rows" });
+  }
+
+  it("says in each header which column is ours, and an empty one reads as not yet defined", async () => {
+    await openOdp();
+    const headers = screen.getAllByRole("columnheader").map((th) => th.textContent);
+    expect(headers).toEqual([
+      "ODP identifierReference · cannot be edited here",
+      "What this parameter sets (AI-written)Reference · cannot be edited here",
+      "Our defined valueYours to define · the value in force here",
+      "DoD value under Rev 3 (reference only)Reference · cannot be edited here",
+    ]);
+    expect(screen.getAllByText("Not yet defined")).toHaveLength(2);
+    expect(screen.getByLabelText("Which column is yours").textContent).toMatch(/^0 of 2 defined\. Only Our defined value is yours/);
+    expect(screen.getByText("Guidance, not a specified value")).toBeTruthy();
+  });
+
+  it("says an untagged list serves no practice and is offered nowhere, not 'one practice'", async () => {
+    vi.mocked(api.listEvidenceStatus).mockResolvedValue({ offered: true, not_offered: null, links: [] } as never);
+    await openOdp();
+    expect(screen.getByText("Serves no practice yet.")).toBeTruthy();
+    expect(screen.queryByText("Serves one practice.")).toBeNull();
+    expect(await screen.findByText(/Offered as evidence nowhere yet/)).toBeTruthy();
+    expect(screen.queryByText(/Offered as evidence for the practices above/)).toBeNull();
+  });
+
+  it("counts a filled value, and shows it rather than the placeholder", async () => {
+    await openOdp(version(2, [
+      ["03.01.01.f.02", "g", "60 days", "at most 90 days"],
+      ["03.16.01", "g", "", "Guidance: x"],
+    ], { columns: COLS, reference_columns: REFS }));
+    expect(screen.getByLabelText("Which column is yours").textContent).toMatch(/^1 of 2 defined\./);
+    expect(screen.getByText("60 days")).toBeTruthy();
+    expect(screen.getAllByText("Not yet defined")).toHaveLength(1);
+  });
+
+  it("gives an input to our column only, and no way to add, remove or rename", async () => {
+    fireEvent.click(await openOdp());
+    expect(screen.getAllByRole("textbox", { name: /row \d/ }).map((i) => i.getAttribute("aria-label"))).toEqual([
+      "Our defined value, row 1", "Our defined value, row 2",
+    ]);
+    expect(screen.queryByRole("button", { name: "+ Add row" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "+ Add column" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Remove row/ })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: /Column \d name/ })).toBeNull();
+    fireEvent.change(screen.getByRole("textbox", { name: "Our defined value, row 1" }), { target: { value: "60 days" } });
+    vi.mocked(api.createLibraryListVersion).mockResolvedValue(undefined as never);
+    fireEvent.click(screen.getByRole("button", { name: "Save as version 2" }));
+    await waitFor(() =>
+      expect(api.createLibraryListVersion).toHaveBeenCalledWith(
+        "org", "odp",
+        [
+          ["03.01.01.f.02", "How long an account can sit unused.", "60 days", "at most 90 days"],
+          ["03.16.01", "Which principles guide building it.", "", "Guidance: At a minimum, documentation."],
+        ],
+        "v1", "",
+      ),
+    );
   });
 });

@@ -198,7 +198,7 @@ def test_tls_expiry_without_an_https_public_url_is_quiet(admin_client, monkeypat
     assert body["configured"] is False and body["attention"] is False
 
 
-# â”€â”€ GET /admin/scheduled-jobs/snapshots: the banner's second alarm â”€â”€â”€â”€â”€â”€â”€â”€
+# ── GET /admin/scheduled-jobs/snapshots: the banner's second alarm ────────
 
 _SNAP_URL = "/admin/scheduled-jobs/snapshots"
 

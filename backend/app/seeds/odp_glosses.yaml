@@ -1,0 +1,100 @@
+# Column 2 of the ODP list: "What this parameter sets", one plain-language
+# gloss per ODP identifier in odp_dod_rev3.json.
+#
+# AI-WRITTEN, ADVISORY. Drafted by Claude (Anthropic, claude-opus-5-5) on
+# 2026-11-05 from the requirement text around each identifier in the DoD
+# memo (docs/reference/OrgDefinedParmsNISTSP800-171.pdf), for Jarrod
+# Winsor's review. It may contain errors, omissions or misreadings. The
+# memo's identifier and value columns are the authority; this is not.
+#
+# The rules each gloss was written to (docs/roadmap.md, "The ODP list"):
+# - it explains what the parameter decides, in plain language;
+# - it never restates the requirement and never paraphrases the DoD value
+#   (that column is verbatim, and a reworded mandate is a changed one);
+# - where a gloss could not be written without changing the meaning, the
+#   assignment text would be used verbatim instead, with the reason. None
+#   needed it.
+#
+# Every identifier in odp_dod_rev3.json has exactly one entry, and nothing
+# else is here (test_odp_list.py's test_every_identifier_has_one_gloss).
+
+"03.01.01.f.02": How long an account can sit unused before it is disabled.
+"03.01.01.g.01": How quickly account managers are told once an account is no longer needed.
+"03.01.01.g.02": How quickly account managers are told when a user leaves or moves to another role.
+"03.01.01.g.03": How quickly account managers are told when a person's system use or need-to-know changes.
+"03.01.01.h.01": How long a user can be inactive before being logged out.
+"03.01.01.h.02": The situations, other than inactivity, in which users are required to log out.
+"03.01.05.b.01": Which security functions (actions that change how the system is secured) need explicit authorization before anyone can use them.
+"03.01.05.b.02": Which kinds of security-relevant information need explicit authorization before anyone can see them.
+"03.01.05.c": How often the privileges given to roles or groups of users are reviewed to confirm they are still needed.
+"03.01.06.a": Who is allowed to hold privileged (administrator-level) accounts.
+"03.01.08.a.01": How many failed logon attempts in a row are allowed.
+"03.01.08.a.02": The time window in which those failed attempts are counted.
+"03.01.08.b": What the system does automatically once the failed-logon limit is reached, including how long any lockout lasts. The memo's table ties this row to the lockout period inside that choice.
+"03.01.10.a": How long a device can be inactive before it locks itself. The requirement offers more than one way to lock; the DoD value covers which of them apply.
+"03.01.11": The conditions or events that end a user's session automatically.
+"03.01.20.b": What an external system (one you do not manage, such as a personal or partner device) has to meet before your people may use it to reach your systems or CUI.
+"03.02.01.a.01": How often users repeat security awareness training after their first session.
+"03.02.01.a.02": Which events, besides system changes, call for extra security awareness training.
+"03.02.01.b.01": How often the awareness training material itself is reviewed and updated.
+"03.02.01.b.02": Which events call for the awareness training material to be updated.
+"03.02.02.a.01": How often people in security roles repeat their role-based training after the first session.
+"03.02.02.a.02": Which events, besides system changes, call for extra role-based training.
+"03.02.02.b.01": How often the role-based training material is reviewed and updated.
+"03.02.02.b.02": Which events call for the role-based training material to be updated.
+"03.03.01.a": Which kinds of events the system records in its logs.
+"03.03.01.b": How often that list of logged event types is reviewed and updated.
+"03.03.04.a": How quickly the responsible people are alerted when logging stops working.
+"03.03.04.b": What is done, beyond the alert, when logging fails.
+"03.03.05.a": How often audit logs are reviewed for signs of inappropriate or unusual activity.
+"03.03.07.b": How precise the time recorded on each log entry has to be.
+"03.04.01.b": How often the documented baseline configuration is reviewed and updated on a schedule, separately from the updates made when components are installed or changed.
+"03.04.02.a": Which configuration settings the system uses, set as restrictively as the work allows.
+"03.04.06.b": Which functions, ports, protocols, connections and services are blocked or limited.
+"03.04.06.c": How often the system is reviewed for functions, ports, protocols, connections and services that are unneeded or insecure.
+"03.04.08.c": How often the list of software allowed to run is reviewed and updated.
+"03.04.10.b": How often the inventory of system components is reviewed and updated.
+"03.04.12.a": How systems are set up before they are issued to people travelling to high-risk locations.
+"03.04.12.b": What is done to those systems when the traveller comes back.
+"03.05.01.b": The situations in which a user has to prove their identity again after already logging in.
+"03.05.02": Which devices have to be identified, and authenticated, before they connect.
+"03.05.05.c": How long a retired identifier, such as a username, stays out of use before it can be given to someone else.
+"03.05.05.d": Which part of a person's status their identifier has to show, so others can tell what kind of user it belongs to.
+"03.05.07.a": How often the list of banned passwords (common, expected or known-compromised ones) is updated.
+"03.05.07.f": The rules a password has to meet, such as its length and what it may not contain.
+"03.05.12.e.01": How often authenticators (passwords, tokens, badges and the like) are changed or refreshed on a schedule.
+"03.05.12.e.02": Which events force authenticators to be changed regardless of the schedule.
+"03.06.02.b": How quickly a suspected incident is reported to your own incident response team.
+"03.06.02.c": Who outside the response team receives incident information.
+"03.06.03": How often the incident response capability is tested.
+"03.06.04.a.01": How soon someone taking on an incident response role, or getting system access, is trained.
+"03.06.04.a.03": How often incident response training is repeated after that.
+"03.06.04.b.01": How often the incident response training material is reviewed and updated.
+"03.06.04.b.02": Which events call for the incident response training material to be updated.
+"03.08.07.a": Which kinds of media (USB drives, discs and the like) are restricted or not allowed.
+"03.09.01.b": The conditions under which people who already have access are screened again.
+"03.09.02.a.01": How quickly a departing employee's system access is disabled.
+"03.10.01.c": How often the list of people allowed into the facility is reviewed.
+"03.10.02.b.01": How often physical access logs are reviewed.
+"03.10.02.b.02": Which events, or signs of events, call for an extra review of physical access logs.
+"03.10.06.b": The security requirements that apply at alternate work sites, such as home offices.
+"03.11.01.b": How often risk assessments are updated.
+"03.11.02.a": How often the system is scanned for vulnerabilities on a schedule, separately from scans when a new vulnerability affecting it is found.
+"03.11.02.b": How quickly vulnerabilities that are found have to be fixed.
+"03.11.02.c": How often the scanner's list of vulnerabilities to look for is updated.
+"03.12.01": How often the system's security requirements are assessed to see whether they are met.
+"03.12.05.a": Which kind of agreement has to be in place before CUI is exchanged between your system and another.
+"03.12.05.c": How often those exchange agreements are reviewed and updated.
+"03.13.09": How long a network connection can be idle before it is ended.
+"03.13.10": The rules for handling cryptographic keys through their life, from creation to destruction.
+"03.13.11": Which kinds of cryptography protect the confidentiality of CUI.
+"03.13.12.a": The exceptions, if any, where collaborative devices (cameras, microphones, conferencing tools) may be switched on remotely.
+"03.14.01.b": How soon security updates for software and firmware are installed after they are released.
+"03.14.02.c.01": How often antimalware tools scan the system, in addition to scanning incoming files as they arrive.
+"03.15.01.b": How often security policies and procedures are reviewed and updated.
+"03.15.02.b": How often the system security plan (SSP) is reviewed and updated.
+"03.15.03.d": How often the rules of behavior that users agree to are reviewed and updated.
+"03.16.01": Which security engineering principles guide building or changing the system and its parts.
+"03.16.03.a": What providers of external services that handle CUI, such as cloud providers, have to meet.
+"03.17.01.b": How often the supply chain risk management plan is reviewed and updated.
+"03.17.03.b": The security requirements used to protect the system, its parts and its services against supply chain risks.

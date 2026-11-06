@@ -3313,6 +3313,12 @@ class ListVersion(Base):
     review_cadence: Mapped[str | None] = mapped_column(Text, nullable=True)
     columns: Mapped[list] = mapped_column(JSONB, nullable=False)
     rows: Mapped[list] = mapped_column(JSONB, nullable=False)
+    # Columns, by name, whose cells no edit may change: they come from the
+    # template's source (the ODP list's DoD identifier and value, verbatim,
+    # and its authored gloss). Empty for every other list. Migration 0073.
+    reference_columns: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
     # Where this content came from: the source file and its SHA-256, the
     # sheets merged into it, any matching changelog markdown verbatim, or
     # the API edit that produced it.
