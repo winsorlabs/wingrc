@@ -2488,6 +2488,11 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 /* â”€â”€ Activation asks before it changes a judgement (2026-11-03) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Text sits on --surface only, with the status badges' own measured
    pairs; the overlay is behind the box, never behind text. */
+.version-move-summary { margin: 0 1rem 0.75rem; display: flex; flex-direction: column; gap: 0.4rem;
+  align-items: flex-start; }
+.version-move-summary-rows { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.version-move-summary-key { font-weight: 600; white-space: nowrap; }
+
 .modal-overlay {
   position: fixed;
   inset: 0;

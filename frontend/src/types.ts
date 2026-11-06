@@ -1889,6 +1889,28 @@ export interface JudgedDecision {
   choice: ActivationChoice;
 }
 
+// What a baseline version move left at needs_review, and why
+// (engine.py:MOVE_REVIEW_REASONS).
+export interface MovedToReview {
+  control_state_id: string;
+  control_id: string;
+  objective_key: string;
+  objective_text: string;
+  status_before: string;
+  why: "no_longer_covered" | "mapping_changed" | "judged_newly_covered";
+  still_covered: boolean;
+}
+
+export interface MoveVersionResult {
+  controls_gained: number;
+  controls_lost: number;
+  controls_changed: number;
+  tasks_created: number;
+  from_version: number | null;
+  to_version: number;
+  set_to_needs_review: MovedToReview[];
+}
+
 export interface ActivationResult {
   objectives_updated: number;
   tasks_created: number;

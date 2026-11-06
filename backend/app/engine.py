@@ -1530,6 +1530,12 @@ def deactivate_org_product(
     }
 
 
+# Why a version move left an objective at needs_review: the new version
+# no longer covers it, changed its mapping, or newly covers an objective
+# a person had judged (contributor_added_status with nobody asked).
+MOVE_REVIEW_REASONS = ("no_longer_covered", "mapping_changed", "judged_newly_covered")
+
+
 def move_org_product_version(
     session: Session,
     org_id: uuid.UUID,
@@ -1583,7 +1589,13 @@ def move_org_product_version(
     is untouched and still linked.
 
     Returns {"controls_gained": N, "controls_lost": N, "controls_changed": N,
-    "tasks_created": N}.
+    "tasks_created": N, "from_version", "to_version", "set_to_needs_review"}.
+    The last is every objective this move left at needs_review, each with
+    why (MOVE_REVIEW_REASONS) and its status before, so the screen can say
+    afterwards what moved and why: the move does not ask, so it tells
+    (Jarrod, 2026-11-05). It is exactly the objectives the move wrote a
+    needs_review history row for
+    (tests/test_activation_judgement.py's test_version_move_tells_*).
     """
     op = session.scalars(
         select(OrgProduct).where(
@@ -1702,6 +1714,8 @@ def move_org_product_version(
     controls_gained = 0
     controls_lost = 0
     controls_changed = 0
+    # (control_state, status before, why, still covered by another tool)
+    reviewed: list[tuple[ControlState, str, str, bool]] = []
 
     for ctrl_id in all_control_ids:
         old_bc = old_claims.get(ctrl_id)
@@ -1755,6 +1769,7 @@ def move_org_product_version(
                         change_reason=reason,
                     )
                 )
+                reviewed.append((cs, prev_status, "no_longer_covered", bool(remaining)))
                 controls_lost += 1
 
             elif not in_old and in_new:
@@ -1778,6 +1793,7 @@ def move_org_product_version(
                     reason = _judged_reason(
                         product.name, prev_status, cs.status, None, "baseline_version_move"
                     )
+                    reviewed.append((cs, prev_status, "judged_newly_covered", had_prior))
                     _record_judged(
                         session, org_id, assessment_id, product, cs, prev_status, None,
                         "baseline_version_move",
@@ -1824,6 +1840,7 @@ def move_org_product_version(
                         ),
                     )
                 )
+                reviewed.append((cs, prev_status, "mapping_changed", len(current) > 1))
                 bcs_needing_fanout[ctrl_id] = new_bc
                 controls_changed += 1
             # else: unchanged claim for this objective -- left alone (see
@@ -1890,11 +1907,29 @@ def move_org_product_version(
 
     recompute_sprs(session, assessment_id)
 
+    objective_by_id = {o.id: o for o in objectives}
+    set_to_needs_review = []
+    for cs, prev_status, why, still_covered in reviewed:
+        o = objective_by_id[cs.objective_id]
+        set_to_needs_review.append({
+            "control_state_id": cs.id,
+            "control_id": ctrl_uuid_to_str[o.control_id],
+            "objective_key": o.objective_key,
+            "objective_text": o.text,
+            "status_before": str(prev_status),
+            "why": why,
+            "still_covered": still_covered,
+        })
+    set_to_needs_review.sort(key=lambda r: (r["control_id"], r["objective_key"]))
+
     return {
         "controls_gained": controls_gained,
         "controls_lost": controls_lost,
         "controls_changed": controls_changed,
         "tasks_created": tasks_created,
+        "from_version": from_number,
+        "to_version": to_number,
+        "set_to_needs_review": set_to_needs_review,
     }
 
 

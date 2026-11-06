@@ -15044,7 +15044,8 @@ than answering it. It neither destroys the judgement nor silently keeps
 one that may be stale, and it is what deactivation and reactivation
 already do with a prior judgement. The version move is triggered by a
 person, so it could ask; it does not yet, and sets `needs_review`, as
-it already does for every claim a move changes.
+it already does for every claim a move changes. Since 2026-11-05 it
+says so afterwards (below).
 
 **The defaults on the screen, and why:**
 
@@ -15102,6 +15103,122 @@ Winsorlabs' assessment, with seven objectives set by hand, at -201:
   test drew its cases from the set under test, so they shrank with it
   and could not fail; they are now named literally.
 - Full suite 2022 passed; vitest 493; `tsc -b` and the build clean.
+- The bench screenshots were pointed to in a local temp directory,
+  which had been cleared by 2026-11-05. The bench host's copies
+  survived, and they are now in the version move's screenshot artifact
+  (the flake entry below). Bench screenshots now go in an artifact.
+
+#### The version move tells afterwards (2026-11-05)
+
+**Jarrod's decision: no dialog in this slice, and not silent either.**
+A person triggers a move, so `needs_review` appearing with no
+explanation is still a surprise. It is smaller than activation's
+`pending_evidence` was, but it is the same kind.
+
+**What it does.** The move's response lists every objective it left at
+`needs_review` (`set_to_needs_review`), each with its status before and
+why (`engine.MOVE_REVIEW_REASONS`):
+
+| Why | Means |
+|---|---|
+| `no_longer_covered` | the new version drops it; `still_covered` says whether another tool covers it |
+| `mapping_changed` | the new version classifies the control differently |
+| `judged_newly_covered` | the new version newly covers it, a person had judged it, and nobody was asked |
+
+The Tools panel shows that once, above the cards, until it is dismissed
+or the panel closes (`VersionMoveSummary.tsx`). The server gives the
+reasons as fields, and the client writes the sentences. A newly covered
+objective that went to `pending_evidence` is not listed: that is the
+designed flow. The list is held to the history the move writes:
+`test_version_move_tells_what_it_set_to_needs_review_and_why` requires
+every `needs_review` history row and nothing else.
+
+### The version move could ask, as activation does -- not started
+
+**Recorded 2026-11-05. Not warranted yet.** Since the move now says
+what it did, the surprise is gone. The question is whether a person
+should decide *before* a move rather than read about it after.
+
+**What could be asked.** Only `judged_newly_covered`: the one case where
+a move overrides a judgement it was not asked about. `no_longer_covered`
+and `mapping_changed` go to `needs_review` because the tool's claim
+changed. Asking whether to keep `met` there is a different question,
+and nothing recorded calls for it.
+
+**What it would cost**, set against the activation slice it would reuse:
+- **The engine:** a `decisions` argument on `move_org_product_version`,
+  passed to `contributor_added_status`, which already takes a choice.
+  The move has its own loop and not `_run_loop`, so the
+  exact-set-and-shown-status check (`ActivationJudgementsChanged`) is
+  written a second time, or factored out of `_run_loop` first.
+- **A preview route:** the move in a savepoint, rolled back, the way
+  `activation_preview` runs activation, with the score before and
+  after.
+- **The screen:** `ActivationAsk.tsx` takes its title and verb as
+  props ("Moving X to v2 would change…"). The move button gets the
+  preview-then-confirm flow and the 409 re-ask that `ProductCard`'s
+  activation already has.
+- **Tests:** every judged status × both answers on the move path, a
+  stale answer refused, a preview that writes nothing, and the score
+  asserted. That is the same matrix as `test_activation_judgement.py`.
+- **The record:** `decided_by: person` on the move's audit rows. That
+  code is shared with activation already.
+
+About half the activation slice: the rule, the record and the dialog
+exist, and it is their wiring that is new. **When it would be
+warranted:** when a move first brings a newly covered control onto an
+objective a person judged on a real tenant. That takes a baseline
+re-import that adds a control, and a tenant pinned behind it, so it is
+rare. The summary would say when it happens.
+
+### Evidence lost before anyone read it: three times, one shape -- recorded 2026-11-05
+
+**One unexplained frontend failure, kept as a data point.** On
+2026-11-03 at 15:20:54 UTC, on the bench (`~/bench/20261103-aa`,
+`node:24-alpine`), the first `vitest run` of the activation slice
+reported `Test Files 2 failed | 42 passed (44)` and `Tests 2 failed |
+491 passed (493)`.
+- **Identified:** one, `ProductCard.test.tsx`'s "asks the server for the
+  score of a new choice". The test file carried a mojibake ellipsis and
+  the component a real one.
+- **Unexplained:** the other. **Its file and test were never named.**
+  The run was piped through `| tail -8`, which kept the summary and cut
+  every `FAIL` line. A second run, filtered with `grep FAIL`, showed only
+  the ProductCard failure, so the other file passed on the second try.
+- After the mojibake fix, three later runs passed in full (493). That
+  makes it a flake with one data point, not a retired failure. The
+  precedent is the bundle-export nondeterminism, which passed per-file
+  verification and turned `main` red ("CI was red on `main` for six consecutive runs", Failure 2).
+- **If it happens again:** keep the whole output (`… > vitest.log
+  2>&1`, then read the log), and add that run here as the second data
+  point. Compare the file, the test and whether it was the first run
+  after `npm install`.
+
+**The output was not kept, and that has happened before.**
+- **2026-10-27, Q.0's load bench.** A run produced an HTTP 500. By the
+  time the backend log was read, the container had been recreated twice
+  (the swap to `main` and back), so the log was gone. The cause
+  (`QueuePool limit ... reached`) was recovered only by reproducing the
+  run and reading the log at once. That was lucky: the failure
+  reproduced.
+- **2026-11-03, the vitest run above.** The evidence was cut by a pipe at
+  the moment it was produced. It did not reproduce, so nothing recovers
+  it.
+- **2026-11-05: the scratch output from 2026-11-03.** The PR body
+  pointed to screenshots in a local temp directory, which had been
+  cleared two days later, along with the scripts and notes beside them.
+  The screenshots survived only because the bench host still had its
+  own copies. That was luck, not design, and nobody reviewing the PR
+  could have opened the path it gave.
+
+**The shape:** evidence that lives only where it was produced, a
+container's log, a terminal's tail or a temp directory, is gone by the
+time someone needs it. For the three cases:
+- **A failure's output** is written to a file in the bench directory
+  before it is filtered.
+- **A log** is read before anything recreates its container.
+- **Screenshots** go in an artifact, which can be reviewed from
+  anywhere.
 
 ### The rule that nothing is met without evidence has no code behind it
 

@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { ApiError, api } from "../api";
-import type { ActivationChoice, ActivationPreview, ProductRow } from "../types";
+import type { ActivationChoice, ActivationPreview, MoveVersionResult, ProductRow } from "../types";
 import { ActivationAsk } from "./ActivationAsk";
 
 interface Props {
@@ -13,9 +13,15 @@ interface Props {
   canWrite: boolean;
   onActivated: () => void;
   onDeactivated: () => void;
+  // Called with what a version move set to needs_review, for the panel to
+  // say once. Given, it replaces onActivated after a move: App's
+  // onActivated closes the panel, which would take the summary with it.
+  onVersionMoved?: (productName: string, result: MoveVersionResult) => void;
 }
 
-export function ProductCard({ product, others, orgId, assessmentId, canWrite, onActivated, onDeactivated }: Props) {
+export function ProductCard({
+  product, others, orgId, assessmentId, canWrite, onActivated, onDeactivated, onVersionMoved,
+}: Props) {
   const [activating, setActivating] = useState(false);
   const [deactivating, setDeactivating] = useState(false);
   const [asking, setAsking] = useState(false);
@@ -145,8 +151,9 @@ export function ProductCard({ product, others, orgId, assessmentId, canWrite, on
       if (!target) {
         throw new Error("No current version found for this product.");
       }
-      await api.moveProductVersion(orgId, assessmentId, product.id, target.id);
-      onActivated();
+      const result = await api.moveProductVersion(orgId, assessmentId, product.id, target.id);
+      if (onVersionMoved) onVersionMoved(product.name, result);
+      else onActivated();
     } catch (e: unknown) {
       setError((e as Error).message);
     } finally {

@@ -298,11 +298,27 @@ class MoveVersionIn(BaseModel):
     target_version_id: uuid.UUID
 
 
+class MovedToReviewOut(BaseModel):
+    control_state_id: uuid.UUID
+    control_id: str
+    objective_key: str
+    objective_text: str
+    status_before: str
+    # engine.MOVE_REVIEW_REASONS
+    why: str
+    still_covered: bool
+
+
 class MoveVersionOut(BaseModel):
     controls_gained: int
     controls_lost: int
     controls_changed: int
     tasks_created: int
+    from_version: int | None
+    to_version: int
+    # What the move left at needs_review and why, for the screen to say
+    # once afterwards; the move does not ask (2026-11-05).
+    set_to_needs_review: list[MovedToReviewOut]
 
 
 class EvidenceTaskStateRef(BaseModel):
