@@ -112,12 +112,13 @@ record_deploy() {
 # Asked through nginx, not backend:8000: nginx is one of the three components
 # /health reports, and it is visible only on a request that came through it.
 # "ok" means backend, nginx and worker are all known and on one commit
-# (backend/app/health.py); the backend match makes it this commit.
+# (backend/app/health.py). health-gate.sh parses the body and reads the
+# top-level status and each component: never grep it, because a nested
+# "status" (the snapshots block) matched the old grep for any deploy.
 echo "waiting for /health to report $sha for backend, nginx and worker ..."
 for _ in $(seq 60); do
   body="$(docker compose exec -T nginx curl -sk --max-time 3 https://localhost/api/health 2>/dev/null || true)"
-  if printf '%s' "$body" | grep -q '"status":"ok"' \
-     && printf '%s' "$body" | grep -q "\"backend\":\"$sha\""; then
+  if printf '%s' "$body" | bash deploy/health-gate.sh "$sha"; then
     echo "$body"
     echo "deployed $sha"
     record_deploy "$body"

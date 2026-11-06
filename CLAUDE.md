@@ -179,6 +179,21 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   wrote, an exit status. A check that cannot tell itself apart from what
   it is checking is not a check (`docs/roadmap.md`'s item W keeps the
   TLS-specific record).
+- **Read a structured format by parsing it, never by matching its
+  text** (proposed 2026-11-06). JSON is read with a JSON parser, and a
+  tool's report from its machine output (Trivy's `--format json`), not
+  from its rendered table. A text match answers "does this string appear
+  anywhere?", which is never the question, and something added to the
+  same body changes its answer without touching the check. Two
+  instances:
+  - the Trivy counter read rendered table rows, which merge repeated
+    cells, and undercounted every scan (re-derived 2026-10-28);
+  - `deploy.sh` grepped `/health` for `"status":"ok"`, and the snapshots
+    block's nested `status` matched it (2026-11-06).
+
+  A parse must also read the right field: the top level, by name. Each
+  such gate has a test feeding it the body that fooled the text match
+  (`tests/test_health_gate.py`).
 - **Every change a request makes is audited, and
   `tests/audit_check.py` enforces it.** Each table a request commits a
   write to needs an audit row in that request naming it, or a rule
@@ -316,8 +331,9 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
     loop reads `grep -q`'s status by intent.
 
   A pipe ending in `grep -q` can SIGPIPE its writer, which pipefail
-  reads as a failure. It is safe in `deploy.sh`'s wait loop only
-  because `/health`'s body is far under the 64 KiB pipe buffer. A CI
+  reads as a failure. `deploy.sh`'s wait loop no longer has one: since
+  2026-11-06 it pipes the body into `deploy/health-gate.sh`, which reads
+  all of it to parse it. A CI
   `run:` step that pipes needs `shell: bash`: GitHub's default runs
   `bash -e` without pipefail, and naming `bash` adds it. At a terminal,
   check the result itself (`git rev-parse HEAD`, `git ls-remote`,

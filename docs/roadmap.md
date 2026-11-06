@@ -15710,6 +15710,60 @@ on disk after rotation, beside the setting:
 not from the plan, so it reports the outcome even if the plan is wrong
 again.
 
+### The deploy gate passed what it existed to refuse -- fixed 2026-11-06
+
+**What happened.** The 2026-11-06 deploy of `5db1201` printed this body,
+then `deployed 5db1201…`, and recorded it:
+`{"status":"incomplete", … "snapshots":{… "status":"ok" …}, "components":{… "worker":"unknown"}}`.
+The worker had not reported yet. A minute later `/health` was `ok` on all
+three components, so that deploy was fine. The gate was not.
+
+**The mechanism.** `deploy.sh`'s wait loop accepted a body when
+`grep -q '"status":"ok"'` matched it and the backend's commit matched.
+Item S (2026-11-03) added a `snapshots` block to the same `/health` body,
+with its own `"status":"ok"`. From then on, the first condition was true
+of every body on a deployment with a fresh snapshot. A split or
+incomplete deploy would have been reported as deployed, provided the
+backend was on the target commit.
+
+**Why this one is different from the rest of the list.** Per-component
+`/health` (2026-10-26) was built so that a split deploy could not read
+as `ok`, and the wait loop was its enforcement. Nobody edited the loop:
+**the snapshots block disabled it by landing beside it**, in a different
+slice, in a different file. Other failures in the confident-signal list
+were wrong when written (a static dict, a single `build` field), or
+changed by an edit to the check itself. This check was right, and stayed
+textually unchanged, while its meaning changed underneath it. **The guard
+had no test that could fail when its meaning changed.** A test of the
+grep's own text would have passed throughout. Only a test feeding it a
+body shaped like the real one could fail. So this is filed as an
+unguarded guard, not as another grep bug, even though the grep is how it
+happened.
+
+**The fix:**
+- **`deploy/health-gate.sh`** parses the body as JSON. It exits 0 only when
+  the top-level `status` is `ok` and backend, nginx and worker each
+  report the target commit. `deploy.sh`'s loop asks it and nothing else.
+- **`tests/test_health_gate.py`** feeds it the body live returned above,
+  a `split` body and an `incomplete` one. Each carries a nested
+  `"status":"ok"`, which a precondition asserts is there, and each is
+  sent both pretty and compact. The gate must refuse all of them. It also
+  refuses an empty body, an HTML 502, a body whose only `status` is
+  nested, and a JSON array. A second test checks that the loop calls the
+  gate and greps no `status` text.
+- **Mutation-checked both ways.** Making the gate grep the body turns 5
+  tests red, including the live body. Reverting the loop to the old grep
+  turns the loop test red.
+
+**Also corrected:** `docs/deployment.md` said "`deploy.sh` waits on
+`status`". That was true of the intent and false of the grep for three
+days. CLAUDE.md's note that the loop's `grep -q` was SIGPIPE-safe is gone
+with the grep.
+
+**Deploying this changes `deploy.sh`.** The running copy has the re-exec
+check (since 660e113), so the target's copy, with the gate, runs that
+same deploy.
+
 ### The rule that nothing is met without evidence has no code behind it
 
 **Found 2026-11-02. Recorded, not scoped.** CLAUDE.md's first hard rule
