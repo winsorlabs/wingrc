@@ -15281,6 +15281,28 @@ sign and minus, and the code points showed the damage. Check code points
 charset and carries character references, so it reads the same however
 it is decoded.
 
+**Later the same day, the ODP slice found more, in tracked files.**
+- **Three files, all from Claude's own slices.** `styles.css` line 2527
+  (a04bea1, the activation slice) and `test_scheduled_jobs_router.py`
+  line 201 (the snapshot slice) carried box-drawing rules damaged the
+  same way. Both had been merged to `main` and passed CI. The ODP
+  branch's own panel test carried four middle dots, appended through a
+  bash heredoc that day.
+- **Why CI passed them:** the box-drawing damage is `U+00E2 U+201D
+  U+20AC`, and the check's first signature needs `U+00E2` directly
+  before `U+20AC`. The check now also carries the four signatures seen
+  since it was written: box-drawing, middle dot, times and minus. It was
+  shown failing on the three files as they were, and passing once they
+  were repaired. A broader byte pattern was not used, because a real
+  "â" in prose would match it.
+- **A check run inline lied too.** The code-point check passed to
+  `py -3 -c` through Git Bash reported the damaged panel test clean. The
+  same check run from a file found it. A check of text encoding is run
+  from a file, never passed through the shell
+  (`.scratch/check_mojibake.py` was the one used, untracked). Heredocs
+  through `py -3 -` failed outright twice on JSX template strings, so
+  edits carrying non-ASCII text go through the Write and Edit tools.
+
 ### The score treats not applicable as not met, and CLAUDE.md said it did not -- recorded 2026-11-05
 
 **Found while checking the activation dialog's score reason.**

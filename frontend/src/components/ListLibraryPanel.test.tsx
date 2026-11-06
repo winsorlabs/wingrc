@@ -818,10 +818,10 @@ describe("a list with reference columns", () => {
     await openOdp();
     const headers = screen.getAllByRole("columnheader").map((th) => th.textContent);
     expect(headers).toEqual([
-      "ODP identifierReference Â· cannot be edited here",
-      "What this parameter sets (AI-written)Reference Â· cannot be edited here",
-      "Our defined valueYours to define Â· the value in force here",
-      "DoD value under Rev 3 (reference only)Reference Â· cannot be edited here",
+      "ODP identifierReference · cannot be edited here",
+      "What this parameter sets (AI-written)Reference · cannot be edited here",
+      "Our defined valueYours to define · the value in force here",
+      "DoD value under Rev 3 (reference only)Reference · cannot be edited here",
     ]);
     expect(screen.getAllByText("Not yet defined")).toHaveLength(2);
     expect(screen.getByLabelText("Which column is yours").textContent).toMatch(/^0 of 2 defined\. Only Our defined value is yours/);

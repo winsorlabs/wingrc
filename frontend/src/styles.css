@@ -2524,7 +2524,7 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 /* Deactivation asks what replaces the product, optionally (2026-10-19). */
 .product-deactivate-form { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; width: 100%; font-size: 0.8rem; }
 
-/* â”€â”€ Activation asks before it changes a judgement (2026-11-03) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+/* ── Activation asks before it changes a judgement (2026-11-03) ───────────
    Text sits on --surface only, with the status badges' own measured
    pairs; the overlay is behind the box, never behind text. */
 .version-move-summary { margin: 0 1rem 0.75rem; display: flex; flex-direction: column; gap: 0.4rem;
