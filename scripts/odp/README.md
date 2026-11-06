@@ -38,6 +38,13 @@ then a run against it, then the diff of the JSON read before committing.
   - 03.12.05.a: the table prints "nondisclosure", the requirement text
     "non-disclosure".
 
+  **The table's wording is kept, and the committed data says so**
+  (2026-11-06). Each of the two rows carries `source_discrepancy`: what
+  the requirement text reads, `"kept": "table"`, and what differs. A
+  reader comparing either row to the PDF finds the difference already
+  noticed, rather than taking it for an extraction error. Only the
+  assignment text differs; neither row's DoD value does.
+
 ## What it found (2026-11-05)
 
 - **80 ODPs**, from 51 tables, one per page, on pages 3 to 53. The tables

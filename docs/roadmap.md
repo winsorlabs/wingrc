@@ -15450,6 +15450,11 @@ change:
 This is one new mechanism. §4's "no new mechanism" holds for where the
 list lives.
 
+**It is a general capability, not an ODP feature** (Jarrod, 2026-11-06).
+Any list can now have columns a person cannot edit, enforced by the
+server. `docs/PLAN-list-library.md` says so, so that the next slice
+needing it finds it instead of building it again.
+
 #### Column 3 ships empty
 
 It is **not** pre-filled with the DoD value. A pre-filled parameter reads
@@ -15501,6 +15506,55 @@ Nothing can link to a single parameter. An implementation statement
 saying "per our defined timeout" stays prose. That is acceptable for this
 slice, and it is the thing to revisit if parameters ever need to be
 referenced.
+
+#### The template merge invented row identity, and the memo will change
+
+Jarrod, 2026-11-06. Matching a copy's values to a revised template by ODP
+identifier (`list_adoption.reference_rows`) is the right behaviour, and it
+is a row identity the list model does not otherwise have. The memo says
+its values "will be updated as necessary", so a later memo can renumber an
+ODP, remove one, or split one in two.
+
+**What happens today, read from the code.** It is not silent, and it is
+not right either:
+- **A removed identifier with a value of ours:** the update counts it in
+  `dropped_cells` and is refused unless the person names the edit it
+  replaces (`odp-dod-rev3-own@vN`). Named, the value is not in the new
+  version; only history keeps it. The refusal names it wrongly, as
+  "filled cell(s) in columns the template dropped", the wording written
+  for dropped columns. It says neither "row" nor which identifier.
+- **A removed identifier with nothing of ours:** the row disappears, and
+  nothing names it.
+- **A renumbered ODP** is a removal plus an addition. The old value is
+  dropped as above, and the new identifier arrives "Not yet defined". A
+  **split** is one removal and two additions.
+
+**Decided (Jarrod's reading, and the reason): a disappearing identifier is
+surfaced, never dropped.** A parameter you defined and can no longer see
+is worse than one you never set. The never-set one reads "Not yet
+defined"; the lost one reads as nothing at all.
+- **A removed identifier that has a value of ours is carried into the new
+  version, marked as no longer in the source.** Its reference cells keep
+  the old memo's text. The update's preview names each such row, by
+  identifier, with our value.
+- **The update is not refused for it.** Nothing is lost, so there is no
+  edit to name. Removing the row afterwards is the person's own edit, and
+  it is recorded like any other.
+- **A removed identifier with nothing of ours drops, and the preview still
+  names it.** Nothing defined is lost, but the reader is told.
+- **WinGRC does not guess at renumbering or splits.** The memo has no
+  mapping, and the no-Rev-2-mapping decision applies equally here. New
+  identifiers arrive "Not yet defined", beside the carried row, and the
+  person moves the value.
+- **Populated follows on its own:** a carried row has our value entered,
+  and a new identifier does not. So the copy is not offered until the new
+  ones are defined, and that is correct.
+
+**Not built.** The carried row needs a per-row mark ("no longer in the
+source"), and rows have no field to carry one. A version-level list of
+retired identifiers in provenance would do it without a row model. Build
+it before the first revised memo is seeded, not after: `lists-seed-odp`
+with a changed PDF is the trigger.
 
 #### Defining is not implementing
 

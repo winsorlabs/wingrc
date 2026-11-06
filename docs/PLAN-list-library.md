@@ -234,6 +234,17 @@ record.
 **Candidates, never auto-applied.** Holds for evidence linking (§5) and for
 any future population from WinGRC activity (§6, L.6).
 
+**A list can have columns nobody edits: use them rather than build them
+again** (2026-11-05, migration 0073). `list_version.reference_columns`
+names columns whose text comes from a template's source. The server
+refuses any edit that changes one of their cells, adds or removes a row,
+or changes the columns (`list_library.reference_change`). A newer
+template version brings their cells and keeps the copy's own, matched by
+the first reference column (`list_adoption.reference_rows`). They never
+count as anyone's entry in `is_populated`. The ODP list is the first
+user; the capability is general. Its open edge is in `docs/roadmap.md`'s
+"The template merge invented row identity".
+
 ## 5. Lists as evidence, and lists in the bundle
 
 `Evidence`'s own docstring already states the principle: *"An artifact is
