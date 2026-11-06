@@ -34,13 +34,13 @@ describe("snapshotBannerLines", () => {
   it("names the snapshot, its age and the limit when stale", () => {
     expect(snapshotBannerLines(status({ status: "stale", attention: true, age_hours: 61.7 }))).toEqual([
       "The newest local snapshot, 20261101T214424Z, is 61 hours old (limit 50); the snapshot job may have stopped. " +
-        'See docs/deployment.md, "Local snapshots".',
+        "Whoever runs this server should check it. The operator's page is \"Local snapshots\" in docs/deployment.md.",
     ]);
   });
 
   it("says when there is none, when the clock is wrong, and when it cannot read", () => {
     expect(snapshotBannerLines(status({ status: "none", attention: true, newest: null }))[0]).toContain(
-      "There is no local snapshot"
+      "There is no local snapshot of this deployment. Whoever runs this server should set up or check the snapshot job."
     );
     expect(snapshotBannerLines(status({ status: "invalid", attention: true }))[0]).toContain("dated in the future");
     expect(
