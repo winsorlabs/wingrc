@@ -125,6 +125,8 @@ class ListVersionOut(BaseModel):
     responsible: str | None
     review_cadence: str | None
     columns: list[str]
+    # Columns no edit may change (migration 0073); empty for most lists.
+    reference_columns: list[str]
     rows: list[list[str]]
     provenance: dict
     created_at: datetime
@@ -257,6 +259,7 @@ def _version_out(v: ListVersion, cause: str) -> ListVersionOut:
     return ListVersionOut(
         id=v.id, version_number=v.version_number, title=v.title, description=v.description,
         responsible=v.responsible, review_cadence=v.review_cadence, columns=list(v.columns),
+        reference_columns=list(v.reference_columns or []),
         rows=[list(r) for r in v.rows], provenance=v.provenance or {},
         created_at=v.created_at, saved_by=_saved_by(v), cause=cause,
         example_rows=list_library.example_rows(v.rows),
@@ -350,7 +353,7 @@ def create_list_definition(
     content = {
         "title": body.title.strip(), "description": body.description.strip(),
         "responsible": body.responsible.strip(), "review_cadence": body.review_cadence.strip(),
-        "columns": [c.strip() for c in body.columns], "rows": body.rows,
+        "columns": [c.strip() for c in body.columns], "reference_columns": [], "rows": body.rows,
     }
     try:
         d = list_library.create_by_hand(
@@ -520,6 +523,9 @@ def create_list_version(
             status_code=422,
             detail=f"rows {bad[:5]} do not have {len(columns)} cells, one per column",
         )
+    refused = list_library.reference_change(base, columns, body.rows)
+    if refused:
+        raise HTTPException(status_code=422, detail=refused)
     content = list_library.content_of(base) | {"columns": columns, "rows": body.rows}
     v = list_library.create_version(
         session, d, content,
