@@ -58,7 +58,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .audit import log_event
-from .list_library import content_of, create_version
+from .list_library import content_of, create_version, history_of
 from .models import ListDefinition, ListVersion
 
 SEEDS = Path(__file__).resolve().parent / "seeds"
@@ -221,7 +221,12 @@ def apply(
         cause = "first_import"
     else:
         d = p.definition
-        prior = (p.current.provenance or {}).get("source_sha256")
+        # Judged against the last version this command wrote: a person's
+        # edit in between records no source.
+        seeded = [
+            v for v in history_of(session, d.id) if (v.provenance or {}).get("via") == "odp_seed"
+        ]
+        prior = (seeded[-1].provenance or {}).get("source_sha256") if seeded else None
         same_source = prior == load_fixture()["source"]["sha256"]
         cause = "importer_changed" if same_source else "source_changed"
     before = p.current.version_number if p.current else None
