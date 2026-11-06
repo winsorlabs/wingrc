@@ -561,8 +561,11 @@ whoever signs in as msp_admin. There is no mail relay by design, and
 nothing else is sent.
 
 `/health` carries the same reading as `snapshots`, and each deploy record
-holds the `/health` body. The field never changes `status`: a restart does
-not take a snapshot, and `deploy.sh` waits on `status`.
+holds the `/health` body. The field never changes the top-level `status`:
+a restart does not take a snapshot, and `deploy.sh` waits on that field.
+It reads it by parsing the body (`deploy/health-gate.sh`). Until
+2026-11-06 it grepped for `"status":"ok"`, and this block's own nested
+`status` matched, so the wait passed a split or incomplete deploy.
 
 ### The restore test
 

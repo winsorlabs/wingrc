@@ -186,7 +186,10 @@ def plan_space(
     """
     if keep < 1:
         raise ValueError("keep must be at least 1")
-    kept = existing[len(existing) - (keep - 1) :] if keep > 1 else []
+    # Clamped at zero: below keep - 1 snapshots the start went negative,
+    # Python counted it from the end, and rotation deleted sets it should
+    # have kept -- live settled at 7 under keep=14 (2026-11-06).
+    kept = existing[max(0, len(existing) - (keep - 1)) :] if keep > 1 else []
     rotated = existing[: len(existing) - len(kept)]
     total = sum(b for _, b in kept) + estimate
     if total > max_total:
@@ -480,7 +483,10 @@ def create(
 
         for old in plan.delete_after:
             shutil.rmtree(root / old)
-            log(f"rotated out {old} (retention keeps {keep})")
+            log(f"rotated out {old}")
+        # What it did, not what it is set to: "retention keeps 14" printed
+        # beside a run that kept 7 (2026-11-06).
+        log(f"{len(complete_snapshots(root))} snapshot(s) kept (keep is {keep})")
 
     unreadable = sorted(set(labels_in_use) - set(configured or []))
     return {

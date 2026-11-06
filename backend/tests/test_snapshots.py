@@ -176,6 +176,28 @@ def test_plan_keeps_the_newest_and_rotates_the_rest_afterwards():
     assert plan.delete_after == ("a", "b")
 
 
+# Written out, not derived from keep: (snapshots already there, how many the
+# plan rotates out) at keep=14. Below 14 nothing goes. Before the clamp, 7
+# rotated 1 and 8 rotated 3, so live settled at 7 (2026-11-06).
+@pytest.mark.parametrize(
+    "count, rotated",
+    [(0, 0), (1, 0), (7, 0), (8, 0), (12, 0), (13, 0), (14, 1), (15, 2)],
+)
+def test_plan_rotates_only_beyond_keep_at_every_count(count, rotated):
+    existing = [(f"s{i:02}", GIB) for i in range(count)]
+    plan = _plan(existing, keep=14, max_total=1000 * GIB, free=1000 * GIB, fs_size=1000 * GIB)
+    assert plan.ok
+    assert plan.delete_after == tuple(f"s{i:02}" for i in range(rotated))
+
+
+def test_plan_counts_every_kept_snapshot_against_the_cap_below_keep():
+    # 7 kept + the new one = 8 GiB, over a 7.5 GiB cap. With the negative
+    # slice only 6 were counted, and this fit.
+    existing = [(f"s{i}", GIB) for i in range(7)]
+    plan = _plan(existing, keep=14, estimate=GIB, max_total=7 * GIB + GIB // 2)
+    assert not plan.ok and "cap" in plan.reason
+
+
 def test_plan_refuses_over_the_cap_and_deletes_nothing():
     plan = _plan([("a", 4 * GIB), ("b", 4 * GIB)], estimate=3 * GIB)
     assert not plan.ok

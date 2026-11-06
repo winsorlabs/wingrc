@@ -15652,6 +15652,118 @@ linked list changes no control status or score (L.4).
 - **Teardown:** the host's lists match their before-lists; live was
   untouched.
 
+### Snapshot retention kept about 7 of 14, while saying it kept 14 -- fixed 2026-11-06
+
+**Found 2026-11-06**, taking the snapshot before the #81–#88 deploy. The
+run printed `rotated out 20261103T025845Z (retention keeps 14)` while only
+7 snapshots existed.
+
+**The cause:** `snapshots.plan_space` kept
+`existing[len(existing) - (keep - 1):]`. Below `keep - 1` snapshots the
+start is negative, Python counts it from the end, and the "kept" list
+came out short. With `keep=14` and *n* already present:
+- **n ≤ 6:** nothing rotated.
+- **n from 7 to 12:** 2n − 13 rotated. At 7, one went; at 8, three.
+- **n ≥ 13:** correct.
+
+So a deployment settles at about 7 surviving snapshots, not 14, from the
+seventh one on. The cap check had the same defect: it counted the bytes
+of the short list, not the snapshots that actually stay.
+
+**What was lost, and what was not:**
+- **Restore points, not data.** A snapshot is a copy. The database and
+  object store it copied were never touched.
+- **Exactly one so far: `20261103T025845Z`**, Jarrod's first, taken by
+  hand. It was deleted at 14:00:57 UTC on 2026-11-06 by the run taken
+  before the deploy. This is reconstructed from the ids and the
+  arithmetic, because no snapshot log was readable. The cron's log path
+  in `docs/deployment.md` does not exist on the host. The runs before it
+  started with 3, 4, 5 and 6 snapshots and rotated none, and the 7 on
+  disk match `/health`'s count of 7 before the run.
+- **Not recoverable.** `rmtree`, same host, no other copy.
+- **Bounded:** under the bug, a deployment keeps about 7. It would have
+  started losing one or more every night from the next run on.
+
+**Correction to the premise as briefed:** the brief said the first
+nightly run after 2026-11-03 was already deleting one a night. It was
+not. Rotation only starts once 7 exist, which on live was the 2026-11-06
+14:00 run. The point it was making stands, though: the run said
+**"retention keeps 14"**. That was true about configuration (`keep` was
+14) and false about behaviour (it kept 7). The log line printed the
+setting, never the outcome, so it could not show the difference.
+
+**The fix:** clamp the start at zero. `test_plan_rotates_only_beyond_keep_at_every_count`
+writes out the counts 0, 1, 7, 8, 12, 13, 14 and 15, with the expected
+rotation for each, rather than deriving them from `keep`.
+`test_plan_counts_every_kept_snapshot_against_the_cap_below_keep` holds
+the cap's half. Against the old line, 7, 8, 12 and the cap case fail,
+while 0, 1, 13, 14 and 15 pass on both, as they should. Every other
+computed slice index in `snapshots.py` was grepped. There is one other
+slice, `_first`'s `problems[:n]`, which starts at zero. The same pattern
+elsewhere, `document_diff.py`'s `run[len(run) - trail:]`, is reached only
+when the run is longer than `lead + trail + 1`, so its start cannot go
+negative.
+
+**The log line now says what the run did.** It counts the finished sets
+on disk after rotation, beside the setting:
+`8 snapshot(s) kept (keep is 14)`. The count is read from the directory,
+not from the plan, so it reports the outcome even if the plan is wrong
+again.
+
+### The deploy gate passed what it existed to refuse -- fixed 2026-11-06
+
+**What happened.** The 2026-11-06 deploy of `5db1201` printed this body,
+then `deployed 5db1201…`, and recorded it:
+`{"status":"incomplete", … "snapshots":{… "status":"ok" …}, "components":{… "worker":"unknown"}}`.
+The worker had not reported yet. A minute later `/health` was `ok` on all
+three components, so that deploy was fine. The gate was not.
+
+**The mechanism.** `deploy.sh`'s wait loop accepted a body when
+`grep -q '"status":"ok"'` matched it and the backend's commit matched.
+Item S (2026-11-03) added a `snapshots` block to the same `/health` body,
+with its own `"status":"ok"`. From then on, the first condition was true
+of every body on a deployment with a fresh snapshot. A split or
+incomplete deploy would have been reported as deployed, provided the
+backend was on the target commit.
+
+**Why this one is different from the rest of the list.** Per-component
+`/health` (2026-10-26) was built so that a split deploy could not read
+as `ok`, and the wait loop was its enforcement. Nobody edited the loop:
+**the snapshots block disabled it by landing beside it**, in a different
+slice, in a different file. Other failures in the confident-signal list
+were wrong when written (a static dict, a single `build` field), or
+changed by an edit to the check itself. This check was right, and stayed
+textually unchanged, while its meaning changed underneath it. **The guard
+had no test that could fail when its meaning changed.** A test of the
+grep's own text would have passed throughout. Only a test feeding it a
+body shaped like the real one could fail. So this is filed as an
+unguarded guard, not as another grep bug, even though the grep is how it
+happened.
+
+**The fix:**
+- **`deploy/health-gate.sh`** parses the body as JSON. It exits 0 only when
+  the top-level `status` is `ok` and backend, nginx and worker each
+  report the target commit. `deploy.sh`'s loop asks it and nothing else.
+- **`tests/test_health_gate.py`** feeds it the body live returned above,
+  a `split` body and an `incomplete` one. Each carries a nested
+  `"status":"ok"`, which a precondition asserts is there, and each is
+  sent both pretty and compact. The gate must refuse all of them. It also
+  refuses an empty body, an HTML 502, a body whose only `status` is
+  nested, and a JSON array. A second test checks that the loop calls the
+  gate and greps no `status` text.
+- **Mutation-checked both ways.** Making the gate grep the body turns 5
+  tests red, including the live body. Reverting the loop to the old grep
+  turns the loop test red.
+
+**Also corrected:** `docs/deployment.md` said "`deploy.sh` waits on
+`status`". That was true of the intent and false of the grep for three
+days. CLAUDE.md's note that the loop's `grep -q` was SIGPIPE-safe is gone
+with the grep.
+
+**Deploying this changes `deploy.sh`.** The running copy has the re-exec
+check (since 660e113), so the target's copy, with the gate, runs that
+same deploy.
+
 ### The rule that nothing is met without evidence has no code behind it
 
 **Found 2026-11-02. Recorded, not scoped.** CLAUDE.md's first hard rule
