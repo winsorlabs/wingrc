@@ -100,6 +100,21 @@ def test_four_odps_are_guidance_not_a_value_as_the_memo_says():
     ]
 
 
+def test_the_two_places_the_memo_differs_from_itself_are_in_the_data():
+    # Checked by eye on pages 6 and 40; the table's wording is kept, and the
+    # row says so for whoever compares it to the PDF next. Named, not derived.
+    rows = {r["identifier"]: r for r in odp_template.load_fixture()["rows"]}
+    noted = sorted(i for i, r in rows.items() if "source_discrepancy" in r)
+    assert noted == ["03.01.08.b", "03.12.05.a"]
+    assert all(rows[i]["source_discrepancy"]["kept"] == "table" for i in noted)
+    assert "nondisclosure" in rows["03.12.05.a"]["assignment_text"]
+    assert "non-disclosure" in rows["03.12.05.a"]["source_discrepancy"]["requirement_text_reads"]
+    assert rows["03.01.08.b"]["assignment_text"] == "[Assignment: organization-defined time period]"
+    assert rows["03.01.08.b"]["source_discrepancy"]["requirement_text_reads"].startswith(
+        "[Selection (one or more): lock the account or node for an [Assignment:"
+    )
+
+
 def test_the_fixture_names_the_committed_pdf():
     if not PDF.exists():
         pytest.skip("the PDF is not in this checkout (an image build has no docs/)")

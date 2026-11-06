@@ -63,15 +63,19 @@ PAGE_NUMBER = re.compile(r"^\d{1,2}$")
 # Where the memo's table and its own requirement text differ, checked by eye
 # against the page (2026-11-05). The table is the source for every row; the
 # difference is the document's, not the extraction's.
+# Where the memo's table and its own requirement text differ. The table is
+# kept, because the table is where the memo sets values; each row carries
+# the difference as `source_discrepancy`, so a reader comparing the row to
+# the PDF sees it was noticed (Jarrod, 2026-11-06). Each entry is the
+# table's text, the requirement text's, and what differs.
 KNOWN_DIFFERENCES = {
-    # The table quotes only the assignment nested inside the selection.
     "03.01.08.b": (
         "[Assignment: organization-defined time period]",
         "[Selection (one or more): lock the account or node for an [Assignment: "
         "organization-defined time period]; lock the account or node until released by an "
         "administrator; delay next logon prompt; notify system administrator; take other action]",
+        "The table quotes only the assignment nested inside the requirement's selection.",
     ),
-    # "nondisclosure" in the table, "non-disclosure" in the requirement text.
     "03.12.05.a": (
         "[Selection (one or more): interconnection security agreements; information exchange "
         "security agreements; memoranda of understanding or agreement; service-level agreements; "
@@ -79,6 +83,7 @@ KNOWN_DIFFERENCES = {
         "[Selection (one or more): interconnection security agreements; information exchange "
         "security agreements; memoranda of understanding or agreement; service-level agreements; "
         "user agreements; non-disclosure agreements; other types of agreements]",
+        'The table reads "nondisclosure"; the requirement text reads "non-disclosure".',
     ),
 }
 # Lines in a cell are about 12.6 points apart; a footnote mark sits about 3
@@ -260,9 +265,19 @@ def extract(pdf_path: Path) -> dict:
             "extractor": "scripts/odp/extract_odp.py, pdfplumber 0.11.7",
             "footnotes": [footnotes[k] for k in sorted(footnotes)],
         },
-        "rows": rows,
+        "rows": [with_discrepancy(r) for r in rows],
         "markers": markers,
     }
+
+
+def with_discrepancy(row: dict) -> dict:
+    known = KNOWN_DIFFERENCES.get(row["identifier"])
+    if known is None:
+        return row
+    _, text, note = known
+    return {**row, "source_discrepancy": {
+        "requirement_text_reads": text, "kept": "table", "note": note,
+    }}
 
 
 def verify(data: dict) -> list[str]:
@@ -278,7 +293,7 @@ def verify(data: dict) -> list[str]:
         want = data["markers"].get(r["identifier"])
         if want is None:
             problems.append(f"{r['identifier']}: no marker in the requirement text")
-        elif (r["assignment_text"], want) == KNOWN_DIFFERENCES.get(r["identifier"]):
+        elif (r["assignment_text"], want) == KNOWN_DIFFERENCES.get(r["identifier"], ())[:2]:
             continue
         elif want != r["assignment_text"]:
             problems.append(f"{r['identifier']}: table {r['assignment_text']!r} != text {want!r}")
