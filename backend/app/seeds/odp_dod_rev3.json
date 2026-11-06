@@ -139,7 +139,12 @@
       "pages": [
         6
       ],
-      "dod_value": "[Selection (one or more): lock the account or node for an at least 15-minute time period; lock the account or node until released by an administrator and notify a system administrator]"
+      "dod_value": "[Selection (one or more): lock the account or node for an at least 15-minute time period; lock the account or node until released by an administrator and notify a system administrator]",
+      "source_discrepancy": {
+        "requirement_text_reads": "[Selection (one or more): lock the account or node for an [Assignment: organization-defined time period]; lock the account or node until released by an administrator; delay next logon prompt; notify system administrator; take other action]",
+        "kept": "table",
+        "note": "The table quotes only the assignment nested inside the requirement's selection."
+      }
     },
     {
       "identifier": "03.01.10.a",
@@ -670,7 +675,12 @@
       "pages": [
         40
       ],
-      "dod_value": "requirements as described in the contract"
+      "dod_value": "requirements as described in the contract",
+      "source_discrepancy": {
+        "requirement_text_reads": "[Selection (one or more): interconnection security agreements; information exchange security agreements; memoranda of understanding or agreement; service-level agreements; user agreements; non-disclosure agreements; other types of agreements]",
+        "kept": "table",
+        "note": "The table reads \"nondisclosure\"; the requirement text reads \"non-disclosure\"."
+      }
     },
     {
       "identifier": "03.12.05.c",
