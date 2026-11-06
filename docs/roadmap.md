@@ -15522,6 +15522,45 @@ evidences that a value was defined. It is not evidence that the value is
 enforced on any system." Nothing treats it as a satisfied control: a
 linked list changes no control status or score (L.4).
 
+#### Verification (2026-11-05)
+
+- **Bench:** `wingrc_verify_odp`, a restore of live snapshot
+  `20261105T213011Z`, migrated to 0073.
+  - **`lists-seed-odp`** on Winsorlabs: dry run "create", apply "Wrote
+    version 1", again "unchanged".
+  - **Backend:** full suite with CI's integration settings, **2037
+    passed**, 2 skipped. Ruff is clean.
+  - **Frontend:** vitest **502 passed** (45 files), and `tsc -b` and the
+    build are clean.
+- **Two failures on the first pass, both fixed before the second:**
+  - the seed judged "source changed" against a person's edit, which
+    records no source;
+  - the panel test carried heredoc mojibake (the mojibake entry above).
+- **The walk** (Playwright, 1366x768):
+  - the template read "0 of 80 defined", with the four headers as
+    designed;
+  - copied into the org, it read the same, with 4 guidance tags;
+  - editing gave 80 inputs (column 3 only) and no add-row button;
+  - one value filled read "1 of 80 defined";
+  - a direct API attempt to reword row 1's DoD value got 422, "...is
+    reference text from the template's source and cannot be changed
+    here", and wrote no version.
+- **The database agreed:** the template at v1 with nothing defined; the
+  copy at v1 empty and v2 with one value. The audit rows were
+  `list.odp_template_seed` (actor `cli:lists-seed-odp`), `list.adopt`
+  and `list.version_create`.
+- **What the walk caught:** an untagged list read "Serves one
+  practice." and "Offered as evidence for the practices above" with
+  none. Both said a result nobody computed, and both are fixed. The
+  empty input's placeholder was the browser's grey, under 4.5:1; it is
+  now `#5c636a`, 6.1:1.
+- **Mutations:**
+  - **Backend:** `reference_change` always allowing the edit turned two
+    tests red, the unit test and the API test.
+  - **Frontend:** inputs on reference cells turned the editing test red.
+- **Teardown:** the host's lists match their before-lists; live was
+  untouched.
+
 ### The rule that nothing is met without evidence has no code behind it
 
 **Found 2026-11-02. Recorded, not scoped.** CLAUDE.md's first hard rule
