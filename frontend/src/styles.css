@@ -2479,7 +2479,10 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
               its side rules #0a58ca against #fff 6.4:1, #f1f3f5 5.8:1.
    reference: a value #212529 on #f1f3f5 13.9:1 (hover #e9ecef 13.0:1);
               its header label #5c636a on #f1f3f5 5.5:1.
-   guidance:  the tag #664d03 on #fff3cd 7.2:1. */
+   guidance:  the tag #664d03 on #fff3cd 7.2:1.
+   editing:   the input's "Not yet defined" placeholder #5c636a on #fff
+              6.1:1 (the browser's own placeholder grey is far under 4.5). */
+.list-rows td.list-col-ours input::placeholder { color: #5c636a; opacity: 1; font-style: italic; }
 .list-rows th.list-col-ours,
 .list-rows td.list-col-ours {
   background: #eef5ff;
