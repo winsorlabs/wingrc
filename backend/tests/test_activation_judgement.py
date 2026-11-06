@@ -259,6 +259,29 @@ def test_preview_states_the_score_the_activation_then_gives(db_session, w):
     assert db_session.get(Assessment, w["a"].id).sprs_score == p["sprs_after"]
 
 
+def test_preview_says_which_practices_already_deduct(db_session, w):
+    # c1 has two objectives: [a] Met by hand, [b] still not_met, so c1
+    # already loses its 5 points and a downgrade of [a] costs nothing.
+    # c2's only objective is Met, so c2 scores, and a downgrade costs 3.
+    _set_by_hand(db_session, w, "c1a", "met")
+    assert _set_by_hand(db_session, w, "c2a", "met") == 104, (
+        "fixture must score c2 and not c1, or this test proves nothing"
+    )
+    p = activation_preview(db_session, w["org"].id, w["p"].id, w["a"].id)
+    by_key = {(o["control_id"], o["objective_key"]): o for o in p["objectives"]}
+    assert {k: (o["becomes"], o["practice_deducts_now"]) for k, o in by_key.items()} == {
+        ("AC.L2-3.1.1", "a"): ("needs_review", True),
+        ("AC.L2-3.1.2", "a"): ("needs_review", False),
+    }
+    assert (p["sprs_now"], p["sprs_after"], p["practices_starting"]) == (104, 101, ["AC.L2-3.1.2"])
+
+    kept = activation_preview(db_session, w["org"].id, w["p"].id, w["a"].id, choices={
+        uuid.UUID(by_key[("AC.L2-3.1.2", "a")]["control_state_id"]): "keep",
+    })
+    assert (kept["sprs_now"], kept["sprs_after"], kept["practices_starting"]) == (104, 104, [])
+    assert [o["practice_deducts_now"] for o in kept["objectives"]] == [True, False]
+
+
 def test_preview_writes_nothing(db_session, w):
     _set_by_hand(db_session, w, "c2a", "met")
     before = (

@@ -37,6 +37,7 @@ from .assessment import (
     Responsibility,
     compute_sprs,
     contributor_added_status,
+    deducting_controls,
     is_judgement_in_question,
     magic_loop_updates,
     resolve_contributor_responsibility,
@@ -69,6 +70,41 @@ class ActivationJudgementsChanged(Exception):
     """The judged objectives at confirm are not the ones the person was
     shown, or one moved since: they approved a change that is no longer the
     one that would happen."""
+
+
+def _scoring_inputs(
+    session: Session, assessment_id: uuid.UUID
+) -> tuple[dict[str, int], dict[str, list[str]], dict[str, str]]:
+    """compute_sprs's three arguments, read from the assessment's control states."""
+    rows = session.execute(
+        select(
+            ControlState.objective_id,
+            ControlState.status,
+            Control.control_id,
+            Control.sprs_weight,
+        )
+        .join(AssessmentObjective, ControlState.objective_id == AssessmentObjective.id)
+        .join(Control, AssessmentObjective.control_id == Control.id)
+        .where(ControlState.assessment_id == assessment_id)
+    ).all()
+
+    control_weights: dict[str, int] = {}
+    objectives_by_control: dict[str, list[str]] = {}
+    objective_statuses: dict[str, str] = {}
+
+    for row in rows:
+        obj_id_str = str(row.objective_id)
+        ctrl_id = row.control_id
+        control_weights[ctrl_id] = row.sprs_weight
+        objectives_by_control.setdefault(ctrl_id, []).append(obj_id_str)
+        objective_statuses[obj_id_str] = row.status
+    return control_weights, objectives_by_control, objective_statuses
+
+
+def _deducting(session: Session, assessment_id: uuid.UUID) -> set[str]:
+    session.flush()
+    _, objectives_by_control, objective_statuses = _scoring_inputs(session, assessment_id)
+    return deducting_controls(objectives_by_control, objective_statuses)
 
 
 def recompute_sprs(session: Session, assessment_id: uuid.UUID) -> int:
@@ -133,30 +169,7 @@ def recompute_sprs(session: Session, assessment_id: uuid.UUID) -> int:
         select(Assessment).where(Assessment.id == assessment_id).with_for_update()
     ).scalar_one_or_none()
 
-    rows = session.execute(
-        select(
-            ControlState.objective_id,
-            ControlState.status,
-            Control.control_id,
-            Control.sprs_weight,
-        )
-        .join(AssessmentObjective, ControlState.objective_id == AssessmentObjective.id)
-        .join(Control, AssessmentObjective.control_id == Control.id)
-        .where(ControlState.assessment_id == assessment_id)
-    ).all()
-
-    control_weights: dict[str, int] = {}
-    objectives_by_control: dict[str, list[str]] = {}
-    objective_statuses: dict[str, str] = {}
-
-    for row in rows:
-        obj_id_str = str(row.objective_id)
-        ctrl_id = row.control_id
-        control_weights[ctrl_id] = row.sprs_weight
-        objectives_by_control.setdefault(ctrl_id, []).append(obj_id_str)
-        objective_statuses[obj_id_str] = row.status
-
-    score = compute_sprs(control_weights, objectives_by_control, objective_statuses)
+    score = compute_sprs(*_scoring_inputs(session, assessment_id))
 
     if locked_assessment is not None:
         locked_assessment.sprs_score = score
@@ -756,13 +769,19 @@ def activation_preview(
     The caller must roll the request back as well: the savepoints undo the
     writes, and the request writes nothing else (test_preview_writes_nothing).
 
-    Returns {"sprs_now", "sprs_after", "objectives"}; objectives is empty
-    when nothing is judged, and sprs_after is then the plain activation's.
+    Returns {"sprs_now", "sprs_after", "objectives", "practices_starting"};
+    objectives is empty when nothing is judged, and sprs_after is then the
+    plain activation's. The score's reasons come from the same two runs
+    (test_preview_says_which_practices_already_deduct): each objective's
+    practice_deducts_now says whether its practice already loses its points,
+    so a downgrade there costs nothing, and practices_starting names every
+    practice that loses its points only after these choices.
     """
     assessment = session.get(Assessment, assessment_id)
     if assessment is None:
         raise ValueError(f"Assessment {assessment_id} not found")
     sprs_now = assessment.sprs_score
+    deducting_now = _deducting(session, assessment_id)
 
     savepoint = session.begin_nested()
     try:
@@ -773,7 +792,10 @@ def activation_preview(
 
     judged = [(uuid.UUID(j["control_state_id"]), j["from"]) for j in found["judged"]]
     if not judged:
-        return {"sprs_now": sprs_now, "sprs_after": sprs_after, "objectives": []}
+        return {
+            "sprs_now": sprs_now, "sprs_after": sprs_after,
+            "objectives": [], "practices_starting": [],
+        }
 
     given = choices or {}
     resolved = {
@@ -784,6 +806,7 @@ def activation_preview(
     try:
         activate_org_product(session, org_id, product_id, assessment_id, decisions=resolved)
         sprs_after = session.get(Assessment, assessment_id).sprs_score
+        deducting_after = _deducting(session, assessment_id)
     finally:
         savepoint.rollback()
 
@@ -811,9 +834,15 @@ def activation_preview(
             "default": str(ACTIVATION_DEFAULTS[shown]),
             "choice": str(choice),
             "becomes": contributor_added_status(shown, True, choice),
+            "practice_deducts_now": control_key in deducting_now,
         })
     objectives.sort(key=lambda o: (o["control_id"], o["objective_key"], o["control_state_id"]))
-    return {"sprs_now": sprs_now, "sprs_after": sprs_after, "objectives": objectives}
+    return {
+        "sprs_now": sprs_now,
+        "sprs_after": sprs_after,
+        "objectives": objectives,
+        "practices_starting": sorted(deducting_after - deducting_now),
+    }
 
 
 # ---------------------------------------------------------------------------
