@@ -76,6 +76,7 @@ record_deploy() {
     echo "commit:   $sha"
     echo "deployed: $(date -u +%Y-%m-%dT%H:%M:%SZ) by $(id -un)"
     echo "health:   $1"
+    printf '%s\n' "$waited" | sed 's/^/wait:     /'
     for svc in backend worker nginx; do
       # The image IDs are what tell a changed base from a new advisory when
       # two records' scans differ, so a failed lookup says so, not blank.
@@ -115,15 +116,25 @@ record_deploy() {
 # (backend/app/health.py). health-gate.sh parses the body and reads the
 # top-level status and each component: never grep it, because a nested
 # "status" (the snapshots block) matched the old grep for any deploy.
+# Every refused try is logged with the gate's reason, and the lines go into
+# the deploy record: what the wait saw is evidence only at the moment it
+# happens (2026-11-06's worker came up about 31 s after the backend, and
+# nothing recorded the tries in between).
 echo "waiting for /health to report $sha for backend, nginx and worker ..."
-for _ in $(seq 60); do
+waited=""
+start=$SECONDS
+for try in $(seq 60); do
   body="$(docker compose exec -T nginx curl -sk --max-time 3 https://localhost/api/health 2>/dev/null || true)"
-  if printf '%s' "$body" | bash deploy/health-gate.sh "$sha"; then
+  if reason="$(printf '%s' "$body" | bash deploy/health-gate.sh "$sha" 2>&1)"; then
+    waited+="try $try, $((SECONDS - start))s: accepted"
     echo "$body"
     echo "deployed $sha"
     record_deploy "$body"
     exit 0
   fi
+  line="try $try, $((SECONDS - start))s: refused: ${reason:-no reason given}"
+  echo "$line"
+  waited+="$line"$'\n'
   sleep 5
 done
 echo "deploy did not become healthy at $sha within 5 minutes; last /health:" >&2

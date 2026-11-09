@@ -566,6 +566,9 @@ a restart does not take a snapshot, and `deploy.sh` waits on that field.
 It reads it by parsing the body (`deploy/health-gate.sh`). Until
 2026-11-06 it grepped for `"status":"ok"`, and this block's own nested
 `status` matched, so the wait passed a split or incomplete deploy.
+Each refused try prints one line with the gate's reason, and the deploy
+record's `deploy.txt` keeps them as `wait:` lines, so how long a
+component took to report is read from the record, not reconstructed.
 
 ### The restore test
 
