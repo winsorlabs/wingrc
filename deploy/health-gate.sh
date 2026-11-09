@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Whether a /health body on stdin is a finished deploy of commit $1: exit 0
 # only when the body's top-level "status" is "ok" and every component
-# reports $1. deploy.sh's wait loop asks this and nothing else.
+# reports $1. deploy.sh's wait loop asks this and nothing else. On a
+# refusal it prints one line on stderr saying why, which the loop logs per
+# try, so a deploy's record shows how the wait went.
 #
 # It parses the JSON and reads the top-level field. It must never match the
 # body's text: until 2026-11-06 the loop grepped for '"status":"ok"', and
@@ -16,15 +18,25 @@ set -euo pipefail
 "${PYTHON:-python3}" -c '
 import json, sys
 sha = sys.argv[1]
+
+def refuse(reason):
+    print(reason, file=sys.stderr)
+    sys.exit(1)
+
+raw = sys.stdin.read()
 try:
-    body = json.load(sys.stdin)
+    body = json.loads(raw)
 except ValueError:
-    sys.exit(1)
-if not isinstance(body, dict) or body.get("status") != "ok":
-    sys.exit(1)
+    refuse("no JSON body (empty)" if not raw.strip() else "no JSON body (%d bytes)" % len(raw))
+if not isinstance(body, dict):
+    refuse("body is not a JSON object")
 components = body.get("components")
 if not isinstance(components, dict):
-    sys.exit(1)
+    components = {}
 names = ("backend", "nginx", "worker")
-sys.exit(0 if all(components.get(n) == sha for n in names) else 1)
+seen = "; ".join("%s %s" % (n, str(components.get(n, "missing"))[:12]) for n in names)
+if body.get("status") != "ok":
+    refuse("status %s: %s" % (body.get("status", "missing"), seen))
+if not all(components.get(n) == sha for n in names):
+    refuse("status ok but not all on %s: %s" % (sha[:12], seen))
 ' "$1"
