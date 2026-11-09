@@ -12310,6 +12310,63 @@ his choice of account, installed by him. The `claude` account cannot
 read that crontab; its first run is seen instead as
 `20261103T031703Z`, the third snapshot.
 
+**The staleness alarm caught a real event (2026-11-09): the first alarm
+in this product to do so.** wl-util-1 went down uncleanly at about
+02:15 UTC on 2026-11-07 and came back at 20:01 UTC on 2026-11-09. Nobody
+predicted it, and nobody was looking for it. When it came back, `/health`
+read `snapshots` `stale` at **77.3 hours** (newest `20261106T151723Z`,
+threshold 50), and msp_admin's banner was up.
+- **Why it matters.** Every reader built this fortnight was proven by a
+  deliberately broken input: the deploy gate, this age check, the scan
+  baseline, the conflict-marker step. This is the first to report
+  something true that nobody planted. The rule applied to each of them,
+  that a control needs a reader, has now paid out once instead of only
+  being argued for.
+- **How the outage was bounded.** It was read from what survives, not
+  from the system journal, which the `claude` account cannot read (as
+  `claude`, `journalctl` shows only that account's own entries):
+  - `last -x` records the 2026-11-06 13:27 boot and the next at
+    2026-11-09 20:01, with no shutdown between them.
+  - The backend's 30 s healthcheck log stops at 02:14:58 on 11-07.
+  - Postgres started with "database system was not properly shut down".
+- **What it cost.** No cron run had a host for three nights, so the
+  count stayed at 8. That is exactly the zero-run count, not a retention
+  fault.
+- **The cause of the outage is not known.** It needs the host's journal,
+  which is Jarrod's to read.
+
+**The database after the crash (2026-11-09).** A clean start is not
+clean data, so this was checked, read-only:
+- **Recovery replayed 208 bytes of WAL** (`redo starts at 0/4C94A920`,
+  `redo done at 0/4C94A9F0`). The last checkpoint, at 01:32:32, was 43
+  minutes before the crash, but the database was idle: almost nothing
+  had been written since.
+- **Data checksums are on**, and `pg_stat_database` showed 0 checksum
+  failures. A crash discards those counters, so the 0 covers 20:01
+  onwards. That window includes the snapshot below, whose `pg_dump`
+  read every table. Shared buffers start empty after a reboot, so every
+  page it touched came from disk and had its checksum checked.
+- **0 invalid indexes** in `pg_index`.
+- **Not checked: the 215 btree indexes' contents.** `amcheck` is
+  available (1.5) but not installed. Installing it is a write to live's
+  schema, and a write to live goes through an audited command or does
+  not run, so the extension was not created. Whether to check them that
+  way is Jarrod's decision.
+
+**The first run of the fixed retention (2026-11-09 20:44 UTC, by hand,
+with its output read as it ran).** The fix (#89) had reached live on
+2026-11-06, but the outage meant no run had used it. Predicted before
+the run: 8 sets on disk, so 9 kept, none rotated,
+`9 snapshot(s) kept (keep is 14)`. Observed: exactly that, with no
+`rotated out` line. Snapshot `20261109T204408Z`: 61 tables, 4329 rows,
+25 objects. It was taken by `deploy/snapshot.sh` and the backend image at
+`e3197d9`, with no keep override. `/health` then read `count` 9, `ok`,
+and the banner cleared. Log:
+`~claude/wingrc-snapshot-runs/20261109T204406Z-by-hand.log`.
+- **`20261106T151723Z` is the last set from before the crash.** No
+  restore from this host has been confirmed since the 2026-11-03 test,
+  which makes a live restore test of a pre-crash set more pressing.
+
 **The first live restore test (2026-11-03, 14:41 UTC, Jarrod
 watching).** Run at `75fb484` as built, with a probe (#79) to show the
 rows themselves. Record:
@@ -15709,6 +15766,11 @@ on disk after rotation, beside the setting:
 `8 snapshot(s) kept (keep is 14)`. The count is read from the directory,
 not from the plan, so it reports the outcome even if the plan is wrong
 again.
+
+**First run of the fixed code: 2026-11-09 20:44 UTC, by hand.** The
+next scheduled run would have been the first, but the host was down
+from 2026-11-07 02:15 (item S). The run was predicted at 9 kept, none
+rotated, and that is what it did.
 
 ### The deploy gate passed what it existed to refuse -- fixed 2026-11-06
 
