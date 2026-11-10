@@ -177,6 +177,27 @@ describe("ProductCard activation", () => {
     )).toBeTruthy();
   });
 
+  // The server's answer for test_preview_a_not_applicable_objective_on_a_scoring_practice:
+  // since 2026-11-10 an N/A objective scores as met (32 CFR 170.24(b)(3)),
+  // so its practice no longer "already scores as not met", and sending the
+  // N/A objective to review costs the practice's points.
+  it("says a not applicable objective's practice would start to score as not met", async () => {
+    vi.mocked(api.previewActivation).mockResolvedValue(
+      preview([
+        judged({ control_state_id: "1", control_id: "AC.L2-3.1.1", objective_key: "a", status: "not_applicable",
+                 default: "keep", choice: "needs_review", becomes: "needs_review" }),
+        judged({ control_state_id: "2", control_id: "AC.L2-3.1.1", objective_key: "b", choice: "keep",
+                 becomes: "met" }),
+      ], 106, 101, ["AC.L2-3.1.1"]),
+    );
+    mountInactive();
+    fireEvent.click(screen.getByRole("button", { name: "Activate" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(
+      "SPRS goes from 106 to 101 (down 5): AC.L2-3.1.1 would score as not met.",
+    )).toBeTruthy();
+  });
+
   it("names what costs points and what already did, when both happen", async () => {
     vi.mocked(api.previewActivation).mockResolvedValue(
       preview([

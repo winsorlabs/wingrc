@@ -318,6 +318,21 @@ def test_family_heatmap(dashboard_json: dict):
     assert by_family["SC"] == {"family": "SC", "controls_met": 0, "controls_total": 1}
 
 
+def test_family_heatmap_counts_a_not_applicable_practice_as_met(
+    client: TestClient, db_session: Session, ref: dict, fake_msp_admin
+):
+    """The heatmap reads assessment.SATISFYING_STATUSES, the set the score
+    reads: since 2026-11-10 an N/A objective is assessed as met (32 CFR
+    170.24(b)(3)). Until then the heatmap kept its own {met, inherited}."""
+    ref["ac2a"].status = "not_applicable"
+    db_session.flush()
+    _grant(db_session, fake_msp_admin, org_id=ref["org"].id)
+    resp = client.get(f"/orgs/{ref['org'].id}/assessments/{ref['assessment'].id}/dashboard")
+    assert resp.status_code == 200
+    by_family = {row["family"]: row for row in resp.json()["family_heatmap"]}
+    assert by_family["AC"] == {"family": "AC", "controls_met": 2, "controls_total": 2}
+
+
 def test_sprs_widget(dashboard_json: dict):
     sprs = dashboard_json["sprs"]
     assert sprs["current_score"] == 97

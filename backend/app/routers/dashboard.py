@@ -35,6 +35,7 @@ from pydantic import BaseModel
 from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
+from ..assessment import SATISFYING_STATUSES
 from ..auth import require_org_access, require_write
 from ..db import get_session
 from ..document_reviews import (
@@ -229,9 +230,9 @@ class DashboardOut(BaseModel):
 
 def _family_heatmap(session: Session, assessment_id: uuid.UUID) -> list[FamilyHeatmapEntry]:
     """A control counts as met iff ALL its objectives (within this
-    assessment) have status in {met, inherited} -- same rule
-    assessment.py:compute_sprs uses for the SPRS rollup, just grouped by
-    family instead of weighted-summed."""
+    assessment) have a status in assessment.SATISFYING_STATUSES -- the set
+    compute_sprs reads, so the two cannot drift, just grouped by family
+    instead of weighted-summed."""
     rows = session.execute(
         select(
             Control.family,
@@ -250,10 +251,9 @@ def _family_heatmap(session: Session, assessment_id: uuid.UUID) -> list[FamilyHe
 
     totals: dict[str, int] = defaultdict(int)
     met: dict[str, int] = defaultdict(int)
-    _satisfied = {"met", "inherited"}
     for (family, _control_id), statuses in statuses_by_control.items():
         totals[family] += 1
-        if all(s in _satisfied for s in statuses):
+        if all(s in SATISFYING_STATUSES for s in statuses):
             met[family] += 1
 
     return [

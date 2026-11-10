@@ -18,11 +18,13 @@ import pytest
 from app.assessment import (
     ACTIVATION_DEFAULTS,
     JUDGED_STATUSES,
+    SATISFYING_STATUSES,
     SPRS_MAX,
     ControlStatus,
     Responsibility,
     compute_sprs,
     contributor_added_status,
+    deducting_controls,
     is_judgement_in_question,
     magic_loop_updates,
     resolve_contributor_responsibility,
@@ -97,12 +99,57 @@ def test_sprs_inherited_counts_as_met():
     assert compute_sprs(weights, objectives, statuses) == 110
 
 
-def test_sprs_not_applicable_counts_as_unmet():
-    # not_applicable still deducts — the assessor must justify scoping out
+def test_sprs_not_applicable_counts_as_met():
+    # Changed 2026-11-10. From the first engine commit (4f87cfd) this test
+    # was test_sprs_not_applicable_counts_as_unmet and asserted 107: "the
+    # assessor must justify scoping out". That was never checked against
+    # the regulation, which says the opposite. 32 CFR 170.24(b)(3): "an
+    # assessment objective assessed as N/A is equivalent to the same
+    # assessment objective being assessed as MET" (docs/roadmap.md, "N/A
+    # objectives stop deducting").
     weights = {"MA.L2-3.7.1": 3}
-    objectives = {"MA.L2-3.7.1": ["obj-a"]}
-    statuses = {"obj-a": ControlStatus.NOT_APPLICABLE}
-    assert compute_sprs(weights, objectives, statuses) == 107
+    objectives = {"MA.L2-3.7.1": ["obj-a", "obj-b"]}
+    statuses = {"obj-a": ControlStatus.NOT_APPLICABLE, "obj-b": ControlStatus.MET}
+    assert compute_sprs(weights, objectives, statuses) == 110
+    assert deducting_controls(objectives, statuses) == set()
+
+
+def test_sprs_practice_with_every_objective_not_applicable_is_satisfied():
+    # Read from the Assessment Guide's p. 10 ("MET or NOT APPLICABLE" for
+    # each objective), not quoted: neither source says this case outright.
+    weights = {"SC.L2-3.13.5": 5}
+    objectives = {"SC.L2-3.13.5": ["obj-a", "obj-b"]}
+    statuses = {"obj-a": ControlStatus.NOT_APPLICABLE, "obj-b": ControlStatus.NOT_APPLICABLE}
+    assert compute_sprs(weights, objectives, statuses) == 110
+    assert deducting_controls(objectives, statuses) == set()
+
+
+def test_sprs_not_applicable_does_not_rescue_a_practice_with_one_not_met():
+    # Assessment Guide p. 11: "The security requirement is NOT MET when one
+    # or more applicable assessment objectives is NOT MET." The whole
+    # weight deducts, not a share.
+    weights = {"AC.L2-3.1.1": 5, "AU.L2-3.3.1": 3}
+    objectives = {"AC.L2-3.1.1": ["a", "b", "c", "d"], "AU.L2-3.3.1": ["e"]}
+    statuses = {
+        "a": ControlStatus.NOT_APPLICABLE,
+        "b": ControlStatus.NOT_APPLICABLE,
+        "c": ControlStatus.MET,
+        "d": ControlStatus.NOT_MET,
+        "e": ControlStatus.NOT_APPLICABLE,
+    }
+    assert compute_sprs(weights, objectives, statuses) == 105
+    assert deducting_controls(objectives, statuses) == {"AC.L2-3.1.1"}
+
+
+def test_sprs_satisfying_statuses_are_met_inherited_and_not_applicable():
+    """Holds assessment.SATISFYING_STATUSES's comment. Written out here,
+    not read from the set, so a status dropped from or added to it turns
+    this red."""
+    assert SATISFYING_STATUSES == {"met", "inherited", "not_applicable"}
+    satisfying = {"met", "inherited", "not_applicable"}
+    for status in ControlStatus:
+        deducts = deducting_controls({"P": ["o"]}, {"o": status})
+        assert deducts == (set() if status in satisfying else {"P"}), status
 
 
 def test_sprs_control_with_no_objectives_is_skipped():

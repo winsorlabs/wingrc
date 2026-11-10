@@ -2087,3 +2087,83 @@ def backfill_missing_control_states(
         session.commit()
 
     return results
+
+
+def rescore_assessments(session: Session, *, reason: str, dry_run: bool = True) -> list[dict]:
+    """Recompute every assessment's stored SPRS score once, after a change to
+    the scoring rule, and say what moved and why.
+
+    Built for 2026-11-10, when not_applicable stopped deducting
+    (assessment.SATISFYING_STATUSES; docs/roadmap.md, "N/A objectives stop
+    deducting"). Without it, a stored score is corrected only when
+    something next recomputes it, so a deployment holds corrected and
+    uncorrected scores side by side, with nothing saying which is which.
+
+    Reports every assessment, moved or not. For one that moves,
+    stopped_deducting names the practices that no longer deduct and have a
+    not_applicable objective: under the earlier rule, exactly those
+    deducted, so sprs_before plus their weights is the new score. When it
+    is not, the stored score was stale for some other reason, and
+    `explained` is False: a finding, never a rounding difference. One that
+    does not move (already rescored, or stored since the change) names no
+    practices and is explained, so a second run reports nothing.
+
+    Writes only where the score moves: recompute_sprs (the score and an
+    SprsSnapshot row; earlier snapshots are never touched), and one audit
+    row (action="assessment.sprs_rescore") with both scores, the practices
+    and *reason*. Nothing else is touched: sprs_submission holds what was
+    filed, as a value, and an exported bundle's score is in its
+    bundle.export audit row. dry_run=True (the default) rolls back.
+
+    Returns one dict per assessment: {"assessment_id", "org_id",
+    "org_name", "assessment_name", "sprs_before", "sprs_after",
+    "stopped_deducting", "explained"}.
+    """
+    results: list[dict] = []
+    assessments = session.scalars(select(Assessment).order_by(Assessment.id)).all()
+    for assessment in assessments:
+        weights, objectives_by_control, statuses = _scoring_inputs(session, assessment.id)
+        deducting = deducting_controls(objectives_by_control, statuses)
+        sprs_before = assessment.sprs_score
+        sprs_after = compute_sprs(weights, objectives_by_control, statuses)
+        # A score already right (rescored before, or stored since the rule
+        # changed) did not move, so nothing stopped deducting in this run.
+        stopped = [] if sprs_after == sprs_before else sorted(
+            c for c, objectives in objectives_by_control.items()
+            if c not in deducting
+            and any(statuses.get(o) == ControlStatus.NOT_APPLICABLE for o in objectives)
+        )
+        explained = sprs_before is not None and (
+            sprs_before + sum(weights[c] for c in stopped) == sprs_after
+        )
+        if sprs_after != sprs_before:
+            recompute_sprs(session, assessment.id)
+            log_event(
+                session,
+                org_id=assessment.org_id,
+                action="assessment.sprs_rescore",
+                entity_type="assessment",
+                entity_id=assessment.id,
+                before_value={"sprs_score": sprs_before},
+                after_value={"sprs_score": sprs_after, "stopped_deducting": stopped},
+                context={"via": "cli", "reason": reason, "explained": explained},
+                actor="system",
+                actor_type="system",
+            )
+        org = session.get(Organization, assessment.org_id)
+        results.append({
+            "assessment_id": str(assessment.id),
+            "org_id": str(assessment.org_id),
+            "org_name": org.name if org else str(assessment.org_id),
+            "assessment_name": assessment.name,
+            "sprs_before": sprs_before,
+            "sprs_after": sprs_after,
+            "stopped_deducting": stopped,
+            "explained": explained,
+        })
+
+    if dry_run:
+        session.rollback()
+    else:
+        session.commit()
+    return results

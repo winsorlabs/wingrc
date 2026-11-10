@@ -445,6 +445,30 @@ def test_bundle_cover_contains_sprs_score(client, db_session, storage, fake_msp_
 
 
 @pytest.mark.integration
+def test_bundle_scores_a_not_applicable_objective_as_met_on_every_page(
+    client, db_session, storage, fake_msp_admin
+):
+    """32 CFR 170.24(b)(3): an N/A objective is assessed as MET. AC.L2-3.1.1
+    with [a] N/A and [b] Met keeps its 5 points. Until 2026-11-10 the score
+    deducted it while scoring.html's table, which reads the rolled-up
+    status, did not list it: "Total deduction: 5" over "No deductions"."""
+    d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    d["cs_a"].status = "not_applicable"
+    d["cs_b"].status = "met"
+    db_session.flush()
+
+    r = client.get(_bundle_url(d))
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        scoring = zf.read(next(n for n in zf.namelist() if n.endswith("scoring.html"))).decode()
+        cover = zf.read(next(n for n in zf.namelist() if n.endswith("cover.html"))).decode()
+
+    assert "Total deduction: 0" in scoring
+    assert "No deductions" in scoring
+    assert "<span class='score-big'>110</span>" in cover
+
+
+@pytest.mark.integration
 def test_bundle_implementation_contains_objective(client, db_session, storage, fake_msp_admin):
     d = _seed(db_session, storage, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
     r = client.get(_bundle_url(d))

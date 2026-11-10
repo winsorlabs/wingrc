@@ -587,11 +587,18 @@ Full model set: `Framework → Control → AssessmentObjective → ControlState`
 
 **SPRS scoring** (`assessment.py:compute_sprs`): groups objectives by control,
 applies worst-objective-wins rollup per control, deducts weight for any
-non-passing control (statuses: `not_met`, `partial`, `pending_evidence`,
-`needs_review`, and `not_applicable`). `met` and `inherited` do not
-deduct. That `not_applicable` deducts is tested; whether CMMC scores it
-as met is open (`docs/roadmap.md`, "The score treats not applicable as
-not met").
+non-passing control (statuses: `not_met`, `partial`, `pending_evidence`
+and `needs_review`). `met`, `inherited` and `not_applicable` do not
+deduct (`assessment.SATISFYING_STATUSES`, which the dashboard heatmap
+also reads). `not_applicable` stopped deducting on 2026-11-10, by 32 CFR
+170.24(b)(3): "an assessment objective assessed as N/A is equivalent to
+the same assessment objective being assessed as MET". This file said so
+from 2026-07-11 while the code deducted. On 2026-11-05 the file was
+rewritten to match the code; the regulation shows the file had been
+right (`docs/roadmap.md`, "N/A objectives stop deducting").
+`inherited`'s place in that set has not been checked against the
+authority (`docs/roadmap.md`, "What inherited means for the score is
+unchecked").
 `engine.py:recompute_sprs` is the single write path for
 `assessment.sprs_score` — every mutation that can change a control's status
 routes through it: assessment creation (`start_assessment`), every product

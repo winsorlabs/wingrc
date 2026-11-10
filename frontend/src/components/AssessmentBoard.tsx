@@ -2,55 +2,13 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { FAMILY_ORDER } from "../lib/families";
 import { applyFilters, clearFilters, filtersActive, toggleSetItem } from "../lib/filters";
+import { computeSprsLive, computeTierSummary } from "../lib/sprs";
 import type { FilterOpts } from "../lib/filters";
 import type { Assessment, ControlStateRow, Org } from "../types";
 import { ControlDrawer } from "./ControlDrawer";
 import { EvidenceTasksPanel } from "./EvidenceTasksPanel";
 import { FamilySection } from "./FamilySection";
 import { BundleListsPicker } from "./BundleListsPicker";
-
-// ---------------------------------------------------------------------------
-// SPRS: always computed from ALL rows, never from the filtered view
-// ---------------------------------------------------------------------------
-
-function computeSprsLive(rows: ControlStateRow[]): number {
-  const controls: Record<string, { weight: number; statuses: string[] }> = {};
-  for (const row of rows) {
-    if (!controls[row.control_id]) {
-      controls[row.control_id] = { weight: row.sprs_weight, statuses: [] };
-    }
-    controls[row.control_id].statuses.push(row.status);
-  }
-  let deductions = 0;
-  for (const { weight, statuses } of Object.values(controls)) {
-    if (!statuses.every((s) => s === "met" || s === "inherited")) {
-      deductions += weight;
-    }
-  }
-  return 110 - deductions;
-}
-
-// ---------------------------------------------------------------------------
-// Weight-tier summary: control-level rollup (same logic as SPRS)
-// ---------------------------------------------------------------------------
-
-interface TierSummary {
-  met: number;
-  total: number;
-}
-
-function computeTierSummary(rows: ControlStateRow[], weight: number): TierSummary {
-  const controls: Record<string, string[]> = {};
-  for (const row of rows) {
-    if (row.sprs_weight !== weight) continue;
-    (controls[row.control_id] ??= []).push(row.status);
-  }
-  let met = 0;
-  for (const statuses of Object.values(controls)) {
-    if (statuses.every((s) => s === "met" || s === "inherited")) met++;
-  }
-  return { met, total: Object.keys(controls).length };
-}
 
 // ---------------------------------------------------------------------------
 // Small presentational components
@@ -75,7 +33,7 @@ function Chip({ label, active, onClick }: ChipProps) {
 
 interface TierBarProps {
   label: string;
-  summary: TierSummary;
+  summary: { met: number; total: number };
 }
 
 function TierBar({ label, summary }: TierBarProps) {

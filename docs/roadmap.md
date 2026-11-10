@@ -15418,6 +15418,213 @@ that is checked against the authoritative text before any code moves,
 and a change would move live scores, so it would be its own slice with
 a dry run per assessment. Nothing changed.
 
+**Settled 2026-11-10: the regulation scores N/A as met, and the code now
+does.** See "N/A objectives stop deducting" below.
+
+### N/A objectives stop deducting -- fixed 2026-11-10
+
+**What was wrong.** `assessment.deducting_controls` satisfied a practice
+only when every objective was `met` or `inherited`. So a `not_applicable`
+objective cost its practice the whole weight. It had done so since the
+first engine commit (4f87cfd, 2026-06-30), and a test asserted it.
+
+**The authority, quoted.** eCFR text current as of 2026-10-22, re-read
+2026-11-10:
+- **32 CFR 170.24(b)(3):** "During an assessment, an assessment
+  objective assessed as N/A is equivalent to the same assessment
+  objective being assessed as MET."
+- **32 CFR 170.24(c)(2):** "For each requirement NOT MET, the associated
+  value of the security requirement is subtracted from the maximum
+  score". Deduction attaches only to NOT MET. And "The maximum score
+  achievable … is equal to the total number of CMMC Level 2 security
+  requirements", so an N/A practice stays in the maximum; it is not
+  removed from it.
+- **CMMC Assessment Guide, Level 2, Version 2.13, September 2024, p. 10:**
+  "Each assessment objective in NIST SP 800-171A must yield a finding of
+  MET or NOT APPLICABLE in order for the overall security requirement to
+  be scored as MET."
+- **Same guide, p. 11:** "A security requirement can be applicable even
+  when assessment objectives included in the security requirement are
+  scored as N/A. The security requirement is NOT MET when one or more
+  applicable assessment objectives is NOT MET."
+
+**Checking the guide's version.**
+- **The source:** dodcio.defense.gov refuses requests from wl-dt26
+  (403). The Wayback Machine's latest capture of
+  `dodcio.defense.gov/Portals/0/Documents/CMMC/AssessmentGuideL2.pdf`
+  is 2025-06-27, with the same content digest as its 2024-11 capture.
+- **What it says:** the cover reads "Version 2.13 | September 2024". The
+  two quotations are on printed pages 10 and 11 (PDF pages 18 and 19).
+- **What that leaves open:** no newer version turned up in a search. The
+  live page itself could not be read, so a version published after
+  2025-06 cannot be ruled out from here.
+
+**An inference, not a quotation.** A practice whose objectives are *all*
+N/A is satisfied, by the same set membership, with no special case.
+Neither source says this outright. It is read from p. 10's "MET or NOT
+APPLICABLE" for each objective. Everything else in this entry is quoted.
+
+**The fix.** `assessment.SATISFYING_STATUSES` holds `met`, `inherited` and
+`not_applicable`, with the citations beside it. `deducting_controls` reads
+it. An objective with no status still counts as not met
+(`test_sprs_unknown_objective_defaults_to_not_met`; changing the default
+to met turns it red).
+
+**What the one line reached, and the copies found on the way:**
+- **The score** (`compute_sprs`, every `recompute_sprs`).
+- **The activation screen.** `deducting_controls` decides which practices
+  "already score as not met" (see below).
+- **The dashboard heatmap** kept its own `{"met", "inherited"}`, and its
+  docstring said it was the same rule `compute_sprs` uses. After the fix
+  it would have been false. It now reads `SATISFYING_STATUSES`. The radar
+  chart draws the heatmap's counts, so it follows.
+- **The assessment board's live score and weight tiers** were a third
+  copy, in `AssessmentBoard.tsx`. They moved to `frontend/src/lib/sprs.ts`,
+  whose test names the statuses.
+- **The bundle disagreed with itself before this.** `scoring.html` lists
+  deductions by each practice's rolled-up status. A practice of `[N/A,
+  met]` rolls up to `not_applicable`, which was never in `_NON_PASSING`,
+  so the table left it out. The score on the same page, from
+  `recompute_sprs`, deducted it: "Total deduction: 5" above "No
+  deductions". The table was right and the number wrong. Now they agree
+  (`test_bundle_scores_a_not_applicable_objective_as_met_on_every_page`).
+
+**The activation screen's sentence.** Take a practice with one objective
+N/A and the others met:
+- **Before:** it deducted. Sending the N/A objective to review left the
+  score where it was, and the dialog said the practice "already scores as
+  not met".
+- **After:** the practice scores. The same choice costs its weight, and
+  the dialog says "SPRS goes from 106 to 101 (down 5): AC.L2-3.1.1 would
+  score as not met."
+
+Both halves come from the server's two runs, so the sentence stays true
+rather than merely compiling. That is held by
+`test_preview_a_not_applicable_objective_on_a_scoring_practice`, and its
+rendering by `ProductCard.test.tsx`.
+
+**The stored scores, corrected once, deliberately.** Otherwise a score
+changes only when something next recomputes it. The deployment would
+then hold corrected and uncorrected scores side by side, with nothing
+saying which is which.
+- **The command:** `wingrc sprs-rescore --reason …`, dry-run by default,
+  `--apply` to write.
+- **What it prints:** every assessment, with before, after and the
+  practices that stopped deducting.
+- **What it writes,** only where a score moves: the score, a new
+  `sprs_snapshot`, and an audit row `assessment.sprs_rescore`.
+- **The check:** a move is explained when the stored score plus the
+  weights of those practices equals the new score. Anything else prints
+  `UNEXPLAINED`, a finding rather than a rounding difference.
+
+**Before and after, on a bench copy of live.** Live's snapshot
+`20261110T031704Z`, restored into a throwaway stack built from the branch:
+
+| | assessments | not-applicable objectives | moved | unexplained |
+|---|---|---|---|---|
+| live copy | 2 | 0 | 0 | 0 |
+
+**Live has no not-applicable objective,** so nothing on live moves. Its
+640 objective rows are 605 not met, 28 pending evidence, 6 met and 1
+needs review. The correction matters for the next one, and for every
+other deployment.
+
+**To see a move,** the copy (never live) was given what a pre-fix
+deployment would hold: one single-objective practice, CA.L2-3.12.3
+(weight 5), set to N/A, with its stored score left where the old rule
+put it.
+- **The dry run:** -204 → -199 (+5), stopped deducting CA.L2-3.12.3,
+  explained.
+- **`--apply`:** wrote that, one audit row and one snapshot.
+- **A stored score set 3 points stale by hand** on the other assessment
+  printed `UNEXPLAINED`.
+
+**The command had a bug, found on that copy.** Its first version counted
+a practice as "stopped deducting" whenever it was N/A and did not deduct,
+even when the score had not moved. So the run after `--apply` flagged
+the corrected assessment `UNEXPLAINED`. It would have done the same for
+any assessment given an N/A objective after the fix. A score that does
+not move now names no practices
+(`test_a_second_run_finds_nothing_to_explain`). Live's own copy could not
+show this, having no N/A objective. The planted case did.
+
+**What the correction must not rewrite, and how that was checked on the
+copy:**
+- **`sprs_submission`:** 1 row, a prior score recorded at onboarding,
+  with no assessment. The command never touches the table; `score` is
+  stored as a value (`models.SprsSubmission`). The row hashed the same
+  before and after `--apply`.
+- **Exported bundles:** the server stores none. A bundle is rendered per
+  request and returned (`routers/bundle.py`). What was exported is
+  recorded in its `bundle.export` audit row, which carries the score.
+  The copy's 9 such rows hashed the same before and after. A downloaded
+  bundle keeps the score it was exported with because it is bytes on
+  someone's disk. "Today's state never rewrites yesterday's record"
+  holds by construction here, and the hashes are the check that the
+  command did not reach either table.
+- **Earlier `sprs_snapshot` rows** hashed the same. The apply only adds.
+
+**The test that guarded the wrong behaviour.**
+`test_sprs_not_applicable_counts_as_unmet` ("the assessor must justify
+scoping out") is now `test_sprs_not_applicable_counts_as_met`, with a
+note saying what changed and citing 170.24(b)(3). It was not wrong to
+exist: it encoded an understanding nobody had checked against the
+regulation.
+
+New cases, with the statuses written out:
+- the mixed practice: N/A, met, and one not met, deducting in full;
+- the all-N/A practice;
+- the set itself, against every status;
+- a not-applicable objective through `PATCH`.
+
+**Mutation checks, each seen red:**
+- Removing `not_applicable` from the backend set turned four engine tests
+  red, at practice level (`deducting_controls`) and on the total
+  (`compute_sprs`).
+- Removing it from `lib/sprs.ts` turned all four of its tests red.
+
+**Also found by the bench, and fixed in the same PR.** The two tests in
+`test_health_gate.py` that read `deploy/deploy.sh` (#89, #90) failed in
+the backend image, which has no `deploy/`. They passed in CI, which runs
+from a checkout. `_gate()` already skipped there, and they now do too.
+Nothing had run the full suite in the image since #89.
+
+**The first defect in this product found by checking an external
+authority, not by reading the code.** The code was self-consistent,
+tested since the first engine commit, and documented. The documentation
+was the truth. CLAUDE.md said from 2026-07-11 that `met`, `inherited` and
+`not_applicable` do not deduct, while the code deducted for N/A. That is
+the reverse of every drift found so far, where the prose went stale and
+the code was right.
+
+**And on 2026-11-05 the drift was found, and corrected the wrong way.**
+The activation slice (036e442) rewrote CLAUDE.md to match the code. It
+left the question open, but the true sentence was replaced by the false
+one. "The code is the truth, so make the prose match" is usually right
+in this repo. Here it was the mistake. A rule taken from an external
+authority is settled by that authority, not by whichever of code and
+prose looks more recent.
+
+### What inherited means for the score is unchecked -- recorded 2026-11-10
+
+**`inherited` is in `SATISFYING_STATUSES` and does not deduct, and its
+regulatory basis has never been checked.** It is the same class of
+defect as N/A: a status whose scoring was decided without reading the
+authority. Being long-standing is no evidence it is right; that was true
+of N/A as well.
+
+**What the regulation does recognise, unread against WinGRC's meaning:**
+170.24(b)(1)(i), "Enduring exceptions when described, along with any
+mitigations, in the system security plan shall be assessed as MET." The
+CMMC documents also treat requirements met by an External Service
+Provider. Whether WinGRC's `inherited` means either of these, something
+narrower, or something the regulation does not score as met, is open.
+
+**Not scoped here,** and not to be assumed fine. When it is taken up, it
+is checked against 32 CFR 170 and the Assessment Guide before any code
+moves. If the score changes, `wingrc sprs-rescore` is the path for
+stored scores.
+
 ### The ODP list: Rev 3's organization-defined parameters, as a template -- built 2026-11-05
 
 **What Jarrod asked for.** A list of the organization-defined parameters
