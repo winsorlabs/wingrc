@@ -12299,6 +12299,48 @@ at all.
 
 Either makes "equivalent" stop being good enough.
 
+### CI tests a checkout, and nothing tests the image it ships -- recorded 2026-11-10
+
+**What happened.** Two tests in `test_health_gate.py` (#89, #90) read
+`deploy/deploy.sh`. They passed in CI and failed in the backend image,
+which has no `deploy/` directory. CI's `backend` and `integration` jobs
+run the suite from a checkout. CI's `image` job builds the backend image
+and scans it, and runs nothing inside it; the nginx image is not built
+in CI at all. So **CI green does not imply the artifact is sound.** The
+bench found it on 2026-11-10, running the full suite in the image for the
+first time since #89 (the N/A fix's entry).
+
+**The second time the bench caught what CI structurally could not.** The
+first was 2026-09-29's: `alembic upgrade head` exited 0 and rolled back,
+leaving an empty database, and `/health` reported healthy throughout. The
+bench saw it only because it started the image on a fresh volume (the
+RLS track's Done entry). CI never starts the image, so it could not.
+
+**This time the tests were wrong, not the product.** The case that
+matters is the converse: product code that reads a file the checkout has
+and the image does not. Only a run inside the image catches that, and
+today only a bench run does one, by hand.
+
+**Adjacent to item R, not the same thing.** R is about identity: deploy
+the image CI scanned, by digest. This is about testing it: run the
+suite in the image that ships. They compose. With R, the image tested
+could be the very digest live pulls; without R, an in-image run in CI
+still tests the same Dockerfile from the same commit, which is more
+than today.
+
+**The open question: should the `image` job run the suite inside the
+image?** The image already carries `tests/` and `/samples/` (the bench
+runs `pytest` in it). What it would take, unmeasured:
+- the no-database suite in the built image, which needs nothing more
+  than `docker run`;
+- the integration suite in it, which needs the `integration` job's
+  `postgres:18` service or one of its own;
+- the run time either adds to `image`, which is required, so it is on
+  every merge's path;
+- whether the nginx image should be built in CI at all.
+
+Not scoped. Recorded so a CI-green slice is not read as a tested image.
+
 ### S. Local snapshots and an exercised restore (built and bench-verified 2026-11-01, alarm and partial writes 2026-11-02; on live 2026-11-03, first live restore test the same day)
 
 **Status: on live since 2026-11-03, and restored from there once, with
@@ -15428,6 +15470,24 @@ only when every objective was `met` or `inherited`. So a `not_applicable`
 objective cost its practice the whole weight. It had done so since the
 first engine commit (4f87cfd, 2026-06-30), and a test asserted it.
 
+**Worse than the wrong score: the bundle's scoring page disagreed with
+itself.** For any practice of `[N/A, met]`, `summary/scoring.html` said
+"Total deduction: 5" above "No deductions". That is not a wrong number.
+It is an assessor-facing page contradicting itself, and a page that does
+that loses the reader's confidence in every other number on it. Two
+things about it matter more than the scoring fix:
+- **Nobody had checked the scoring page against its own figures.** The
+  deduction table and the total came from two copies of the rule (the
+  table from `bundle_service._NON_PASSING`, the total from
+  `compute_sprs`), and no test compared them.
+- **It took an unrelated correction to find it.** It surfaced only
+  because the N/A fix moved one copy and not the other. Before that it
+  could have shipped in any bundle with an N/A objective.
+
+`test_bundle_scores_a_not_applicable_objective_as_met_on_every_page` now
+reads both off one rendered page. The two copies are still separate;
+see "The copies" below.
+
 **The authority, quoted.** eCFR text current as of 2026-10-22, re-read
 2026-11-10:
 - **32 CFR 170.24(b)(3):** "During an assessment, an assessment
@@ -15458,6 +15518,11 @@ first engine commit (4f87cfd, 2026-06-30), and a test asserted it.
 - **What that leaves open:** no newer version turned up in a search. The
   live page itself could not be read, so a version published after
   2025-06 cannot be ruled out from here.
+- **So, for the next reader:** verified are the quoted text, its page
+  numbers, and that v2.13 was the published guide on 2025-06-27. Not
+  verifiable from this machine is whether it is still current. That is
+  as settled as it can be from here; a reader who can open dodcio's page
+  should check the cover.
 
 **An inference, not a quotation.** A practice whose objectives are *all*
 N/A is satisfied, by the same set membership, with no special case.
@@ -15481,13 +15546,25 @@ to met turns it red).
 - **The assessment board's live score and weight tiers** were a third
   copy, in `AssessmentBoard.tsx`. They moved to `frontend/src/lib/sprs.ts`,
   whose test names the statuses.
-- **The bundle disagreed with itself before this.** `scoring.html` lists
+- **The bundle's scoring page** (above). `scoring.html` lists
   deductions by each practice's rolled-up status. A practice of `[N/A,
   met]` rolls up to `not_applicable`, which was never in `_NON_PASSING`,
   so the table left it out. The score on the same page, from
-  `recompute_sprs`, deducted it: "Total deduction: 5" above "No
-  deductions". The table was right and the number wrong. Now they agree
-  (`test_bundle_scores_a_not_applicable_objective_as_met_on_every_page`).
+  `recompute_sprs`, deducted it. The table was right and the number
+  wrong. #94 moved the number, not the table: `_NON_PASSING` and
+  `_rollup_status` are still the bundle's own copy, which agrees with
+  `SATISFYING_STATUSES` today (its complement, under a worst-wins rank
+  that puts all three satisfying statuses on top). One test ties them,
+  for the N/A case only. Putting the bundle on the shared set is open,
+  not scoped here.
+
+**The copies, and why the brief named only one site.** The brief came
+from a grep for `deducting_controls` and its callers. Callers are
+findable by name; copies are not, because a copy calls nothing. All
+three copies above were found by reading. CLAUDE.md now says to search
+for a rule's content (the set, the constant, the values, and their
+complement), and the heatmap's docstring is in its list of universal
+claims that asserted the opposite of the code.
 
 **The activation screen's sentence.** Take a practice with one objective
 N/A and the others met:
@@ -15548,6 +15625,12 @@ not move now names no practices
 (`test_a_second_run_finds_nothing_to_explain`). Live's own copy could not
 show this, having no N/A objective. The planted case did.
 
+**Real data proved nothing here.** A deployment with no N/A objective
+cannot exercise this fix at all: "0 moved, 0 unexplained" is what the
+old code would also have printed. Everything the bench showed about the
+command, the move, the explanation and the bug, came from a case
+planted in the copy.
+
 **What the correction must not rewrite, and how that was checked on the
 copy:**
 - **`sprs_submission`:** 1 row, a prior score recorded at onboarding,
@@ -15587,7 +15670,8 @@ New cases, with the statuses written out:
 `test_health_gate.py` that read `deploy/deploy.sh` (#89, #90) failed in
 the backend image, which has no `deploy/`. They passed in CI, which runs
 from a checkout. `_gate()` already skipped there, and they now do too.
-Nothing had run the full suite in the image since #89.
+Nothing had run the full suite in the image since #89. The gap is its
+own item: "CI tests a checkout, and nothing tests the image it ships".
 
 **The first defect in this product found by checking an external
 authority, not by reading the code.** The code was self-consistent,
@@ -15597,13 +15681,17 @@ was the truth. CLAUDE.md said from 2026-07-11 that `met`, `inherited` and
 the reverse of every drift found so far, where the prose went stale and
 the code was right.
 
-**And on 2026-11-05 the drift was found, and corrected the wrong way.**
-The activation slice (036e442) rewrote CLAUDE.md to match the code. It
-left the question open, but the true sentence was replaced by the false
-one. "The code is the truth, so make the prose match" is usually right
-in this repo. Here it was the mistake. A rule taken from an external
-authority is settled by that authority, not by whichever of code and
-prose looks more recent.
+**On 2026-11-05 the only correct record was overwritten to match the
+defect.** The activation slice (036e442) found the disagreement and
+rewrote CLAUDE.md to match the code. It left the question open in the
+roadmap, but the one place in the repository that held the rule
+correctly was corrected toward the error. This was not drift. Drift is
+prose going stale on its own; this was a deliberate edit that removed
+the truth. From then until 2026-11-10, nothing in the repository stated
+the rule; the roadmap held it only as an open question. "The code is the truth, so make the prose match"
+is usually right in this repo, and here it was the mistake. A rule
+taken from an external authority is settled by that authority, not by
+whichever of code and prose looks more recent.
 
 ### What inherited means for the score is unchecked -- recorded 2026-11-10
 

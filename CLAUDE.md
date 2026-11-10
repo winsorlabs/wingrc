@@ -235,7 +235,15 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   - the audit check's first draft said no SECURITY DEFINER function
     writes on a request path, and `grant_org_membership` does;
   - `clear_current_org` said "No production path calls this", until org
-    creation did.
+    creation did;
+  - the dashboard heatmap's docstring said "same rule
+    assessment.py:compute_sprs uses" while it held its own copy of the
+    status set. It agreed with the score only because two literal sets
+    happened to match, and the N/A fix (2026-11-10) would have split
+    them. A claimed relationship that does not exist is worse than no
+    docstring: it tells the next person there is nothing to look at.
+    The brief for that fix grepped for the scoring function's callers,
+    and this sentence is why `dashboard.py` was not on the list.
 
   These are two kinds. `publish_document`'s claim was false when
   written: an author's error, which review can catch. `close_cycle`'s
@@ -269,6 +277,19 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   ever the links publish made, so removing auto-linking (item X) would
   have silently emptied it. Store the fact where it is decided
   (migration 0069; `docs/roadmap.md`'s side-effect lesson).
+- **To find everything a rule reaches, search for the rule's content,
+  not only its function's name.** When a rule has a canonical
+  implementation, grep for what the rule *is*: the status set, the
+  constant, the threshold, the literal values, in the backend and the
+  frontend, and in complement form (a set of what fails is a copy of
+  what passes). Callers are findable by name; copies are not, because a
+  copy calls nothing. 2026-11-10: the brief for the N/A fix named one
+  site, from a grep for `deducting_controls` and its callers. Three
+  places had reimplemented the rule instead: the dashboard heatmap,
+  `AssessmentBoard.tsx`'s live score, and the bundle's scoring page
+  (`bundle_service._NON_PASSING`, the complement). Each was found by
+  reading, not by the grep (`docs/roadmap.md`, "N/A objectives stop
+  deducting").
 - CI (`.github/workflows/ci.yml`) runs `backend` with **no database at
   all** and `integration` against `postgres:18`. Both run
   unconditionally — `integration` deliberately has no `needs: backend`,
