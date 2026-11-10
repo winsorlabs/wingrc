@@ -12377,7 +12377,12 @@ clean data, so this was checked, read-only:
 
   **The remedy, if a query ever returns something that looks wrong:**
   `REINDEX` the indexes behind it. That is also a write to live, so it
-  goes through the audited path too.
+  goes through the audited path too. **No such command exists today.**
+  If an index ever needs rebuilding, writing that command is part of the
+  fix, not a prerequisite that blocks it: a REINDEX would be wanted
+  during an incident, when "the remedy is unavailable" is the wrong
+  answer. The rule's purpose is that a live write is recorded, not that
+  it can't happen.
 
   **If index verification is ever wanted,** it arrives as an audited CLI
   command (dry-run by default, an audit row saying why), never as an
