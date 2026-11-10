@@ -25,7 +25,8 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import case, select
+from sqlalchemy import case, func, select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from . import evidence_links
@@ -1962,6 +1963,49 @@ def move_org_product_version(
     }
 
 
+class TenantRowsHidden(RuntimeError):
+    """A command that reads every tenant cannot see every tenant's rows."""
+
+
+def every_tenant_assessments(session: Session) -> list[Assessment]:
+    """Every assessment in the database, or TenantRowsHidden.
+
+    For a command that reads across tenants. As `wingrc_app` with no org
+    set, row-level security returns zero assessments, and a command that
+    counts them reports "nothing to do" (2026-11-10: `sprs-rescore` on
+    live said "0 assessment(s)" of 2). A zero is an answer only once it is
+    checked against a count that could not have been filtered.
+
+    That count is taken with `row_security = off`, under which Postgres
+    raises for a role RLS would filter rather than filtering it
+    (snapshots.py dumps the same way). So the count is unfiltered or the
+    command refuses, and the list must match it. Counting organizations
+    would not do: `organization` has no RLS policy, so the app role sees
+    every org while every assessment is hidden.
+    (tests/test_sprs_rescore.py, `test_..._as_the_app_role_refuses`.)
+    """
+    savepoint = session.begin_nested()
+    try:
+        session.execute(text("SET LOCAL row_security = off"))
+        total = session.scalar(select(func.count()).select_from(Assessment))
+    except DBAPIError as e:
+        savepoint.rollback()
+        if getattr(e.orig, "sqlstate", None) != "42501":
+            raise
+        raise TenantRowsHidden(
+            "this connection's role is subject to row-level security, so it "
+            "would see one tenant's assessments or none and report that as "
+            "the answer"
+        ) from e
+    savepoint.rollback()  # and with it, the SET LOCAL
+    assessments = list(session.scalars(select(Assessment).order_by(Assessment.id)))
+    if len(assessments) != total:
+        raise TenantRowsHidden(
+            f"saw {len(assessments)} assessment(s) of {total} in the database"
+        )
+    return assessments
+
+
 def backfill_missing_control_states(
     session: Session, *, reason: str, dry_run: bool = True
 ) -> list[dict]:
@@ -2012,8 +2056,7 @@ def backfill_missing_control_states(
     """
     results: list[dict] = []
 
-    assessments = session.scalars(select(Assessment)).all()
-    for assessment in assessments:
+    for assessment in every_tenant_assessments(session):
         objectives = session.execute(
             select(AssessmentObjective, Control.control_id)
             .join(Control, AssessmentObjective.control_id == Control.id)
@@ -2120,8 +2163,7 @@ def rescore_assessments(session: Session, *, reason: str, dry_run: bool = True) 
     "stopped_deducting", "explained"}.
     """
     results: list[dict] = []
-    assessments = session.scalars(select(Assessment).order_by(Assessment.id)).all()
-    for assessment in assessments:
+    for assessment in every_tenant_assessments(session):
         weights, objectives_by_control, statuses = _scoring_inputs(session, assessment.id)
         deducting = deducting_controls(objectives_by_control, statuses)
         sprs_before = assessment.sprs_score

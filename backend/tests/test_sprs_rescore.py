@@ -12,9 +12,9 @@ import uuid
 from datetime import date
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from app.engine import rescore_assessments, start_assessment
+from app.engine import TenantRowsHidden, rescore_assessments, start_assessment
 from app.models import (
     AssessmentObjective,
     AuditLog,
@@ -161,3 +161,56 @@ def test_a_filed_submission_keeps_its_score(db_session, with_na):
     rescore_assessments(db_session, reason="test", dry_run=False)
     db_session.refresh(filed)
     assert filed.score == 104
+
+
+def _as_app_role(db_session):
+    db_session.execute(select(1))
+    db_session.connection().exec_driver_sql("SET ROLE wingrc_app")
+
+
+def _reset_role(db_session):
+    db_session.connection().exec_driver_sql("RESET ROLE")
+
+
+def test_rescore_as_the_app_role_refuses(db_session, with_na, without_na):
+    """Live, 2026-11-10: run as `wingrc_app` with no org set, the command
+    printed "0 assessment(s), 0 moved, 0 unexplained" over 2. Now it refuses
+    rather than report a zero it never checked."""
+    _as_app_role(db_session)
+    try:
+        assert db_session.scalar(select(func.count()).select_from(type(with_na))) == 0, (
+            "fixture must reproduce live's zero (RLS hides every assessment "
+            "from the app role with no org set), or this test proves nothing"
+        )
+        with pytest.raises(TenantRowsHidden, match="row-level security"):
+            rescore_assessments(db_session, reason="test", dry_run=True)
+    finally:
+        _reset_role(db_session)
+
+
+def test_rescore_as_the_app_role_with_one_org_set_refuses(db_session, with_na, without_na):
+    # One tenant visible is the quieter failure: a plausible list, short.
+    from app.rls import set_current_org
+
+    _as_app_role(db_session)
+    try:
+        set_current_org(db_session, with_na.org_id)
+        assert db_session.scalar(select(func.count()).select_from(type(with_na))) == 1, (
+            "fixture must show exactly one tenant's assessment, or this test proves nothing"
+        )
+        with pytest.raises(TenantRowsHidden):
+            rescore_assessments(db_session, reason="test", dry_run=True)
+    finally:
+        _reset_role(db_session)
+
+
+def test_rescore_refuses_a_list_shorter_than_the_unfiltered_count(
+    db_session, with_na, without_na, monkeypatch
+):
+    # The list must match the count taken with row_security off. Postgres
+    # gives no way to filter a role that passed that count, so the short
+    # list is made by hand: the comparison is what is under test.
+    real = db_session.scalars
+    monkeypatch.setattr(db_session, "scalars", lambda stmt: list(real(stmt))[1:])
+    with pytest.raises(TenantRowsHidden, match="saw .* of"):
+        rescore_assessments(db_session, reason="test", dry_run=True)
