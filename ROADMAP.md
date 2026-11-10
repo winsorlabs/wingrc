@@ -136,8 +136,9 @@ now a historical design record.
 CM, IA, IR, MA, MP, PS, PE, RA, CA, SC, SI).
 
 - **Each axis:** percentage of controls in that family that are fully met
-  (all objectives ∈ {met, inherited}), using the same all-objectives-met
-  rollup as SPRS scoring. This keeps the chart and the score consistent.
+  (all objectives in `assessment.SATISFYING_STATUSES`: met, inherited,
+  not applicable), the same set SPRS scoring reads. This keeps the chart
+  and the score consistent.
 - **Purpose:** spatial visualization of where the deficiencies are concentrated.
   A family that is a small slice visually signals where work is needed; a full
   polygon means no gaps. This is faster to read than scrolling 14 family
