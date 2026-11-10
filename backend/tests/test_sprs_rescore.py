@@ -133,6 +133,16 @@ def test_apply_moves_only_the_assessment_with_not_applicable(db_session, with_na
     assert _rescore_audits(db_session, without_na) == []
 
 
+def test_a_second_run_finds_nothing_to_explain(db_session, with_na):
+    """Once rescored, the assessment still has an N/A practice that does not
+    deduct, but nothing moves, so nothing stopped. Found on the bench copy
+    of live, 2026-11-10: the first version reported this UNEXPLAINED, and
+    would have for any assessment given an N/A objective after the fix."""
+    rescore_assessments(db_session, reason="test", dry_run=False)
+    results = rescore_assessments(db_session, reason="test", dry_run=True)
+    assert _outcome(results, with_na) == (109, 109, [], True)
+
+
 def test_a_score_moving_without_not_applicable_is_unexplained(db_session):
     # Stored 100, but nothing here was ever not applicable: the earlier
     # rule gave 107 too. The move is not this change's, and says so.

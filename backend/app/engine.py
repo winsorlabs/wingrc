@@ -2099,12 +2099,14 @@ def rescore_assessments(session: Session, *, reason: str, dry_run: bool = True) 
     something next recomputes it, so a deployment holds corrected and
     uncorrected scores side by side, with nothing saying which is which.
 
-    Reports every assessment, moved or not. stopped_deducting names the
-    practices that no longer deduct and have a not_applicable objective:
-    under the earlier rule, exactly those deducted, so sprs_before plus
-    their weights is the new score. When it is not, the stored score was
-    stale for some other reason, and `explained` is False: a finding, never
-    a rounding difference.
+    Reports every assessment, moved or not. For one that moves,
+    stopped_deducting names the practices that no longer deduct and have a
+    not_applicable objective: under the earlier rule, exactly those
+    deducted, so sprs_before plus their weights is the new score. When it
+    is not, the stored score was stale for some other reason, and
+    `explained` is False: a finding, never a rounding difference. One that
+    does not move (already rescored, or stored since the change) names no
+    practices and is explained, so a second run reports nothing.
 
     Writes only where the score moves: recompute_sprs (the score and an
     SprsSnapshot row; earlier snapshots are never touched), and one audit
@@ -2122,13 +2124,15 @@ def rescore_assessments(session: Session, *, reason: str, dry_run: bool = True) 
     for assessment in assessments:
         weights, objectives_by_control, statuses = _scoring_inputs(session, assessment.id)
         deducting = deducting_controls(objectives_by_control, statuses)
-        stopped = sorted(
+        sprs_before = assessment.sprs_score
+        sprs_after = compute_sprs(weights, objectives_by_control, statuses)
+        # A score already right (rescored before, or stored since the rule
+        # changed) did not move, so nothing stopped deducting in this run.
+        stopped = [] if sprs_after == sprs_before else sorted(
             c for c, objectives in objectives_by_control.items()
             if c not in deducting
             and any(statuses.get(o) == ControlStatus.NOT_APPLICABLE for o in objectives)
         )
-        sprs_before = assessment.sprs_score
-        sprs_after = compute_sprs(weights, objectives_by_control, statuses)
         explained = sprs_before is not None and (
             sprs_before + sum(weights[c] for c in stopped) == sprs_after
         )
