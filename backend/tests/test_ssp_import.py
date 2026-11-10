@@ -135,18 +135,29 @@ def test_as_the_app_role_it_sees_its_own_org_and_refuses_one_rls_hides(
 ):
     """Live runs the CLI as `wingrc_app`. With the org set, the command sees
     that org's assessment and its existing statement; an assessment RLS
-    hides is refused, never read as having no statements."""
+    hides is refused, never read as having no statements.
+
+    The role is set before each step: preview_import ends in a rollback,
+    which here rolls back the savepoint the SET ROLE ran in."""
     org, assessment, other, elsewhere = target
-    db_session.execute(select(1))
-    db_session.connection().exec_driver_sql("SET ROLE wingrc_app")
+
+    def app_role():
+        db_session.execute(select(1))
+        db_session.connection().exec_driver_sql("SET ROLE wingrc_app")
+        assert db_session.execute(select(func.current_user())).scalar() == "wingrc_app", (
+            "the step must run as wingrc_app, or this test proves nothing")
+
     try:
+        app_role()
         result = preview_import(db_session, _file(tmp_path), org_id=org.id,
                                 assessment_id=assessment.id)
         assert result.plan.already_has_statement == ("AC.L2-3.1.1[c]",)
+        app_role()
         set_current_org(db_session, org.id)
         assert db_session.scalars(select(ControlState).where(
             ControlState.assessment_id == elsewhere.id)).first() is None, (
             "fixture must have RLS hide the other org's rows, or this test proves nothing")
+        app_role()
         with pytest.raises(TargetNotVisible):
             preview_import(db_session, _file(tmp_path), org_id=other.id,
                            assessment_id=assessment.id)
