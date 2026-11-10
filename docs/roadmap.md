@@ -15874,7 +15874,14 @@ repetition as the source's, is recorded and not chosen.
 - **Mutations, each seen red:**
   - accepting a cross-family hit;
   - accepting the best fuzzy candidate;
-  - reading `-` as text.
+  - reading `-` as text;
+  - the preview marking every objective met and committing;
+  - dropping the visibility refusal (both refusal tests).
+- **Bench, in the image:** full suite 2084 passed, 19 skipped at
+  `e74e75c`; ruff clean.
+- **Visibility is a query:** `preview_import` looks the target up with
+  `select()`, not `session.get()`, which answers from the identity map
+  without a query and so could see a row RLS hides.
 
 **Next, for Jarrod:** run it against the sample to get the hit rate.
 That number decides whether the write slice is worth building in this
