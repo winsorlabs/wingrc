@@ -282,6 +282,36 @@ def test_preview_says_which_practices_already_deduct(db_session, w):
     assert [o["practice_deducts_now"] for o in kept["objectives"]] == [True, False]
 
 
+def test_preview_a_not_applicable_objective_on_a_scoring_practice(db_session, w):
+    """32 CFR 170.24(b)(3): N/A is assessed as MET, so c1 ([a] N/A, [b]
+    Met) keeps its 5 points. Until 2026-11-10 c1 deducted here, and sending
+    [a] to review read "SPRS stays at 101: AC.L2-3.1.1 already scores as
+    not met". Now the same choice costs the 5 points and says why
+    (docs/roadmap.md, "N/A objectives stop deducting")."""
+    _set_by_hand(db_session, w, "c1a", "not_applicable")
+    assert _set_by_hand(db_session, w, "c1b", "met") == 106, (
+        "fixture must score c1 (110 - 3 - 1) or this test proves nothing"
+    )
+    p = activation_preview(db_session, w["org"].id, w["p"].id, w["a"].id)
+    by_key = {(o["control_id"], o["objective_key"]): o for o in p["objectives"]}
+    assert {k: (o["status"], o["practice_deducts_now"]) for k, o in by_key.items()} == {
+        ("AC.L2-3.1.1", "a"): ("not_applicable", False),
+        ("AC.L2-3.1.1", "b"): ("met", False),
+    }
+    ids = {k: uuid.UUID(o["control_state_id"]) for k, o in by_key.items()}
+
+    downgraded = activation_preview(db_session, w["org"].id, w["p"].id, w["a"].id, choices={
+        ids[("AC.L2-3.1.1", "a")]: "needs_review", ids[("AC.L2-3.1.1", "b")]: "keep",
+    })
+    assert (downgraded["sprs_now"], downgraded["sprs_after"], downgraded["practices_starting"]) == (
+        106, 101, ["AC.L2-3.1.1"],
+    )
+    kept = activation_preview(db_session, w["org"].id, w["p"].id, w["a"].id, choices={
+        ids[("AC.L2-3.1.1", "a")]: "keep", ids[("AC.L2-3.1.1", "b")]: "keep",
+    })
+    assert (kept["sprs_now"], kept["sprs_after"], kept["practices_starting"]) == (106, 106, [])
+
+
 def test_preview_writes_nothing(db_session, w):
     _set_by_hand(db_session, w, "c2a", "met")
     before = (

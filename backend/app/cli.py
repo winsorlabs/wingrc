@@ -221,6 +221,50 @@ def backfill_missing_control_states_cmd(
         session.close()
 
 
+@app.command(name="sprs-rescore")
+def sprs_rescore_cmd(
+    reason: str = typer.Option(
+        ..., help="Why the scores are being recomputed -- recorded verbatim in "
+        "every audit row this writes."
+    ),
+    apply: bool = typer.Option(False, help="Write the new scores (default: dry-run only)"),
+) -> None:
+    """Recompute every assessment's stored SPRS score after a scoring-rule
+    change, and print each one: before, after, and the practices that
+    stopped deducting. Writes only where a score moves, with an audit row
+    each. A row marked UNEXPLAINED moved by more than its not-applicable
+    practices account for: a finding, not a rounding difference
+    (engine.rescore_assessments; docs/roadmap.md, "N/A objectives stop
+    deducting")."""
+    from .engine import rescore_assessments
+
+    session = SessionLocal()
+    try:
+        results = rescore_assessments(session, reason=reason, dry_run=not apply)
+        moved = [r for r in results if r["sprs_after"] != r["sprs_before"]]
+        for r in results:
+            delta = (
+                f"{r['sprs_after'] - r['sprs_before']:+d}"
+                if r["sprs_before"] is not None else "n/a"
+            )
+            typer.echo(
+                f"{r['org_name']} / {r['assessment_name']} ({r['assessment_id']}): "
+                f"SPRS {r['sprs_before']} -> {r['sprs_after']} ({delta}); "
+                f"stopped deducting: {', '.join(r['stopped_deducting']) or 'none'}"
+                f"{'' if r['explained'] else ' -- UNEXPLAINED'}"
+            )
+        unexplained = sum(1 for r in results if not r["explained"])
+        tail = " Applied." if apply else " DRY RUN -- nothing written. Re-run with --apply."
+        typer.echo(
+            f"\n{len(results)} assessment(s), {len(moved)} moved, {unexplained} unexplained.{tail}"
+        )
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 _TEST_ORGS = "SELECT id FROM organization WHERE name != 'Acme MSP'"
 
 

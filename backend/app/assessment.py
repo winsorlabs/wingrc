@@ -164,30 +164,64 @@ def compute_sprs(
         3.13.11 (FIPS crypto) have partial-credit rules (−3 if partial, −5 if
         absent) not captured by this flat model; both are stored at weight=5.
 
-    A control is fully satisfied iff ALL its objectives have status in
-    {met, inherited}. Any other status causes the full sprs_weight to deduct.
-    Controls with no objectives in the lookup are skipped.
+    A control is fully satisfied iff ALL its objectives have a status in
+    SATISFYING_STATUSES (met, inherited, not_applicable). Any other status
+    causes the full sprs_weight to deduct. Controls with no objectives in
+    the lookup are skipped.
     """
     deducting = deducting_controls(objectives_by_control, objective_statuses)
     return SPRS_MAX - sum(w for c, w in control_weights.items() if c in deducting)
+
+
+# The objective statuses that leave a practice's points in place. A
+# practice deducts its full weight when any objective has another status.
+#
+# not_applicable is here by 32 CFR 170.24(b)(3): "During an assessment, an
+# assessment objective assessed as N/A is equivalent to the same assessment
+# objective being assessed as MET." Deduction attaches only to NOT MET
+# (170.24(c)(2): "For each requirement NOT MET, the associated value of the
+# security requirement is subtracted from the maximum score"), and an N/A
+# practice stays in the maximum, which is "the total number of CMMC Level 2
+# security requirements". The CMMC Assessment Guide, Level 2, v2.13 (Sept
+# 2024), p. 10: "Each assessment objective in NIST SP 800-171A must yield a
+# finding of MET or NOT APPLICABLE in order for the overall security
+# requirement to be scored as MET"; p. 11: "The security requirement is NOT
+# MET when one or more applicable assessment objectives is NOT MET."
+# Until 2026-11-10 not_applicable deducted (docs/roadmap.md, "N/A
+# objectives stop deducting").
+#
+# A practice whose objectives are all not_applicable is satisfied by the
+# same membership. Neither source says so in those words; it is read from
+# p. 10's "MET or NOT APPLICABLE" for each objective.
+#
+# inherited's place here has not been checked against the authority
+# (docs/roadmap.md, "What inherited means for the score is unchecked").
+#
+# Held by tests/test_assessment_engine.py's
+# test_sprs_satisfying_statuses_are_met_inherited_and_not_applicable. The
+# dashboard's heatmap reads this set, and the frontend's lib/sprs.ts holds
+# its copy.
+SATISFYING_STATUSES: frozenset[str] = frozenset(
+    {ControlStatus.MET, ControlStatus.INHERITED, ControlStatus.NOT_APPLICABLE}
+)
 
 
 def deducting_controls(
     objectives_by_control: dict[str, list[str]],
     objective_statuses: dict[str, str],
 ) -> set[str]:
-    """The controls compute_sprs deducts: any objective not met or inherited.
+    """The controls compute_sprs deducts: any objective whose status is not
+    in SATISFYING_STATUSES. An objective with no status counts as not met.
 
     Shared with the activation screen, which says which practices already
     deduct when a downgrade leaves the score where it was.
     """
-    _satisfied: set[str] = {ControlStatus.MET, ControlStatus.INHERITED}
     return {
         control_id
         for control_id, objectives in objectives_by_control.items()
         if objectives
         and not all(
-            objective_statuses.get(obj_id, ControlStatus.NOT_MET) in _satisfied
+            objective_statuses.get(obj_id, ControlStatus.NOT_MET) in SATISFYING_STATUSES
             for obj_id in objectives
         )
     }

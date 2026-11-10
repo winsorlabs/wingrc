@@ -298,6 +298,19 @@ def test_sprs_recomputed_when_sole_objective_marked_inherited(client, db_session
 
 
 @pytest.mark.integration
+def test_sprs_recomputed_when_sole_objective_marked_not_applicable(
+    client, db_session, fake_msp_admin
+):
+    # 32 CFR 170.24(b)(3): N/A is assessed as MET. Until 2026-11-10 this
+    # deducted (docs/roadmap.md, "N/A objectives stop deducting").
+    d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
+    url = f"/orgs/{d['org'].id}/assessments/{d['assessment'].id}/control-states/{d['cs'].id}"
+    r = client.patch(url, json={"status": "not_applicable"})
+    assert r.status_code == 200
+    assert r.json()["sprs_score"] == 110
+
+
+@pytest.mark.integration
 def test_sprs_deducts_when_objective_partial(client, db_session, fake_msp_admin):
     # partial ≠ met; full weight (1) deducted → 109
     d = _seed(db_session, org_id=fake_msp_admin.org_id, fake_msp_admin=fake_msp_admin)
