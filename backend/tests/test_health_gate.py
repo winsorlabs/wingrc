@@ -50,6 +50,12 @@ def _run(stdin: str, sha: str = SHA) -> subprocess.CompletedProcess:
     )
 
 
+def _deploy_sh() -> str:
+    if not DEPLOY.exists():
+        pytest.skip("needs deploy/ (an image build has no deploy/)")
+    return DEPLOY.read_text(encoding="utf-8")
+
+
 def _gate(stdin: str, sha: str = SHA) -> int:
     return _run(stdin, sha).returncode
 
@@ -104,7 +110,7 @@ def test_refuses_a_body_it_cannot_read_as_a_finished_deploy(stdin):
 def test_deploy_sh_asks_the_gate_and_matches_no_status_text():
     """The gate is only a gate if the loop uses it. Reverting the loop to
     grep the body turns this red."""
-    text = DEPLOY.read_text(encoding="utf-8")
+    text = _deploy_sh()
     loop = text[text.index("waiting for /health") : text.index('echo "deployed $sha"')]
     assert 'bash deploy/health-gate.sh "$sha"' in loop
     assert not re.search(r"grep[^\n]*status", loop)
@@ -149,7 +155,7 @@ def test_an_accepted_body_prints_nothing():
 def test_deploy_sh_logs_each_refused_try_with_the_reason_and_records_it():
     """Reverting the loop to drop the reason, or the record's wait lines,
     turns this red."""
-    text = DEPLOY.read_text(encoding="utf-8")
+    text = _deploy_sh()
     loop = text[text.index("waiting for /health") : text.index('echo "deployed $sha"')]
     assert "reason=\"$(printf '%s' \"$body\" | bash deploy/health-gate.sh \"$sha\" 2>&1)\"" in loop
     assert 'refused: ${reason' in text
