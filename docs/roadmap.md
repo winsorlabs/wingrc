@@ -15819,8 +15819,10 @@ passes in exactly the case it exists for: it cannot fail.
   tenant's assessments, a plausible list that is short.
 - **The count comparison** has its own test.
 - **The backfill** has the app-role test too.
-- **Mutation:** making `every_tenant_assessments` return whatever the
-  role sees turns the app-role tests red.
+- **Mutation, on the bench:** making `every_tenant_assessments` return
+  whatever the role sees turns all four refusal tests red (three
+  rescore, one backfill), and restoring it turns them green. Full suite
+  in the image: 2064 passed, 19 skipped; ruff clean.
 
 **The family, and that it was built by us, knowing it.** This is a
 confident signal: an output that reads as an answer and verified less
