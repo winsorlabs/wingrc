@@ -1008,6 +1008,47 @@ def review_cycles_detach_unattested_cmd(
         session.close()
 
 
+@app.command(name="ssp-import-preview")
+def ssp_import_preview_cmd(
+    ssp: Path = typer.Argument(..., help="The customer's existing SSP (.docx)"),
+    org_id: str = typer.Option(..., help="Target org id. Required: there is no default."),
+    assessment_id: str = typer.Option(..., help="Target assessment id, in that org."),
+) -> None:
+    """Read implementation statements from a customer's SSP, match each row to
+    an 800-171A objective, and report what an import would write. Writes
+    nothing: there is no --apply yet, by design (docs/roadmap.md,
+    "Importing implementation statements from a customer's SSP").
+
+    Reports every row: exact matches, and every row NOT accepted (no match,
+    a match outside its family heading, an ambiguous match) in full. The
+    source's Status column is tallied and never imported; Notes and RACI
+    are not imported. Refuses a file it does not recognise, naming it, and
+    a target it cannot see. The same file gives the same report.
+    """
+    import uuid as _uuid
+
+    from .importers.ssp_docx import SspNotRecognised
+    from .ssp_import import TargetNotVisible, preview_import, render
+
+    try:
+        org, assessment = _uuid.UUID(org_id), _uuid.UUID(assessment_id)
+    except ValueError:
+        typer.echo("--org-id and --assessment-id must be UUIDs", err=True)
+        raise typer.Exit(2) from None
+    session = SessionLocal()
+    try:
+        try:
+            result = preview_import(session, ssp, org_id=org, assessment_id=assessment)
+        except (SspNotRecognised, TargetNotVisible) as e:
+            typer.echo(f"Refusing: {e}", err=True)
+            raise typer.Exit(1) from e
+        for line in render(result):
+            typer.echo(line)
+    finally:
+        session.rollback()
+        session.close()
+
+
 @app.command(name="seed-baselines")
 def seed_baselines_cmd(
     db_url: str = typer.Option(None, "--db-url", help="Override DATABASE_URL"),

@@ -15713,6 +15713,208 @@ is checked against 32 CFR 170 and the Assessment Guide before any code
 moves. If the score changes, `wingrc sprs-rescore` is the path for
 stored scores.
 
+### Importing implementation statements from a customer's SSP -- planned 2026-11-10; first slice (preview, writes nothing) built
+
+**What Jarrod wants.** A feature for every onboarding, not a one-off
+migration. A customer arriving with an SSP should not have to retype
+it. **The first slice writes nothing**, because the matching has to be
+proven against real files before anything lands in a tenant.
+
+#### What the source is: one real document
+
+These are facts about one redacted sample, `ExampleSSP.docx`, as the
+brief describes it, not claims about SSPs in general. **That file was
+not found on wl-dt26 or wl-util-1 when the slice was built**, so its hit
+rate has not been measured; the slice is built and tested against files
+made in its shape.
+- **A `.docx`, with the content in a table, not prose.** Section `8. NIST
+  SP 800-171 Rev 2 Security Controls`, a family heading per family
+  (`8.1 Access Control`), and a table with columns **Control**,
+  **Status**, **Notes**, **Implementation Statement**, **RACI**.
+- **Already objective-level.** The Control column holds the 800-171A
+  objective's text ("Authorized users are identified." is 3.1.1[a]).
+  `ImplementationStatement` is keyed per objective too, so nothing needs
+  splitting from practice to objective.
+- **No control identifier anywhere.** No `3.1.1`, `AC.L2-3.1.1` or
+  `AC-2`. Matching is the row's text against
+  `AssessmentObjective.text`, which holds the 800-171A wording for all
+  320 objectives.
+- **The Status column says "Met"** on every sampled row.
+- **The RACI column holds names and email addresses.**
+
+**What the catalog adds:**
+- **Not every row will be verbatim.** The brief quotes the sample's
+  3.1.1[c] as "Devices *including* other systems authorized to connect…";
+  800-171A and the catalog say "Devices *(and other systems)*
+  authorized…". If the quote is exact, that row does not match exactly
+  and goes to review with 3.1.1[c] as its first candidate. A test pins
+  the brief's wording.
+- **Two catalog texts appear twice.** "Privileged accounts are
+  identified." is AC.L2-3.1.5[a] and IA.L2-3.5.3[a]; the family heading
+  tells them apart. AU.L2-3.3.1[d] and AU.L2-3.3.2[b] share a text in one
+  family, so such a row is ambiguous and never accepted.
+
+#### A table parse, not an AI extraction
+
+**`importers/document.py` is the obvious thing to reach for, and it is
+the wrong tool.** It exists for unstructured vendor PDFs, where a model
+infers coverage. This source is structured: `python-docx` (already
+locked) reads the table, and every cell is a known field. Extraction is
+deterministic and re-runnable: the same file gives the same rows, which
+a test can hold and a model call cannot.
+
+AI earns at most one place: proposing a match for a row whose text does
+not match the catalog. Even there it proposes, and a person decides.
+Not built.
+
+#### The hard rule: status never imports
+
+The source says **Met**. Importing it would mark controls met in a
+tenant, in bulk, on another document's claim about a system WinGRC has
+never assessed. That is item X's defect ("a published document is
+offered, and a person attaches it": evidence attached unchosen) at
+tenant scale. It is also the ODP list's distinction ("Defining is not
+implementing"): a document saying a thing is done is not the thing
+being done.
+- **The import reads narrative and provenance only.** `control_state`,
+  its status and SPRS are not touched. The first slice's tests assert
+  all three, plus `implementation_statement`.
+- **A written statement would land as `status = 'draft'`**, which the
+  model supports.
+- **The source's status is carried as provenance, labelled as the source
+  document's claim**, so a reviewer sees what the old SSP said. It goes
+  in `grounded_in`, never in a status column. The preview tallies it and
+  says that none of it is imported.
+
+#### Matching: a near match is worse than no match
+
+A wrong match files one customer's statement under the wrong control,
+in a document an assessor reads. An unmatched row is only visible work.
+- **Exact after normalisation:** NFKC, case, whitespace, curly quotes, a
+  trailing period.
+- **The family heading cross-checks.** A row under Access Control that
+  matches an SI objective is a mismatch, not accepted.
+- **Anything below an exact, unique, in-family match goes to review**
+  with up to three ranked candidates. It never lands.
+- **No row is dropped.** Unmatched, mismatched, ambiguous and
+  headingless rows are each counted and listed with their full text.
+- **The hit rate is the number that says whether this works.** The
+  preview prints it first.
+
+#### What the sample holds that is not a statement
+
+- **Notes is a second narrative, and WinGRC has one `body`.** Joining
+  them would invent a paragraph nobody wrote. Implementation Statement
+  is the body. Notes is counted and not imported in this slice; whether
+  it rides along as provenance is decided when writing is built.
+- **`-` is the source's empty marker** and reads as empty, never as text.
+- **RACI is its own feature:** contacts and RACI assignments, created
+  from personal data, a different write with a different consent
+  question. Out of scope. The preview counts non-empty RACI cells and
+  never prints their content. Recorded so whoever builds it knows the
+  data is in the source.
+
+#### Duplicated statements: a finding only real data shows
+
+The sample's 3.1.1[a], [b] and [c] carry nearly the same paragraph,
+written per practice and pasted per objective, differing by a space.
+WinGRC combines per-objective paragraphs per control when it publishes,
+so a verbatim import republishes the paragraph three times under one
+control.
+
+They are near-identical, not identical, so collapsing them is a
+judgement, not an equality test. **Never de-duplicated automatically:**
+that would edit a customer's words. The preview groups statements under
+one control that are identical after whitespace or at least 95% alike,
+and says which. The intended write path offers the group to a person to
+collapse or keep. The other option, keeping them as-is and treating the
+repetition as the source's, is recorded and not chosen.
+
+#### The first slice, built: `wingrc ssp-import-preview`
+
+`wingrc ssp-import-preview FILE --org-id … --assessment-id …`.
+- **Where:** the parse and match are `importers/ssp_docx.py`, with no
+  database. The target, the catalog and the plan are `ssp_import.py`.
+- **What it prints:**
+  - the file's SHA-256;
+  - rows per family heading;
+  - each exact match and the objective it landed on;
+  - every row not accepted, by reason, with its text and candidates;
+  - the near-duplicate groups;
+  - the Status tally, with the line that none of it imports;
+  - the Notes and RACI counts;
+  - what a write would do: create a draft, leave an existing statement
+    alone, refuse two source rows for one objective, or skip a row with
+    no statement text.
+- **What it writes:** nothing. There is no `--apply`. A command that
+  writes nothing has nothing to audit, so it writes no audit row either.
+- **Visibility, before it bites:** it sets the named org through
+  `rls.set_current_org`, so it works as `wingrc_app` without the owner
+  override. The named assessment must then be visible in that org, or
+  the command refuses: a hidden assessment is never read as one with no
+  statements. An empty catalog is refused too.
+- **Refusals:** a file without that table, or not a `.docx` at all, is
+  refused by name.
+
+**Verified** (tests: `test_ssp_docx.py`, no database;
+`test_ssp_import.py`, integration):
+- **Nothing is written:** `control_state`, status, SPRS,
+  `implementation_statement`, `sprs_snapshot` and `audit_log` are all
+  unchanged, with a source saying Met on every row.
+- **Determinism:** the same file twice gives the same report.
+- **Planted rows:** an unmatched row is listed, and a family-mismatch
+  row is reported.
+- **Markers and personal data:** `-` reads as empty, and RACI content
+  is never printed.
+- **Refusals:**
+  - an unrecognised `.docx` and a non-`.docx`, each by name;
+  - another org's assessment;
+  - as `wingrc_app`, an assessment RLS hides. With its own org set, the
+    app role sees the assessment and its existing statement.
+- **Mutations, each seen red:**
+  - accepting a cross-family hit;
+  - accepting the best fuzzy candidate;
+  - reading `-` as text.
+
+**Next, for Jarrod:** run it against the sample to get the hit rate.
+That number decides whether the write slice is worth building in this
+shape.
+
+#### Other SSPs will not look like this one
+
+**The importer recognises a shape or refuses.** That is the existing
+importer's discipline for a scanned PDF: detect it, and report it by
+name rather than send an empty document to a model. A format it does not
+recognise is an error naming the file, never a best-effort guess. One
+sample is not a format family. What a second and third shape would cost,
+so the general feature is scoped from evidence:
+- **Same table, other column names or orders.** Cheap: the header is
+  one tuple, and a small set of known headers with a column map
+  generalises it. Each needs its sample and a test.
+- **Tables with control identifiers** (`3.1.1`, `AC.L2-3.1.1`) instead
+  of objective text. Moderate. Matching by identifier is easier and
+  surer than by text, but a practice-level table has to be split to
+  objectives, which is the problem this sample did not have. A
+  practice-level statement either lands on one objective or is offered
+  per objective for a person to divide.
+- **Prose under headings** (a heading per practice, paragraphs beneath).
+  Harder: section boundaries are inferred from heading styles and
+  numbering, which vary by template, and the split to objectives is a
+  judgement. This is where a model proposing the split could help, with
+  a person deciding.
+- **PDFs, and scanned PDFs with no text layer.** A text PDF loses table
+  structure in extraction, which makes it the prose case at best. A
+  scanned one is refused by name, as `document.py` refuses it.
+
+#### Recorded, not built
+
+- **The write path:** `--apply`, draft statements with provenance, the
+  duplicate review, and a screen. Its audit rows follow CLAUDE.md's
+  audited-CLI rule.
+- **Importing RACI** as contacts and assignments, with its consent
+  question.
+- **AI-proposed matches** for unmatched rows, which a person decides.
+
 ### The ODP list: Rev 3's organization-defined parameters, as a template -- built 2026-11-05
 
 **What Jarrod asked for.** A list of the organization-defined parameters
