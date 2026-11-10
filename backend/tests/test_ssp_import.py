@@ -140,6 +140,10 @@ def test_as_the_app_role_it_sees_its_own_org_and_refuses_one_rls_hides(
     The role is set before each step: preview_import ends in a rollback,
     which here rolls back the savepoint the SET ROLE ran in."""
     org, assessment, other, elsewhere = target
+    # Plain ids: the rollback expires the ORM objects, and a refresh under
+    # RLS of a row the role cannot see raises.
+    org_id, assessment_id, other_id, elsewhere_id = (
+        org.id, assessment.id, other.id, elsewhere.id)
 
     def app_role():
         db_session.execute(select(1))
@@ -149,17 +153,17 @@ def test_as_the_app_role_it_sees_its_own_org_and_refuses_one_rls_hides(
 
     try:
         app_role()
-        result = preview_import(db_session, _file(tmp_path), org_id=org.id,
-                                assessment_id=assessment.id)
+        result = preview_import(db_session, _file(tmp_path), org_id=org_id,
+                                assessment_id=assessment_id)
         assert result.plan.already_has_statement == ("AC.L2-3.1.1[c]",)
         app_role()
-        set_current_org(db_session, org.id)
+        set_current_org(db_session, org_id)
         assert db_session.scalars(select(ControlState).where(
-            ControlState.assessment_id == elsewhere.id)).first() is None, (
+            ControlState.assessment_id == elsewhere_id)).first() is None, (
             "fixture must have RLS hide the other org's rows, or this test proves nothing")
         app_role()
         with pytest.raises(TargetNotVisible):
-            preview_import(db_session, _file(tmp_path), org_id=other.id,
-                           assessment_id=assessment.id)
+            preview_import(db_session, _file(tmp_path), org_id=other_id,
+                           assessment_id=assessment_id)
     finally:
         db_session.connection().exec_driver_sql("RESET ROLE")

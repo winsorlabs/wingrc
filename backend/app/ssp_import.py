@@ -78,10 +78,14 @@ def preview_import(
     session: Session, path: Path, *, org_id: uuid.UUID, assessment_id: uuid.UUID
 ) -> Result:
     set_current_org(session, org_id)
-    org = session.get(Organization, org_id)
+    # select(), not session.get(): get() answers from the identity map
+    # without a query, so it could "see" a row RLS would hide.
+    org = session.scalars(select(Organization).where(Organization.id == org_id)).first()
     if org is None:
         raise TargetNotVisible(f"no organization {org_id}")
-    assessment = session.get(Assessment, assessment_id)
+    assessment = session.scalars(
+        select(Assessment).where(Assessment.id == assessment_id)
+    ).first()
     if assessment is None or assessment.org_id != org_id:
         raise TargetNotVisible(
             f"assessment {assessment_id} is not visible in {org.name} ({org_id}): it does "
