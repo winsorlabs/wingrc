@@ -12341,17 +12341,52 @@ clean data, so this was checked, read-only:
   `redo done at 0/4C94A9F0`). The last checkpoint, at 01:32:32, was 43
   minutes before the crash, but the database was idle: almost nothing
   had been written since.
-- **Data checksums are on**, and `pg_stat_database` showed 0 checksum
-  failures. A crash discards those counters, so the 0 covers 20:01
-  onwards. That window includes the snapshot below, whose `pg_dump`
-  read every table. Shared buffers start empty after a reboot, so every
-  page it touched came from disk and had its checksum checked.
+- **Every table page was checksum-verified, by an operation that already
+  existed.** The reasoning, so the next person can reuse it:
+  - Data checksums are on (`SHOW data_checksums`).
+  - Postgres verifies a page's checksum each time it reads the page into
+    shared buffers, and shared buffers start empty after a reboot.
+  - The snapshot below ran `pg_dump`, which reads every row of every
+    table. So every table and toast page was read into shared buffers
+    after the restart and checked once: by the dump, or earlier by the
+    app.
+  - `pg_stat_database.checksum_failures` was 0. A crash discards those
+    counters, so the 0 covers exactly the window from 20:01, which
+    contains the dump. (`wingrc` had read 1,596 blocks against 1,142
+    table and toast pages.)
+
+  This is better evidence than most checks built on purpose, and it cost
+  nothing new. After any unclean shutdown on a host with checksums on,
+  the next snapshot is the integrity check of the tables. Read
+  `checksum_failures` after it. It does not cover indexes, and it
+  detects damaged pages, not rows that are logically wrong.
 - **0 invalid indexes** in `pg_index`.
-- **Not checked: the 215 btree indexes' contents.** `amcheck` is
-  available (1.5) but not installed. Installing it is a write to live's
-  schema, and a write to live goes through an audited command or does
-  not run, so the extension was not created. Whether to check them that
-  way is Jarrod's decision.
+- **The 215 btree indexes are unverified, and that was accepted (Jarrod,
+  2026-11-09).** `amcheck` (1.5) is available but not installed, and was
+  not installed. The reasons:
+  - **The residual risk is correctness, not loss.** A corrupt btree gives
+    wrong query results, such as missing rows. It does not lose data.
+    The tables are checksum-verified, indexes are WAL-logged, and an
+    index can be rebuilt from its table at any time.
+  - **The crash was about as benign as an unclean shutdown gets:** 208
+    bytes of replay on an idle database.
+  - **Installing an extension is a schema write to live,** and a write
+    to a live database goes through an audited command or does not run.
+    An exception for a diagnostic would be a worse precedent than the
+    uncertainty it removes.
+
+  **The remedy, if a query ever returns something that looks wrong:**
+  `REINDEX` the indexes behind it. That is also a write to live, so it
+  goes through the audited path too.
+
+  **If index verification is ever wanted,** it arrives as an audited CLI
+  command (dry-run by default, an audit row saying why), never as an
+  exception to the rule.
+
+  **Not a way around it: running `amcheck` on a restored copy.** It
+  looks as if it resolves the tension, and it doesn't. `pg_restore`
+  rebuilds every index from its table, so a copy's indexes say nothing
+  about live's. Don't propose it.
 
 **The first run of the fixed retention (2026-11-09 20:44 UTC, by hand,
 with its output read as it ran).** The fix (#89) had reached live on
