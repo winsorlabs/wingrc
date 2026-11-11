@@ -198,3 +198,44 @@ def test_status_is_tallied_as_the_sources_claim(tmp_path, catalog):
 ])
 def test_family_headings(heading, family):
     assert ssp_docx._family_of(heading) == family
+
+
+# The committed synthetic SSP (tests/fixtures/make_ssp_synthetic.py). The
+# real sample is a customer's document and stays out of the repo; this one
+# is invented, with one planted case per row, written out here.
+_FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+def test_the_synthetic_ssp_reads_as_planted(catalog):
+    p = ssp_docx.preview(_FIXTURES / "ssp_synthetic.docx", catalog)
+    assert [(m.row.number, m.kind, m.objective.ref if m.objective else None)
+            for m in p.matches] == [
+        (1, "exact", "AC.L2-3.1.1[a]"),
+        (2, "exact", "AC.L2-3.1.1[b]"),
+        (3, "unmatched", None),           # "including", not "(and other systems)"
+        (4, "exact", "AC.L2-3.1.5[a]"),
+        (5, "family_mismatch", None),     # SI's text under Access Control
+        (6, "unmatched", None),           # in no catalog
+        (7, "ambiguous", None),           # AU.L2-3.3.1[d] = AU.L2-3.3.2[b]
+        (8, "exact", "IA.L2-3.5.3[a]"),   # row 4's text, told apart by family
+    ]
+    assert p.matches[2].candidates[0][0] == "AC.L2-3.1.1[c]"
+    assert p.matches[4].candidates == (("SI.L2-3.14.1[a]", 1.0),)
+    [g] = p.duplicates
+    assert (g.refs, g.identical) == (("AC.L2-3.1.1[a]", "AC.L2-3.1.1[b]"), False)
+    row6 = p.rows[5]
+    assert (row6.notes, row6.statement, row6.raci_present) == (None, None, False)
+    assert p.rows[2].notes == "Inventory reconciled at each quarterly review."
+    assert ssp_docx.status_tally(p.rows) == [("Met", 7), ("Not Met", 1)]
+
+
+def test_the_committed_synthetic_ssp_is_what_its_script_writes(tmp_path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("make_ssp_synthetic",
+                                                  _FIXTURES / "make_ssp_synthetic.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    fresh = module.build(tmp_path / "fresh.docx")
+    assert ssp_docx.parse(_FIXTURES / "ssp_synthetic.docx") == ssp_docx.parse(fresh), (
+        "re-run tests/fixtures/make_ssp_synthetic.py and commit the .docx")
