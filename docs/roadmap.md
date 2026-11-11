@@ -13917,6 +13917,25 @@ clone:
 That check is also in CLAUDE.md, at the start of every session, because
 CLAUDE.md is what a clone carries.
 
+**A second data point: a stale `packed-refs.lock` (2026-11-11).** On
+pushing #97's merge commit, the push itself landed (`git ls-remote`
+showed `98e632c`). Updating the local ref then failed with "Unable to
+create '.git/packed-refs.lock': File exists". What was read:
+- the lock was empty and dated 09:31:10 local;
+- the merge commit is 10:03:47, about 32 minutes later, so the push did
+  not create it;
+- no `git` process was running;
+- the reflog has no entry near 09:31;
+- the tracking ref already read `98e632c`.
+
+The lock was removed, and fetch and status worked again. What wrote it
+is not known. It is a second git file operation interfered with on the
+same checkout, after the `.idx` rename that fails with "Permission
+denied". Two different operations is a second data point for whatever
+is doing it. It points the same way as the clone-outside-`C:\dev` test
+above, and gives that clone one more thing to watch for: a lock left
+behind with no git process running.
+
 ### X. Publishing a document attaches it as evidence unchosen -- a hard-rule violation, live ✅ BUILT (2026-10-18)
 
 **Built as the Done entry "Item X: a published document is offered, and a
@@ -16047,6 +16066,28 @@ repetition as the source's, is recorded and not chosen.
   `select()`, not `session.get()`, which answers from the identity map
   without a query and so could see a row RLS hides.
 
+**The sample and the fixture are two files (2026-11-11).** Measuring
+the hit rate needs the real file, and testing needs a fixture; they are
+not the same file.
+- **The real `ExampleSSP.docx` is never committed.** It is a customer's
+  document, redacted, and this repo is public: the same reasoning that
+  keeps `.claude/settings.json` out. It stays outside the repo or
+  untracked. Its hit rate is reported as a number in a PR. Nothing else
+  from it is quoted here beyond what this entry already says.
+- **The committed fixture is synthetic:**
+  `tests/fixtures/ssp_synthetic.docx`, written by
+  `make_ssp_synthetic.py` beside it. It has the sample's shape and
+  invented content, with one planted case per row:
+  - a near-duplicate pair;
+  - the "including"/"(and other systems)" variant;
+  - a family mismatch;
+  - an unmatched row with `-` in every other cell;
+  - the ambiguous AU text;
+  - one text under two families.
+- **The tests:** `test_ssp_docx.py` writes each row's expected outcome
+  out. It also checks that the script still writes what is committed, so
+  an edit to the script without a re-run fails (seen red).
+
 **Next, for Jarrod:** run it against the sample to get the hit rate.
 That number decides whether the write slice is worth building in this
 shape.
@@ -16093,16 +16134,32 @@ so two open branches edit the same lines and conflict routinely.** #97 conflicte
 with #96 at exactly that spot. It is a property of the file, not a defect.
 But every parallel branch pays a resolution cost, and the resolution
 happens in the file the whole product is accountable to.
+
+**Two correct documents can merge into a false one.** This is its own
+class, distinct from everything else recorded here. It is not drift (a
+fact that changed later), not an overclaim (a claim false when written),
+and not a stale fact (prose a later change forgot). Each statement was
+true on its own branch, and the merge falsified it. #97's resolution
+amended three:
+- **#96's table of every CLI command** lacked `ssp-import-preview`, which
+  the next entry introduced. Complete on #96's branch, incomplete in the
+  merge.
+- **The bench entry said nothing in the integration suite runs the CLI as
+  the app role.** That was already contradicted by the refusal tests in
+  the entry directly after it, in the same commit. Neither branch was
+  wrong. The claim was written before those tests existed and landed
+  beside them.
+- **The SSP entry's bench result** (2084 passed) followed, after the
+  merge, an entry saying the bench runs as the owner. It now says the
+  bench shows nothing about visibility.
+
+**This is why resolution costs more than accepting both hunks.** "Both
+sides survived" is the check a conflict editor offers, and it passes on
+all three. The check that caught them is reading the merged result in
+sequence, as one document, as a reader will.
 - **Resolve on the branch, not in GitHub's web editor,** by whoever knows
   what both sides say. Check the order, that neither entry repeats the
-  other, and that they still agree read in sequence. Two entries written
-  independently can each be right and contradict each other side by side.
-  #97's resolution put #96's two entries first and amended both sides:
-  - #96's table of every CLI command gained `ssp-import-preview`;
-  - the bench entry's "nothing runs the CLI as the app role" was no longer
-    true of the merged file;
-  - the SSP entry's bench result now says the bench shows nothing about
-    visibility.
+  other, and then read the merged text in sequence.
 - **CI's conflict-marker step does not catch a stray `=======`, on
   purpose:** in Markdown it is a heading underline. A resolution that
   removes the angle-bracket markers and leaves the separator passes CI,
