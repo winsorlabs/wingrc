@@ -15905,9 +15905,10 @@ proven against real files before anything lands in a tenant.
 
 These are facts about one redacted sample, `ExampleSSP.docx`, as the
 brief describes it, not claims about SSPs in general. **That file was
-not found on wl-dt26 or wl-util-1 when the slice was built**, so its hit
-rate has not been measured; the slice is built and tested against files
-made in its shape.
+not found on wl-dt26 or wl-util-1 when the slice was built**; the slice
+is built and tested against files made in its shape. The file arrived
+2026-11-11 as a three-row excerpt; what it showed, and the hit rate it
+cannot give, is below ("What the sample showed").
 - **A `.docx`, with the content in a table, not prose.** Section `8. NIST
   SP 800-171 Rev 2 Security Controls`, a family heading per family
   (`8.1 Access Control`), and a table with columns **Control**,
@@ -15997,14 +15998,29 @@ in a document an assessor reads. An unmatched row is only visible work.
 
 #### Duplicated statements: a finding only real data shows
 
-The sample's 3.1.1[a], [b] and [c] carry nearly the same paragraph,
-written per practice and pasted per objective, differing by a space.
-WinGRC combines per-objective paragraphs per control when it publishes,
-so a verbatim import republishes the paragraph three times under one
-control.
+**Corrected 2026-11-11, from the file itself.** This section first said
+the sample's 3.1.1[a], [b] and [c] carry nearly the same paragraph,
+differing by a space. That came from the brief, before the file was
+read, and the file does not show it. Measured after collapsing
+whitespace:
+- **Lengths:** the three statements are 1,337, 644 and 1,187 characters.
+- **Similarity:** [a] and [c] are 0.913 alike; each is 0.63 to 0.68 alike
+  with [b].
+- **No pair reaches the 0.95 threshold,** and [c] does not match the
+  catalog exactly, so it would not be grouped anyway.
 
-They are near-identical, not identical, so collapsing them is a
-judgement, not an equality test. **Never de-duplicated automatically:**
+**The repetition is there, in a different shape.** Each pair shares one
+unbroken passage of 342 to 525 characters, inside statements that
+otherwise differ: a block pasted into each, not one paragraph repeated.
+WinGRC combines per-objective paragraphs per control when it publishes,
+so a verbatim import still republishes those passages under one
+control. **The preview's duplicate check, built for near-identical
+statements, reports nothing on the real file.** Whether shared passages
+should be reported, and how, is open. It needs more than three rows to
+decide.
+
+Near-identical or shared in part, collapsing them is a judgement, not an
+equality test. **Never de-duplicated automatically:**
 that would edit a customer's words. The preview groups statements under
 one control that are identical after whitespace or at least 95% alike,
 and says which. The intended write path offers the group to a person to
@@ -16072,8 +16088,9 @@ not the same file.
 - **The real `ExampleSSP.docx` is never committed.** It is a customer's
   document, redacted, and this repo is public: the same reasoning that
   keeps `.claude/settings.json` out. It stays outside the repo or
-  untracked. Its hit rate is reported as a number in a PR. Nothing else
-  from it is quoted here beyond what this entry already says.
+  untracked. A hit rate from a full document is reported as a number in
+  a PR. Nothing else from it is quoted here beyond what this entry
+  already says, and what it showed is measurements, not text.
 - **The committed fixture is synthetic:**
   `tests/fixtures/ssp_synthetic.docx`, written by
   `make_ssp_synthetic.py` beside it. It has the sample's shape and
@@ -16088,9 +16105,36 @@ not the same file.
   out. It also checks that the script still writes what is committed, so
   an edit to the script without a re-run fails (seen red).
 
-**Next, for Jarrod:** run it against the sample to get the hit rate.
-That number decides whether the write slice is worth building in this
-shape.
+#### What the sample showed, and what it cannot (2026-11-11)
+
+**The sample is an excerpt, not a document.** It holds one table, one
+family (8.1 Access Control), and three data rows. **So the hit rate is
+unmeasured.** "2 of 3" is not a hit rate and is not reported as one.
+What three rows in one family do show, read on wl-dt26 with no database
+(`importers/ssp_docx.py` against `cmmc_l2.yaml`; nothing from the file
+committed):
+- **The parse works on the real output.**
+  - The section heading, an introductory paragraph, the family heading
+    and one table, in that order.
+  - The header is exactly the five columns, in the brief's order.
+  - Every row has five distinct cells (no merged cells), and each
+    statement is one paragraph.
+  - **The headings are styled `Normal`, not as Word headings,** so a
+    parse keyed on heading styles would have found no families. The
+    parse reads the heading's text.
+- **The real wording matches the catalog.** Rows [a] and [b] are
+  verbatim 800-171A and match exactly. Row [c] really does say
+  "including", as the brief quoted. It is unmatched, with 3.1.1[c] first
+  at 0.94, and goes to review.
+- **Markers:** Notes is `-` on two rows and text on one, and the `-`
+  reads as empty. RACI is non-empty on all three. Status is "Met" on all
+  three, tallied as the source's claim.
+- **The duplicate finding was wrong as written**, corrected above.
+
+**What would give a real number:** the full implementation section from
+the same customer, with the same redaction. That is the difference
+between "the parser works" and "this feature is viable", and that number
+decides whether the write slice is worth building in this shape.
 
 #### Other SSPs will not look like this one
 
