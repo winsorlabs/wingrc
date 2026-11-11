@@ -10,7 +10,8 @@ sample's (section heading, family heading, the five columns); every
 statement, note and name is written here, and each row is planted for
 one case, so the file says what it tests:
 
-  1-2  exact; near-duplicate statements under AC.L2-3.1.1
+  1-2  exact; near-duplicate statements under AC.L2-3.1.1, which is the
+       sample's shape and fine (nothing detects it, by decision)
   3    "including" where 800-171A says "(and other systems)": unmatched
   4    "Privileged accounts are identified." under Access Control
   5    an SI objective's text under Access Control: family mismatch

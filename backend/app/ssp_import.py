@@ -170,14 +170,6 @@ def render(result: Result) -> list[str]:
     for m in exact:
         lines.append(f"  row {m.row.number} -> {m.objective.ref}")
 
-    lines += ["", f"{len(p.duplicates)} group(s) of duplicate statements under one control "
-              f"(identical, or at least {ssp_docx.NEAR_DUPLICATE_RATIO:.0%} alike); "
-              "reported for a person to judge, never collapsed:"]
-    for g in p.duplicates:
-        how = ("identical" if g.identical
-               else f"near-identical, lowest similarity {g.lowest_ratio:.3f}")
-        lines.append(f"  {g.control_id}: {', '.join(g.refs)} ({how})")
-
     lines += ["", "What the source's Status column says (the source's claim, never imported):"]
     for status, n in ssp_docx.status_tally(p.rows):
         lines.append(f"  {status}: {n}")
