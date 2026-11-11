@@ -673,7 +673,7 @@ difference between a working cutover and a confusing one.
 |---|---|---|
 | Serving requests | `WINGRC_DATABASE_URL` | Read/write rows. No DDL. Should be subject to row-level security. |
 | Running migrations | `WINGRC_MIGRATION_DATABASE_URL` | Owner: creates and alters tables. |
-| Administrative CLI | `WINGRC_DATABASE_URL` (today) | Owner: see below. |
+| Administrative CLI | `WINGRC_DATABASE_URL`, which is `wingrc_app` once cut over | The owner, for some commands, by an explicit override: see below. |
 
 ### Why two connection strings
 
@@ -702,19 +702,48 @@ security cutover gets undone without anyone noticing:
   `WINGRC_MIGRATION_DATABASE_URL`, rather than failing partway through some
   migration with a message about a table.
 
-### The CLI runs as the owner, and that is a decision
+### The CLI runs as the app role on a cut-over deployment
 
-`wingrc` and `wingrc-admin` commands connect via `WINGRC_DATABASE_URL`,
-and several of them genuinely require owner privileges:
+`wingrc` and `wingrc-admin` commands connect via `WINGRC_DATABASE_URL`.
+Until the cutover that was the owner. **On a cut-over deployment it is
+`wingrc_app`**, so every command runs as the app role unless told
+otherwise. On live, since 2026-09-29, both the backend and the worker
+carry `WINGRC_DATABASE_URL` as `wingrc_app` and
+`WINGRC_MIGRATION_DATABASE_URL` as the owner. This section said "the CLI
+runs as the owner" until 2026-11-10, and a deploy step written from it
+ran a cross-tenant command as the app role, which read zero rows
+(`docs/roadmap.md`, "A zero nobody checked").
+
+Several commands genuinely need the owner:
 
 - `wingrc-admin` (bootstrap-admin) creates the first organization and the
   first user — there is no org context yet for row-level security to scope
   to, by definition.
 - `wingrc reset-dev` deletes across every tenant in the database.
+- `wingrc sprs-rescore` and `backfill-missing-control-states` read every
+  tenant's assessments.
 - `wingrc seed` / `seed-catalog` / `seed-baselines` write deployment-wide
   reference data that belongs to no tenant.
 - `wingrc scope` and `wingrc render` look read-only but call
   `get_or_create_org`, which writes.
+
+**Run those with the owner override**, inside the backend container,
+where the owner URL is already set. Nothing is typed or printed:
+
+```bash
+docker compose exec -T backend sh -c \
+  'WINGRC_DATABASE_URL="$WINGRC_MIGRATION_DATABASE_URL" wingrc sprs-rescore --reason "…"'
+```
+
+**Only `sprs-rescore` and `backfill-missing-control-states` refuse when
+run without it.** As the app role, `scope` and `render` read one org
+without setting it, so they print nothing and write an empty workbook.
+Use the override for them until that is fixed (`docs/roadmap.md`'s
+table of every command). The `--db-url` flag some commands take does
+nothing; use the override above instead.
+
+The snapshot commands need no override: they connect through
+`WINGRC_MIGRATION_DATABASE_URL` themselves, with `row_security = off`.
 
 Forcing these through `wingrc_app` would mean weakening that role or adding
 bypasses to it — both worse than an honest "this tool runs as the owner".
@@ -722,8 +751,8 @@ bypasses to it — both worse than an honest "this tool runs as the owner".
 **The consequence, stated plainly because it is an operational
 requirement, not a footnote:** the CLI is a privileged administrative tool.
 Its access is controlled by who can reach the host and the credential, not
-by row-level security, and after the `wingrc_app` cutover it will be the
-main thing still holding owner rights. Treat the owner credential the same
+by row-level security, and since the `wingrc_app` cutover the owner
+override is the main thing still holding owner rights. Treat the owner credential the same
 way `docs/email-setup.md` and the credential-encryption-key guidance treat
 their secrets — in the operator's password manager or secrets store, not
 only in a `.env` on a machine that may be rebuilt — and limit shell access

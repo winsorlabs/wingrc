@@ -15673,6 +15673,12 @@ from a checkout. `_gate()` already skipped there, and they now do too.
 Nothing had run the full suite in the image since #89. The gap is its
 own item: "CI tests a checkout, and nothing tests the image it ships".
 
+**The deploy step for the rescore was wrong as written.** Run as #94's
+PR body gave it, on live it connected as `wingrc_app`, and RLS hid every
+assessment: "0 assessment(s)". The step was stopped, re-run with the
+owner override, and read 2 assessments, 0 moved, 0 unexplained. See "A
+zero nobody checked" and "The bench runs as the owner" below.
+
 **The first defect in this product found by checking an external
 authority, not by reading the code.** The code was self-consistent,
 tested since the first engine commit, and documented. The documentation
@@ -15712,6 +15718,162 @@ narrower, or something the regulation does not score as met, is open.
 is checked against 32 CFR 170 and the Assessment Guide before any code
 moves. If the score changes, `wingrc sprs-rescore` is the path for
 stored scores.
+
+### The bench runs as the owner, so it cannot see an RLS defect -- recorded 2026-11-10
+
+**What the bench is.** A bench clone's `.env` sets no database URL, so
+its backend, worker and CLI take `docker-compose.yml`'s default,
+`wingrc`: the owner, which bypasses row-level security. Checked on
+2026-11-10's clone, not inferred. Live has run as `wingrc_app` since the
+2026-09-29 cutover (`WINGRC_DATABASE_URL` names `wingrc_app` in both the
+backend and the worker; read from the containers, role names only).
+
+**What that means.** Every bench walk, every bench run of a CLI command,
+and every live-copy rehearsal reads every tenant's rows whatever the
+code does about tenancy. A defect that only shows under RLS cannot
+appear on the bench, by construction. 2026-11-10 is the case: on the
+live copy `sprs-rescore` reported 2 assessments, and on live it
+reported 0 (the next entry). The rehearsal said the deploy step worked
+because the rehearsal could not fail the way live did.
+
+**What does exercise RLS today:** the integration suite, and only on the
+request path. Its fixture switches to `SET ROLE wingrc_app` for the
+length of each request (`conftest._app_session`). Nothing there ran a
+CLI command's code as the app role until 2026-11-10: the next entry's
+refusal tests and the SSP preview's visibility test (the entry after
+it) each `SET ROLE wingrc_app` for one command. The rest of the CLI
+and the worker still are not run that way, and a click on the bench
+stack runs as the owner.
+
+**So bench verification has been treated as more than it is.** "Verified
+on the bench" has meant "the slice works", and it has been the step that
+proves a slice (CLAUDE.md's landing order). For anything whose
+correctness depends on tenancy, it proves nothing. That gap was there
+for every slice since the cutover.
+
+**What it would take to run the bench as the app role.** Live's
+configuration, reproduced:
+1. After migrations, `ALTER ROLE wingrc_app PASSWORD …` with a password
+   generated per bench. Migration 0016 creates the role with no
+   password, so it cannot log in until this is done.
+2. The bench's `.env` sets `WINGRC_DATABASE_URL` to `wingrc_app` and
+   `WINGRC_MIGRATION_DATABASE_URL` to the owner, the same split as live.
+3. After a `snapshot-restore`, step 1 again: the role is a cluster role
+   and not in the dump (`docs/deployment.md`, "Recovering", step 3).
+
+**What it would cost:**
+- **Bring-up:** the password is set after the first migration, so it
+  takes two `up`s or a one-shot step between migrating and serving.
+  `docs/bench-stack-verification.md` and every bench script change.
+- **Bench CLI runs:** these then need the owner override, as live's do.
+  That is the point, but it is also friction on every bench run of a
+  command.
+- **Tests:** unaffected. The suite connects through
+  `WINGRC_TEST_DATABASE_URL`, as the owner, and sets the role per
+  request itself.
+- **Live-copy rehearsals:** these become faithful, which is the main
+  gain. The snapshot commands already use the owner URL and
+  `row_security = off`, so they keep working.
+
+Not done in the fix that found it, by instruction. Recorded above the
+fix because it is the larger finding: one command was wrong, and the
+step meant to catch it could not.
+
+### A zero nobody checked: `sprs-rescore` on live -- fixed 2026-11-10
+
+**What happened.** #94's deploy step was
+`docker compose exec -T backend wingrc sprs-rescore …`. On live that
+connects as `wingrc_app` with no org set, so RLS hid every assessment,
+and the dry run printed "0 assessment(s), 0 moved, 0 unexplained". Live
+has 2. The step was stopped there, not applied. Re-run with the owner
+override, it printed 2 assessments, 0 moved, 0 unexplained, matching the
+bench, and `--apply` wrote nothing because nothing moved.
+
+**Why the deploy step was written wrong.** `docs/deployment.md` said the
+CLI connects as the owner through `WINGRC_DATABASE_URL`, with "(today)"
+in the table. That was written before the cutover and never revised.
+Since the cutover, that URL is `wingrc_app`. Now corrected there.
+
+**The rule: a command that counts tells "zero rows" from "zero visible
+rows".** Before a zero is trusted, it is checked against something
+known to be present that the same filter could not hide. A zero that
+was never checked against a known count is not an answer.
+
+**The fix.** `engine.every_tenant_assessments` is how
+`sprs-rescore` and `backfill-missing-control-states` now enumerate:
+- **The known count:** it counts assessments with `row_security = off`.
+  Under that setting Postgres raises for a role RLS would filter, rather
+  than filtering it, so the count is unfiltered or there is no count.
+  `snapshots.py` already dumps this way.
+- **The check:** the list must then match that count.
+- **On failure:** either failure raises `TenantRowsHidden`, and the CLI
+  refuses, printing the owner override.
+
+**The obvious check would not have worked.** "Count the orgs and refuse
+on zero" was the first suggestion. `organization` has no RLS policy, so
+the app role sees every org while every assessment is hidden. That check
+passes in exactly the case it exists for: it cannot fail.
+
+**Tests:**
+- **`test_rescore_as_the_app_role_refuses`** runs under
+  `SET ROLE wingrc_app`. Its precondition asserts the role sees zero
+  assessments, so the fixture reproduces live's zero.
+- **`…_with_one_org_set_refuses`** covers the quieter failure: one
+  tenant's assessments, a plausible list that is short.
+- **The count comparison** has its own test.
+- **The backfill** has the app-role test too.
+- **Mutation, on the bench:** making `every_tenant_assessments` return
+  whatever the role sees turns all four refusal tests red (three
+  rescore, one backfill), and restoring it turns them green. Full suite
+  in the image: 2064 passed, 19 skipped; ruff clean.
+
+**The family, and that it was built by us, knowing it.** This is a
+confident signal: an output that reads as an answer and verified less
+than it implies. The family has been named in this file since
+2026-10-26 (`/health`'s "confident-signal family"). Its last instance,
+the deploy gate, was fixed four days earlier (2026-11-06), and CLAUDE.md
+states it as a product invariant: a check must actually check. This one
+was written on 2026-11-10 by the same author as those entries (Claude),
+in a command built to make a correction *visible*. Knowing the
+pattern did not prevent producing it. Writing it down plainly is the
+point: naming a failure mode does not stop the next instance. A check
+that can fail, run on the configuration that ships, does.
+
+**Every CLI command, read for the same exposure.** "As the app role"
+means live's default: `wingrc_app`, no org set. The verdicts are read
+from the code, and only `sprs-rescore` was run on live.
+
+| Command | What it reads | As the app role | Verdict |
+|---|---|---|---|
+| `sprs-rescore` | every assessment | "0 assessment(s)" (seen on live) | **refuses now** |
+| `backfill-missing-control-states` | every assessment | "No assessments need backfilling" | **refuses now** |
+| `render --org` | one org's `scope_entity`; never sets the org | writes an **empty list workbook** and says "Wrote …" | **exposed, not fixed** |
+| `scope --org` | the same | prints nothing | **exposed, not fixed** |
+| `seed --org` | the same, then writes | the dry run lists every workbook row as new; `--apply` fails on RLS's check (loud) | **read half exposed** |
+| `reset-dev` | every tenant | previews zero rows, deletes none of the RLS tables | refuses outside `development`; exposed only on a dev box that cut over |
+| `wingrc-admin bootstrap-admin` | `user`, before it sets the org | its "already exists" check can never find a user | blind check; the unique constraint fails loudly instead |
+| `rotate-credential-keys` | `integration_connection` (no RLS) | correct; `--apply`'s pre-flight `pg_dump` fails loudly | no silent zero |
+| `seed-catalog`, `seed-baselines` | reference tables (no RLS) | correct | not exposed |
+| `lists-import`, `lists-seed-odp`, `review-cycles-detach-unattested` | one org, `--org-id`, set through `set_current_org` | correct | not exposed, by design |
+| `ssp-import-preview` (added by #97, after this table was written) | one org and assessment, `--org-id`, set through `set_current_org` | correct; a hidden assessment is refused, never read as one with no statements | not exposed, by design |
+| `snapshot-create`, `-restore`, `-verify` | every table | owner URL, `row_security = off` | not exposed, by construction (the pattern) |
+| `jobs-run-due`, `worker` | definer functions list orgs; `set_current_org` per org | correct | not exposed, by design |
+| `views` | no database | | |
+
+**Two more found on the way, also not fixed:**
+- **`--db-url` does nothing.** `seed-catalog`, `seed-baselines`,
+  `backfill-missing-control-states` and `rotate-credential-keys` set
+  `DATABASE_URL`, which `Settings` never reads (its prefix is `WINGRC_`).
+  Even the right name would be too late, since `db.py` builds its engine
+  when `cli.py` imports it. It is the override a reader would reach for
+  after this refusal, so the refusal names the working one instead.
+- **`scheduler.py`'s module docstring** says the worker and the CLI
+  connect "via the same `db.py:SessionLocal`, the owner role". Since
+  the cutover, that is `wingrc_app` on live.
+
+`render` matters most of the open ones. It is a list an assessor or
+customer is handed, and as the app role it is an empty one, with
+nothing saying why.
 
 ### Importing implementation statements from a customer's SSP -- planned 2026-11-10; first slice (preview, writes nothing) built
 
@@ -15878,7 +16040,9 @@ repetition as the source's, is recorded and not chosen.
   - the preview marking every objective met and committing;
   - dropping the visibility refusal (both refusal tests).
 - **Bench, in the image:** full suite 2084 passed, 19 skipped at
-  `e74e75c`; ruff clean.
+  `e74e75c`; ruff clean. The bench runs as the owner ("The bench runs
+  as the owner", above), so it shows nothing about visibility; the
+  app-role test is what does.
 - **Visibility is a query:** `preview_import` looks the target up with
   `select()`, not `session.get()`, which answers from the identity map
   without a query and so could see a row RLS hides.
@@ -15921,6 +16085,29 @@ so the general feature is scoped from evidence:
 - **Importing RACI** as contacts and assignments, with its consent
   question.
 - **AI-proposed matches** for unmatched rows, which a person decides.
+
+### `docs/roadmap.md` conflicts whenever two branches are open -- recorded 2026-11-11
+
+**Every slice appends to this file, mostly near the same spot in Planned,
+so two open branches edit the same lines and conflict routinely.** #97 conflicted
+with #96 at exactly that spot. It is a property of the file, not a defect.
+But every parallel branch pays a resolution cost, and the resolution
+happens in the file the whole product is accountable to.
+- **Resolve on the branch, not in GitHub's web editor,** by whoever knows
+  what both sides say. Check the order, that neither entry repeats the
+  other, and that they still agree read in sequence. Two entries written
+  independently can each be right and contradict each other side by side.
+  #97's resolution put #96's two entries first and amended both sides:
+  - #96's table of every CLI command gained `ssp-import-preview`;
+  - the bench entry's "nothing runs the CLI as the app role" was no longer
+    true of the merged file;
+  - the SSP entry's bench result now says the bench shows nothing about
+    visibility.
+- **CI's conflict-marker step does not catch a stray `=======`, on
+  purpose:** in Markdown it is a heading underline. A resolution that
+  removes the angle-bracket markers and leaves the separator passes CI,
+  and can turn the line above it into a heading. In a `.md` file, check the
+  separator by eye.
 
 ### The ODP list: Rev 3's organization-defined parameters, as a template -- built 2026-11-05
 
@@ -16369,6 +16556,14 @@ with the grep.
 **Deploying this changes `deploy.sh`.** The running copy has the re-exec
 check (since 660e113), so the target's copy, with the gate, runs that
 same deploy.
+
+**The wait is logged, one line per try, with the gate's reason (#90).**
+Its first live run was 2026-11-10's deploy of `0d7cd1d`. The record
+holds `try 1, 0s: refused: status incomplete: … worker unknown`, then
+`try 2, 5s: accepted`. The worker reports its commit about five seconds
+after the other two. That window had always been there and nothing
+showed it. The logging was built to make such a window visible, and the
+first window it showed was this one.
 
 ### The rule that nothing is met without evidence has no code behind it
 

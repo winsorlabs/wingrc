@@ -220,6 +220,20 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   user, membership and API token, then raw-`DELETE`d them with no audit
   row, so live's log holds no trace any of them existed
   (`docs/roadmap.md`'s "A concrete case from before the rules").
+- **A command that counts tells "zero rows" from "zero visible rows."**
+  Before a zero is trusted, it is checked against something known to be
+  present that the same filter could not hide. A zero never checked
+  against a known count is not an answer. The CLI runs as `wingrc_app`
+  on a cut-over deployment, so RLS hides every tenant's rows from a
+  command that sets no org. A command that reads across tenants
+  enumerates through `engine.every_tenant_assessments` or the same
+  shape: an unfiltered count with `row_security = off`, which raises
+  rather than filtering, then the list checked against it. Counting
+  `organization` proves nothing, because it has no RLS policy. Run such
+  commands with the owner override (`docs/deployment.md`, "The CLI runs
+  as the app role on a cut-over deployment"). The bench runs as the
+  owner, so it cannot show this class (`docs/roadmap.md`, "The bench
+  runs as the owner" and "A zero nobody checked").
 - **A docstring or comment that makes a universal claim about what the
   code does carries a test that fails when the claim stops being true.**
   Universal means "none", "never", "always", "only", "every", or a
@@ -864,8 +878,9 @@ transitively, is policy-gated (migrations 0060/0061).
 
 Migrations still need the owner, via `WINGRC_MIGRATION_DATABASE_URL` —
 which is why there are two connection strings, and why consolidating them
-back would break the next deploy. The CLI also runs as the owner and
-privileged commands need an explicit override; see `docs/deployment.md`'s
+back would break the next deploy. The CLI runs as `wingrc_app` on a
+cut-over deployment, and privileged commands need an explicit owner
+override; see `docs/deployment.md`'s
 "Database roles" section for both, and `docs/roadmap.md`'s Done entries for
 the reasoning. Router-level
 guards on all routers. Multi-org access (`org_membership`, per-membership

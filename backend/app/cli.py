@@ -65,6 +65,17 @@ def _reset_dev_guard_error(raw_env: str | None) -> str | None:
     )
 
 
+_OWNER_OVERRIDE = (
+    'Run it as the owner: WINGRC_DATABASE_URL="$WINGRC_MIGRATION_DATABASE_URL" wingrc ...'
+    " (docs/deployment.md, \"The CLI runs as the app role on a cut-over deployment\")."
+)
+
+
+def _refuse_hidden_rows(e: Exception) -> None:
+    typer.echo(f"Refusing to run: {e}. {_OWNER_OVERRIDE}", err=True)
+    raise typer.Exit(code=1) from e
+
+
 @app.command()
 def seed(
     workbook: Path = typer.Argument(..., help="Authorized-Entities .xlsx to import"),
@@ -191,11 +202,14 @@ def backfill_missing_control_states_cmd(
         os.environ["DATABASE_URL"] = db_url
 
     from .db import SessionLocal as _SL  # re-import to pick up env override
-    from .engine import backfill_missing_control_states
+    from .engine import TenantRowsHidden, backfill_missing_control_states
 
     session = _SL()
     try:
-        results = backfill_missing_control_states(session, reason=reason, dry_run=not apply)
+        try:
+            results = backfill_missing_control_states(session, reason=reason, dry_run=not apply)
+        except TenantRowsHidden as e:
+            _refuse_hidden_rows(e)
         if not results:
             typer.echo(
                 "No assessments need backfilling -- every objective already "
@@ -236,11 +250,14 @@ def sprs_rescore_cmd(
     practices account for: a finding, not a rounding difference
     (engine.rescore_assessments; docs/roadmap.md, "N/A objectives stop
     deducting")."""
-    from .engine import rescore_assessments
+    from .engine import TenantRowsHidden, rescore_assessments
 
     session = SessionLocal()
     try:
-        results = rescore_assessments(session, reason=reason, dry_run=not apply)
+        try:
+            results = rescore_assessments(session, reason=reason, dry_run=not apply)
+        except TenantRowsHidden as e:
+            _refuse_hidden_rows(e)
         moved = [r for r in results if r["sprs_after"] != r["sprs_before"]]
         for r in results:
             delta = (

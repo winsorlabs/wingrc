@@ -22,7 +22,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from app.engine import backfill_missing_control_states, start_assessment
+from app.engine import TenantRowsHidden, backfill_missing_control_states, start_assessment
 from app.models import (
     AssessmentObjective,
     AuditLog,
@@ -205,3 +205,21 @@ def test_assessment_with_nothing_missing_is_not_reported(db_session, ref):
 
     matching = [r for r in results if r["assessment_id"] == str(ref["assessment"].id)]
     assert matching == []
+
+
+def test_backfill_as_the_app_role_refuses(db_session, ref):
+    """As `wingrc_app` with no org set, RLS hides every assessment, and the
+    command used to answer "No assessments need backfilling". It refuses
+    rather than report a zero it never checked (engine.every_tenant_assessments)."""
+    from app.models import Assessment
+
+    db_session.execute(select(1))
+    db_session.connection().exec_driver_sql("SET ROLE wingrc_app")
+    try:
+        assert db_session.scalars(select(Assessment)).first() is None, (
+            "fixture must hide every assessment from the app role, or this test proves nothing"
+        )
+        with pytest.raises(TenantRowsHidden):
+            backfill_missing_control_states(db_session, reason="test", dry_run=True)
+    finally:
+        db_session.connection().exec_driver_sql("RESET ROLE")
