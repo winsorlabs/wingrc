@@ -16210,13 +16210,13 @@ the same as before.
 - joining paragraphs with one newline: 2 red;
 - reading tracked insertions instead of refusing: 1 red.
 
-**Found on the way, not fixed: the bundle shows a statement as one
-paragraph.** A statement body is plain text, edited in a textarea, and
-the SSP page escapes it into a single `<p>`
+**Found on the way, and fixed as its own slice (#100): the bundle
+showed a statement as one paragraph.** A statement body is plain text,
+edited in a textarea, and the SSP page escaped it into a single `<p>`
 (`bundle_service.py`'s implementation page). So a paragraph break the
-import keeps shows as a space there, for a statement typed by hand as
-much as an imported one. It is a rendering gap, separate from the
-import.
+import keeps showed as a space there, for a statement typed by hand as
+much as an imported one. See "A person's paragraphs ran together in the
+SSP".
 
 #### Other formats: AI finds, deterministic logic places, a person confirms (specified 2026-11-11, not built)
 
@@ -16343,6 +16343,14 @@ audited: it is a request path, so `tests/audit_check.py` enforces it.
   evidence route, because a leaked link discloses the CUI boundary.
 - Replacing a diagram never deletes the prior version, and an upload is
   audited (`system_description.<slot>.upload`).
+- **A view is audited too.** `_diagram_url` returns the evidence
+  download path, so the page's `<img>` fetches it through
+  `routers/evidence.py`'s `download_evidence`. That route writes an
+  `evidence.download` row naming the diagram's Evidence row before it
+  streams a byte. `audit.py`'s event list says so, and the code does it.
+  No test asserts the row for a diagram in particular:
+  `test_diagram_upload.py` asserts the diagram URL is that route, and the
+  route writes the row on every request.
 
 So the job is to pull the embedded images out of the source document and
 offer them for two slots that are already built. No new model, and no
@@ -16359,18 +16367,51 @@ invariant).
 
 **A finding the brief did not have: the slots take PNG and SVG only**
 (`_DIAGRAM_ALLOWED_MIME`; SVG goes through `sanitize_svg`). Images
-embedded in a `.docx` are often JPEG, or EMF/WMF when pasted from Visio,
-which browsers cannot display.
-- A JPEG needs the slot widened or a conversion.
-- An EMF needs a conversion.
-
-A conversion changes the customer's file. Which way to go is decided in
-the slice, with a real sample.
+embedded in a `.docx` are often JPEG, or EMF/WMF when pasted from Visio.
+**These are two different sizes of job, and whoever picks this up should
+not price them as one** (Jarrod, 2026-11-12).
+- **JPEG is a small change: widen the slot.** On the server it is one
+  line, an `image/jpeg` entry in `_DIAGRAM_ALLOWED_MIME`. The magic-byte
+  check already knows JPEG (`evidence._verify_magic_bytes`), and the
+  bundle embeds a diagram as a data URI under its stored type, which
+  browsers and WeasyPrint both render. Around that line: the two `accept`
+  attributes in `SystemDescriptionForm.tsx`, the comment above the dict,
+  and `docs/pdf_ssp_template_spec.md`'s format list. The spec puts SVG
+  first because a raster diagram's small labels blur under zoom, which
+  holds for JPEG as much as PNG, so it widens PNG's fallback rather than
+  overturning the reason. The customer's file is stored as it came.
+- **EMF and WMF are a conversion problem.** Browsers cannot render them
+  at all, so widening the slot would store a picture nobody can see. A
+  converter has to run, which means a new system dependency in the
+  backend image (nothing in the backend or its Dockerfile handles EMF or
+  WMF today). And the stored diagram becomes a derivative of the
+  customer's file, so the slice has to decide which file is the record
+  and keep the original beside it. A real Visio-pasted sample decides
+  whether this is needed at all.
 
 **Not interpreting a diagram's contents.** Deriving scope entities from
 a network topology is a different and much harder problem, and nothing
 here implies it. "Extract diagrams" does not mean "understand the
 network".
+
+**Recorded 2026-11-12: an absence reported from a search that could not
+see the thing.** The direction brief said viewing a diagram is audited.
+Claude checked and reported in #99 and its summary that it found no
+audit row for a view, so the entry did not claim one. The next brief
+accepted that and asked for a record that it had asserted coverage from
+a comment fragment in `audit.py`. Writing that record, Claude read the
+path the bytes take, and the comment was right: a view writes
+`evidence.download` (above). The search had looked for a diagram-specific
+action, and the view rides the generic evidence one.
+
+So the defect was in the check, not the brief. "Found none" is a claim
+like any other. This one was never tested against a case known to be
+present, which is CLAUDE.md's "a zero nobody checked" in a review rather
+than a query. The comment's claim, meanwhile, is a universal one ("also
+fires for a … diagram view") that names no test. That is the
+universal-claims convention's other half, and a test asserting the row
+for a diagram view would hold it. Not written here: it is a test for
+existing code, offered rather than added to a docs record.
 
 #### Recorded, not built
 
