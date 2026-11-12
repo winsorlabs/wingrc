@@ -29,6 +29,24 @@ What is read, and what is not:
   is read; its content never leaves this module.
 - `-` is the source's empty marker and reads as empty.
 
+A cell's text is read by `_cell_text`, not python-docx's `cell.text`,
+which loses things without a word: it joins paragraphs and line breaks
+alike with one newline, drops a bullet, and reads only a paragraph's
+direct runs, so text inside a content control, a field or a smart tag
+vanishes. What a statement body holds (tests/test_ssp_docx.py's
+fidelity tests pin each case):
+- every character of the cell's text as written: curly quotes, dashes
+  and the source's own spacing, with no normalisation;
+- a paragraph break as a blank line, a line break as a newline;
+- a bulleted paragraph as `- `, a numbered one as `1. `, indented two
+  spaces per level;
+- each paragraph trimmed at its ends, and empty paragraphs dropped.
+A cell this cannot read faithfully refuses the file, naming the row and
+what it found: a nested table, a picture, an equation, a symbol-font
+character, unaccepted tracked changes, a merged cell, or list numbering
+other than bullets and digits. Arriving subtly wrong is worse than not
+arriving, because review would read it as right.
+
 Matching is exact after normalisation (case, whitespace, curly quotes, a
 trailing period) and must be unique within the row's family heading. A
 wrong match files one customer's statement under the wrong control in a
@@ -43,7 +61,7 @@ import re
 import unicodedata
 import zipfile
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 HEADER = ("control", "status", "notes", "implementation statement", "raci")
@@ -67,10 +85,6 @@ FAMILIES = {
 
 _EMPTY_MARKERS = {"", "-", "–", "—"}
 _HEADING = re.compile(r"^(?:\d+(?:\.\d+)*\.?\s+)?(?P<name>[a-z ]+?)(?:\s*\((?P<code>[a-z]{2})\))?$")
-
-# Near-duplicate threshold for statements under one control, after
-# whitespace is collapsed. Reported for a person to judge, never applied.
-NEAR_DUPLICATE_RATIO = 0.95
 
 
 class SspNotRecognised(ValueError):
@@ -107,20 +121,11 @@ class RowMatch:
     candidates: tuple[tuple[str, float], ...] = ()
 
 
-@dataclass(frozen=True)
-class DuplicateGroup:
-    control_id: str
-    refs: tuple[str, ...]
-    identical: bool  # identical once whitespace is collapsed
-    lowest_ratio: float
-
-
 @dataclass
 class Preview:
     file_name: str
     rows: list[SourceRow]
     matches: list[RowMatch]
-    duplicates: list[DuplicateGroup] = field(default_factory=list)
 
     def of(self, kind: str) -> list[RowMatch]:
         return [m for m in self.matches if m.kind == kind]
@@ -136,6 +141,143 @@ def normalise(text: str) -> str:
 def _cell(text: str) -> str | None:
     t = re.sub(r"\s+", " ", text).strip()
     return None if t in _EMPTY_MARKERS else text.strip()
+
+
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_UNREADABLE = {
+    "tbl": "a nested table", "drawing": "a picture", "pict": "a picture",
+    "object": "an embedded object", "sym": "a symbol-font character",
+    "ins": "unaccepted tracked changes", "del": "unaccepted tracked changes",
+    "moveFrom": "unaccepted tracked changes", "moveTo": "unaccepted tracked changes",
+}
+_MATH = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
+
+
+class _Unreadable(Exception):
+    pass
+
+
+class _Lists:
+    """List numbering, resolved from numbering.xml: what prefix a
+    paragraph gets, counted per cell."""
+
+    def __init__(self, doc):
+        self._doc = doc
+        self._levels: dict[tuple[str, int], tuple[str, int]] = {}
+        try:
+            numbering = doc.part.numbering_part.element
+        except (KeyError, NotImplementedError):
+            return
+        abstract = {a.get(_W + "abstractNumId"): a for a in numbering.iter(_W + "abstractNum")}
+        for num in numbering.iter(_W + "num"):
+            ref = num.find(_W + "abstractNumId")
+            a = abstract.get(ref.get(_W + "val")) if ref is not None else None
+            if a is None:
+                continue
+            for lvl in a.iter(_W + "lvl"):
+                fmt = lvl.find(_W + "numFmt")
+                start = lvl.find(_W + "start")
+                self._levels[(num.get(_W + "numId"), int(lvl.get(_W + "ilvl")))] = (
+                    fmt.get(_W + "val") if fmt is not None else "decimal",
+                    int(start.get(_W + "val")) if start is not None else 1,
+                )
+
+    def _num_pr(self, p):
+        num_pr = p.find(f"{_W}pPr/{_W}numPr")
+        if num_pr is not None:
+            return num_pr
+        style_el = p.find(f"{_W}pPr/{_W}pStyle")
+        style_id = style_el.get(_W + "val") if style_el is not None else None
+        styles = self._doc.styles.element
+        while style_id:
+            style = next((s for s in styles.iter(_W + "style")
+                          if s.get(_W + "styleId") == style_id), None)
+            if style is None:
+                return None
+            num_pr = style.find(f"{_W}pPr/{_W}numPr")
+            if num_pr is not None:
+                return num_pr
+            based = style.find(_W + "basedOn")
+            style_id = based.get(_W + "val") if based is not None else None
+        return None
+
+    def prefix(self, p, counters: dict) -> str | None:
+        num_pr = self._num_pr(p)
+        if num_pr is None:
+            return None
+        num_id_el, ilvl_el = num_pr.find(_W + "numId"), num_pr.find(_W + "ilvl")
+        num_id = num_id_el.get(_W + "val") if num_id_el is not None else None
+        if num_id in (None, "0"):
+            return None
+        ilvl = int(ilvl_el.get(_W + "val")) if ilvl_el is not None else 0
+        fmt, start = self._levels.get((num_id, ilvl), ("bullet", 1))
+        indent = "  " * ilvl
+        for key in [k for k in counters if k[0] == num_id and k[1] > ilvl]:
+            del counters[key]
+        if fmt == "none":
+            return indent
+        if fmt == "bullet":
+            return indent + "- "
+        if fmt == "decimal":
+            n = counters.get((num_id, ilvl), start - 1) + 1
+            counters[(num_id, ilvl)] = n
+            return f"{indent}{n}. "
+        raise _Unreadable(f"list numbering in the format {fmt!r}")
+
+
+def _block_paragraphs(container):
+    for child in container.iterchildren():
+        tag = child.tag.rsplit("}", 1)[-1]
+        if tag == "p":
+            yield child
+        elif tag in ("sdt", "customXml"):
+            content = child.find(_W + "sdtContent") if tag == "sdt" else child
+            if content is not None:
+                yield from _block_paragraphs(content)
+        elif tag == "tbl":
+            raise _Unreadable(_UNREADABLE["tbl"])
+
+
+def _paragraph_text(p) -> str:
+    parts: list[str] = []
+    for el in p.iter():
+        if el.tag.startswith(_MATH):
+            raise _Unreadable("an equation")
+        tag = el.tag.rsplit("}", 1)[-1] if el.tag.startswith(_W) else None
+        if tag in _UNREADABLE:
+            raise _Unreadable(_UNREADABLE[tag])
+        if tag == "t":
+            parts.append(el.text or "")
+        elif tag == "tab" and el.getparent().tag == _W + "r":
+            parts.append("\t")
+        elif tag in ("br", "cr"):
+            parts.append("\n")
+        elif tag == "noBreakHyphen":
+            parts.append("\u2011")
+    return "".join(parts)
+
+
+def _cell_text(tc, lists: _Lists) -> str:
+    """A cell's text as a statement body holds it (the module docstring)."""
+    blocks: list[tuple[str, bool]] = []
+    counters: dict = {}
+    for p in _block_paragraphs(tc):
+        prefix = lists.prefix(p, counters)
+        text = _paragraph_text(p).strip()
+        if text:
+            blocks.append(((prefix or "") + text, prefix is not None))
+    out = ""
+    for i, (text, is_item) in enumerate(blocks):
+        if i:
+            out += "\n" if is_item and blocks[i - 1][1] else "\n\n"
+        out += text
+    return out
+
+
+def _merged(tc) -> bool:
+    span = tc.find(f"{_W}tcPr/{_W}gridSpan")
+    return (tc.find(f"{_W}tcPr/{_W}vMerge") is not None
+            or (span is not None and int(span.get(_W + "val", "1")) > 1))
 
 
 def _family_of(heading: str) -> str | None:
@@ -161,6 +303,7 @@ def parse(path: Path) -> list[SourceRow]:
     except (PackageNotFoundError, zipfile.BadZipFile, KeyError, ValueError) as e:
         raise SspNotRecognised(f"{path.name}: not a .docx this importer can open ({e})") from e
 
+    lists = _Lists(doc)
     rows: list[SourceRow] = []
     heading: str | None = None
     family: str | None = None
@@ -181,7 +324,18 @@ def parse(path: Path) -> list[SourceRow]:
                 continue
             tables_seen += 1
             for tr in table.rows[1:]:
-                cells = [c.text for c in tr.cells]
+                tcs = tr._tr.findall(_W + "tc")
+                try:
+                    if len(tcs) != len(HEADER) or any(_merged(tc) for tc in tcs):
+                        raise _Unreadable("a merged cell")
+                    cells = [_cell_text(tc, lists) for tc in tcs[:4]]
+                except _Unreadable as e:
+                    raise SspNotRecognised(
+                        f"{path.name}: the row after {len(rows)} read row(s) holds "
+                        f"{e}, which this importer cannot read faithfully"
+                    ) from e
+                # RACI: only whether it is empty is read, never its content.
+                cells.append("".join(t.text or "" for t in tcs[4].iter(_W + "t")))
                 control = _cell(cells[0])
                 if control is None:
                     continue
@@ -243,41 +397,10 @@ def _rank(row: SourceRow, catalog: list[CatalogObjective], hits: list[CatalogObj
     return tuple((ref, score) for score, ref in scored[:3])
 
 
-def duplicates(matches: list[RowMatch]) -> list[DuplicateGroup]:
-    """Statements under one control that are the same paragraph, or nearly.
-    Reported for a person to collapse or keep; never applied."""
-    by_control: dict[str, list[tuple[str, str]]] = {}
-    for m in matches:
-        if m.kind == "exact" and m.row.statement:
-            flat = re.sub(r"\s+", " ", m.row.statement).strip()
-            by_control.setdefault(m.objective.control_id, []).append((m.objective.ref, flat))
-    groups: list[DuplicateGroup] = []
-    for control_id in sorted(by_control):
-        items = sorted(by_control[control_id])
-        used: set[int] = set()
-        for i, (ref_i, text_i) in enumerate(items):
-            if i in used:
-                continue
-            refs, lowest, identical = [ref_i], 1.0, True
-            for j in range(i + 1, len(items)):
-                if j in used:
-                    continue
-                ref_j, text_j = items[j]
-                ratio = difflib.SequenceMatcher(None, text_i, text_j).ratio()
-                if text_j == text_i or ratio >= NEAR_DUPLICATE_RATIO:
-                    used.add(j)
-                    refs.append(ref_j)
-                    identical = identical and text_j == text_i
-                    lowest = min(lowest, ratio)
-            if len(refs) > 1:
-                groups.append(DuplicateGroup(control_id, tuple(refs), identical, round(lowest, 3)))
-    return groups
-
-
 def preview(path: Path, catalog: list[CatalogObjective]) -> Preview:
     rows = parse(path)
     matches = match(rows, catalog)
-    return Preview(path.name, rows, matches, duplicates(matches))
+    return Preview(path.name, rows, matches)
 
 
 def status_tally(rows: list[SourceRow]) -> list[tuple[str, int]]:

@@ -13917,6 +13917,25 @@ clone:
 That check is also in CLAUDE.md, at the start of every session, because
 CLAUDE.md is what a clone carries.
 
+**A second data point: a stale `packed-refs.lock` (2026-11-11).** On
+pushing #97's merge commit, the push itself landed (`git ls-remote`
+showed `98e632c`). Updating the local ref then failed with "Unable to
+create '.git/packed-refs.lock': File exists". What was read:
+- the lock was empty and dated 09:31:10 local;
+- the merge commit is 10:03:47, about 32 minutes later, so the push did
+  not create it;
+- no `git` process was running;
+- the reflog has no entry near 09:31;
+- the tracking ref already read `98e632c`.
+
+The lock was removed, and fetch and status worked again. What wrote it
+is not known. It is a second git file operation interfered with on the
+same checkout, after the `.idx` rename that fails with "Permission
+denied". Two different operations is a second data point for whatever
+is doing it. It points the same way as the clone-outside-`C:\dev` test
+above, and gives that clone one more thing to watch for: a lock left
+behind with no git process running.
+
 ### X. Publishing a document attaches it as evidence unchosen -- a hard-rule violation, live ✅ BUILT (2026-10-18)
 
 **Built as the Done entry "Item X: a published document is offered, and a
@@ -15875,20 +15894,38 @@ from the code, and only `sprs-rescore` was run on live.
 customer is handed, and as the app role it is an empty one, with
 nothing saying why.
 
-### Importing implementation statements from a customer's SSP -- planned 2026-11-10; first slice (preview, writes nothing) built
+### Importing implementation statements from a customer's SSP -- planned 2026-11-10; preview built; cell fidelity built 2026-11-11
 
 **What Jarrod wants.** A feature for every onboarding, not a one-off
 migration. A customer arriving with an SSP should not have to retype
 it. **The first slice writes nothing**, because the matching has to be
 proven against real files before anything lands in a tenant.
 
+**Where this stands (2026-11-11, after Jarrod's review of the preview):**
+- **Built:**
+  - `wingrc ssp-import-preview` (#97), which reads, matches, reports and
+    writes nothing;
+  - the synthetic fixture (#98);
+  - cell fidelity, the accuracy work (below).
+- **Next: nothing, until a second real SSP arrives in a different
+  format.** One example cannot shape an adapter interface.
+- **Specified, not built:**
+  - format adapters, with AI extraction;
+  - the resumable review session and its screen;
+  - diagrams;
+  - the write path.
+- **Stopped, by decision:**
+  - duplicate detection;
+  - the full-document hit rate.
+
 #### What the source is: one real document
 
 These are facts about one redacted sample, `ExampleSSP.docx`, as the
 brief describes it, not claims about SSPs in general. **That file was
-not found on wl-dt26 or wl-util-1 when the slice was built**, so its hit
-rate has not been measured; the slice is built and tested against files
-made in its shape.
+not found on wl-dt26 or wl-util-1 when the slice was built**; the slice
+is built and tested against files made in its shape. The file arrived
+2026-11-11 as a three-row excerpt; what it showed, and the hit rate it
+cannot give, is below ("What the sample showed").
 - **A `.docx`, with the content in a table, not prose.** Section `8. NIST
   SP 800-171 Rev 2 Security Controls`, a family heading per family
   (`8.1 Access Control`), and a table with columns **Control**,
@@ -15925,9 +15962,9 @@ locked) reads the table, and every cell is a known field. Extraction is
 deterministic and re-runnable: the same file gives the same rows, which
 a test can hold and a model call cannot.
 
-AI earns at most one place: proposing a match for a row whose text does
-not match the catalog. Even there it proposes, and a person decides.
-Not built.
+For this table, no AI is needed. Where AI does belong, for other formats,
+is set out below ("Other formats"): it finds statements, and it never
+places them.
 
 #### The hard rule: status never imports
 
@@ -15960,8 +15997,15 @@ in a document an assessor reads. An unmatched row is only visible work.
   with up to three ranked candidates. It never lands.
 - **No row is dropped.** Unmatched, mismatched, ambiguous and
   headingless rows are each counted and listed with their full text.
-- **The hit rate is the number that says whether this works.** The
-  preview prints it first.
+- **Nothing lands on a near-match. That is what makes an unknown hit
+  rate safe.** An unmatched, mismatched or ambiguous row goes to review,
+  so an unknown match rate costs review time, never correctness. The
+  full-document hit rate is not coming (Jarrod, 2026-11-11): redacting a
+  whole implementation section is not worth the effort. The feature goes
+  ahead on the sample's three real rows and the synthetic fixture, with
+  the hit rate recorded as unmeasured. This property is load-bearing,
+  and it is stated here so nobody has to infer it. The preview still
+  prints the rate for whatever file it reads, first.
 
 #### What the sample holds that is not a statement
 
@@ -15976,21 +16020,26 @@ in a document an assessor reads. An unmatched row is only visible work.
   never prints their content. Recorded so whoever builds it knows the
   data is in the source.
 
-#### Duplicated statements: a finding only real data shows
+#### Repeated statements: not a problem, by decision (2026-11-11)
 
-The sample's 3.1.1[a], [b] and [c] carry nearly the same paragraph,
-written per practice and pasted per objective, differing by a space.
-WinGRC combines per-objective paragraphs per control when it publishes,
-so a verbatim import republishes the paragraph three times under one
-control.
+**Repeated text across objectives is expected and fine (Jarrod).** The
+preview's duplicate check was removed on 2026-11-11, and nothing
+replaces it. A statement arrives on each objective it was written for,
+word for word, and nothing groups, flags or collapses it. The synthetic
+fixture keeps its near-duplicate pair. It is harmless, and it documents
+the shape.
 
-They are near-identical, not identical, so collapsing them is a
-judgement, not an equality test. **Never de-duplicated automatically:**
-that would edit a customer's words. The preview groups statements under
-one control that are identical after whitespace or at least 95% alike,
-and says which. The intended write path offers the group to a person to
-collapse or keep. The other option, keeping them as-is and treating the
-repetition as the source's, is recorded and not chosen.
+**The record of what the sample showed stays.** This section first said
+the sample's 3.1.1[a], [b] and [c] carry nearly the same paragraph,
+differing by a space. That came from the brief, before the file was
+read, and the file does not show it:
+- the statements are 1,337, 644 and 1,187 characters;
+- no pair is more than 0.913 alike;
+- what repeats is a shared passage of 342 to 525 characters inside
+  statements that otherwise differ.
+
+The question that opened, whether to report shared passages, is closed:
+not a problem, by decision.
 
 #### The first slice, built: `wingrc ssp-import-preview`
 
@@ -16002,7 +16051,6 @@ repetition as the source's, is recorded and not chosen.
   - rows per family heading;
   - each exact match and the objective it landed on;
   - every row not accepted, by reason, with its text and candidates;
-  - the near-duplicate groups;
   - the Status tally, with the line that none of it imports;
   - the Notes and RACI counts;
   - what a write would do: create a draft, leave an existing statement
@@ -16047,44 +16095,332 @@ repetition as the source's, is recorded and not chosen.
   `select()`, not `session.get()`, which answers from the identity map
   without a query and so could see a row RLS hides.
 
-**Next, for Jarrod:** run it against the sample to get the hit rate.
-That number decides whether the write slice is worth building in this
-shape.
+**The sample and the fixture are two files (2026-11-11).** Findings
+about real output need the real file, and testing needs a fixture; they
+are not the same file.
+- **The real `ExampleSSP.docx` is never committed.** It is a customer's
+  document, redacted, and this repo is public: the same reasoning that
+  keeps `.claude/settings.json` out. It stays outside the repo or
+  untracked. Nothing from it is quoted here beyond what this entry
+  already says, and what it showed is recorded as measurements, not
+  text.
+- **The committed fixture is synthetic:**
+  `tests/fixtures/ssp_synthetic.docx`, written by
+  `make_ssp_synthetic.py` beside it. It has the sample's shape and
+  invented content, with one planted case per row:
+  - a near-duplicate pair, kept to document the shape;
+  - the "including"/"(and other systems)" variant;
+  - a family mismatch;
+  - an unmatched row with `-` in every other cell;
+  - the ambiguous AU text;
+  - one text under two families.
+- **The tests:** `test_ssp_docx.py` writes each row's expected outcome
+  out. It also checks that the script still writes what is committed, so
+  an edit to the script without a re-run fails (seen red).
 
-#### Other SSPs will not look like this one
+#### What the sample showed, and what it cannot (2026-11-11)
 
-**The importer recognises a shape or refuses.** That is the existing
-importer's discipline for a scanned PDF: detect it, and report it by
-name rather than send an empty document to a model. A format it does not
-recognise is an error naming the file, never a best-effort guess. One
-sample is not a format family. What a second and third shape would cost,
-so the general feature is scoped from evidence:
+**The sample is an excerpt, not a document.** It holds one table, one
+family (8.1 Access Control), and three data rows. **So the hit rate is
+unmeasured.** "2 of 3" is not a hit rate and is not reported as one.
+What three rows in one family do show, read on wl-dt26 with no database
+(`importers/ssp_docx.py` against `cmmc_l2.yaml`; nothing from the file
+committed):
+- **The parse works on the real output.**
+  - The section heading, an introductory paragraph, the family heading
+    and one table, in that order.
+  - The header is exactly the five columns, in the brief's order.
+  - Every row has five distinct cells (no merged cells), and each
+    statement is one paragraph.
+  - **The headings are styled `Normal`, not as Word headings,** so a
+    parse keyed on heading styles would have found no families. The
+    parse reads the heading's text.
+- **The real wording matches the catalog.** Rows [a] and [b] are
+  verbatim 800-171A and match exactly. Row [c] really does say
+  "including", as the brief quoted. It is unmatched, with 3.1.1[c] first
+  at 0.94, and goes to review.
+- **Markers:** Notes is `-` on two rows and text on one, and the `-`
+  reads as empty. RACI is non-empty on all three. Status is "Met" on all
+  three, tallied as the source's claim.
+- **The duplicate claim was wrong as written** ("Repeated statements",
+  above).
+
+**The full document is not coming** (Jarrod, 2026-11-11). Redacting a
+whole implementation section is not worth the effort. The hit rate
+stays unmeasured, and the Matching section says why that is safe.
+
+#### Cell fidelity: the accuracy work (built 2026-11-11)
+
+**Jarrod's requirement: the text found in the cells must arrive on each
+objective accurately.** With matching settled as exact-or-review, the
+risk moved from matching to reading. A statement that arrives subtly
+changed still reads almost right, so review would never catch it.
+
+**The first question, answered from the file.** The brief noticed that
+[b] and [c] lack the space after one full stop that [a] has. That could
+have been a paragraph boundary lost on join. It is not: in both rows the
+missing space is inside one run's text, and every statement cell in the
+sample is a single paragraph with no break element. The source differs,
+and the import keeps it as written.
+
+**What python-docx's `cell.text` loses, read from its 1.2.0 source.** It
+joins a cell's paragraphs with one newline, so paragraphs are not run
+together. But it loses three things, silently:
+- a paragraph break and a line break both become one newline;
+- a bullet or a list number is dropped, because numbering is formatting,
+  not text;
+- a paragraph's text comes from its direct runs and hyperlinks only.
+  Text inside a content control, a field, a smart tag or an unaccepted
+  tracked insertion vanishes.
+
+**What a statement body holds now** (`importers/ssp_docx.py`'s
+`_cell_text`; its module docstring has the rule):
+- every character as written: curly quotes, dashes, the source's own
+  spacing, with no normalisation;
+- a paragraph break as a blank line, and a line break as a newline;
+- a bullet as `- `, a number as `1. `, indented two spaces per level;
+- each paragraph trimmed at its ends, and empty paragraphs dropped.
+
+**What it refuses, rather than half-reads.** A cell holding any of these
+refuses the file, naming what it found:
+- a nested table, a picture, an embedded object or an equation;
+- a symbol-font character;
+- unaccepted tracked changes;
+- a merged cell;
+- list numbering other than bullets and digits.
+
+Arriving subtly wrong is worse than not arriving.
+
+**Tests** (`test_ssp_docx.py`, no database). Each asserts exactly what
+the body holds:
+- a two-paragraph cell;
+- a line break inside a paragraph;
+- a bulleted cell, and a numbered one;
+- a statement over 50,000 characters;
+- curly quotes, an em dash, an en dash and doubled spaces;
+- text inside a content control;
+- one refusal per kind.
+
+The bullet and content-control tests assert, as preconditions, that
+python-docx itself loses that text. The sample's three statements read
+the same as before.
+
+**Mutations, each seen red:**
+- reading with `cell.text` again: 7 red;
+- joining paragraphs with one newline: 2 red;
+- reading tracked insertions instead of refusing: 1 red.
+
+**Found on the way, and fixed as its own slice (#100): the bundle
+showed a statement as one paragraph.** A statement body is plain text,
+edited in a textarea, and the SSP page escaped it into a single `<p>`
+(`bundle_service.py`'s implementation page). So a paragraph break the
+import keeps showed as a space there, for a statement typed by hand as
+much as an imported one. See "A person's paragraphs ran together in the
+SSP".
+
+#### Other formats: AI finds, deterministic logic places, a person confirms (specified 2026-11-11, not built)
+
+**What Jarrod wants:** SSPs from other products, PDFs included, with AI
+making sense of the contents. **He asked whether a well-structured SSP
+should import correctly.** The honest answer: there are two separable
+jobs, and structure helps only one of them.
+- **Finding the statements is layout parsing.** AI is good at it,
+  structure helps directly, and a mistake is visible: obvious junk, or
+  nothing.
+- **Placing each statement on the right objective does not get easier
+  with structure.**
+  - This sample matched because its exporter wrote 800-171A *objective*
+    wording, one row per objective. That is a property of that product,
+    not of a good SSP.
+  - Most SSPs write one narrative per *practice*. A well-structured SSP
+    of that shape is *harder* to import than a scruffy objective-keyed
+    one, because something must decide which sentence answers [a] and
+    which answers [b].
+  - An SSP that labels its sections `3.1.1` or `AC-2` is trivially
+    matchable, whatever its layout.
+
+**A wrong placement is invisible.** A plausible statement lands on a
+plausible control, and an assessor finds it. That is the confident-signal
+family this product has spent a fortnight removing.
+
+**The rule: AI finds, deterministic logic places, a person confirms.**
+- The model extracts into a common shape.
+- Matching stays exact-or-review.
+- Everything lands as `draft`.
+
+A wrong AI reading then costs review time, rather than producing a false
+SSP.
+
+**Build the seam, not the generality.**
+- One format adapter per SSP flavour, behind one shared matcher. This
+  `.docx` table is adapter one: `importers/ssp_docx.py`'s `parse`, whose
+  `SourceRow` is the common shape's first draft.
+- The AI's job is to propose which adapter fits and to extract into the
+  common shape. It never decides what is true.
+- New formats are new adapters, added from real files. No adapter is
+  written for a format nobody has sent.
+- **Nothing here is built until a second real SSP, in a different
+  format, arrives.**
+
+**The OCR discipline carries over.** A scanned PDF with no text layer is
+detected and refused by name, as `importers/document.py` refuses it. It
+is never sent to a model as an empty document.
+
+**What the shapes we can foresee would cost**, so each adapter is scoped
+from evidence when its file arrives:
 - **Same table, other column names or orders.** Cheap: the header is
   one tuple, and a small set of known headers with a column map
   generalises it. Each needs its sample and a test.
 - **Tables with control identifiers** (`3.1.1`, `AC.L2-3.1.1`) instead
-  of objective text. Moderate. Matching by identifier is easier and
-  surer than by text, but a practice-level table has to be split to
-  objectives, which is the problem this sample did not have. A
-  practice-level statement either lands on one objective or is offered
-  per objective for a person to divide.
+  of objective text. Moderate.
+  - Placing by identifier is easier and surer than by text.
+  - But a practice-level row covers several objectives, and dividing it
+    among them is placement. A practice-level statement goes to review,
+    where a person divides it.
 - **Prose under headings** (a heading per practice, paragraphs beneath).
-  Harder: section boundaries are inferred from heading styles and
-  numbering, which vary by template, and the split to objectives is a
-  judgement. This is where a model proposing the split could help, with
-  a person deciding.
-- **PDFs, and scanned PDFs with no text layer.** A text PDF loses table
-  structure in extraction, which makes it the prose case at best. A
-  scanned one is refused by name, as `document.py` refuses it.
+  Harder.
+  - Finding the sections is the model's kind of work: heading styles and
+    numbering vary by template.
+  - Dividing a practice's text among objectives is still placement, so
+    it goes to a person. A model may at most propose a division, shown
+    as a proposal beside the source text and never pre-filled.
+- **PDFs.** A text PDF loses its table structure in extraction, which
+  makes it the prose case at best. A scanned one is refused by name.
+
+#### The review screen: one family at a time, resumable (specified 2026-11-11, not built)
+
+**Jarrod's design:** an approval page in the spirit of the Tool Import
+wizard. Work through one control family at a time, with approvals
+autosaved as they are made, and pick at it over days while working on
+the assessment. That shape solves the real problem: 320 rows is not one
+sitting.
+
+**Inherit the concept, not the current screen.** The Tool Import wizard
+is itself queued for rework because it is hard to navigate: eleven
+columns, every decision at once ("The Tool Import wizard: each row a
+decision a person can make"). Apply that entry's conclusions, not its
+layout:
+- **Progressive disclosure.** Show only the columns the decision turns
+  on, and let everything else expand per row.
+- **Headers that ask a question.**
+- **The decision the row turns on, in front.** Here that is the source
+  text beside the objective it would land on, or its candidates, and
+  accept, reject or edit. The source's status claim, its Notes and the
+  RACI count are reading material, opened per row.
+
+**Resumability is new machinery, and it brings a new risk.** It needs a
+durable import session, with per-row state (pending, accepted, rejected,
+edited) that survives for days. The assessment can change underneath
+it:
+- **A statement added by hand after the session started is never
+  silently overwritten.** That row becomes a conflict needing an
+  explicit choice, never an automatic win for either side. It is
+  decided against the live state when the row is applied, not against
+  the session's starting snapshot. The list library's import has the
+  same rule: it never replaces a person's edit unless that edit is
+  named.
+- **The source file is pinned to the session.** The preview already
+  hashes it. A revised SSP from the customer is a new session, not a
+  surprise halfway through an old one.
+- **An abandoned session is visible and discardable,** never a
+  half-applied import that nobody remembers. Whether an accepted row
+  writes its draft at once or when the session closes is decided in the
+  slice. Either way, the session says what it has written.
+
+**Status stays untouched throughout**, per the hard rule above.
+Everything lands as `draft`, however it was approved. Each write is
+audited: it is a request path, so `tests/audit_check.py` enforces it.
+
+#### Diagrams: extract and offer for the two slots (specified 2026-11-11, not built)
+
+**The destination already exists.**
+- Migration 0029 put `network_diagram_evidence_id` and
+  `data_flow_diagram_evidence_id` on `system_description`. Each points
+  at an Evidence row with `kind = 'file'`.
+- `bundle_service.py` renders both into the SSP with their own figure
+  styling (`.diagram-figure`, `.diagram-img`).
+- `orgs.py`'s `_diagram_url` streams a diagram through the authenticated
+  evidence route, because a leaked link discloses the CUI boundary.
+- Replacing a diagram never deletes the prior version, and an upload is
+  audited (`system_description.<slot>.upload`).
+- **A view is audited too.** `_diagram_url` returns the evidence
+  download path, so the page's `<img>` fetches it through
+  `routers/evidence.py`'s `download_evidence`. That route writes an
+  `evidence.download` row naming the diagram's Evidence row before it
+  streams a byte. `audit.py`'s event list says so, and the code does it.
+  No test asserts the row for a diagram in particular:
+  `test_diagram_upload.py` asserts the diagram URL is that route, and the
+  route writes the row on every request.
+
+So the job is to pull the embedded images out of the source document and
+offer them for two slots that are already built. No new model, and no
+new bundle work.
+
+**Which image is which** is the only real question, when a document
+holds a dozen: logos, headers, screenshots. The surrounding heading or
+caption usually answers it. **An AI proposal is fine here, for a reason
+that applies nowhere else in this feature: a misassigned diagram is
+instantly obvious to a person, because they look at the picture.** So
+propose freely, show both candidates, and let the person pick. A
+proposal is offered, never attached: a person picks (CLAUDE.md's product
+invariant).
+
+**A finding the brief did not have: the slots take PNG and SVG only**
+(`_DIAGRAM_ALLOWED_MIME`; SVG goes through `sanitize_svg`). Images
+embedded in a `.docx` are often JPEG, or EMF/WMF when pasted from Visio.
+**These are two different sizes of job, and whoever picks this up should
+not price them as one** (Jarrod, 2026-11-12).
+- **JPEG is a small change: widen the slot.** On the server it is one
+  line, an `image/jpeg` entry in `_DIAGRAM_ALLOWED_MIME`. The magic-byte
+  check already knows JPEG (`evidence._verify_magic_bytes`), and the
+  bundle embeds a diagram as a data URI under its stored type, which
+  browsers and WeasyPrint both render. Around that line: the two `accept`
+  attributes in `SystemDescriptionForm.tsx`, the comment above the dict,
+  and `docs/pdf_ssp_template_spec.md`'s format list. The spec puts SVG
+  first because a raster diagram's small labels blur under zoom, which
+  holds for JPEG as much as PNG, so it widens PNG's fallback rather than
+  overturning the reason. The customer's file is stored as it came.
+- **EMF and WMF are a conversion problem.** Browsers cannot render them
+  at all, so widening the slot would store a picture nobody can see. A
+  converter has to run, which means a new system dependency in the
+  backend image (nothing in the backend or its Dockerfile handles EMF or
+  WMF today). And the stored diagram becomes a derivative of the
+  customer's file, so the slice has to decide which file is the record
+  and keep the original beside it. A real Visio-pasted sample decides
+  whether this is needed at all.
+
+**Not interpreting a diagram's contents.** Deriving scope entities from
+a network topology is a different and much harder problem, and nothing
+here implies it. "Extract diagrams" does not mean "understand the
+network".
+
+**Recorded 2026-11-12: an absence reported from a search that could not
+see the thing.** The direction brief said viewing a diagram is audited.
+Claude checked and reported in #99 and its summary that it found no
+audit row for a view, so the entry did not claim one. The next brief
+accepted that and asked for a record that it had asserted coverage from
+a comment fragment in `audit.py`. Writing that record, Claude read the
+path the bytes take, and the comment was right: a view writes
+`evidence.download` (above). The search had looked for a diagram-specific
+action, and the view rides the generic evidence one.
+
+So the defect was in the check, not the brief. "Found none" is a claim
+like any other. This one was never tested against a case known to be
+present, which is CLAUDE.md's "a zero nobody checked" in a review rather
+than a query. The comment's claim, meanwhile, is a universal one ("also
+fires for a … diagram view") that names no test. That is the
+universal-claims convention's other half, and a test asserting the row
+for a diagram view would hold it. Not written here: it is a test for
+existing code, offered rather than added to a docs record.
 
 #### Recorded, not built
 
-- **The write path:** `--apply`, draft statements with provenance, the
-  duplicate review, and a screen. Its audit rows follow CLAUDE.md's
-  audited-CLI rule.
+- **The write path:** draft statements with provenance, through the
+  review session above. Its audit rows follow CLAUDE.md's audit rules.
 - **Importing RACI** as contacts and assignments, with its consent
   question.
-- **AI-proposed matches** for unmatched rows, which a person decides.
+- **AI-proposed matches** for rows in review: shown as proposals, and a
+  person decides ("Other formats", above).
 
 ### `docs/roadmap.md` conflicts whenever two branches are open -- recorded 2026-11-11
 
@@ -16093,16 +16429,32 @@ so two open branches edit the same lines and conflict routinely.** #97 conflicte
 with #96 at exactly that spot. It is a property of the file, not a defect.
 But every parallel branch pays a resolution cost, and the resolution
 happens in the file the whole product is accountable to.
+
+**Two correct documents can merge into a false one.** This is its own
+class, distinct from everything else recorded here. It is not drift (a
+fact that changed later), not an overclaim (a claim false when written),
+and not a stale fact (prose a later change forgot). Each statement was
+true on its own branch, and the merge falsified it. #97's resolution
+amended three:
+- **#96's table of every CLI command** lacked `ssp-import-preview`, which
+  the next entry introduced. Complete on #96's branch, incomplete in the
+  merge.
+- **The bench entry said nothing in the integration suite runs the CLI as
+  the app role.** That was already contradicted by the refusal tests in
+  the entry directly after it, in the same commit. Neither branch was
+  wrong. The claim was written before those tests existed and landed
+  beside them.
+- **The SSP entry's bench result** (2084 passed) followed, after the
+  merge, an entry saying the bench runs as the owner. It now says the
+  bench shows nothing about visibility.
+
+**This is why resolution costs more than accepting both hunks.** "Both
+sides survived" is the check a conflict editor offers, and it passes on
+all three. The check that caught them is reading the merged result in
+sequence, as one document, as a reader will.
 - **Resolve on the branch, not in GitHub's web editor,** by whoever knows
   what both sides say. Check the order, that neither entry repeats the
-  other, and that they still agree read in sequence. Two entries written
-  independently can each be right and contradict each other side by side.
-  #97's resolution put #96's two entries first and amended both sides:
-  - #96's table of every CLI command gained `ssp-import-preview`;
-  - the bench entry's "nothing runs the CLI as the app role" was no longer
-    true of the merged file;
-  - the SSP entry's bench result now says the bench shows nothing about
-    visibility.
+  other, and then read the merged text in sequence.
 - **CI's conflict-marker step does not catch a stray `=======`, on
   purpose:** in Markdown it is a heading underline. A resolution that
   removes the angle-bracket markers and leaves the separator passes CI,

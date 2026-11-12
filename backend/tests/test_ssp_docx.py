@@ -8,6 +8,7 @@ then a table of Control, Status, Notes, Implementation Statement, RACI.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -140,7 +141,9 @@ def test_the_dash_marker_reads_as_empty_not_as_text(tmp_path, catalog):
     assert (r.statement, r.notes, r.status, r.raci_present) == (None, None, None, False)
 
 
-def test_near_identical_statements_under_one_control_are_grouped_not_collapsed(tmp_path, catalog):
+def test_repeated_statements_are_each_kept_word_for_word(tmp_path, catalog):
+    # Repetition across objectives is expected and fine (Jarrod,
+    # 2026-11-11): nothing groups, flags or collapses it.
     path = _ssp(tmp_path / "s.docx", [("8.1 Access Control", [
         _row("Authorized users are identified.", statement=_STATEMENT),
         _row("Processes acting on behalf of authorized users are identified.",
@@ -149,12 +152,13 @@ def test_near_identical_statements_under_one_control_are_grouped_not_collapsed(t
              statement=_STATEMENT.replace("HR's", "HR’s")),
     ])])
     p = ssp_docx.preview(path, catalog)
-    [g] = p.duplicates
-    assert g.control_id == "AC.L2-3.1.1"
-    assert g.refs == ("AC.L2-3.1.1[a]", "AC.L2-3.1.1[b]", "AC.L2-3.1.1[c]")
-    assert not g.identical
-    # Each statement is still its own row, word for word.
-    assert [m.row.statement for m in p.matches][1].count("  ") == 1
+    assert [m.kind for m in p.matches] == ["exact"] * 3
+    assert [m.row.statement for m in p.matches] == [
+        _STATEMENT,
+        _STATEMENT.replace("IT administrator", "IT  administrator"),
+        _STATEMENT.replace("HR's", "HR’s"),
+    ]
+    assert not hasattr(p, "duplicates")
 
 
 def test_a_docx_without_the_table_is_refused_by_name(tmp_path, catalog):
@@ -198,3 +202,179 @@ def test_status_is_tallied_as_the_sources_claim(tmp_path, catalog):
 ])
 def test_family_headings(heading, family):
     assert ssp_docx._family_of(heading) == family
+
+
+# The committed synthetic SSP (tests/fixtures/make_ssp_synthetic.py). The
+# real sample is a customer's document and stays out of the repo; this one
+# is invented, with one planted case per row, written out here.
+_FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+def test_the_synthetic_ssp_reads_as_planted(catalog):
+    p = ssp_docx.preview(_FIXTURES / "ssp_synthetic.docx", catalog)
+    assert [(m.row.number, m.kind, m.objective.ref if m.objective else None)
+            for m in p.matches] == [
+        (1, "exact", "AC.L2-3.1.1[a]"),
+        (2, "exact", "AC.L2-3.1.1[b]"),
+        (3, "unmatched", None),           # "including", not "(and other systems)"
+        (4, "exact", "AC.L2-3.1.5[a]"),
+        (5, "family_mismatch", None),     # SI's text under Access Control
+        (6, "unmatched", None),           # in no catalog
+        (7, "ambiguous", None),           # AU.L2-3.3.1[d] = AU.L2-3.3.2[b]
+        (8, "exact", "IA.L2-3.5.3[a]"),   # row 4's text, told apart by family
+    ]
+    assert p.matches[2].candidates[0][0] == "AC.L2-3.1.1[c]"
+    assert p.matches[4].candidates == (("SI.L2-3.14.1[a]", 1.0),)
+    # Rows 1 and 2: a near-duplicate pair, kept to document the shape.
+    assert p.rows[1].statement == p.rows[0].statement.replace("access request", "access-request")
+    row6 = p.rows[5]
+    assert (row6.notes, row6.statement, row6.raci_present) == (None, None, False)
+    assert p.rows[2].notes == "Inventory reconciled at each quarterly review."
+    assert ssp_docx.status_tally(p.rows) == [("Met", 7), ("Not Met", 1)]
+
+
+def test_the_committed_synthetic_ssp_is_what_its_script_writes(tmp_path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("make_ssp_synthetic",
+                                                  _FIXTURES / "make_ssp_synthetic.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    fresh = module.build(tmp_path / "fresh.docx")
+    assert ssp_docx.parse(_FIXTURES / "ssp_synthetic.docx") == ssp_docx.parse(fresh), (
+        "re-run tests/fixtures/make_ssp_synthetic.py and commit the .docx")
+
+
+# Cell fidelity: what a statement body holds, exactly. The text in a cell
+# must arrive on its objective as written; text that reads almost right
+# is the case review would never catch.
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def _statement_cell(tmp_path: Path, fill) -> tuple[Path, object]:
+    """One row whose statement cell `fill(cell)` writes; returns the file
+    and that cell as python-docx saw it before saving."""
+    doc = Document()
+    doc.add_paragraph("8.1 Access Control")
+    table = doc.add_table(rows=1, cols=5)
+    for cell, text in zip(table.rows[0].cells, _HEADER, strict=True):
+        cell.text = text
+    cells = table.add_row().cells
+    for cell, text in zip(cells, _row("Authorized users are identified."), strict=True):
+        cell.text = text
+    cells[3].text = ""
+    fill(cells[3])
+    path = tmp_path / "s.docx"
+    doc.save(str(path))
+    return path, cells[3]
+
+
+def _body(path: Path) -> str:
+    [row] = ssp_docx.parse(path)
+    return row.statement
+
+
+def test_a_two_paragraph_cell_keeps_its_paragraph_break(tmp_path):
+    def fill(cell):
+        cell.paragraphs[0].add_run("Accounts are requested by ticket.")
+        cell.add_paragraph("The IT lead approves each request.")
+    path, _ = _statement_cell(tmp_path, fill)
+    assert _body(path) == "Accounts are requested by ticket.\n\nThe IT lead approves each request."
+
+
+def test_a_line_break_inside_a_paragraph_is_one_newline(tmp_path):
+    def fill(cell):
+        run = cell.paragraphs[0].add_run("Owner: IT lead")
+        run.add_break()
+        run.add_text("Backup: office manager")
+    path, _ = _statement_cell(tmp_path, fill)
+    assert _body(path) == "Owner: IT lead\nBackup: office manager"
+
+
+def test_a_bulleted_cell_keeps_its_bullets(tmp_path):
+    def fill(cell):
+        cell.paragraphs[0].add_run("Accounts require:")
+        cell.add_paragraph("multifactor sign-in;", style="List Bullet")
+        cell.add_paragraph("a named owner.", style="List Bullet")
+        cell.add_paragraph("Reviewed each quarter.")
+    path, saw = _statement_cell(tmp_path, fill)
+    assert "- " not in saw.text, "python-docx must drop the bullets, or this test proves nothing"
+    assert _body(path) == (
+        "Accounts require:\n\n- multifactor sign-in;\n- a named owner.\n\nReviewed each quarter."
+    )
+
+
+def test_a_numbered_cell_keeps_its_numbers(tmp_path):
+    def fill(cell):
+        cell.paragraphs[0].add_run("Request the account.")
+        cell.paragraphs[0].style = "List Number"
+        cell.add_paragraph("Approve it.", style="List Number")
+    path, _ = _statement_cell(tmp_path, fill)
+    assert _body(path) == "1. Request the account.\n2. Approve it."
+
+
+def test_a_very_long_statement_arrives_whole(tmp_path):
+    long = " ".join(f"Sentence {i} names control step {i * 7 % 13}." for i in range(2000))
+    path, _ = _statement_cell(tmp_path, lambda cell: cell.paragraphs[0].add_run(long))
+    body = _body(path)
+    assert len(long) > 50_000, "fixture must be long, or this test proves nothing"
+    assert body == long
+
+
+def test_curly_quotes_and_dashes_are_kept_as_written(tmp_path):
+    text = ("The “owner” approves — always; it’s required "
+            "(2024–2025), and spacing  is  the source’s.")
+    path, _ = _statement_cell(tmp_path, lambda cell: cell.paragraphs[0].add_run(text))
+    assert _body(path) == text
+
+
+def test_text_inside_a_content_control_is_not_dropped(tmp_path):
+    from docx.oxml import parse_xml
+
+    def fill(cell):
+        p = cell.paragraphs[0]
+        p.add_run("Approved by ")
+        p._p.append(parse_xml(
+            f'<w:sdt xmlns:w="{_W[1:-1]}"><w:sdtContent>'
+            '<w:r><w:t>the IT lead</w:t></w:r></w:sdtContent></w:sdt>'))
+        p.add_run(" in writing.")
+    path, saw = _statement_cell(tmp_path, fill)
+    assert "IT lead" not in saw.text, "python-docx must drop it, or this test proves nothing"
+    assert _body(path) == "Approved by the IT lead in writing."
+
+
+@pytest.mark.parametrize("case, found", [
+    ("nested table", "a nested table"),
+    ("tracked insertion", "unaccepted tracked changes"),
+    ("merged cell", "a merged cell"),
+    ("roman numbering", "list numbering in the format 'lowerRoman'"),
+])
+def test_a_cell_it_cannot_read_faithfully_refuses_the_file(tmp_path, case, found):
+    from docx.oxml import parse_xml
+
+    def fill(cell):
+        if case == "nested table":
+            cell.paragraphs[0].add_run("See:")
+            cell.add_table(rows=1, cols=1)
+        elif case == "tracked insertion":
+            cell.paragraphs[0]._p.append(parse_xml(
+                f'<w:ins xmlns:w="{_W[1:-1]}" w:id="1" w:author="x">'
+                '<w:r><w:t>added text</w:t></w:r></w:ins>'))
+        elif case == "merged cell":
+            cell.paragraphs[0].add_run("Spans two columns.")
+            cell.merge(_next_cell(cell))
+        elif case == "roman numbering":
+            cell.paragraphs[0].add_run("First.")
+            cell.paragraphs[0].style = "List Number"
+            numbering = cell.part.numbering_part.element
+            for fmt in numbering.iter(_W + "numFmt"):
+                if fmt.get(_W + "val") == "decimal":
+                    fmt.set(_W + "val", "lowerRoman")
+    path, _ = _statement_cell(tmp_path, fill)
+    with pytest.raises(SspNotRecognised, match=rf"s\.docx: .*{re.escape(found)}"):
+        ssp_docx.parse(path)
+
+
+def _next_cell(cell):
+    tc = cell._tc
+    return type(cell)(tc.getnext(), cell._parent)
