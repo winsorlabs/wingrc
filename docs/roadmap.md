@@ -13298,6 +13298,34 @@ because every C and H figure in it was wrong and the prose quoted it.
 | 2026-10-27 `7d81b4a` (Q.0) | 308 / 156 / 1 / 70 | 232 / 139 / 0 / 48 | 1: `libxml2` CVE-2026-6653, unreachable (the Python ones resolved away) |
 | 2026-10-27 `07bc630` (#64) | 308 / 156 / 1 / 70 | 232 / 139 / 0 / 48 | 1: the same |
 | 2026-10-29 UTC, **no deploy**: live's `07bc630` images rescanned, from JSON | 311 / 164 / 2 / 70 | 232 / 139 / 1 / 47 | 2: `libxml2` CVE-2026-6653, unreachable; `libbrotli1` CVE-2026-111497 (nginx: Alpine's `brotli-libs`, the same CVE) |
+| 2026-11-10 `0d7cd1d` (#95) | 374 / 165 / 0 / 110 | 237 / 144 / 1 / 54 | 0 |
+| **2026-11-12 `eade513` (#96 to #100), no dependency change** | **393 / 172 / 0 / 126** | **241 / 148 / 1 / 57** | 0 |
+
+Deploys between 10-29 and 11-10 are not tabulated, so the rise to
+110 HIGH is not explained here. The 11-10 row is there as the baseline
+for the 11-12 one.
+
+**2026-11-12: a movement with no dependency change, and not from the
+base images either.** The five PRs deployed changed no lock,
+Dockerfile or frontend lockfile. Both scans' package lists, Trivy's
+own, are identical between the two records: 238 packages in the
+backend and 72 in nginx, the same Alpine 3.23.4, and the same Trivy
+0.69.3. So the whole movement is the advisory database:
+- backend: 16 advisories on unchanged packages re-rated to HIGH (24
+  severity changes in all);
+- nginx: three new HIGH matches on `libxslt` 1.1.43-r3, present in both
+  images. One, CVE-2026-125350, was published 2026-11-10 18:17 UTC,
+  49 minutes after the earlier scan.
+
+The brief recording this put it down to the floating base images
+(Jarrod, 2026-11-12). The records disprove that for this pair. Of the
+three movements observed, one was packages (10-27, the Python ones
+resolved away) and two were advisories (10-29's brotli, and this).
+Each was found by reading the records by hand, which is the case for a
+baseline. A baseline that also says which cause moved the count needs
+the package list, not the image ID: every deploy stamps its commit
+into the image (`WINGRC_BUILD_SHA`), so the ID differs on every deploy
+whether or not the base changed.
 
 **The first version's figures,** *rows / unique / C / H* counted from the
 rendered table, for comparison:
@@ -15697,6 +15725,11 @@ PR body gave it, on live it connected as `wingrc_app`, and RLS hid every
 assessment: "0 assessment(s)". The step was stopped, re-run with the
 owner override, and read 2 assessments, 0 moved, 0 unexplained. See "A
 zero nobody checked" and "The bench runs as the owner" below.
+
+**Live walk: done (Jarrod, 2026-11-10).** On live, marking an objective
+Not Applicable improved the assessment's score. The walk stayed on the
+carried list in PR bodies until 2026-11-12, after it was done, and was
+closed then.
 
 **The first defect in this product found by checking an external
 authority, not by reading the code.** The code was self-consistent,
