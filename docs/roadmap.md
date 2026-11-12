@@ -16440,6 +16440,98 @@ linked list changes no control status or score (L.4).
 - **Teardown:** the host's lists match their before-lists; live was
   untouched.
 
+### A person's paragraphs ran together in the SSP -- fixed 2026-11-12
+
+**The defect.** An implementation statement is plain text, typed into a
+textarea. The bundle escaped it into one `<p>`, and HTML collapses every
+newline inside an element, so a statement typed in three paragraphs read
+as one run-on paragraph in `ssp/02_implementation.html` and in
+`system_security_plan.pdf`, which shares that body and its CSS. That is
+every hand-typed multi-paragraph statement in the document the product
+exists to produce, not only an imported one.
+
+**Why it was fixed as its own slice rather than filed.** #99 built
+paragraph fidelity into the SSP import, and the renderer then threw it
+away. A pipeline that keeps structure on the way in and drops it on the
+way out is worse than one that never kept it: the care is invisible and
+the loss looks intended (Jarrod).
+
+**The fix: `bundle_service._text_html`.**
+- A blank line starts a new `<p class="txt">`. Several blank lines, or a
+  blank line holding spaces or tabs, are one break.
+- A single newline is a `<br>`. Windows and old-Mac line endings are read
+  as newlines.
+- `.txt` sets `white-space: pre-wrap`, so spaces are kept. That is what
+  shows a nested item's indent: the import writes two spaces per level.
+- Nothing is interpreted. `- ` is text, not a list, and `**` is two
+  asterisks. A statement is plain text; a document body is Markdown
+  (`markdown_doc.py`), and the two are not merged here.
+- A statement's status tag goes inside its last paragraph, where it sat
+  before.
+
+**Which fields, and how they were found.** Every `_esc(` in
+`bundle_service.py` was read, and each field checked against how it is
+entered. The fix covers each multi-line field the bundle prints:
+- the implementation statement (`ControlDrawer.tsx`'s textarea);
+- the system description's three narratives: 1.2 System Description,
+  1.5 Authorization Boundary and 1.7 CUI Flow (`SystemDescriptionForm.tsx`'s
+  three textareas), on the same page shape;
+- a SPRS filing's note (`SprsSubmissionsPanel.tsx`'s textarea), in
+  `summary/scoring.html`'s table;
+- a finding's description, a `Text` column, in `summary/outstanding.html`'s
+  table. No screen was found that writes it with a textarea, but nothing
+  stops an API caller from sending newlines.
+
+Left as they were, each a single line where it is entered: the
+requirement and objective text (the catalog), an evidence reference's
+location, and an external connection's description (an input, not a
+textarea).
+
+**The app has the same defect in one place, recorded, not fixed.**
+The statement and the three narratives appear in the app only in their
+textareas, which keep newlines. But `SprsSubmissionsPanel.tsx` shows a
+filing's note in a plain `<div>` (the current filing) and `<td>` (the
+history), so a note's line breaks collapse on that screen too. It is
+outside this slice, which is the bundle.
+
+**No existing artifact changes, checked rather than assumed.** "Today's
+state never rewrites yesterday's record" is the rule this would brush
+against if the server kept bundles. It does not:
+- `routers/bundle.py` returns the ZIP in the response body. Nothing in
+  the export path calls `upload_file` or `put_object`.
+- The export's record is its `bundle.export` audit row, holding the
+  artifact log's file name and hash. Nothing reads either back to
+  re-render or compare.
+- Snapshots (item S) hold the database and the object store, and
+  neither holds a bundle.
+
+So a bundle exported before this keeps its bytes wherever its recipient
+keeps it, and its audit row's hash still matches them. Only a bundle
+generated after this ships looks different. A re-export of the same
+assessment is a new record of today, with its own row and hash.
+
+**Tests** (`tests/test_bundle_text.py`, 12, no database). Each asserts
+the exact HTML: two paragraphs with the tag in the last; a line break; the
+import's bulleted body; a nested item's indent and the `pre-wrap` rule
+that shows it; line-ending and blank-line variants; escaping; a body of
+only newlines; each of the three narratives and their "Not provided.";
+a finding's description; a filing's note; and that no raw newline is
+left inside a rendered paragraph.
+
+**Mutations, each seen red:**
+- the statement back to one escaped `<p>`: 7 red;
+- the CUI flow narrative back to one escaped `<p>`: 2 red;
+- `pre-wrap` removed: 1 red;
+- paragraphs joined with `<br><br>` inside one `<p>`: 5 red;
+- a finding's description back to plain escaping: 1 red.
+
+**Bench (wl-util-1, 27dd57d).** The backend image rendered one
+hand-built snapshot twice, once with main's `bundle_service.py` mounted
+over the branch's: WeasyPrint keeps the paragraphs, the line breaks and
+the nested indent in the PDF. The before-and-after pages are an artifact
+(https://claude.ai/artifact/9oAKHeHJjwoMwizzwTVsQr). No new color or
+background, so there is no contrast to measure.
+
 ### Snapshot retention kept about 7 of 14, while saying it kept 14 -- fixed 2026-11-06
 
 **Found 2026-11-06**, taking the snapshot before the #81–#88 deploy. The
