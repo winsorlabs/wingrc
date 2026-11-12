@@ -104,6 +104,8 @@ _CSS = (
     ".obj{margin:.6rem 0;padding:.5rem .75rem;border-left:3px solid #e5e7eb;background:#fafafa}"
     ".obj-k{font-weight:700;color:#374151;display:inline-block;min-width:2rem}"
     ".no-stmt{color:#9ca3af;font-style:italic}"
+    ".txt{white-space:pre-wrap}"
+    "td .txt{margin:0}td .txt+.txt{margin-top:.5em}"
     ".s-tag{font-size:.75rem;color:#6b7280;background:#f3f4f6;"
     "padding:.1rem .4rem;border-radius:2px;margin-left:.5rem}"
     ".logo{max-height:80px;max-width:200px;margin-bottom:1rem;display:block}"
@@ -576,6 +578,26 @@ def _safe_slug(name: str) -> str:
 
 def _esc(s: str | None) -> str:
     return html.escape(s or "")
+
+
+_PARAGRAPH_BREAK = re.compile(r"\n(?:[ \t]*\n)+")
+
+
+def _text_html(text: str, tail: str = "") -> str:
+    """A person's plain text as HTML: each paragraph (lines separated by a
+    blank line) its own <p class="txt">, each line break a <br>, and
+    spaces kept by `.txt`'s white-space, so a nested list's indent shows.
+    `tail` is HTML appended inside the last paragraph (a statement's status
+    tag). Nothing is interpreted: "- " is text, not a list. Used for an
+    implementation statement, the system description's three narratives, a
+    SPRS filing's note and a finding's description, each typed into a
+    textarea; `html.escape` inside one <p> ran their paragraphs together
+    (tests/test_bundle_text.py)."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+    paras = [p for p in _PARAGRAPH_BREAK.split(text) if p.strip()] or [""]
+    html_paras = ["<br>".join(_esc(line.rstrip()) for line in p.split("\n")) for p in paras]
+    html_paras[-1] += tail
+    return "".join(f'<p class="txt">{p}</p>' for p in html_paras)
 
 
 def _na(v: object) -> str:
@@ -1941,17 +1963,17 @@ def _sys_desc_body(snapshot: BundleSnapshot) -> str:
         f"{_esc(sd.operational_status.replace('_', ' ').title())}</td></tr>"
         f"</table>"
         f"<h2>1.2 System Description</h2>"
-        f"<p>{_esc(sd.system_description or 'Not provided.')}</p>"
+        f"{_text_html(sd.system_description or 'Not provided.')}"
         f"<h2>1.3 CUI Categories</h2>"
         f"{_list_items(sd.cui_categories)}"
         f"<h2>1.4 CUI Storage Locations</h2>"
         f"{_list_items(sd.cui_storage_locations)}"
         f"<h2>1.5 Authorization Boundary</h2>"
-        f"<p>{_esc(sd.authorization_boundary_description or 'Not provided.')}</p>"
+        f"{_text_html(sd.authorization_boundary_description or 'Not provided.')}"
         f"<h2>1.6 External Connections</h2>"
         f"{_ext_conn_table(sd.external_connections)}"
         f"<h2>1.7 CUI Flow</h2>"
-        f"<p>{_esc(sd.cui_flow_description or 'Not provided.')}</p>"
+        f"{_text_html(sd.cui_flow_description or 'Not provided.')}"
         f"<h2>1.8 Network Diagram</h2>"
         f"{_diagram_img_html(sd.network_diagram_bytes, sd.network_diagram_mime)}"
         f"<h2>1.9 Data Flow Diagram</h2>"
@@ -1994,8 +2016,9 @@ def _implementation_body(snapshot: BundleSnapshot) -> str:
 
         for obj in ctrl.objectives:
             stmt_html = (
-                f"<p>{_esc(obj.stmt_body)}"
-                f"<span class='s-tag'>{_esc(obj.stmt_status or '')}</span></p>"
+                _text_html(
+                    obj.stmt_body, f"<span class='s-tag'>{_esc(obj.stmt_status or '')}</span>"
+                )
                 if obj.stmt_body
                 else "<p class='no-stmt'>No implementation statement drafted.</p>"
             )
@@ -2735,7 +2758,7 @@ def _render_scoring(snapshot: BundleSnapshot) -> str:
         f"<tr><td>{_esc(s.submitted_date)}</td>"
         f"<td>{s.score}</td>"
         f"<td>{_esc(s.submitted_by_name)}</td>"
-        f"<td>{_esc(s.note) if s.note else ''}</td>"
+        f"<td>{_text_html(s.note) if s.note else ''}</td>"
         f"<td>{'Voided' if s.voided else 'Current' if i == 0 else ''}</td></tr>"
         for i, s in enumerate(snapshot.sprs_submissions)
     )
@@ -2813,7 +2836,7 @@ def _render_outstanding(snapshot: BundleSnapshot) -> str:
         f"<td>{_esc(f.title)}</td>"
         f"<td>{_esc(f.severity)}</td>"
         f"<td>{_status_badge(f.status)}</td>"
-        f"<td>{_esc(f.description or '')}</td>"
+        f"<td>{_text_html(f.description) if f.description else ''}</td>"
         f"</tr>"
         for f in snapshot.findings
     )
