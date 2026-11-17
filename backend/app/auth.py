@@ -6,7 +6,7 @@ Credential resolution order in get_current_user:
 
 Session and state cookies are HttpOnly + SameSite=Lax. Secure is meant to
 follow WINGRC_ENVIRONMENT: the four set/clear cookie helpers below read
-settings.environment == "production". It is not a reason to run without TLS.
+settings.environment == "production".
 Until the compose-hardening slice, docker-compose.yml pinned the variable to
 "development" where no .env could reach it, so compose deployments, live
 included, issued every cookie without Secure (docs/roadmap.md, "The compose
