@@ -12374,8 +12374,10 @@ threshold 50), and msp_admin's banner was up.
 - **What it cost.** No cron run had a host for three nights, so the
   count stayed at 8. That is exactly the zero-run count, not a retention
   fault.
-- **The cause of the outage is not known.** It needs the host's journal,
-  which is Jarrod's to read.
+- **The cause: a power cut at Jarrod's home** shut down the wl-util-1 VM
+  (Jarrod, 2026-11-17). That fits what survives: a boot with no
+  shutdown before it, and Postgres reporting it was not properly shut
+  down. The journal was not read; the cause is his account of it.
 
 **The database after the crash (2026-11-09).** A clean start is not
 clean data, so this was checked, read-only:
@@ -12448,6 +12450,19 @@ and the banner cleared. Log:
 - **`20261106T151723Z` is the last set from before the crash.** No
   restore from this host has been confirmed since the 2026-11-03 test,
   which makes a live restore test of a pre-crash set more pressing.
+  **Restore-tested 2026-11-17, 14:37 UTC, pass,** run at `8f67ee6` at
+  Jarrod's offer, before the rotation reached it (the 11-19 nightly run,
+  after that day's deploy snapshot):
+  - schema head `0073`, as the manifest records;
+  - 61 tables, 4,279 rows;
+  - SPRS recomputed on both assessments, matching the stored score;
+  - all 13 objects named by rows fetched, 25 in the set;
+  - 3 stored credentials decrypting under `prod-wl-util-1-2026-09-11`;
+  - nothing left behind: the before and after state diff is empty.
+
+  Record: `~claude/wingrc-deploys/20261117T143722Z-restore-test-20261106T151723Z/`.
+  The data from before the unclean shutdown restores, with its objects
+  and its credentials.
 
 **Disk headroom reclaimed, with the snapshots shown untouched
 (2026-11-17, 02:12 to 02:14 UTC).** `snapshot-create` refuses when less
@@ -13621,13 +13636,167 @@ explanation, and the `[PLACEHOLDER - reason]` legend. The first row
 visible at 1366×768, and contrast measured as in L.8. Frontend only; if
 it needs an API change, stop.
 
-### The compose file ships default credentials, one of which makes credential encryption decorative -- a product defect, first
+### The auth state cookies were signed with a public key: an account takeover with no factor at all -- fixed and deployed 2026-11-17 (#106)
 
-**Found 2026-10-23.** Three defaults, in order of consequence. The order
-is by where each one travels. The MinIO and Postgres defaults let in an
-attacker who already has network access to the deployment. The Fernet
-default goes further, because it decrypts data that leaves the
-deployment.
+**Found 2026-11-17, while reading `config.py` for the compose-hardening
+slice.** The most serious defect found in this product so far. It was in
+no entry: the compose entry below listed three defaults, and this is a
+fourth, with the worst consequence.
+
+**The defect.** `config.auth_flow_secret` is the HMAC key for the three
+signed state cookies, and it defaulted to the literal
+`dev-auth-flow-secret-change-in-production`, in this public repo.
+`docker-compose.yml` never passed `WINGRC_AUTH_FLOW_SECRET`, so no `.env`
+could change it. Every compose deployment, live included, signed those
+cookies with a key anyone could read. With the key, a cookie can be made
+that `verify_state_cookie` accepts as the server's own. Read from the
+code on 2026-11-17, at `cf93ced`, cookie by cookie:
+
+**`wingrc_mfa_pending`: a complete bypass, not a defeat of one factor.**
+- **What it carries:** `user_id`, `org_id`, `phase` (`enroll` or
+  `verify`) and `exp`. The server issues it after a password check
+  (`/auth/login`) or an invite or reset redemption (`/auth/set-password`),
+  and chooses `phase` from `user.mfa_enrolled`.
+- **Forged, the attacker chooses all of it,** `phase` included. That is
+  where Jarrod's first reading fell short. He read the cookie as "a
+  password check succeeded for this user", which leaves the user's TOTP
+  in the way. That is right for `phase = verify`, and only for it:
+  - **`phase = verify`, then `/auth/mfa/verify`:** checks the user is
+    active and that the code matches *the user's* TOTP secret or an
+    unused backup code. So it skips the password, the login rate limit
+    and the lockout, but the second factor still stands. A first-factor
+    defeat.
+  - **`phase = enroll`, then `/auth/mfa/enroll`:** checks nothing about
+    the user except that the row exists. Not `mfa_enrolled`, not
+    `is_active`, not `requires_admin_reset`, not `locked_until`. It makes
+    a fresh TOTP secret, returns it to the caller, and sets a
+    `wingrc_mfa_setup` cookie that the server itself signs.
+  - **Then `/auth/mfa/enroll/confirm`:** checks the code against that
+    secret, which the caller now holds. It then writes it over the user's
+    `totp_secret`, sets `mfa_enrolled` and **`is_active = True`**, adds
+    ten backup codes, and issues a session.
+- **So one forged cookie with `phase = enroll` gave a session as any
+  user, with no password and no second factor.** It also:
+  - replaced the victim's authenticator, so their own codes stopped
+    working; their old unused backup codes still did, because nothing
+    deletes them;
+  - reactivated a deactivated account;
+  - passed an account locked out or flagged for an administrator reset.
+- **What the attacker needed:** the target's user id and an org id under
+  which the user row is visible to the lookup (their home org; the cookie
+  sets it as the RLS context). Both are random UUIDs, so they cannot be
+  guessed. Where an authenticated user can read another user's id was not
+  enumerated, so the likely attacker is anyone who has held one:
+  - an insider with any role, which makes this a privilege escalation to
+    `msp_admin`;
+  - a former user, who knows their own id;
+  - anyone who saw ids in a URL, an export or a log.
+
+**`wingrc_mfa_setup`: nothing beyond the above.** It carries `user_id`,
+`org_id` and the `totp_secret` being enrolled. Confirm requires a valid
+pending cookie with `phase = enroll` and the same `user_id`, and the
+server issues a setup cookie to anyone who holds that pending cookie.
+Forging the setup cookie only lets the attacker choose the secret instead
+of being given one. Without a forged pending cookie, a forged setup
+cookie is refused by the `user_id` match. **The enrolment danger came
+from forging the pending cookie, not this one.**
+
+**`wingrc_auth_flow`: unreachable on live, and weak even where SSO is
+configured.**
+- **Unreachable on live:** SSO is not configured there (checked
+  2026-11-17). `/auth/callback` verifies the cookie first, so a forged
+  one would pass, and then answers 501 (`_get_msal_app`) before any
+  exchange. Nothing follows from it.
+- **Weak where configured:** the cookie carries MSAL's flow state
+  (`state`, `nonce`, PKCE `code_verifier`, `redirect_uri`). Forged, the
+  attacker controls those values, but the identity still comes from an
+  `id_token` Entra issues for a code Entra issued, exchanged with the
+  deployment's client secret. Signing in as a user still needs that
+  user's Entra sign-in; forgery buys at most tampering with the
+  attacker's own flow. Reasoned from the code and MSAL's contract, not
+  tested against a tenant.
+
+**Was it used on live? Two answers, by path.**
+- **The enrol path: no evidence of use,** because a takeover by that
+  path leaves a trace. Confirm always writes `auth.mfa.enrolled`.
+  - Live has 7, all between 2026-07-15 and 2026-09-04, none since.
+  - Each was the user's first: no earlier `auth.mfa.enrolled`, and no
+    earlier MFA login for the same user. A takeover of an enrolled
+    account would show one.
+  - The three deactivated users have no login or enrolment after
+    deactivation, and are inactive today.
+  - What this does not rule out: an enrolment forged for a user who had
+    not yet enrolled, which would look like a first enrolment. The seven
+    fall in July to September, when accounts were being provisioned and
+    tested, and two belong to users since deleted. They were not each
+    confirmed with the person.
+- **The verify path: no evidence either way.**
+  - **The audit log can't tell it apart.** A forged `verify` cookie plus
+    the user's own TOTP writes the same `auth.login` row (`mfa: totp`)
+    as a real sign-in. A successful password check writes no audit row,
+    so "an MFA step not preceded by a password check" leaves nothing to
+    find. Live has 152 `auth.login` rows, every one `mfa: totp`, and none
+    can be told apart.
+  - **nginx and the backend can't answer either.** Both log only to the
+    container's stdout, and every deploy recreates the containers. On
+    2026-11-17 both logs began at 14:36 UTC, that day's deploy.
+  - **The sessions table has no source address.**
+  - **What bounds this path is its precondition:** the user's TOTP or
+    backup code.
+- Read 2026-11-17 by Claude, counts and dates only.
+
+**The mitigation, beside the exposure, not instead of it.** Live is
+LAN-only: `dev.wingrc.us` resolves through hosts files, and there is no
+public route to it. Reaching the endpoints at all needed a foothold on
+that LAN. That is why the evidence above is plausible rather than
+reassuring by default: the population that could have tried is small. It
+is no defence for any other deployment, because a deployment that follows
+`docs/deployment.md` serves the same endpoints on a public hostname.
+
+**The fix (#106, deployed 2026-11-17 at `8f67ee6`).**
+- **No default:** `auth_flow_secret` has none, and compose requires
+  `WINGRC_AUTH_FLOW_SECRET` (`:?`).
+- **A weak key is refused:** `auth.auth_flow_secret()` refuses one that is
+  missing, under 32 characters, or the old literal. Signing raises, and
+  verifying accepts nothing.
+- **Live:**
+  - **The key:** 64 characters, appended to `.env` with `>>` without
+    being printed. The file stayed `claude:wladmin 640`.
+  - **The forged cookie, before and after.** On the bench, main's image
+    let it pass verification (404, stopped only by the random user id),
+    and the fix refuses it (400). On live after the deploy, the running
+    backend refused it (400).
+- **Tests:** `tests/test_auth_flow_secret.py`, two mutations seen red.
+
+**What it does not fix.** `/auth/mfa/enroll` still trusts its pending
+cookie for everything. The cookie is now unforgeable, but the endpoint
+still checks nothing about the user. It doesn't ask whether the user is
+active, already enrolled, locked out or flagged for an administrator
+reset. A defect anywhere in how that cookie is issued would again reach
+straight through to a session and a replaced authenticator. Recorded, not
+scoped: whoever touches MFA next should make enrolment refuse an enrolled
+or inactive user, as `/auth/mfa/verify` refuses an inactive one.
+
+### The compose file ships default credentials: one let anyone take over an account, one makes credential encryption decorative -- a product defect, first
+
+**Found 2026-10-23, with three defaults; a fourth found 2026-11-17.**
+Four defaults, in order of consequence:
+- **The state-cookie key let someone in.** It is first.
+- **The Fernet key leaves the deployment.** It decrypts data in every
+  database copy.
+- **The MinIO and Postgres defaults** let in an attacker who already has
+  network access to the deployment.
+
+**0. The state-cookie HMAC key: a sign-in with no factor at all.** Its
+own entry, above ("The auth state cookies were signed with a public
+key"), fixed and deployed 2026-11-17 (#106). It was the same defect as
+the rest of this entry: a default in this public repo that compose gave
+no way to override (here, by never passing the variable). Nobody listed
+it on 2026-10-23, because the search then was for credentials in
+`docker-compose.yml`, and this one was in `config.py`, absent from the
+compose file altogether. **A secret with a Python-level default is the
+same defect as a compose literal.** The slice that executes this entry
+also checks `config.py` for others.
 
 **1. The default Fernet key: integration-credential encryption is
 decorative.** `docker-compose.yml` sets
@@ -14623,7 +14792,9 @@ points back here.
 tell him something the badges did not. If they don't, the segments are
 measuring the wrong things, and that is worth hearing before more is
 built on them. **RACI reading partial or empty everywhere is a finding,
-not noise,** and its fix is upstream of the bar (above). Not yet walked.
+not noise,** and its fix is upstream of the bar (above). **Walked
+2026-11-17:** Jarrod reports the bars look good and work as he imagined
+they would.
 
 **Deployed 2026-11-17** at `6cc2377` (#103), by `deploy/deploy.sh`,
 after snapshot `20261117T021450Z`. `/health` read `6cc2377` for all three
