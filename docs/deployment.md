@@ -16,7 +16,8 @@ guide sets up.
 - A Ubuntu server (local or cloud — your choice) with **Docker**, **Docker
   Compose**, and **git** installed. Nothing else is assumed.
 - Two DNS names pointed at this server: `YOUR_HOSTNAME` (the app) and
-  `storage.YOUR_HOSTNAME` (evidence/logo downloads). Both are required — see
+  `storage.YOUR_HOSTNAME` (logo and vendor-document downloads; evidence
+  streams through the app). Both are required — see
   the comment block at the top of `deploy/nginx/nginx.conf` for why a
   separate storage subdomain exists rather than a path on the main hostname.
 - Access to your DNS provider to create TXT records (for certificate

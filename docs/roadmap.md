@@ -13820,17 +13820,25 @@ would break both. The user row has no deactivation marker beyond
 
 Closing it takes a marker set by deactivation and cleared by
 reactivation (a `deactivated_at` column), checked at `/auth/login` and at
-enrolment. A migration, so recorded here, not built in the slice.
+enrolment. That is a migration, so it was not built in #108. The
+2026-11-17 brief made it its own slice, next and before production ("A deactivated
+account that never enrolled can sign in and reactivate itself").
 
 ### The compose file ships default credentials: one let anyone take over an account, one makes credential encryption decorative -- a product defect, first; fixed 2026-11-17 (#108)
 
 **Found 2026-10-23, with three defaults; a fourth found 2026-11-17.**
 Four defaults, in order of consequence:
 - **The state-cookie key let someone in.** It is first.
+- **MinIO's root credential reads, writes and deletes every tenant's
+  evidence from the LAN.** nginx proxies the storage host to MinIO's
+  whole API. Second since 2026-11-17, when that was read from
+  `nginx.conf`; until then this bullet grouped MinIO with Postgres
+  (the correction under item 2, below).
 - **The Fernet key leaves the deployment.** It decrypts data in every
   database copy.
-- **The MinIO and Postgres defaults** let in an attacker who already has
-  network access to the deployment.
+- **The Postgres owner's default** needs a shell on the host or the
+  compose network: the database port is not published, and nginx
+  proxies nothing to it.
 
 **0. The state-cookie HMAC key: a sign-in with no factor at all.** Its
 own entry, above ("The auth state cookies were signed with a public
@@ -13850,9 +13858,10 @@ a key committed to a public repo. A deployment that does not set its own
 encrypts every integration credential an operator enters (Liongard, the
 AI provider, SMTP) under a key anyone can read. Whoever holds a copy of
 the database can then decrypt all of them. Database copies move
-routinely: backups, `pg_dump`s, restore tests, cloud storage. MinIO's
-and the owner's defaults stay inside the compose network; this one
-leaves with every backup.
+routinely: backups, `pg_dump`s, restore tests, cloud storage. The
+owner's default stays inside the compose network; this one leaves with
+every backup. (This sentence said MinIO's stayed inside too. It did not;
+see the correction under item 2.)
 
 `docs/deployment.md` does not mention the key at all. Only a
 commented-out line in `.env.example` does. So an operator who follows
@@ -13916,6 +13925,40 @@ runs on the public defaults. A default credential is a weak setting.
 This is worse: a false claim about the product's security posture, in
 the guide a customer reads first, which ignores the operator who did the
 right thing without saying so.
+
+**Correction, 2026-11-17: MinIO's default was reachable from the LAN,
+and the October assessment never read the nginx config.** On 2026-10-23
+this entry said MinIO's and the owner's defaults "stay inside the
+compose network", and the opening bullets written 2026-11-17 (#107)
+still put MinIO with Postgres, behind network access to the deployment.
+Both were wrong, in the direction that made MinIO look less urgent than
+it was. Since 2026-09-08 (`e8484dd`), `deploy/nginx/nginx.conf` has
+proxied `location /` on `storage.dev.wingrc.us` to `minio:9000`. That
+is the whole S3 API, and MinIO's admin API on the same port, not only
+the presigned GETs the host exists for (logos and vendor documents;
+evidence streams through the backend). nginx publishes 443 on the host
+and picks a server block by the Host header, so any LAN client that can
+reach the host's address can send that name and talk to MinIO. With
+`wingrc`/`wingrc-dev-secret`, published in this repo, it can read,
+write and delete every tenant's evidence (one bucket, keyed by org) and
+administer MinIO itself. The assessment was made from the compose file,
+without reading the config that decides what leaves the compose
+network. The 2026-11-17 brief found it, by reading that config. It moved MinIO's
+rotation ahead of the tooling that would have let `deploy.sh` do it
+(the migration, below).
+- **Was it used? No evidence either way, for objects.** MinIO keeps no
+  access log here, and nginx's goes back only to the last deploy ("Live
+  cannot say who signed in from where").
+- **One trace can be read.** Root can add IAM users and service
+  accounts, and a root password change does not remove them. On
+  2026-11-17 live's `.minio.sys/config/iam` held only its format file,
+  so there were none. The migration reads it again just before the
+  change.
+- **The bound:** live is LAN-only (the state-cookie entry).
+- **Not done, a separate decision:** limiting the storage host to `GET`
+  and `HEAD`. Then the host would carry no write surface, whatever the
+  credential. The rotation fixes the credential; this would narrow what
+  any credential could do through nginx.
 
 **3. The database owner.** `POSTGRES_PASSWORD: wingrc` is also a
 literal. That role owns every table and bypasses RLS. The repo is
@@ -14064,6 +14107,16 @@ Secure** (found 2026-11-17, not in any entry before).
   - and live is LAN-only.
 
   Real, bounded, not an emergency.
+- **Two of the brief's own errors, recorded at its request
+  (2026-11-17):**
+  - **Its cookie bound was overstated.** It said typing the hostname
+    over HTTP would send the cookie. The cookies are scoped to `/api`, so
+    it would not, and the narrower bound above stands.
+  - **"Merged #107" meant "approved, pending Jarrod".** Its notes had
+    said "Merged #103", "Merged #107" and so on for PRs it approved. It
+    merges nothing; Jarrod does. That is why this slice found #107 still
+    open against the note, and carried it. Read any past "merged" in a
+    brief that way.
 - **The fix:** compose requires it with no default. `config.py` accepts
   only `development` or `production` and refuses anything else at
   startup, so a typo such as `Production` cannot quietly mean "not
@@ -14196,9 +14249,25 @@ fallback URL in `conftest.py`) stay: no deployment reaches them.
   `backend`, `worker` and `nginx` (`--no-deps`). MinIO's password changes
   only when `minio` is recreated, at the same moment as the backend gets
   the new secret, or storage fails in between. That is a hand
-  `docker compose up` on live, which the deploy rule forbids, so it is
-  Jarrod's call: approve that one recorded step, or have `deploy.sh` gain
-  a way to recreate a named service.
+  `docker compose up` on live, which the deploy rule forbids, so it was
+  Jarrod's call.
+- **Decided 2026-11-17 (the brief, passed on by Jarrod): the recorded
+  hand step now, and `deploy.sh`'s named-service recreate afterwards.**
+  I had recommended the tooling first. The brief overruled that, because
+  of the LAN reach
+  above: the most urgent item in this slice does not wait behind a
+  tooling improvement. The step is one documented, deliberate act, run
+  with Jarrod present and recorded in the deploy record with its reason.
+  That is not the detached-checkout incidents, which were an undocumented
+  assumption followed at a terminal.
+- **The step:** `docker compose up -d --no-deps minio backend worker
+  nginx`, after the new password is in `.env`. nginx is in it although
+  its config does not change. `proxy_pass http://minio:9000` names a
+  fixed host, which nginx resolves once, when it starts, and a recreated
+  `minio` can come back on another address. My first version of this
+  step left nginx out.
+- **Afterwards, its own small slice:** `deploy.sh` gains a way to
+  recreate a named service, so the next rotation needs no hand step.
 
 **Live migration:** not yet run; it follows the merge (below, when run).
 
@@ -14218,12 +14287,48 @@ cookies is the real fix, and this is the belt.
 `Strict-Transport-Security: max-age=31536000; includeSubDomains` on every
 response, and live served it through nginx on `storage.dev.wingrc.us`.
 Nothing set it in `nginx.conf`, so nobody knew. That host shares the
-app's certificate, so a lapse would have locked browsers out of every
-evidence download for up to a year. It was found on the bench, by reading
+app's certificate, so a lapse would have locked a browser that had been
+there out of what the host serves for up to a year: organisation logos
+and the vendor documents behind a product baseline (presigned URLs).
+Evidence downloads are not among them: they stream through the backend
+on the app host, since 2026-09-14 (`99db755`). This paragraph said
+"every evidence download" when #108 was opened, from the comments in
+`nginx.conf`, `docker-compose.yml` and `docs/deployment.md`. Those
+comments had been stale since that change, and all three are corrected.
+It was found on the bench, by reading
 the header as served; the first version of the test read only
 `nginx.conf` and passed. Now `proxy_hide_header` drops MinIO's, and the
 host sends the app's one day. A browser that cached the year takes the
 day on its next visit there.
+
+**October's lapse: HSTS did not block evidence downloads, which never
+touched this host (the brief's connection, checked 2026-11-17).** The
+proposed link was this: item W records three days of evidence downloads
+failing on the expired certificate, and MinIO's year made that a hard
+block, not a warning anyone could click through. Read against the code
+and live, half of it holds:
+- **The header was being served then.** The MinIO image is
+  `RELEASE.2025-09-07` (`14cea493d9a3`), its container was created
+  2026-09-22, and nginx hid nothing.
+- **Evidence downloads were not on the storage host.** Since 2026-09-14
+  they have streamed through the backend on `dev.wingrc.us`, which sent
+  no HSTS. In October they met the app's own certificate warning, which
+  could be clicked through. Item W's "signed URLs on `storage.dev`" for
+  evidence was already out of date when it was written; it is corrected.
+- **What the storage host did serve in October:** logos and vendor
+  documents.
+  - **Logos are images.** A browser never offers a click-through for a
+    certificate error on an image, with or without HSTS, so they failed
+    either way.
+  - **A vendor document opens by navigation** (a 302 to a presigned
+    URL). For a browser that had loaded anything from the storage host
+    over a valid certificate before the lapse, a logo included, HSTS
+    made that error final. Without HSTS it would have been a
+    click-through warning.
+
+So the year made the lapse final on the storage host, but what it
+reached in October was vendor documents for administrators, not
+evidence. Whether anyone met it is not recorded.
 
 `tests/test_nginx_hsts.py` holds:
 - one day on both hosts;
@@ -14244,6 +14349,72 @@ about 90 days later. So the earliest is spring 2027.
 - **Never preload** without both.
 
 Jumping straight to two years is the mistake this records against.
+
+### A deactivated account that never enrolled can sign in and reactivate itself -- next, before production (decided 2026-11-17)
+
+**An access-control defect with a clear exploit path and a one-column
+fix.** It was found while building #108's enrolment refusals, and first
+recorded there for "whoever touches MFA next". The 2026-11-17 brief
+made it its own slice, queued next.
+
+**The path, read from the code:**
+1. An administrator deactivates an account (`users.deactivate_user`, or
+   `patch_user` with `is_active=False`). That sets `is_active = False`
+   and revokes its sessions.
+2. If the account had set its password but not yet enrolled, its owner
+   signs in again. `/auth/login` checks the password, the lockout and
+   `requires_admin_reset`, but not `is_active`. It answers
+   `{"next": "enroll"}`.
+3. `/auth/mfa/enroll/confirm` sets `mfa_enrolled` and
+   **`is_active = True`**. The deactivation is undone by the person it
+   was meant to stop, with no administrator involved. The audit log
+   shows `auth.mfa.enrolled`, not a reactivation.
+
+An enrolled account cannot do this: `/auth/mfa/verify` refuses an
+inactive user, and so does session resolution.
+
+**A second path, found while writing this entry: the SSO callback.**
+`routers/auth.py`'s Entra callback treats any inactive user as a first
+SSO sign-in ("First SSO login -- activate the user") and sets
+`is_active = True`, enrolled or not. It checks `requires_admin_reset`,
+not deactivation. So, on a deployment with SSO, a deactivated user whose
+Entra account still works is reactivated by signing in. SSO is not
+configured on live (its callback answers 501), so live cannot reach this
+path.
+
+**Live today: no account is in that state.** A read on 2026-11-17
+(counts only) found 5 users, none both inactive and not removed. The
+three deactivations in the audit log are all of accounts since
+anonymized. So the defect is real and unreachable on live today. It
+becomes reachable the first time an administrator deactivates an
+account that has a password and no enrolment.
+
+**The fix:**
+- **Migration 0074:** `user.deactivated_at` (and who did it). It is set
+  by both deactivation paths and cleared only by an administrator's
+  reactivation.
+- **Refused while it is set:**
+  - `/auth/login`;
+  - `/auth/mfa/enroll` and `/auth/mfa/enroll/confirm`
+    (`enrollment_refusal`);
+  - the SSO callback.
+
+  Invitees and accounts whose MFA an administrator reset leave it NULL,
+  so they still enrol. That is why #108 could not use `is_active`
+  ("Still not refused: an inactive account" in the auth entry).
+- **Backfill:** an inactive account that is enrolled can only be
+  deactivated, because a reset clears enrolment. An inactive account
+  that is not enrolled is ambiguous: an invitee, a reset, or a
+  deactivation. The migration decides it from the audit log's latest
+  `user.deactivate`, or `is_active` change, against a later reactivation.
+  It says how many rows each rule set. On live today the set is empty.
+- **Tests write each path out:**
+  - login, enrol and confirm, refused;
+  - the SSO callback, refused;
+  - an invitee and an MFA reset, still enrolling;
+  - reactivation clears the marker.
+
+  Mutations: each check dropped in turn, seen red.
 
 ### Live cannot say who signed in from where -- recorded 2026-11-17; urgent the day there are two users
 
@@ -14366,7 +14537,14 @@ renewal closed if wrong. Not worth it while live is a LAN dev box; revisit
 with "goes public" below.
 
 **What the outage cost:** browser-facing evidence downloads and logos
-(signed URLs on `storage.dev`) hit the same warning for three days. The
+(signed URLs on `storage.dev`) hit the same warning for three days.
+**Corrected 2026-11-17:** only logos and vendor documents were on
+`storage.dev`. Evidence downloads had streamed through the backend on
+the app's own host since 2026-09-14 (`99db755`), so they met the app's
+warning, which could be clicked through. Logos fail on a certificate
+error regardless. A vendor document on the storage host could not be
+clicked through for a browser that had been there before, because the
+host was serving MinIO's own year of HSTS ("HSTS: one day first"). The
 app itself was unaffected -- backend and worker reach MinIO at
 `http://minio:9000` inside the compose network and never touch the
 certificate, and their logs since 2026-10-14 hold no TLS errors. That

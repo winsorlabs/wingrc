@@ -97,8 +97,9 @@ services:
   # Blob or AWS S3 in the cloud; MinIO keeps self-host and air-gapped simple.
   #
   # No host-published ports: the backend reaches MinIO over the internal
-  # Docker network (WINGRC_STORAGE_ENDPOINT). Browser-facing evidence/logo
-  # downloads (presigned URLs) go through nginx's storage.YOUR_HOSTNAME
+  # Docker network (WINGRC_STORAGE_ENDPOINT). Browser-facing logo and
+  # vendor-document downloads (presigned URLs; evidence streams through the
+  # backend) go through nginx's storage.YOUR_HOSTNAME
   # server block instead of a directly-published MinIO port — see
   # docs/deployment.md and deploy/nginx/nginx.conf.
   minio:
