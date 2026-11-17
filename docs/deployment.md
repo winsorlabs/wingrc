@@ -35,6 +35,12 @@ Edit `.env`:
 - `WINGRC_ENVIRONMENT=production` — required for any HTTPS deployment; this
   is what puts the `Secure` flag on session cookies (see
   `backend/app/auth.py`). Do not skip this.
+- `WINGRC_AUTH_FLOW_SECRET` — **required; compose will not start without
+  it.** The key that signs the sign-in state cookies. Generate one with
+  `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`. At least
+  32 characters. The backend refuses sign-in when it is missing, shorter
+  than that, or the public default this repo once shipped. Changing it only
+  invalidates sign-ins in progress (five-minute cookies), never a session.
 - `WINGRC_STORAGE_PUBLIC_ENDPOINT=https://storage.YOUR_HOSTNAME`
 - `MINIO_SERVER_URL=https://storage.YOUR_HOSTNAME`
 - `WINGRC_PUBLIC_URL=https://YOUR_HOSTNAME` — the URL a browser uses to

@@ -125,8 +125,13 @@ class Settings(BaseSettings):
     entra_client_secret: str | None = None
     entra_redirect_uri: str = "http://localhost:8000/api/auth/callback"
 
-    # Auth: cookie signing for auth_flow + mfa_pending state cookies
-    auth_flow_secret: str = "dev-auth-flow-secret-change-in-production"
+    # Auth: the HMAC key for the signed state cookies (auth_flow, mfa_pending,
+    # mfa_setup). No default: until 2026-11-17 it defaulted to a literal in
+    # this public repo, and docker-compose.yml never passed it, so every
+    # compose deployment signed those cookies with a key anyone could read.
+    # auth.py refuses to sign or accept one without a real key
+    # (docs/roadmap.md, "The auth state cookies were signed with a public key").
+    auth_flow_secret: str | None = None
 
     # Auth: session expiry and password policy
     session_expiry_hours: int = 8
