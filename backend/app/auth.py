@@ -8,9 +8,11 @@ Session cookies are HttpOnly + SameSite=Lax. The Secure flag is set only in
 production (settings.environment == "production") because the dev server runs
 over plain HTTP at 10.10.24.35:8000.
 
-State cookies (wingrc_auth_flow, wingrc_mfa_pending) are signed with HMAC-SHA256
-using WINGRC_AUTH_FLOW_SECRET. They carry a short-lived payload (5 min) for the
-OIDC code exchange and the in-progress MFA verification step respectively.
+State cookies (wingrc_auth_flow, wingrc_mfa_pending, wingrc_mfa_setup) are signed
+with HMAC-SHA256 using WINGRC_AUTH_FLOW_SECRET, which has no default and is
+refused when short or the old public default (auth_flow_secret()). They carry
+a short-lived payload (5 min) for the OIDC code exchange and the in-progress
+MFA verification step respectively.
 
 Password hashing: PBKDF2-HMAC-SHA256 with 600,000 iterations (NIST SP 800-63B /
 SP 800-132). bcrypt/argon2/scrypt are not FIPS-140-validated; stdlib hashlib is.
@@ -322,10 +324,40 @@ def check_login_rate_limit(ip: str) -> None:
 # State cookie signing (HMAC-SHA256)
 # ---------------------------------------------------------------------------
 
+# The default auth_flow_secret had until 2026-11-17. It is in a public repo,
+# so a deployment still configured with it is refused by name, not accepted.
+PUBLIC_DEFAULT_AUTH_FLOW_SECRET = "dev-auth-flow-secret-change-in-production"
+MIN_AUTH_FLOW_SECRET_LENGTH = 32
+
+
+class AuthFlowSecretError(RuntimeError):
+    """WINGRC_AUTH_FLOW_SECRET is unset, too short, or the public default."""
+
+
+def auth_flow_secret() -> bytes:
+    """The state-cookie HMAC key, or AuthFlowSecretError.
+
+    Fails closed: signing refuses (the request errors) and verifying rejects
+    every cookie, so no state cookie is ever made or accepted under a
+    missing or public key (tests/test_auth_flow_secret.py)."""
+    secret = get_settings().auth_flow_secret
+    if not secret:
+        problem = "is not set"
+    elif secret == PUBLIC_DEFAULT_AUTH_FLOW_SECRET:
+        problem = "is the public default from the repo"
+    elif len(secret) < MIN_AUTH_FLOW_SECRET_LENGTH:
+        problem = f"is shorter than {MIN_AUTH_FLOW_SECRET_LENGTH} characters"
+    else:
+        return secret.encode()
+    raise AuthFlowSecretError(
+        f"WINGRC_AUTH_FLOW_SECRET {problem}. Set it in .env "
+        "(docs/deployment.md, step 1); sign-in is refused until it is."
+    )
+
+
 def sign_state_cookie(payload: dict[str, Any]) -> str:
     """Encode payload as URL-safe base64 + HMAC-SHA256 signature."""
-    settings = get_settings()
-    secret = settings.auth_flow_secret.encode()
+    secret = auth_flow_secret()
     msg = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     sig = hmac.new(secret, msg, hashlib.sha256).hexdigest()
     b64 = base64.urlsafe_b64encode(msg).rstrip(b"=").decode()
@@ -337,8 +369,7 @@ def verify_state_cookie(value: str) -> dict[str, Any] | None:
         b64, sig = value.rsplit(".", 1)
         padding = 4 - len(b64) % 4
         msg = base64.urlsafe_b64decode(b64 + "=" * padding)
-        settings = get_settings()
-        secret = settings.auth_flow_secret.encode()
+        secret = auth_flow_secret()
         expected = hmac.new(secret, msg, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(sig, expected):
             return None

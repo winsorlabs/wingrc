@@ -56,6 +56,10 @@ x-backend-env: &backend-env
   # file) and keep it out of git. crypto.py fails closed — with this
   # unset, storing/reading any integration credential is refused
   # outright rather than falling back to plaintext.
+  # The HMAC key for the signed sign-in state cookies (auth.py). Required,
+  # with no default: until 2026-11-17 this line did not exist, so every
+  # compose deployment signed them with config.py's public default.
+  WINGRC_AUTH_FLOW_SECRET: ${WINGRC_AUTH_FLOW_SECRET:?WINGRC_AUTH_FLOW_SECRET is required -- set it in .env, see docs/deployment.md}
   WINGRC_CREDENTIAL_ENCRYPTION_KEYS: ${WINGRC_CREDENTIAL_ENCRYPTION_KEYS:-dev:DFKuK2mEIJpixerxDMGU5xyQQwpWQBZxCFjOaZKjNSs=}
   # Item S: hours before the newest local snapshot reads stale and raises
   # msp_admin's banner. Set for a daily schedule; the schedule is a host

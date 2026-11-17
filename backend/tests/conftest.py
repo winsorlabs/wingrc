@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.audit import set_current_actor
 from app.auth import CurrentUser, actor_type_for
+from app.config import get_settings
 from app.db import get_session
 from app.models import OrgMembership, User
 from app.rls import reapply_current_org, set_current_org
@@ -40,6 +41,15 @@ _APP_ROLE = "wingrc_app"
 
 _ALEMBIC_INI = str(Path(__file__).resolve().parents[1] / "alembic.ini")
 _DEFAULT_DEV_URL = "postgresql+psycopg://wingrc:wingrc@db:5432/wingrc"
+
+# The state-cookie key has no default (auth.auth_flow_secret). Tests that
+# sign in need one; a deployment's own is never read here. setdefault, so
+# a test that sets it (test_auth_flow_secret.py) still decides. The imports
+# above already read settings once, hence the cache clear.
+os.environ.setdefault(
+    "WINGRC_AUTH_FLOW_SECRET", "test-only-state-cookie-key-not-for-any-deployment"
+)
+get_settings.cache_clear()
 
 
 def _test_db_url() -> str | None:
