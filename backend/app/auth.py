@@ -4,9 +4,13 @@ Credential resolution order in get_current_user:
   1. wingrc_session cookie (human sessions)
   2. Authorization: Bearer wingrc_<token> header (API tokens)
 
-Session cookies are HttpOnly + SameSite=Lax. The Secure flag is set only in
-production (settings.environment == "production") because the dev server runs
-over plain HTTP at 10.10.24.35:8000.
+Session and state cookies are HttpOnly + SameSite=Lax. Secure is meant to
+follow WINGRC_ENVIRONMENT: the four set/clear cookie helpers below read
+settings.environment == "production".
+Until the compose-hardening slice, docker-compose.yml pinned the variable to
+"development" where no .env could reach it, so compose deployments, live
+included, issued every cookie without Secure (docs/roadmap.md, "The compose
+file ships default credentials").
 
 State cookies (wingrc_auth_flow, wingrc_mfa_pending, wingrc_mfa_setup) are signed
 with HMAC-SHA256 using WINGRC_AUTH_FLOW_SECRET, which has no default and is
