@@ -176,6 +176,7 @@ export interface ControlStateRow {
   contributors: Contributor[];
   statement_status: string | null;
   evidence_count: number;
+  raci_letters: string[];
   sprs_weight: number;
   is_level_1: boolean;
 }

@@ -17,6 +17,7 @@ function row(overrides: Partial<ControlStateRow> = {}): ControlStateRow {
     contributors: [],
     statement_status: null,
     evidence_count: 0,
+    raci_letters: [],
     sprs_weight: 1,
     is_level_1: false,
     ...overrides,

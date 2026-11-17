@@ -14258,9 +14258,10 @@ and the tests.
 
 **Separately: the widget's "any link means covered" test is weak on its
 own.** `_blocked_objectives` asks whether *any* `evidence_state_link`
-row exists. It does not filter `is_archived`, so a link archived by a
-product's deactivation counts as evidence present. It does not ask
-whether the evidence is current either:
+row exists. It did not filter `is_archived`, so a link archived by a
+product's deactivation counted as evidence present (fixed 2026-10-19;
+see "Found while building: four readers counted archived links as
+live"). It does not ask whether the evidence is current either:
 - a list link that has drifted counts;
 - a superseded document version counts;
 - an expired artifact counts.
@@ -14366,23 +14367,209 @@ The display then:
 
 **What it touches:**
 - **The blocked-objectives widget**
-  (`routers/dashboard.py:_blocked_objectives`) counts any link, archived
+  (`routers/dashboard.py:_blocked_objectives`) counted any link, archived
   included, as evidence present. An objective whose only evidence is
-  archived must read as having none. The widget's definition of "has
-  evidence" is recorded under "Review cycles attach only what attests"
-  (Planned) and goes with item Z: a screen's count says what it
-  computed.
-- **The readiness bars** (queued behind the attests slice, brief dated
-  2026-10-18; no entry in this file yet). An objective whose only
-  evidence is archived reads **red** on the Evidence segment, with the
-  archived artifact visible beneath it. That is the case the bars exist
-  to catch. When that entry is written, its red/yellow/green for
-  Evidence cites this entry's definition (live links only; archived
-  shown, never counted) rather than writing its own.
+  archived must read as having none. **Fixed the same day,** with the
+  control-states `evidence_count` and two other readers ("Found while
+  building: four readers counted archived links as live", above; the
+  test is `test_evidence_links.py:test_counts_and_widgets_read_live_links_only`).
+  *Corrected 2026-11-17:* this bullet kept the present tense for four
+  weeks, and the readiness bars' brief took it as current. Currency
+  (a drifted list, a superseded document) is still not part of "has
+  evidence"; that stays with item Z.
+- **The readiness bars** (built 2026-11-17; "The readiness bars" below).
+  An objective whose only evidence is archived reads **empty** on the
+  Evidence segment, with the archived artifact visible beneath it in the
+  drawer. Its Evidence rule cites this entry's definition (live links
+  only; archived shown, never counted) rather than writing its own.
 
 **Not in this item:** any change to `control_state.status` or SPRS
 (deactivation already sets `needs_review`); inferring replacement in any
 form.
+
+### The readiness bars: Implementation | RACI | Evidence on every objective -- built 2026-11-17
+
+**What Jarrod asked for (2026-10-19).** *"A Completion status by Control
+which would figure a complete control one that has RACI Assignment,
+Implementation statement, and evidence attached"*, then *"a thermometer
+[Implementation | RACI | Evidence] where each section is either Green
+(Good) / Yellow (Partial) / Red (Empty)"*, on the objective row. A brief
+dated 2026-10-18 held it, and two entries referred to it, but this file
+had no entry until this one. A brief is not in the repo, so this entry
+is the record.
+
+**Jarrod's decision, 2026-11-17: the same three segments apply to every
+objective, whatever its responsibility.** A provider-satisfied objective
+still needs a statement, an owner and evidence to read complete. His
+reasons: an assessor doesn't care who provides a control; they want to
+read how it is done and see proof. And a bar that means different things
+on different rows cannot be scanned, which defeats having one.
+`responsibility` stays in the payload and on the row. **It does not
+change the rule. Do not add a responsibility-aware variant later as an
+improvement.** The rule function, `frontend/src/lib/readiness.ts`'s
+`readiness`, takes no `responsibility` and no `status`, so the decision
+is in its signature as well as here.
+
+**The rules.** Each state has a mark as well as a colour: hollow
+(empty), half (partial), full (complete).
+
+| Segment | Empty (red) | Partial (yellow) | Complete (green) |
+|---|---|---|---|
+| Implementation | no statement | `draft` | `reviewed` or `approved` |
+| RACI | no letter held | a letter held, but R or A missing | R and A both held |
+| Evidence | no live link | **none** | at least one live link |
+
+- **Implementation** maps the statement vocabulary as it is. A status the
+  vocabulary does not have reads empty, never complete (the database's
+  check constraint refuses one today). A statement whose body is blank
+  reads by its status: the drawer never saves a blank body, and live
+  had none on 2026-11-17, but the API would accept one. Recorded, not
+  handled.
+- **RACI: R and A, the brief's reading, kept after checking live.** Live
+  on 2026-11-17 held 70 assignments, every one an R, on 70 objectives,
+  one holder each; no objective held an A, a C or an I, and the other 570
+  had none. R alone is what the picker offers first (`RaciSection.tsx`
+  defaults to R), so live's usage shows the default, not a decision that
+  A is unneeded. Under this rule no objective on live reads complete on
+  RACI today: 70 partial, 570 empty. Whether that tells Jarrod something
+  true (nobody is accountable for anything) or is noise is what his walk
+  decides. If it is noise, the rule is the thing to change, in this
+  function, with its cases. Not checked: that there is exactly one A.
+  C and I count toward partial and are never required.
+- **Evidence has two states, not three.** Jarrod asked for three colours;
+  a segment that is really binary gets two. A yellow that never fires is
+  clutter, and a yellow with an invented meaning is worse, because people
+  read significance into it. Live links only, by "Archived evidence stays
+  visible on its objective"'s definition: archived links are shown on the
+  objective and never counted. **The one honest yellow considered:**
+  every live link drifted or superseded (a list moved on, a document
+  republished). Not built: it is a second definition of "current", which
+  is item Z's, and the drift notices already say it on the objective.
+  Jarrod's to overrule.
+- **`needs_review` is not a bar state.** The objective's badge says it,
+  and the bars add no second warning. A `needs_review` objective with all
+  three present reads complete on all three.
+
+**The brief's trap had already been closed.** It asked whether
+`evidence_count` counts archived links, warning that an archived-only
+objective would read green if so. It does not, and has not since
+2026-10-19: `routers/assessments.py:list_control_states` filters
+`is_archived`, as the blocked-objectives widget does, and
+`test_counts_and_widgets_read_live_links_only` asserts both. The brief
+had read the archived-evidence entry's bullet, which kept the present
+tense after the fix landed the same day; that bullet is corrected.
+`evidence_count` had no reader in the frontend before this (it was in
+`types.ts` only), so no second meaning had grown on it.
+
+**What changed:**
+- `ControlStateOut.raci_letters`: the distinct letters held on the
+  objective, sorted. One query for the whole assessment, joined on it.
+- `lib/readiness.ts` holds the rules; `ReadinessBar.tsx` draws them at
+  the start of the row's badges, as one joined bar.
+- A RACI change in the control drawer now refetches the board's rows on
+  close, as an evidence change already did, so the bar does not go
+  stale. A statement save already updated the row in place.
+
+**What it does not do.** No change to `control_state.status` or SPRS.
+The bars read and decide nothing:
+`test_readiness_payload.py:test_the_bars_read_and_decide_nothing`
+asserts both, around a read and around assigning the letters a segment
+reads.
+
+**Colour is never the only cue** (V and V.1). Each segment has its name
+(Impl, RACI, Evid), a mark (hollow, half, full), and its state in words
+as its `aria-label` and hover title, for example "RACI: partial (R held;
+no A)". Measured with WCAG 2.x, as `styles.css` records beside `.rb-seg`:
+- text and mark on fill: complete 10.35:1, partial 7.21:1, empty 10.22:1;
+- the fills alone against white are 1.30, 1.11 and 1.34:1, so a fill is
+  never the boundary. Each segment's border is its text colour, at 13.43,
+  7.99 and 13.65:1 against white (3:1 is the floor for a non-text
+  element).
+
+A greyscale screenshot of the board shows the three states apart by
+their marks.
+
+**Cost, measured on a bench copy of live.** Live's `20261116T031703Z`
+was restored into a throwaway project. `GET …/control-states` for its
+320-objective assessment went straight to the backend. Each run was 10
+warm-up requests, then 200 sequential, then 200 at concurrency 10 and
+200 at concurrency 25. Main and the branch alternated on the same copy,
+two rounds each. Concurrency stopped at 25 because the bench shares its
+host with live; Q.0's collapse point (50 to 100) was not re-measured.
+
+| Data | Build | Sequential median | Concurrency 25, median | Throughput at 25 |
+|---|---|---|---|---|
+| As restored, 70 RACI rows | main | 22.7, 23.1 ms | 632, 648 ms | 39.4, 37.5 rps |
+| | branch | 23.7, 24.0 ms | 648, 684 ms | 38.1, 36.2 rps |
+| Every objective given A, R, C and I: 1,350 rows | main | 22.2, 22.9 ms | 635, 621 ms | 39.4, 39.6 rps |
+| | branch | 27.0, 26.9 ms | 747, 749 ms | 32.1, 33.0 rps |
+
+- On today's data the cost is about 1 ms a request.
+- At the worst realistic volume it is about 4 ms, and about 17% of
+  throughput under concurrency.
+- **The first version cost about 3 ms on today's data, and the reason
+  was the filter, not the rows.** It selected letters by an `IN` list of
+  all 320 row ids: 1.92 ms for the query alone, against 0.33 ms joined
+  on the assessment, measured with both returning the same 72 rows. It
+  was changed before the figures above.
+- **Found, not fixed:** the contributors query in the same function uses
+  the same 320-id `IN` list, so it probably costs the same 1.5 ms or so
+  for nothing. It predates this slice. If the remaining 4 ms at volume
+  matters, an `array_agg` grouped per objective would return 320 rows
+  instead of 1,350; it was not tried.
+
+**What the bars showed on live's copy.** On the assessment measured:
+249 objectives empty on all three, 70 empty / partial / empty (R
+without A), and none complete except one made on the bench for the
+screenshot. One control stands out: its six objectives are all marked
+`met`, and every one reads empty on Implementation and Evidence. Two of
+them have only archived evidence (the unattested review cycle's detached
+records). The badges say Met, and the bars say nothing stands behind it.
+That is CLAUDE.md's "nothing is met without evidence", which is held by
+the person and not by code, now visible on the board.
+
+**Tests and checks.**
+- `frontend/src/lib/readiness.test.ts`: every segment's cases written
+  out, per state, including:
+  - that Evidence has no partial;
+  - that an unknown statement status never reads complete;
+  - that a provider-satisfied objective with no statement reads empty;
+  - that the four responsibilities give the same bar;
+  - that `needs_review` changes nothing.
+- `ReadinessBar.test.tsx`: on the rendered row:
+  - the archived-only case reads empty, with its words;
+  - every segment's words, title and label;
+  - a mark on every state;
+  - provider-satisfied with no statement reads empty, with "MSP" still
+    shown;
+  - the badge is the only word for `needs_review`.
+- `backend/tests/test_readiness_payload.py`:
+  - the letters are distinct and sorted;
+  - they cost one query, asserted by counting statements that touch
+    `raci_assignment` with every row holding a letter;
+  - status and SPRS are untouched.
+- **Mutations, each seen red:**
+  - Backend: `.distinct()` removed; letters not returned; one query per
+    row.
+  - Frontend:
+    - Evidence given a partial;
+    - RACI complete on R alone;
+    - a draft reading complete;
+    - provider-satisfied excused from Implementation;
+    - the words removed, so colour is the only cue;
+    - `needs_review` folded into a segment.
+- **Bench (wl-util-1, `dd4196b`):**
+  - full backend suite 2116 passed, 19 skipped; ruff clean;
+  - frontend `tsc -b` clean, vitest 543 passed, build clean.
+- Screenshots at 1366×768: complete on all three, empty on all three,
+  the realistic screen, the archived-only row, and the screen in
+  greyscale (https://claude.ai/artifact/6os7ZeEugjV6Wz4mjhHr6C).
+
+**Jarrod's walk.** Open an assessment board and see whether the bars
+tell him something the badges did not. If they don't, the segments are
+measuring the wrong things, and that is worth hearing before more is
+built on them. RACI is the segment most likely to need a second look
+(above).
 
 ### The evidence ✕ deletes the artifact, unaudited, and says "Remove" ✅ DONE (2026-10-19)
 
