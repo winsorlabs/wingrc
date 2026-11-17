@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { api } from "../api";
 import type { ControlStateRow } from "../types";
+import { ReadinessBar } from "./ReadinessBar";
 
 export const STATUSES = [
   { value: "met", label: "Met" },
@@ -71,6 +72,7 @@ export function ObjectiveRow({ row, orgId, assessmentId, canWrite, onStatusChang
       <span className="obj-key">[{row.objective_key}]</span>
       <span className="obj-text">{row.objective_text}</span>
       <span className="obj-badges">
+        <ReadinessBar row={row} />
         {row.contributors.map((c) => (
           <span
             key={c.product_id}

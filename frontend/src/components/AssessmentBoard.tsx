@@ -134,7 +134,7 @@ export function AssessmentBoard({ org, assessment, canWrite, currentUserRole }: 
     setDrawerControl({ dbId, controlId, title });
   }
 
-  function handleEvidenceChanged() {
+  function handleRowsChanged() {
     api
       .getControlStates(org.id, assessment.id)
       .then(setRows)
@@ -374,7 +374,7 @@ export function AssessmentBoard({ org, assessment, canWrite, currentUserRole }: 
           currentUserRole={currentUserRole}
           onClose={() => setDrawerControl(null)}
           onSave={handleStatementSave}
-          onEvidenceChanged={handleEvidenceChanged}
+          onRowsChanged={handleRowsChanged}
         />
       )}
 

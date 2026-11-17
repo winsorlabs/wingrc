@@ -53,7 +53,7 @@ interface Props {
   currentUserRole: string | null | undefined;
   onClose: () => void;
   onSave: (updates: Array<{ objectiveId: string; status: string }>) => void;
-  onEvidenceChanged?: () => void;
+  onRowsChanged?: () => void;
 }
 
 function fromRow(row: StatementRow): StatementItem {
@@ -87,7 +87,7 @@ export function ControlDrawer({
   currentUserRole,
   onClose,
   onSave,
-  onEvidenceChanged,
+  onRowsChanged,
 }: Props) {
   const [items, setItems] = useState<StatementItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -108,7 +108,9 @@ export function ControlDrawer({
   const [notesError, setNotesError] = useState<string | null>(null);
   const [confirmRevertId, setConfirmRevertId] = useState<string | null>(null);
   const [evidenceCounts, setEvidenceCounts] = useState<Record<string, number>>({});
-  const [evidenceDirty, setEvidenceDirty] = useState(false);
+  // Set by an evidence or RACI change, so closing refetches the board's rows
+  // and their readiness bars.
+  const [rowsDirty, setRowsDirty] = useState(false);
   // Fetched once per drawer open (the whole assessment's worth), not once
   // per objective -- RaciSection below only reads its own slice via
   // control_state_id. Same endpoints RolesPanel.tsx uses (G.7 Part 2: "one
@@ -181,15 +183,17 @@ export function ControlDrawer({
 
   function handleEvidenceCountChange(objectiveId: string, count: number) {
     setEvidenceCounts((prev) => ({ ...prev, [objectiveId]: count }));
-    setEvidenceDirty(true);
+    setRowsDirty(true);
   }
 
   function handleRaciAssigned(row: RaciAssignmentRow) {
     setRaciAssignments((prev) => [...prev, row]);
+    setRowsDirty(true);
   }
 
   function handleRaciRemoved(raciId: string) {
     setRaciAssignments((prev) => prev.filter((a) => a.id !== raciId));
+    setRowsDirty(true);
   }
 
   function startEditingNotes(item: StatementItem) {
@@ -246,7 +250,7 @@ export function ControlDrawer({
   }
 
   function handleClose() {
-    if (evidenceDirty && onEvidenceChanged) onEvidenceChanged();
+    if (rowsDirty && onRowsChanged) onRowsChanged();
     onClose();
   }
 

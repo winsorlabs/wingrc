@@ -194,6 +194,35 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .obj-text { flex: 1; font-size: 0.8rem; line-height: 1.45; }
 .obj-badges { display: flex; align-items: center; gap: 0.35rem; flex-shrink: 0; padding-top: 0.1rem; }
 
+/* ── Readiness bars (docs/roadmap.md, "The readiness bars") ──
+   One joined bar per objective: Impl | RACI | Evid. Colour is never the only
+   cue. Each segment has its name and a mark, full (good), half (partial) or
+   hollow (empty), and says its state in words on hover and to a screen
+   reader. WCAG 2.x, measured 2026-11-17:
+   - text and mark on fill: good #0a3622 on #d1e7dd 10.35:1; partial #664d03
+     on #fff3cd 7.21:1; empty #58151c on #f8d7da 10.22:1.
+   - the fills against white are 1.30, 1.11 and 1.34:1, so a fill is not a
+     boundary. Each segment's border is its text colour, against white 13.43,
+     7.99 and 13.65:1 (3:1 is the floor for a non-text element). */
+.rb { display: inline-flex; flex-shrink: 0; }
+.rb-seg {
+  display: inline-flex; align-items: center; gap: 0.2rem;
+  padding: 0.05rem 0.3rem; font-size: 0.66rem; font-weight: 600; line-height: 1.3;
+  border: 1px solid currentColor; white-space: nowrap;
+}
+.rb-seg + .rb-seg { border-left-width: 0; }
+.rb-seg:first-child { border-radius: 3px 0 0 3px; }
+.rb-seg:last-child { border-radius: 0 3px 3px 0; }
+.rb-good    { background: var(--met-bg);     color: var(--met-fg); }
+.rb-partial { background: var(--partial-bg); color: var(--partial-fg); }
+.rb-empty   { background: var(--not-met-bg); color: var(--not-met-fg); }
+.rb-mark {
+  display: inline-block; width: 0.55rem; height: 0.55rem;
+  border: 1.5px solid currentColor; border-radius: 50%;
+}
+.rb-good .rb-mark    { background: currentColor; }
+.rb-partial .rb-mark { background: linear-gradient(90deg, currentColor 50%, transparent 50%); }
+
 /* ── Badges ── */
 .badge {
   display: inline-block; padding: 0.125rem 0.45rem;
