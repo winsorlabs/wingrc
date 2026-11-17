@@ -3,6 +3,14 @@
 Planned features in build sequence. Items marked **Done** are shipped and tested.
 Items without a status are planned but not yet started.
 
+**Who decided, from 2026-11-17.** Entries before 2026-11-17 may credit
+Jarrod with reasoning that came from the brief, the advisor's notes Jarrod
+passes on. The two were not told apart until then, and those entries are
+not re-attributed. From 2026-11-17 an entry says which it was. A decision
+is Jarrod's. A finding, a recommendation or an instruction from the notes
+is the brief's. In a compliance product's own record, that is the
+difference between a decision and a recommendation.
+
 ---
 
 ## Done
@@ -13949,16 +13957,64 @@ rotation ahead of the tooling that would have let `deploy.sh` do it
 - **Was it used? No evidence either way, for objects.** MinIO keeps no
   access log here, and nginx's goes back only to the last deploy ("Live
   cannot say who signed in from where").
-- **One trace can be read.** Root can add IAM users and service
-  accounts, and a root password change does not remove them. On
-  2026-11-17 live's `.minio.sys/config/iam` held only its format file,
-  so there were none. The migration reads it again just before the
-  change.
+- **One trace can be read, and it is the only evidence there is.**
+  Changing a password stops new use of it. It does not undo what was done
+  with it. Root can add IAM users, service accounts and a bucket policy
+  for anonymous readers, and each keeps working under its own name after
+  the rotation. That is easy to miss, because the rotation feels like the
+  fix. So the general rule is in `docs/deployment.md`, "Moving off a
+  default credential": check what was created with the old credential.
+  Read on live 2026-11-17, before the change:
+  - **MinIO's IAM store** (`.minio.sys/config/iam`, read from the volume
+    read-only) holds only its format file: no users, no service accounts,
+    no STS credentials;
+  - **anonymous requests are refused:** a bucket listing, the bucket
+    root, and a GET and HEAD of a real object, all 403;
+  - **Postgres** has only `wingrc` and `wingrc_app`.
+
+  MinIO keeps no access log here, so this read is all there is. A clean
+  read means "no foothold visible today", not "never used". The migration
+  reads it again just before the change.
 - **The bound:** live is LAN-only (the state-cookie entry).
-- **Not done, a separate decision:** limiting the storage host to `GET`
-  and `HEAD`. Then the host would carry no write surface, whatever the
-  credential. The rotation fixes the credential; this would narrow what
-  any credential could do through nginx.
+
+**The storage host carries reads only (2026-11-17, #108, the brief's
+instruction).** `limit_except GET` on its one location; GET also admits
+HEAD.
+- **Checked first:** nothing writes through it. Every upload, delete,
+  snapshot and restore goes to `http://minio:9000` inside the compose
+  network (`storage.py`'s `_s3`). The public client signs `get_object`
+  URLs and nothing else. Signing makes no request. The host's legitimate
+  traffic is logos and vendor documents, both GETs. Live's nginx log
+  since the last deploy agrees, but it is a few hours old, so the code is
+  the evidence.
+- **Why it outlasts the password:** a password protects until it leaks.
+  With the restriction, a leaked credential still cannot overwrite or
+  delete a piece of evidence through that host, or administer MinIO
+  (admin writes are PUT, POST and DELETE). Evidence is the asset a
+  restore cannot fully replace, because the only copy of a deleted object
+  is a snapshot older than the deletion.
+- **What it does not stop:** signed reads. A leaked credential can still
+  read evidence through the host, and only the password change stops
+  that. A limit by path (the bucket only, no `/minio/` admin reads) was
+  considered and not taken. The bucket's name is a setting, which would
+  couple nginx to it, and the reads it would close are the ones the
+  password already guards.
+- **Shipped with the rotation:** `deploy.sh` brings the new nginx up
+  before the MinIO hand step. So the window where the host is both open
+  to writes and on a published credential closes in one session.
+- **Seen working on the bench**, with the branch's nginx in front of
+  MinIO and requests signed with the root pair, as a leaked credential
+  would be:
+  - GET 200, with the body intact;
+  - HEAD 200;
+  - PUT, DELETE and POST each 403 from nginx;
+  - the object's sha256 unchanged.
+
+  With `limit_except` removed, the same signed PUT overwrote the object
+  and the DELETE removed it.
+- **Held by** `tests/test_nginx_storage_methods.py`: every proxied
+  location on the storage host refuses everything but GET. Widened to
+  `GET POST PUT DELETE`, it fails.
 
 **3. The database owner.** `POSTGRES_PASSWORD: wingrc` is also a
 literal. That role owns every table and bypasses RLS. The repo is
@@ -14507,6 +14563,14 @@ monitoring build-out.
 | API token in `.scratch/hit_live_endpoint.py` (wl-dt26) | n/a | n/a | **Closed 2026-10-23.** Dead: no `api_token` row on live matches its hash. The row was deleted on 2026-09-07 with its user, unaudited (the audit Done entry's concrete case). The file was deleted 2026-10-23 |
 | Entra SSO client secret | up to 24 months, set in Entra | nothing | not configured on live; becomes a row the day it is |
 | API tokens (`wingrc_…`) | per token, `expires_at` | the token itself stops working | none live |
+
+**A rotation does not revoke what the old credential made (2026-11-17).**
+For any row above, after a rotation, list what the old credential could
+have created and check it against what is expected. Where nothing
+records use, a clean list means "no foothold visible today". The
+procedure and the per-credential reads are in `docs/deployment.md`,
+"Moving off a default credential"; the first time it was applied is the
+MinIO correction in the compose item.
 
 **Public-CA issuance for this name is DNS-01 or nothing while the
 deployment is LAN-only.** HTTP-01 needs Let's Encrypt to reach port 80 on

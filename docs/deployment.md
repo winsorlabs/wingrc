@@ -493,6 +493,42 @@ still on its old default. **Take a snapshot first** (`deploy/snapshot.sh`).
 Never put a value on a command line or print it. Read it from `.env` into
 a pipe.
 
+**A rotation does not revoke what the old credential made, so check
+for it.** A new password stops new use of the old one. It does not undo
+what someone already did with it. An account, key or policy created with
+the old credential keeps working under its own name after the rotation.
+That is easy to miss, because the rotation feels like the fix. So, for
+each credential you move, list what it could have created and compare
+with what you expect. Do it just before the change, so the list is
+current.
+- **The Postgres owner** (a superuser) can create roles. List them:
+
+  ```bash
+  docker compose exec -T db psql -U wingrc -d wingrc -tA \
+    -c "select rolname from pg_roles where rolname !~ '^pg_' order by 1"
+  ```
+
+  Expect `wingrc` and `wingrc_app`.
+- **MinIO's root credential** can create IAM users, service accounts and
+  a bucket policy that lets anonymous readers in.
+  - **The IAM store,** read from the volume, read-only:
+
+    ```bash
+    docker run --rm -v wingrc_minio_data:/data:ro alpine:3.22 \
+      find /data/.minio.sys/config/iam -type f
+    ```
+
+    WinGRC creates no IAM entries, so expect only
+    `format.json/xl.meta`.
+  - **Anonymous requests:** from inside the compose network, an unsigned
+    request to `http://minio:9000/evidence?list-type=2`, and to one real
+    object, should both answer 403.
+- **The Fernet key** creates nothing. Its exposure is the credentials it
+  encrypted, below.
+
+Where nothing records use, as with MinIO, which keeps no access log
+here, a clean list means "no foothold visible today", not "never used".
+
 ### The owner's password
 
 Postgres keeps the password it was initialised with. `POSTGRES_PASSWORD`
@@ -524,9 +560,16 @@ in `.env` only has to agree with it.
 See the item in `docs/roadmap.md`, "The compose file ships default
 credentials", for the procedure as tested. Keep `MINIO_ROOT_USER` and
 change only the password. Set `MINIO_ROOT_PASSWORD` and
-`WINGRC_STORAGE_SECRET_KEY` to the same new value, then recreate `minio`,
-`backend` and `worker` together. The backend cannot reach storage between
-those recreations.
+`WINGRC_STORAGE_SECRET_KEY` to the same new value, then recreate them
+together:
+
+```bash
+docker compose up -d --no-deps minio backend worker nginx
+```
+
+The backend cannot reach storage between those recreations. nginx is in
+the command because it resolves `minio` once, when it starts, and a
+recreated `minio` can come back on another address.
 
 ### The Fernet key
 
