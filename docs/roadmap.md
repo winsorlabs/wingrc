@@ -13311,16 +13311,42 @@ Dockerfile or frontend lockfile. Both scans' package lists, Trivy's
 own, are identical between the two records: 238 packages in the
 backend and 72 in nginx, the same Alpine 3.23.4, and the same Trivy
 0.69.3. So the whole movement is the advisory database:
-- backend: 16 advisories on unchanged packages re-rated to HIGH (24
-  severity changes in all);
+- backend: 24 advisories on unchanged packages that had no rating
+  (UNKNOWN) were given one, 16 of them HIGH and 8 MEDIUM, and 19 new
+  ones arrived unrated;
 - nginx: three new HIGH matches on `libxslt` 1.1.43-r3, present in both
   images. One, CVE-2026-125350, was published 2026-11-10 18:17 UTC,
   49 minutes after the earlier scan.
 
-The brief recording this put it down to the floating base images
-(Jarrod, 2026-11-12). The records disprove that for this pair. Of the
-three movements observed, one was packages (10-27, the Python ones
-resolved away) and two were advisories (10-29's brotli, and this).
+The records disprove the first explanation given, which was the
+floating base images. Of the three movements observed, one was packages
+(10-27, the Python ones resolved away) and two were advisories (10-29's
+brotli, and this).
+
+**10-29's brotli and the 11-12 rise are one phenomenon, not two**
+(Jarrod, 2026-11-12). In each, the artifact was held constant: 10-29
+rescanned the same images, and 11-12's two images have the same packages.
+Only the advisory data changed. That makes them the strongest pair in
+this item, because they show the two ways a count moves with nothing
+built: an advisory rated higher (brotli, HIGH to CRITICAL) and advisories
+rated or published for the first time (11-12). Both moves were upward.
+A count falling with the artifact held constant, as a withdrawn or
+downgraded advisory would make it, has not been observed. The brief
+said the pair showed both directions, and the records show one.
+
+**How the wrong attribution travelled, recorded 2026-11-12.** It started
+in Claude's report of the `eade513` deploy, which said the rise came
+"from the floating base images, not from code in these PRs". The second
+half had been checked: no dependency file changed. The first half was a
+guess, written in the same sentence and the same tone. Jarrod repeated it
+in the next brief, then cited it as the third instance of a pattern. By
+then a guess had the standing of evidence: it was counted toward the
+case for a baseline, and nobody had read a record. It was caught when
+Claude read the two scans' package lists to write the row. This item's
+lesson is that a count nobody reads is not a measurement. Applied to the
+records themselves, a cause nobody read out of the records is not a
+finding, however many times it is repeated. A report gives a cause only
+with what it was read from, or calls it a guess.
 Each was found by reading the records by hand, which is the case for a
 baseline. A baseline that also says which cause moved the count needs
 the package list, not the image ID: every deploy stamps its commit
