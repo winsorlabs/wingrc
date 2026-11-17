@@ -265,6 +265,20 @@ def _build_client() -> StorageClient:
 
     s = get_settings()
     if s.storage_endpoint:
+        missing = [
+            name
+            for name, value in (
+                ("WINGRC_STORAGE_ACCESS_KEY", s.storage_access_key),
+                ("WINGRC_STORAGE_SECRET_KEY", s.storage_secret_key),
+            )
+            if not value
+        ]
+        if missing:
+            # They had public defaults until 2026-11-17; none now.
+            raise RuntimeError(
+                f"WINGRC_STORAGE_ENDPOINT is set but {' and '.join(missing)} "
+                "is not. Set it in .env (docs/deployment.md, step 1)."
+            )
         return MinIOClient(
             endpoint=s.storage_endpoint,
             access_key=s.storage_access_key,

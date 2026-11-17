@@ -6,11 +6,13 @@
 # procedure can if only one of them gets remembered.
 x-backend-env: &backend-env
   # Overridable from the host .env so the wingrc_app cutover is a config
-  # change rather than an edit to this file. The default stays the owning
-  # role because a fresh install has no wingrc_app password yet -- there is
-  # no shippable default for a credential.
-  WINGRC_DATABASE_URL: ${WINGRC_DATABASE_URL:-postgresql+psycopg://wingrc:wingrc@db:5432/wingrc}
-  WINGRC_TEST_DATABASE_URL: postgresql+psycopg://wingrc:wingrc@db:5432/wingrc_test
+  # change rather than an edit to this file. The default is the owning role,
+  # built from POSTGRES_PASSWORD, because a fresh install has no wingrc_app
+  # password yet. There is no shippable default for a credential, so no
+  # password is written in this file (docs/roadmap.md, "The compose file
+  # ships default credentials").
+  WINGRC_DATABASE_URL: ${WINGRC_DATABASE_URL:-postgresql+psycopg://wingrc:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required -- set it in .env, see docs/deployment.md}@db:5432/wingrc}
+  WINGRC_TEST_DATABASE_URL: postgresql+psycopg://wingrc:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required -- set it in .env, see docs/deployment.md}@db:5432/wingrc_test
   # Connection `alembic upgrade head` uses, and nothing else. Unset here on
   # purpose: WINGRC_DATABASE_URL above is still the owning role, which can
   # run DDL, so migrations work without it today.
@@ -22,12 +24,14 @@ x-backend-env: &backend-env
   # checks the connected role can create objects and exits naming this
   # variable. See docs/deployment.md.
   WINGRC_MIGRATION_DATABASE_URL: ${WINGRC_MIGRATION_DATABASE_URL:-}
-  # Set explicitly (not left to Settings.environment's Python-level
-  # default) so `wingrc reset-dev`'s production guard (cli.py) sees a
-  # real "development" value here rather than reading as unset --
-  # unset now refuses, on purpose, since that's the actual shape of a
-  # fresh production deploy where nobody set this yet.
-  WINGRC_ENVIRONMENT: development
+  # Required, no default: "production" or "development" (config.py
+  # refuses anything else). It decides the Secure flag on every cookie
+  # (auth.py) and whether `wingrc reset-dev` may run (cli.py). Until
+  # 2026-11-17 this was the literal "development", which no .env could
+  # change, so every compose deployment, live included, issued its cookies
+  # without Secure. A default would repeat that silently for a deployment
+  # that forgot the line.
+  WINGRC_ENVIRONMENT: ${WINGRC_ENVIRONMENT:?WINGRC_ENVIRONMENT is required -- set it in .env, see docs/deployment.md}
   # The URL a browser uses to reach this deployment -- see config.py's own
   # docstring on this setting. Only consumed by routers/users.py (invite/
   # reset email links) and scheduler.py's review-cycle/SPRS-reminder jobs
@@ -47,20 +51,20 @@ x-backend-env: &backend-env
   # Without it, presigned URLs contain the internal 'minio' hostname
   # which browsers can't resolve.
   WINGRC_STORAGE_PUBLIC_ENDPOINT: ${WINGRC_STORAGE_PUBLIC_ENDPOINT:-}
-  WINGRC_STORAGE_ACCESS_KEY: wingrc
-  WINGRC_STORAGE_SECRET_KEY: wingrc-dev-secret
-  # D.1: encrypts third-party integration credentials (Liongard, SMTP,
-  # etc.) at rest — see crypto.py. This dev key is fine for local/bench
-  # use only; a real deployment MUST set its own via a host .env override
-  # (WINGRC_CREDENTIAL_ENCRYPTION_KEYS in the shell/`.env`, not this
-  # file) and keep it out of git. crypto.py fails closed — with this
-  # unset, storing/reading any integration credential is refused
-  # outright rather than falling back to plaintext.
+  # The backend's MinIO credentials. Required, no default: they were
+  # literals here, so the guide's instruction to set them in .env could not
+  # take effect.
+  WINGRC_STORAGE_ACCESS_KEY: ${WINGRC_STORAGE_ACCESS_KEY:?WINGRC_STORAGE_ACCESS_KEY is required -- set it in .env, see docs/deployment.md}
+  WINGRC_STORAGE_SECRET_KEY: ${WINGRC_STORAGE_SECRET_KEY:?WINGRC_STORAGE_SECRET_KEY is required -- set it in .env, see docs/deployment.md}
   # The HMAC key for the signed sign-in state cookies (auth.py). Required,
   # with no default: until 2026-11-17 this line did not exist, so every
   # compose deployment signed them with config.py's public default.
   WINGRC_AUTH_FLOW_SECRET: ${WINGRC_AUTH_FLOW_SECRET:?WINGRC_AUTH_FLOW_SECRET is required -- set it in .env, see docs/deployment.md}
-  WINGRC_CREDENTIAL_ENCRYPTION_KEYS: ${WINGRC_CREDENTIAL_ENCRYPTION_KEYS:-dev:DFKuK2mEIJpixerxDMGU5xyQQwpWQBZxCFjOaZKjNSs=}
+  # D.1: encrypts third-party integration credentials (Liongard, SMTP, the
+  # AI provider) at rest; see crypto.py. Required, no default: a key in this
+  # public repo would be a vendor key every deployment shared. crypto.py
+  # still fails closed for a deployment that does not use compose.
+  WINGRC_CREDENTIAL_ENCRYPTION_KEYS: ${WINGRC_CREDENTIAL_ENCRYPTION_KEYS:?WINGRC_CREDENTIAL_ENCRYPTION_KEYS is required -- set it in .env, see docs/deployment.md}
   # Item S: hours before the newest local snapshot reads stale and raises
   # msp_admin's banner. Set for a daily schedule; the schedule is a host
   # cron line the backend cannot read, so a different schedule needs this
@@ -75,7 +79,11 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: wingrc
-      POSTGRES_PASSWORD: wingrc
+      # Read only when the data volume is first initialised. Changing it
+      # later does nothing to the role: an existing deployment changes the
+      # password with ALTER ROLE (docs/deployment.md, "Moving off a default
+      # credential").
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required -- set it in .env, see docs/deployment.md}
       POSTGRES_DB: wingrc
     volumes:
       - db_data:/var/lib/postgresql
@@ -98,8 +106,8 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: wingrc
-      MINIO_ROOT_PASSWORD: wingrc-dev-secret
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required -- set it in .env, see docs/deployment.md}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required -- set it in .env, see docs/deployment.md}
       # Public URL MinIO advertises for itself when running behind the nginx
       # reverse proxy (used for its own redirects/self-checks, not for
       # signature validation). Should match the storage subdomain nginx

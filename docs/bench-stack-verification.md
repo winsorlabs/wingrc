@@ -83,7 +83,20 @@ bench work.
 
 1. `git clone` (or `git pull` an existing bench clone) into
    `/home/claude/bench/<name>`.
-2. `docker compose -p wingrc_verify_<date> up -d --build` — own project
+2. **Give the clone its own `.env`** (since 2026-11-17 compose refuses to
+   start without every required value, and names the missing one):
+
+   ```bash
+   cp .env.example .env && chmod 600 .env
+   sed -i 's/^WINGRC_ENVIRONMENT=$/WINGRC_ENVIRONMENT=development/' .env
+   deploy/generate-env.sh
+   ```
+
+   Fresh random values, printed by name only. Never copy live's `.env`:
+   its values are live's credentials. A bench restored from a live
+   snapshot needs live's Fernet key to read stored credentials; that is
+   `snapshot-verify`'s concern, by key label, not this file's.
+3. `docker compose -p wingrc_verify_<date> up -d --build` — own project
    name, no port publishing overrides needed since nothing outside the
    compose network needs to reach it; use `docker compose exec` for
    shell access into `backend`/`db`/etc.
@@ -96,7 +109,7 @@ bench work.
    backend worker` before re-running tests -- an edit is invisible until
    then. A negative control (old file swapped in) needs the same rebuild,
    then `git checkout --` and a rebuild to restore.
-3. Backend: `docker compose -p wingrc_verify_<date> exec backend pytest -q`
+4. Backend: `docker compose -p wingrc_verify_<date> exec backend pytest -q`
    (full suite, not just `-m "not integration"` — that's the local-only
    subset). **The full suite in one process, never a per-file run.**
    Running a file in isolation is a different experiment, not a cheaper
@@ -110,7 +123,7 @@ bench work.
    cleanly (`alembic upgrade head` is what `docker compose up` already
    runs on backend start — check its logs, and check migration source for
    whether it's purely additive or touches existing rows).
-4. Frontend: a throwaway `node:24-alpine` (or matching) container running
+5. Frontend: a throwaway `node:24-alpine` (or matching) container running
    the frontend's own `npm install && npm test && npm run build`
    unmodified — don't hand-roll a different build path. **`npm install`,
    not `npm ci`**: there is no committed `package-lock.json`, and
@@ -123,9 +136,9 @@ bench work.
    Mount the **repo root**, not just `frontend/`: the Markdown renderer's
    parity test reads `backend/tests/fixtures/markdown_corpus.json`, which is
    deliberately shared with the backend suite rather than duplicated.
-5. Any slice-specific load measurement or manual walkthrough the slice's
+6. Any slice-specific load measurement or manual walkthrough the slice's
    own task calls for.
-6. Tear down: `docker compose -p wingrc_verify_<date> down -v` — confirm
+7. Tear down: `docker compose -p wingrc_verify_<date> down -v` — confirm
    the live `wingrc` project's containers are still running unaffected
    before and after. Since item S, a bench stack's backend also gets its
    own snapshot directory, `/var/lib/wingrc-snapshots/wingrc_verify_<date>`,

@@ -28,29 +28,54 @@ guide sets up.
 git clone <this-repo-url> wingrc
 cd wingrc
 cp .env.example .env
+chmod 600 .env
+deploy/generate-env.sh
 ```
 
-Edit `.env`:
+**Keep `.env` at mode 600, or 640 with a group only operators are in.** It
+holds every credential below, and it never goes in git.
 
-- `WINGRC_ENVIRONMENT=production` — required for any HTTPS deployment; this
-  is what puts the `Secure` flag on session cookies (see
-  `backend/app/auth.py`). Do not skip this.
-- `WINGRC_AUTH_FLOW_SECRET` — **required; compose will not start without
-  it.** The key that signs the sign-in state cookies. Generate one with
-  `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`. At least
-  32 characters. The backend refuses sign-in when it is missing, shorter
-  than that, or the public default this repo once shipped. Changing it only
-  invalidates sign-ins in progress (five-minute cookies), never a session.
+**Required values: `docker compose` refuses to start while any is empty,
+and names it.** None has a default. The defaults this repository used to
+carry were public, so a deployment that kept one ran on a credential
+anyone could read (`docs/roadmap.md`, "The compose file ships default
+credentials").
+
+`deploy/generate-env.sh` fills each secret below that is empty with a
+fresh random value and prints only the names it filled, never a value. It
+never changes a value already set. **Copy each generated value into a
+password manager off this host before you rely on the deployment.**
+
+| Variable | What it is | Generated |
+|---|---|---|
+| `WINGRC_ENVIRONMENT` | `production` or `development`; nothing else is accepted. `production` puts `Secure` on every cookie. Use it for any deployment served over HTTPS. | **No: set it yourself.** It is a decision, not a secret. |
+| `POSTGRES_PASSWORD` | The database owner's password. The owner owns every table and bypasses row-level security. Postgres reads it only when its volume is first initialised. **URL-safe characters only** (letters, digits, `-`, `_`): compose places it in a connection URL. | Yes |
+| `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | MinIO's root credentials. Also read at first start. | Yes |
+| `WINGRC_STORAGE_ACCESS_KEY`, `WINGRC_STORAGE_SECRET_KEY` | The backend's storage credentials. Today they must equal MinIO's root pair. | Yes, copied from the root pair |
+| `WINGRC_AUTH_FLOW_SECRET` | Signs the sign-in state cookies. At least 32 characters; the backend refuses sign-in without a usable one. Changing it only fails sign-ins in progress, never a session. | Yes |
+| `WINGRC_CREDENTIAL_ENCRYPTION_KEYS` | Encrypts stored integration credentials (Liongard, SMTP, the AI provider) at rest, as `label:fernetkey`. **Lose it and every stored credential is lost**; a database backup does not include it. Rotate with `wingrc rotate-credential-keys`. | Yes |
+
+To generate one by hand instead:
+
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"      # a password or the state-cookie key
+python3 -c "import base64,os; print('prod:' + base64.urlsafe_b64encode(os.urandom(32)).decode())"  # a Fernet key
+```
+
+**These values are read once.** Changing `POSTGRES_PASSWORD` or
+`MINIO_ROOT_PASSWORD` in `.env` after the first start does nothing to the
+running service. An existing deployment follows "Moving off a default
+credential", below.
+
+**Also set:**
+
 - `WINGRC_STORAGE_PUBLIC_ENDPOINT=https://storage.YOUR_HOSTNAME`
 - `MINIO_SERVER_URL=https://storage.YOUR_HOSTNAME`
-- `WINGRC_PUBLIC_URL=https://YOUR_HOSTNAME` — the URL a browser uses to
-  reach this deployment. Without it, invite/reset emails and review-cycle/
-  SPRS-reminder notifications fall back to a link-less body instead of a
-  working link (see `config.py`'s own docstring on this setting). Read by
-  both `backend` and `worker` — recreate both after setting it.
-- Set real values for `WINGRC_STORAGE_ACCESS_KEY` / `WINGRC_STORAGE_SECRET_KEY`
-  (don't ship with the `wingrc` / `wingrc-dev-secret` defaults) and any other
-  secrets called out in `.env.example`.
+- `WINGRC_PUBLIC_URL=https://YOUR_HOSTNAME`: the URL a browser uses to
+  reach this deployment. Without it, invite and reset emails and the
+  review-cycle and SPRS-reminder notifications fall back to a body with no
+  link (`config.py`'s docstring on this setting). Both `backend` and
+  `worker` read it; recreate both after setting it.
 
 ## 2. Obtain a TLS certificate (DNS-01)
 
@@ -457,6 +482,57 @@ again. A half-corrected table is worse than a restored one.
 7a's dump is the database alone. That is enough to undo a migration, which
 never touches the object store. It is not enough to recover a deployment:
 see the next section.
+
+## Moving off a default credential
+
+For a deployment started before 2026-11-17, when compose supplied public
+defaults. The new compose file refuses to start until `.env` holds every
+required value (step 1). Set those values first, then move each credential
+still on its old default. **Take a snapshot first** (`deploy/snapshot.sh`).
+Never put a value on a command line or print it. Read it from `.env` into
+a pipe.
+
+### The owner's password
+
+Postgres keeps the password it was initialised with. `POSTGRES_PASSWORD`
+in `.env` only has to agree with it.
+
+1. **Set `POSTGRES_PASSWORD` to a new value in `.env`, and put the same
+   value in `WINGRC_MIGRATION_DATABASE_URL`, if it is set.** Rewrite the
+   file in place (`deploy/generate-env.sh` does this for an empty value).
+   `sed -i` replaces the file and makes it yours.
+2. **Change the role**, through psql's stdin, over the container's local
+   socket:
+
+   ```bash
+   python3 - <<'PY' | docker compose exec -T db psql -U wingrc -d wingrc -q
+   import re
+   v = re.search(r"^POSTGRES_PASSWORD=(.*)$", open(".env").read(), re.M).group(1)
+   print("ALTER ROLE wingrc PASSWORD '" + v.replace("'", "''") + "';")
+   PY
+   ```
+
+   Running connections keep working. Only new ones use the new password.
+3. **`deploy/deploy.sh`.** It recreates `backend` and `worker`; a restart
+   would not re-read `.env`. The backend runs `alembic upgrade head` as it
+   starts, through the owner's URL, so a healthy `/health` proves the new
+   password works.
+
+### MinIO's root password
+
+See the item in `docs/roadmap.md`, "The compose file ships default
+credentials", for the procedure as tested. Keep `MINIO_ROOT_USER` and
+change only the password. Set `MINIO_ROOT_PASSWORD` and
+`WINGRC_STORAGE_SECRET_KEY` to the same new value, then recreate `minio`,
+`backend` and `worker` together. The backend cannot reach storage between
+those recreations.
+
+### The Fernet key
+
+A deployment that ran on the old public development key rotates with
+`wingrc rotate-credential-keys`. It also treats every integration
+credential entered under that key as exposed in any database copy made
+since, and reissues it at the provider.
 
 ## Local snapshots (not a backup)
 
