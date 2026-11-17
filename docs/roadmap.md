@@ -12449,6 +12449,36 @@ and the banner cleared. Log:
   restore from this host has been confirmed since the 2026-11-03 test,
   which makes a live restore test of a pre-crash set more pressing.
 
+**Disk headroom reclaimed, with the snapshots shown untouched
+(2026-11-17, 02:12 to 02:14 UTC).** `snapshot-create` refuses when less
+than 10% of the filesystem would remain, so headroom is what protects the
+nightly snapshot. On 2026-11-12 it stood about 2 GiB above that floor,
+mostly taken by Claude's old bench images and the build cache. Jarrod
+approved removing both; volumes were not pruned.
+
+- **What ran,** as `claude` on wl-util-1: `docker rmi` of the 78
+  `wingrc_verify_*` image tags (no container, running or stopped, used
+  one), then `docker builder prune -af` (759 cache entries, 15.45 GB,
+  none in use).
+- **Disk:** 36.34 GB used of 45.62 (84%, 6.93 GB free) before; 19.11 GB
+  (45%, 24.16 GB free) after. 17.2 GB freed.
+- **The snapshots, read the same way before and after:** a `stat` of
+  every entry under `/var/lib/wingrc-snapshots` (type, size, mtime,
+  path), through a read-only mount. Both times: 927 entries, 82,898,572
+  bytes, 14 sets, oldest `20261105T031703Z`, newest `20261116T031703Z`,
+  the same listing hash, and `diff` of the two listings empty.
+- **`/health`, before and after:** snapshot `count` 14, newest
+  `20261116T031703Z`, `ok`, all components `eade513`.
+- **Also unchanged:** the five volumes (`trivy-cache` and live's four)
+  and the five live containers, with their uptimes.
+- **Where it is:** `~claude/disk_state.sh`, `~claude/disk-before.txt`,
+  `~claude/disk-after.txt`, and the two listings
+  `~claude/snaps-before.txt` and `~claude/snaps-after.txt`.
+- The pre-deploy snapshot taken next, `20261117T021450Z`, rotated out
+  `20261105T031703Z`, as keep 14 predicts. That came after the after
+  reading, so it is not part of the comparison.
+- The prune emptied the cache, so #103's deploy rebuilt every layer.
+
 **The first live restore test (2026-11-03, 14:41 UTC, Jarrod
 watching).** Run at `75fb484` as built, with a probe (#79) to show the
 rows themselves. Record:
@@ -13346,7 +13376,10 @@ Claude read the two scans' package lists to write the row. This item's
 lesson is that a count nobody reads is not a measurement. Applied to the
 records themselves, a cause nobody read out of the records is not a
 finding, however many times it is repeated. A report gives a cause only
-with what it was read from, or calls it a guess.
+with what it was read from, or calls it a guess. **The same lesson ran
+the other way on 2026-11-17:** the readiness bars' brief took a claim
+about current behaviour from a stale entry instead of the code, and
+checking it is what found the entry stale ("The readiness bars").
 Each was found by reading the records by hand, which is the case for a
 baseline. A baseline that also says which cause moved the count needs
 the package list, not the image ID: every deploy stamps its commit
@@ -14387,7 +14420,7 @@ The display then:
 (deactivation already sets `needs_review`); inferring replacement in any
 form.
 
-### The readiness bars: Implementation | RACI | Evidence on every objective -- built 2026-11-17
+### The readiness bars: Implementation | RACI | Evidence on every objective -- built and deployed 2026-11-17
 
 **What Jarrod asked for (2026-10-19).** *"A Completion status by Control
 which would figure a complete control one that has RACI Assignment,
@@ -14428,14 +14461,19 @@ is in its signature as well as here.
 - **RACI: R and A, the brief's reading, kept after checking live.** Live
   on 2026-11-17 held 70 assignments, every one an R, on 70 objectives,
   one holder each; no objective held an A, a C or an I, and the other 570
-  had none. R alone is what the picker offers first (`RaciSection.tsx`
-  defaults to R), so live's usage shows the default, not a decision that
-  A is unneeded. Under this rule no objective on live reads complete on
-  RACI today: 70 partial, 570 empty. Whether that tells Jarrod something
-  true (nobody is accountable for anything) or is noise is what his walk
-  decides. If it is noise, the rule is the thing to change, in this
-  function, with its cases. Not checked: that there is exactly one A.
-  C and I count toward partial and are never required.
+  had none. Every picker starts at R, so live's usage shows the default,
+  not a decision that A is unneeded. Under this rule no objective on live
+  reads complete on RACI today: 70 partial, 570 empty. Not checked: that
+  there is exactly one A. C and I count toward partial and are never
+  required.
+- **Jarrod, 2026-11-17: keep the rule. Do not change it to R-only.** The
+  bar is telling the truth: no accountable party has ever been assigned
+  on this deployment, and CMMC needs one. A rule softened to match
+  incomplete data would hide the gap the bar's first run surfaced. The
+  defect is upstream of the bar, in the picker's default, which made A
+  something nobody was ever asked for: "The RACI picker defaults to R, so
+  nobody is asked for an A" (Planned). As real assignments are made, the
+  segment reads complete, which is the behaviour wanted.
 - **Evidence has two states, not three.** Jarrod asked for three colours;
   a segment that is really binary gets two. A yellow that never fires is
   clutter, and a yellow with an invented meaning is worse, because people
@@ -14458,6 +14496,13 @@ objective would read green if so. It does not, and has not since
 `test_counts_and_widgets_read_live_links_only` asserts both. The brief
 had read the archived-evidence entry's bullet, which kept the present
 tense after the fix landed the same day; that bullet is corrected.
+**The brief's error is what found both stale bullets** (Jarrod,
+2026-11-17). It grounded a claim about current behaviour in a roadmap
+entry instead of the code. That is the inverse of the convention these
+records assert: what the code does today is read from the code, and an
+entry says where to look. Checking the brief's claim against the code
+showed the bullet and a second sentence about the widget had both been
+stale for four weeks.
 `evidence_count` had no reader in the frontend before this (it was in
 `types.ts` only), so no second meaning had grown on it.
 
@@ -14521,12 +14566,17 @@ host with live; Q.0's collapse point (50 to 100) was not re-measured.
 **What the bars showed on live's copy.** On the assessment measured:
 249 objectives empty on all three, 70 empty / partial / empty (R
 without A), and none complete except one made on the bench for the
-screenshot. One control stands out: its six objectives are all marked
-`met`, and every one reads empty on Implementation and Evidence. Two of
-them have only archived evidence (the unattested review cycle's detached
-records). The badges say Met, and the bars say nothing stands behind it.
-That is CLAUDE.md's "nothing is met without evidence", which is held by
-the person and not by code, now visible on the board.
+screenshot.
+
+**AC.L2-3.1.1: six objectives marked `met`, every one empty on
+Implementation and Evidence.** Two of them, [a] and [c], have only
+archived evidence: the unattested review cycle's detached records. The
+badges say Met, and the bars say nothing stands behind it. This is the
+first concrete instance of "The rule that nothing is met without
+evidence has no code behind it" (Planned), which recorded the gap in the
+abstract on 2026-11-02: no code stops a `met` with nothing attached. A
+read-only display made it visible on live, deciding nothing. That entry
+points back here.
 
 **Tests and checks.**
 - `frontend/src/lib/readiness.test.ts`: every segment's cases written
@@ -14568,8 +14618,17 @@ the person and not by code, now visible on the board.
 **Jarrod's walk.** Open an assessment board and see whether the bars
 tell him something the badges did not. If they don't, the segments are
 measuring the wrong things, and that is worth hearing before more is
-built on them. RACI is the segment most likely to need a second look
-(above).
+built on them. **RACI reading partial or empty everywhere is a finding,
+not noise,** and its fix is upstream of the bar (above). Not yet walked.
+
+**Deployed 2026-11-17** at `6cc2377` (#103), by `deploy/deploy.sh`,
+after snapshot `20261117T021450Z`. `/health` read `6cc2377` for all three
+components, snapshot count 14. Record:
+`~claude/wingrc-deploys/20261117T021646Z-6cc2377a269a/`. Its scan read
+backend 402 findings, 177 distinct, 0 critical, 126 high, and nginx 241,
+148, 1, 57. Against 11-12 the backend rose by 9 findings and 5 distinct,
+with no high or critical change. The cause has not been read out of the
+package lists, so none is given.
 
 ### The evidence ✕ deletes the artifact, unaudited, and says "Remove" ✅ DONE (2026-10-19)
 
@@ -17296,8 +17355,46 @@ avoid, and worse, because the placeholder looks like evidence. Whoever
 picks this up decides which option, and for which cases. This entry's
 job is only to stop the rule reading as enforced when it isn't.
 
+**First concrete instance, 2026-11-17.** The readiness bars' first run,
+on a copy of live, showed AC.L2-3.1.1's six objectives all marked `met`
+and every one empty on Implementation and Evidence; two have only
+archived evidence ("The readiness bars"). A read-only display surfaced
+it, which is the warn-don't-enforce option's raw material: the gap is
+now visible where people mark status, without anything refusing.
+
 **Related:** the Tool Import wizard entry, where a wrong bulk-accepted
 row leaves objectives one unchecked click from `met`.
+
+### The RACI picker defaults to R, so nobody is asked for an A
+
+**Found 2026-11-17 by the readiness bars' first run. Recorded, not
+built.**
+
+- **Every place a letter is chosen starts at R:** the control drawer
+  (`RaciSection.tsx`, `useState("R")`), and Roles' family bulk-assign and
+  per-objective override (`RolesPanel.tsx`, three `raci_letter: "R"`
+  initial states). Assign needs only a contact, so pressing it without
+  touching the letter writes an R.
+- **The evidence: on live, 70 assignments, 70 R, and no A, C or I**
+  (2026-11-17, counts only). The audit log says they came from two
+  actions, both on 2026-11-03 and both R: one single assign, and one
+  family bulk-assign that wrote 69 and skipped the one already held. So
+  the 70/0 split is two choices, not seventy, and each left the letter
+  where it started. Nobody was ever asked who is accountable.
+- **Why it matters:** CMMC needs an accountable party. The readiness
+  bars' RACI segment reads complete only with R and A, and Jarrod kept
+  that rule (2026-11-17), so on live it reads partial on 70 objectives
+  and empty on 570. The bar is right. The default is what made A
+  something nobody was asked for.
+- **What it should be, by Jarrod's reading: no default.** The letter
+  select starts empty, and Assign refuses without a letter, as it already
+  refuses without a contact ("Choose a contact before assigning"). The
+  same goes for bulk-assign and the override. The letter is then always a
+  choice, and the bars read complete as real assignments are made.
+- **The 70 existing rows stay as assigned.** They are a person's
+  assignments; changing one is a person's edit, made in the UI.
+- **When built:** each picker's empty start written out in a test, and
+  Assign with no letter refused, in each.
 
 ### `coverage_basis = assists` is credited exactly like `customer_system`
 
