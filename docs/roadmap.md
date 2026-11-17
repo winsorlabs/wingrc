@@ -14502,7 +14502,11 @@ entry instead of the code. That is the inverse of the convention these
 records assert: what the code does today is read from the code, and an
 entry says where to look. Checking the brief's claim against the code
 showed the bullet and a second sentence about the widget had both been
-stale for four weeks.
+stale for four weeks. **Its pair, the same day:** Jarrod's note merging
+#103 read live's 70 R assignments as seventy assignments; the audit log
+shows two actions ("The RACI picker defaults to R", Planned). Both are a
+brief over-reading evidence it had not checked. One took a roadmap entry
+for the code, and the other took a row count for a count of choices.
 `evidence_count` had no reader in the frontend before this (it was in
 `types.ts` only), so no second meaning had grown on it.
 
@@ -17229,6 +17233,42 @@ not. Rotation only starts once 7 exist, which on live was the 2026-11-06
 14) and false about behaviour (it kept 7). The log line printed the
 setting, never the outcome, so it could not show the difference.
 
+**Rotation at keep, on live: both halves of the fixed retention have
+run in production (recorded 2026-11-17).** Below keep the fixed code
+takes the clamped path and rotates nothing, as the 2026-11-09 and
+2026-11-10 runs showed (9 kept, then 11). At keep it rotates exactly one
+per new snapshot. That half had first run on live by 2026-11-14, earlier
+than the brief that asked for this record supposed:
+
+- **Inferred from the ids, three nightly runs (2026-11-14, 11-15, 11-16):**
+  - 11-09's by-hand run left 9 sets;
+  - the nightly runs and a pre-deploy run on 11-10 through 11-13 brought
+    that to 14;
+  - each of the next three nightly runs added one and rotated one.
+  The three oldest of 11-09's sets, `20261103T030437Z`,
+  `20261103T031703Z` and `20261104T031704Z`, are gone, and `/health`
+  read 14 on 11-16. No line of those runs' output has been read: the cron
+  log path in `docs/deployment.md` does not exist on the host (2026-11-17,
+  checked again).
+- **Observed, 2026-11-17 02:14 UTC:** the snapshot taken before #103's
+  deploy printed `rotated out 20261105T031703Z` and `14 snapshot(s) kept
+  (keep is 14)`, with the output read as it ran
+  (`~claude/snap-pre103.log`). That is the first rotation on live with a
+  readable record. It is also the deletion predicted at the retention
+  check after #102 merged: "11-17 should delete `20261105T031703Z`." It
+  came from the pre-deploy run rather than the nightly one, because the
+  pre-deploy run came first.
+- **Inferred, the 2026-11-17 nightly run (03:17 UTC):** `20261117T031704Z`
+  was added and `20261105T213011Z` is gone. At 13:38 UTC the directory
+  held 14 sets, `20261106T031704Z` to `20261117T031704Z`, and `/health`
+  read 14.
+
+**So the question raised on 2026-11-17 is closed:** the count reached 14
+and stays there, losing one set, the oldest, per new snapshot. The 11-17
+record is the only rotation whose output was read. The other four rest
+on the ids alone, and the cron log is what would make them directly
+readable (the carried "cron log path" walk).
+
 **The fix:** clamp the start at zero. `test_plan_rotates_only_beyond_keep_at_every_count`
 writes out the counts 0, 1, 7, 8, 12, 13, 14 and 15, with the expected
 rotation for each, rather than deriving them from `keep`.
@@ -17370,17 +17410,28 @@ row leaves objectives one unchecked click from `met`.
 **Found 2026-11-17 by the readiness bars' first run. Recorded, not
 built.**
 
+- **The lead example: one unchanged default wrote 69 rows.** On
+  2026-11-03 a single family bulk-assign, its letter left at R, wrote an
+  R on 69 objectives and skipped the one already held (live's audit log,
+  `raci.bulk_assign`, read 2026-11-17). Accepting the default cost
+  nothing beyond choosing a contact, and it wrote a whole family. That is
+  the sharpest form of this defect: the cheaper a default is to accept
+  and the more rows it writes, the less any one of those rows was
+  decided.
 - **Every place a letter is chosen starts at R:** the control drawer
   (`RaciSection.tsx`, `useState("R")`), and Roles' family bulk-assign and
   per-objective override (`RolesPanel.tsx`, three `raci_letter: "R"`
   initial states). Assign needs only a contact, so pressing it without
   touching the letter writes an R.
-- **The evidence: on live, 70 assignments, 70 R, and no A, C or I**
-  (2026-11-17, counts only). The audit log says they came from two
-  actions, both on 2026-11-03 and both R: one single assign, and one
-  family bulk-assign that wrote 69 and skipped the one already held. So
-  the 70/0 split is two choices, not seventy, and each left the letter
-  where it started. Nobody was ever asked who is accountable.
+- **The count, second:** on live, 70 assignments, 70 R, and no A, C or I
+  (2026-11-17, counts only). They came from two actions, both left at R:
+  the bulk-assign above and one single assign. **So the 70/0 split is two
+  choices, not seventy, and that strengthens the case rather than
+  weakening it.** Read as seventy, it would look like a consistent
+  practice of assigning R. Read as two, it shows the default doing the
+  choosing, at a scale of 69 rows in one action. Nobody was ever asked
+  who is accountable. Jarrod's merge note had the seventy reading;
+  the audit log corrected it.
 - **Why it matters:** CMMC needs an accountable party. The readiness
   bars' RACI segment reads complete only with R and A, and Jarrod kept
   that rule (2026-11-17), so on live it reads partial on 70 objectives
