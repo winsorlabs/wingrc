@@ -14038,9 +14038,11 @@ literal added to step 1, and what verifying it found.
 Secure** (found 2026-11-17, not in any entry before).
 - **The defect:** compose wrote `WINGRC_ENVIRONMENT: development`, a
   literal no `.env` could reach. `.env.example` and the guide's step 1 both
-  told the operator to set `production`. That makes it the same defect as
-  the MinIO keys: configuration the guide expects, hard-coded where
-  configuration cannot reach.
+  told the operator to set `production`. **Live's own `.env` did: it has
+  said `WINGRC_ENVIRONMENT=production` all along** (read 2026-11-17), and
+  compose ignored it. That makes it the same defect as the MinIO keys:
+  configuration the guide expects, hard-coded where configuration cannot
+  reach, overriding the operator who did the right thing without a word.
 - **The consequence:** `auth.py` puts Secure on a cookie only under
   `production`, so live has issued the session cookie and the three
   sign-in state cookies without Secure, from the start.
@@ -14065,7 +14067,8 @@ Secure** (found 2026-11-17, not in any entry before).
 - **The fix:** compose requires it with no default. `config.py` accepts
   only `development` or `production` and refuses anything else at
   startup, so a typo such as `Production` cannot quietly mean "not
-  production". Live is set to `production` in its migration (below).
+  production". Live needs no edit for this one: its `.env` already says
+  `production`, and the deploy makes it count.
 - **Tests:** `tests/test_cookie_secure.py` holds Secure present under
   `production` and absent under `development` on all four helpers, by
   name. It also checks that nothing outside `auth.py` sets a cookie, so the
