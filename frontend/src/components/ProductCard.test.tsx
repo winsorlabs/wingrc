@@ -253,9 +253,11 @@ describe("ProductCard activation", () => {
     await within(dialog).findByText("SPRS stays at 104.");
     fireEvent.click(within(dialog).getByRole("button", { name: "Activate Heimdal" }));
     await waitFor(() => expect(onActivated).toHaveBeenCalled());
+    // Since 2026-11-18 the confirm also sends the responsibility answers:
+    // an empty list here, because no hand-set responsibility was asked.
     expect(api.activateProduct).toHaveBeenCalledWith("o", "a", "p", [
       { control_state_id: "cs1", shown_status: "met", choice: "keep" },
-    ]);
+    ], []);
   });
 
   it("when what was shown has changed, says so and asks again; nothing activates", async () => {
