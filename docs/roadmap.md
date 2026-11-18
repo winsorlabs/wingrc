@@ -14383,10 +14383,12 @@ step and its reason in `hand-step-minio.md`.
      (`wingrc_app`) did not change.
 
 The rollback copies of `.env` lived in `~claude`, mode 600, and were
-deleted once Jarrod's checks passed. **Still open:** `.env` is
-`claude:wladmin 640` (Jarrod's `chown`); the Fernet key and the state-cookie
-key were already off their defaults; option (b), `deploy.sh`'s
-named-service recreate, is next, then the deactivated-account slice.
+deleted once Jarrod's checks passed. Jarrod then ran the `chown`:
+`.env` is `wladmin:wladmin 640` (read 2026-11-18), so `claude` can read it,
+which is all compose and `deploy.sh` need, and can no longer write it. A
+later change to `.env` is Jarrod's. The Fernet key and the state-cookie
+key were already off their defaults. **Next:** option (b), `deploy.sh`'s
+named-service recreate, then the deactivated-account slice.
 
 ### HSTS: one day first -- decided 2026-11-17 (#108)
 
