@@ -684,7 +684,10 @@ writeup.
   overwriting one (2026-11-18, migration 0075).**
   - **Before:** nothing but a tool could set it.
   - **Now:** `PUT …/control-states/{id}/responsibility` sets it and marks
-    it a person's (`responsibility_set_by`).
+    it a person's (`responsibility_set_by`). Only the MSP's side may:
+    `msp_admin`, `consultant_admin`, `msp_engineer`. A customer setting
+    `provider_satisfies` would assert the MSP's obligations; status, a
+    claim about the customer's own system, stays open to `customer_poc`.
   - **Every recompute goes through `engine._tool_responsibility`:**
     - activation asks, on the same screen and with the same "changed
       since shown" refusal as a judged status;

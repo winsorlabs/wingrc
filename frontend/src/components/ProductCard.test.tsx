@@ -116,6 +116,9 @@ describe("ProductCard activation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Activate" }));
     const dialog = await screen.findByRole("dialog");
     expect(api.activateProduct).not.toHaveBeenCalled();
+    expect(within(dialog).getByRole("heading", { level: 2 }).textContent).toBe(
+      "Activating Heimdal would change a responsibility you set",
+    );
     const select = within(dialog).getByLabelText("Responsibility for AC.L2-3.1.2[a]") as HTMLSelectElement;
     expect(select.value).toBe("keep");
     fireEvent.click(within(dialog).getByRole("button", { name: "Activate Heimdal" }));

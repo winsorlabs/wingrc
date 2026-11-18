@@ -46,6 +46,16 @@ function scoreLine(preview: ActivationPreview): string {
   return line;
 }
 
+/** The dialog's heading, naming what a person did: a status they judged,
+ * a responsibility they set, or both. "an objective you judged" alone
+ * reads as wrong to someone who only set responsibility. */
+export function askHeading(productName: string, statuses: number, responsibilities: number): string {
+  const judged = statuses === 1 ? "an objective you judged" : `${statuses} objectives you judged`;
+  const set = responsibilities === 1 ? "a responsibility you set" : `${responsibilities} responsibilities you set`;
+  const what = statuses && responsibilities ? `${judged} and ${set}` : statuses ? judged : set;
+  return `Activating ${productName} would change ${what}`;
+}
+
 export function ActivationAsk({
   productName,
   preview,
@@ -92,9 +102,7 @@ export function ActivationAsk({
         onClick={(e) => e.stopPropagation()}
       >
         <h2 id="activation-ask-title">
-          {n === 1
-            ? `Activating ${productName} would change an objective you judged`
-            : `Activating ${productName} would change ${n} objectives you judged`}
+          {askHeading(productName, preview.objectives.length, preview.responsibility.length)}
         </h2>
         <p>
           {productName} covers {n === 1 ? "it" : "these"}, and {n === 1 ? "it was" : "each was"} set by a person.

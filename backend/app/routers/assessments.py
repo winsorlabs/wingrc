@@ -36,7 +36,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..audit import log_event
-from ..auth import CurrentUser, get_current_user, require_org_access, require_write
+from ..auth import CurrentUser, require_org_access, require_write
 from ..db import get_session
 from ..engine import (
     ActivationJudgementsChanged,
@@ -1300,6 +1300,13 @@ def move_product_version(
     return MoveVersionOut(**result)
 
 
+# Who may set responsibility: the MSP's side only. customer_poc is not
+# here on purpose (set_control_state_responsibility says why), and
+# c3pao_assessor never writes. Mirrored by frontend/src/lib/roles.ts's
+# canSetResponsibility.
+RESPONSIBILITY_ROLES = ("msp_admin", "consultant_admin", "msp_engineer")
+
+
 class SetResponsibilityIn(BaseModel):
     responsibility: Literal["provider_satisfies", "shared", "customer_owns", "external_system"]
     # "raci_suggestion" when the person accepted the drawer's suggestion
@@ -1324,12 +1331,18 @@ def set_control_state_responsibility(
     control_state_id: uuid.UUID,
     body: SetResponsibilityIn,
     session: Session = Depends(get_session),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_org_access(*RESPONSIBILITY_ROLES)),
 ) -> SetResponsibilityOut:
     """The only human write path for responsibility (engine.set_responsibility).
-    Gated like a status edit: the router's require_write, so every role
-    but c3pao_assessor. A tool never overwrites the value without asking
-    (engine._tool_responsibility); RACI never writes it."""
+
+    Gated to the MSP's side (RESPONSIBILITY_ROLES; the brief, 2026-11-18),
+    narrower than a status edit. Responsibility crosses the boundary
+    between two organisations: a customer setting provider_satisfies would
+    assert the MSP's obligations, in the matrix an assessor reads, as the
+    party it benefits. A status is a statement about the customer's own
+    system, so it stays open to customer_poc. A tool never overwrites the
+    value without asking (engine._tool_responsibility); RACI never writes
+    it."""
     try:
         cs = set_responsibility(
             session, org_id, assessment_id, control_state_id, body.responsibility,

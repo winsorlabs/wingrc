@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { canEditPractitionerNotes } from "../lib/roles";
+import { canEditPractitionerNotes, canSetResponsibility } from "../lib/roles";
 import type { Contact, RaciAssignmentRow, ResolvedIdentity, StatementRow } from "../types";
 import { EvidenceSection } from "./EvidenceSection";
 import { RaciSection } from "./RaciSection";
@@ -491,7 +491,7 @@ export function ControlDrawer({
                         assignments={raciAssignments.filter(
                           (a) => a.control_state_id === item.control_state_id
                         )}
-                        canWrite={canWrite}
+                        canWrite={canWrite && canSetResponsibility(currentUserRole)}
                         onChanged={(value, setBy, setAt) => {
                           setItems((prev) => prev.map((x) => x.objective_id === item.objective_id
                             ? { ...x, responsibility: value, responsibility_set_by: setBy, responsibility_set_at: setAt }

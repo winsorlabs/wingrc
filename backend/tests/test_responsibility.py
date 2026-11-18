@@ -241,7 +241,7 @@ def _resp_url(w, key):
 @pytest.mark.integration
 @pytest.mark.parametrize("role,allowed", [
     ("msp_admin", True), ("consultant_admin", True), ("msp_engineer", True),
-    ("customer_poc", True), ("c3pao_assessor", False),
+    ("customer_poc", False), ("c3pao_assessor", False),
 ])
 def test_the_endpoint_and_its_role_gate(db_session, w, as_role, role, allowed):
     c = as_role(role)
@@ -309,3 +309,18 @@ def test_activation_through_http_asks_then_keeps_or_takes(db_session, w, as_role
     assert r.json()["responsibility"][0]["responsibility_after"] == E
     assert r.json()["responsibility"][0]["decided_by"] == "person"
     assert _cs(db_session, w["s"]["c2a"]).responsibility == E
+
+
+@pytest.mark.integration
+def test_a_customer_may_set_a_status_but_not_responsibility(db_session, w, as_role):
+    """The asymmetry the gate rests on: a status is a claim about the
+    customer's own system; responsibility asserts the MSP's obligations,
+    so it is set on the MSP's side."""
+    c = as_role("customer_poc")
+    status = c.patch(f"/orgs/{w['org'].id}/assessments/{w['a'].id}/control-states/"
+                     f"{w['s']['c2a'].id}", json={"status": "partial"})
+    assert status.status_code == 200, (
+        "customer_poc must be able to edit a status, or this test proves nothing")
+    resp = c.put(_resp_url(w, "c2a"), json={"responsibility": P})
+    assert resp.status_code == 403
+    assert _cs(db_session, w["s"]["c2a"]).responsibility == C

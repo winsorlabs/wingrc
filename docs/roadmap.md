@@ -16720,9 +16720,25 @@ So it defaulted to Customer and moved only when a tool did.
   - writes an audit row, `control_state.responsibility_set`, whose
     `via` says whether it was typed or came from the RACI suggestion.
 - **Status and score do not move.** Responsibility is not scored.
-- **Gate:** the router's `require_write`, the same as editing a status,
-  so every role but `c3pao_assessor`. That is the nearest precedent, not
-  a new decision, and `customer_poc` is included as it is for status.
+- **Gate: the MSP's side only.** `msp_admin`, `consultant_admin` and
+  `msp_engineer` (`RESPONSIBILITY_ROLES`), narrowed by the brief on
+  2026-11-18 from the first version's status-edit gate. The asymmetry
+  decides it:
+  - A customer setting "we own this" is a statement about themselves.
+  - A customer setting `provider_satisfies` would assert the MSP's
+    obligations, printed in the customer responsibility matrix an
+    assessor reads, made by the party it benefits, in a document the MSP
+    signs off.
+  - A status is a statement about the customer's own system, so status
+    editing stays open to `customer_poc`.
+
+  Responsibility crosses the boundary between two organisations, so it
+  is set on the MSP's side. `test_a_customer_may_set_a_status_but_not_responsibility`
+  holds the asymmetry. In the drawer, `customer_poc` sees the value
+  read-only, with no suggestion.
+- **Recorded, not built: a customer's say.** If customers should take
+  part, the honest shape is a suggestion they raise and the MSP accepts,
+  the same pattern as the RACI prompt, not a direct write.
 - **The drawer** shows the value, who set it (or that nobody has: "the
   default, or the tools covering this objective"), and a select to change
   it.
@@ -16817,9 +16833,12 @@ recompute now goes through `engine._tool_responsibility`, with
   - activating RocketCyber, which would set Provider, asked first,
     defaulting to keep, and wrote nothing while asking;
   - activating with the default kept External system.
-- **One wording not changed:** with only responsibility asked, the
-  dialog's heading still says "would change an objective you judged",
-  the status ask's sentence.
+- **The dialog's heading names what the person did** (fixed 2026-11-18,
+  the brief's note). It had said "would change an objective you judged"
+  even when only a responsibility was asked, which reads as wrong to
+  someone who set responsibility and nothing else. `askHeading` now says
+  "a responsibility you set", "an objective you judged", or both,
+  each case written out in `ActivationAsk.test.ts`.
 
 ### The version move could ask, as activation does -- not started
 
@@ -17994,6 +18013,26 @@ kept in the audit row's `before_value`.
 
 #### A person may confirm a near match (2026-11-18, after Jarrod's live walk)
 
+**The score cannot carry correctness. That is why the picker requires
+a person.** On the CMMC catalog, 168 pairs of *genuinely different*
+objectives in one family score 0.80 or more against each other, up to
+0.98. IA.L2-3.5.3[c] and [d] score 0.98, and CM.L2-3.4.5's objectives
+differ by one word ("defined", "enforced"). A row can be one word away
+from the right objective and one word away from a wrong one, and the
+score is the same either way.
+
+**Do not auto-accept above a threshold.** It is the obvious future
+"improvement", and this finding is what makes it wrong. No threshold
+separates a near match to the right objective from a near match to its
+sibling, so an automatic accept above one would file a statement under
+the wrong objective, in a document an assessor reads, without anyone
+having looked. Only a person reading the row's text beside each
+candidate's catalog text can tell them apart. The picker shows both for
+that reason, and preselects nothing. This is not colour: it is the
+reason for the design, and a change to automate placement has to answer
+it first. `ssp_import_session.NEAR_MATCH_FLOOR`'s comment says the same
+where the next person will read it.
+
 **The decision that waited on a number, and the number.**
 - **The rule as built:** the stricter reading of "the matcher never
   guesses", that a person could not confirm a near match either. It was
@@ -18036,29 +18075,24 @@ kept in the audit row's `before_value`.
   An assessor can tell a verbatim match from a judgement call. The
   screen says "Accepted onto … as a near match (0.94), confirmed by …".
 
-**The floor is 0.80, and it is not a safety margin.**
-- **Why no floor can be one:** distinct objectives in one family are
-  often near-identical. On the CMMC catalog, 168 such pairs score 0.80
-  or above against each other, up to 0.98: IA.L2-3.5.3[c] and [d], and
-  CM.L2-3.4.5's objectives, which differ by one word ("defined",
-  "enforced"). A high score does not mean the same objective.
-- **What makes a pick safe:** the person reading the source beside each
-  candidate's text.
-- **What the floor does:** it removes noise, such as three guesses at
-  0.2, that invites a wrong click.
-- **Why 0.80:** on the real file the right objective scored 0.94 and
-  the two wrong ones 0.57 and 0.53, and a one-word difference in an
-  objective's text scores about 0.9.
+**The floor is 0.80, and it is not a safety margin.** No floor can be
+one (above). Correctness is the person's; the floor's only job is not
+to waste the reviewer's time on candidates not worth reading, such as
+three guesses at 0.2. Why 0.80: on the real file the right objective
+scored 0.94 and the two wrong ones 0.57 and 0.53, and a one-word
+difference in an objective's text scores about 0.9.
 
 **The floor's effect on the real file's 61 near-match rows:**
 - **40 are offered at least one candidate.** Of those, 14 get two or
   three, so the person has to read them; 297 and 298 are 0.99 against
   0.93.
 - **21 are offered none,** and stay written by hand.
-- **7 of the 21 have a best score from 0.75 to 0.79.** Whether those
-  top candidates are right needs someone to read the text, and none is
-  quoted here (the customer's file). Jarrod's next walk tells whether
-  the floor moves.
+- **7 of the 21 have a best score from 0.75 to 0.79.** This is not a
+  safety question, since the person decides every placement either
+  way. The criterion is only whether those candidates are worth
+  reading. Jarrod can judge that by looking at them (none is quoted
+  here; it is the customer's file), and lowering the floor costs nothing
+  but attention.
 - **The floor is provisional:** one file is the evidence.
 
 **Verified:**
