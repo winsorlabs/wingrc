@@ -564,12 +564,14 @@ change only the password. Set `MINIO_ROOT_PASSWORD` and
 together:
 
 ```bash
-docker compose up -d --no-deps minio backend worker nginx
+docker compose up -d --no-deps --force-recreate minio backend worker nginx
 ```
 
 The backend cannot reach storage between those recreations. nginx is in
 the command because it resolves `minio` once, when it starts, and a
-recreated `minio` can come back on another address.
+recreated `minio` can come back on another address. `--force-recreate` is
+what makes that happen: nginx's own configuration does not change, and
+without the flag compose leaves an unchanged service running.
 
 ### The Fernet key
 

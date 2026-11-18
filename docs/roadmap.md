@@ -13832,7 +13832,7 @@ enrolment. That is a migration, so it was not built in #108. The
 2026-11-17 brief made it its own slice, next and before production ("A deactivated
 account that never enrolled can sign in and reactivate itself").
 
-### The compose file ships default credentials: one let anyone take over an account, one makes credential encryption decorative -- a product defect, first; fixed 2026-11-17 (#108)
+### The compose file ships default credentials: one let anyone take over an account, one makes credential encryption decorative -- a product defect, first; fixed 2026-11-17 (#108), live 2026-11-18
 
 **Found 2026-10-23, with three defaults; a fourth found 2026-11-17.**
 Four defaults, in order of consequence:
@@ -13974,7 +13974,8 @@ rotation ahead of the tooling that would have let `deploy.sh` do it
 
   MinIO keeps no access log here, so this read is all there is. A clean
   read means "no foothold visible today", not "never used". The migration
-  reads it again just before the change.
+  read it again just before the change, on 2026-11-18, with the same
+  result (the live migration, below).
 - **The bound:** live is LAN-only (the state-cookie entry).
 
 **The storage host carries reads only (2026-11-17, #108, the brief's
@@ -14316,16 +14317,76 @@ fallback URL in `conftest.py`) stay: no deployment reaches them.
   with Jarrod present and recorded in the deploy record with its reason.
   That is not the detached-checkout incidents, which were an undocumented
   assumption followed at a terminal.
-- **The step:** `docker compose up -d --no-deps minio backend worker
-  nginx`, after the new password is in `.env`. nginx is in it although
-  its config does not change. `proxy_pass http://minio:9000` names a
-  fixed host, which nginx resolves once, when it starts, and a recreated
-  `minio` can come back on another address. My first version of this
-  step left nginx out.
+- **The step:** `docker compose up -d --no-deps --force-recreate minio
+  backend worker nginx`, after the new password is in `.env`. nginx is in
+  it although its config does not change. `proxy_pass http://minio:9000`
+  names a fixed host, which nginx resolves once, when it starts, and a
+  recreated `minio` can come back on another address. My first version of
+  this step left nginx out.
+  - **And the second version left it out in effect.** Without
+    `--force-recreate`, compose recreates a named service only when its
+    configuration changed, and nginx's does not, so nginx would have kept
+    running with the address it resolved at start. Noticed on 2026-11-18
+    just before the step ran, and the step ran with the flag. It adds
+    nothing for the other three, whose environment changes anyway.
 - **Afterwards, its own small slice:** `deploy.sh` gains a way to
   recreate a named service, so the next rotation needs no hand step.
 
-**Live migration:** not yet run; it follows the merge (below, when run).
+**Live migration: run 2026-11-18, Jarrod present, after he merged #108
+(`6bb99da`).** Each step's output printed names, counts, statuses and
+digests of object bytes, and no value. The deploy record is
+`~claude/wingrc-deploys/20261118T132651Z-6bb99dac5331/`, with the hand
+step and its reason in `hand-step-minio.md`.
+1. **Snapshot** `20261118T132501Z`: 61 tables, 31 objects; `/health` ok,
+   14 kept.
+2. **`.env`, rewritten in place** (same inode, `claude:wladmin 640`): a new
+   `POSTGRES_PASSWORD`, the same value replacing the password in
+   `WINGRC_MIGRATION_DATABASE_URL`, and MinIO's values as they were, read
+   from the running containers. The storage key pair matched MinIO's root
+   pair, and the owner URL matched the running backend's.
+   `WINGRC_DATABASE_URL` (`wingrc_app`) was left alone, so compose's
+   `:-` default for it never applies on live. The new compose file
+   accepted the file (`config -q`) before anything changed.
+3. **`ALTER ROLE wingrc`** through psql's stdin. Over the network
+   (`postgres:18` on `wingrc_default`, to `db`): old refused, new
+   accepted.
+4. **`deploy.sh`** to `6bb99da`: `/health` ok on all three components,
+   which also showed migrations running through the new owner password.
+   Then:
+   - the running backend's environment is `production`, so Secure is on;
+   - HSTS `max-age=86400` on both hosts;
+   - through the storage host, PUT, DELETE and POST were each refused by
+     nginx (403), and an unsigned GET by MinIO (403);
+   - a pending cookie signed with the old public key, at
+     `/auth/mfa/enroll`: 400;
+   - the restore test of step 1's snapshot passed;
+   - Jarrod signed out and in with password and TOTP.
+5. **The reads, again, just before the change:** roles `wingrc` and
+   `wingrc_app`; the IAM store holds only its format file; one bucket;
+   anonymous bucket listing, bucket root, and GET and HEAD of a real
+   object, all 403. No foothold visible today.
+6. **The MinIO hand step** at 13:31:24Z: one new value written as both
+   `MINIO_ROOT_PASSWORD` and `WINGRC_STORAGE_SECRET_KEY`, then the step
+   above, with `--force-recreate`. The backend was healthy at 13:31:57Z.
+   The worker started last, because it waits for the backend, so a
+   `ps` 31 seconds in read it "Up Less than a second". It had zero
+   restarts, and `/health` read ok on all three.
+7. **After:**
+   - all 31 objects read back with the same combined sha256 as before;
+   - the old MinIO password is refused and the new one accepted, on a
+     signed bucket listing;
+   - a logo, signed as the app signs it and fetched through the storage
+     host, answered 200 (`image/png`);
+   - in the browser, Jarrod saw Acme's logo, and downloaded and opened
+     evidence. His session survived both changes, as it should: a session
+     is a token row in the database, and the app's own role
+     (`wingrc_app`) did not change.
+
+The rollback copies of `.env` lived in `~claude`, mode 600, and were
+deleted once Jarrod's checks passed. **Still open:** `.env` is
+`claude:wladmin 640` (Jarrod's `chown`); the Fernet key and the state-cookie
+key were already off their defaults; option (b), `deploy.sh`'s
+named-service recreate, is next, then the deactivated-account slice.
 
 ### HSTS: one day first -- decided 2026-11-17 (#108)
 
