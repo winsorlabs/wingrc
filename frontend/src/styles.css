@@ -2603,7 +2603,7 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .activation-ask-score { font-weight: 600; }
 .activation-ask-actions { display: flex; gap: 0.5rem; }
 
-/* â”€â”€ SSP import (SspImportPanel.tsx) â”€â”€
+/* -- SSP import (SspImportPanel.tsx) --
    Existing tokens only. Pairs, WCAG 2.x, measured 2026-11-18:
    --text on --surface 15.43:1; --muted on --surface 6.09:1;
    --primary on --surface 6.44:1 (the details summaries);

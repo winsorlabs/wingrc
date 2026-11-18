@@ -386,7 +386,8 @@ def view(
 
 
 def sessions(session: Session, org_id: uuid.UUID, assessment_id: uuid.UUID):
-    """Every session on the assessment, newest first, with its counts:
+    """Every session on the assessment, the open one first and then newest
+    first, with its counts:
     an abandoned one is listed, not hidden."""
     _assessment(session, org_id, assessment_id)
     counts = (
@@ -402,7 +403,10 @@ def sessions(session: Session, org_id: uuid.UUID, assessment_id: uuid.UUID):
         .outerjoin(counts, counts.c.session_id == SspImportSession.id)
         .where(SspImportSession.org_id == org_id,
                SspImportSession.assessment_id == assessment_id)
-        .order_by(SspImportSession.started_at.desc(), SspImportSession.id)
+        # The open one first, then newest first; id last so two sessions
+        # started in one transaction still come back in one order.
+        .order_by((SspImportSession.status != "open"), SspImportSession.started_at.desc(),
+                  SspImportSession.id)
     ).all()
 
 
