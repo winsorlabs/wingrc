@@ -17533,6 +17533,10 @@ committed):
 **The full document is not coming** (Jarrod, 2026-11-11). Redacting a
 whole implementation section is not worth the effort. The hit rate
 stays unmeasured, and the Matching section says why that is safe.
+**Superseded 2026-11-18:** the whole document was imported on live, where
+it never needed redacting, since nothing but statement text is kept. The
+measured rate is 257 of 320 exact (80%), under "A person may confirm a
+near match" below.
 
 #### Cell fidelity: the accuracy work (built 2026-11-11)
 
@@ -17854,26 +17858,102 @@ kept in the audit row's `before_value`.
   catalog objective's text word for word, but more than one objective, or
   one outside the row's family, has it. The person picks one of those
   candidates, and none is preselected.
-- `unmatched`: nothing. Its candidates are similarity guesses, shown for
-  reading. The sample's 3.1.1[c] ("including" for "(and other systems)",
-  0.94) does not land, and is written by hand.
-
-  **This is a decision waiting on a number, not a settled one.**
-  - **What the brief meant:** "unmatched rows cannot be accepted onto
-    anything" meant the *matcher* never guesses.
-  - **What was built:** the stricter reading, that a person cannot
-    confirm a near match either. It is the safer of the two, and it
-    ships.
-  - **Its cost:** every near match is a statement typed by hand.
-  - **The number:** Jarrod's walk on the real file gives the rate.
-  - **If the rate is high:** the design always allowed a person to
-    confirm a close match. A person choosing a candidate is placement by
-    a human, which is what "a near match is worse than no match" asked
-    for, since that rule is about the matcher. The change would be one
-    kind added to `PICKABLE_KINDS`, with no candidate preselected. The
-    test that pins today's rule (`test_an_unmatched_row_cannot_be_accepted_…`)
-    changes with it.
+- `unmatched`: as built on 2026-11-18, nothing; since the near-match
+  change below, a candidate at or above the floor that a person picks.
 - A row with no statement text: nothing.
+
+#### A person may confirm a near match (2026-11-18, after Jarrod's live walk)
+
+**The decision that waited on a number, and the number.**
+- **The rule as built:** the stricter reading of "the matcher never
+  guesses", that a person could not confirm a near match either. It was
+  recorded as waiting on the real file's rate.
+- **What happened:** Jarrod uploaded the customer's SSP on live. Row 3
+  of the first family showed `AC.L2-3.1.1[c] (0.94)` "for reading only",
+  with Reject as the only action, though to a person reading both texts
+  it is obviously the row's objective.
+- **The real file is the whole document,** not the 3-row excerpt the
+  full-document hit rate was once said never to come from. Read from
+  live's rows on 2026-11-18, counts only:
+  - **320 rows:** 257 exact (80%), 61 with no exact match (19%), and 2
+    whose exact text needed a person to choose.
+  - That 19% corrects the brief's "one row in three", which is the
+    excerpt's rate.
+- **The change:** a person may pick from the ranked candidates. The
+  matcher still never guesses, and a person placing a row is what *AI
+  finds, deterministic logic places, a person confirms* asked for.
+
+**What changed** (`ssp_import_session.offers`):
+- **What is offered:**
+  - a candidate whose catalog text is the row's text, as before;
+  - a near match at or above `NEAR_MATCH_FLOOR`.
+- **None is preselected.** Accept is disabled until a person picks, and
+  a request naming no objective is refused ("None is chosen for you").
+- **Each offered candidate shows its catalog text** beside the source's.
+  Candidates under the floor are listed as not offered.
+- **Exactness is read from the catalog text, not the score.** Scores are
+  rounded to two places, so a long near match can round up to 1.0.
+- **The row's state is not a fourth value.** It is `accepted` or
+  `edited`, as before, because placement and editing are independent:
+  a person can confirm a near match and also edit its text.
+- **How the row was placed is recorded in `grounded_in`:**
+  - `placement`: `exact_match`, `person_chose_exact_text` or
+    `person_confirmed_near_match`;
+  - `near_match_score`;
+  - `candidates_offered`: each with its ref, score and whether it was
+    exact text, as shown.
+
+  An assessor can tell a verbatim match from a judgement call. The
+  screen says "Accepted onto … as a near match (0.94), confirmed by …".
+
+**The floor is 0.80, and it is not a safety margin.**
+- **Why no floor can be one:** distinct objectives in one family are
+  often near-identical. On the CMMC catalog, 168 such pairs score 0.80
+  or above against each other, up to 0.98: IA.L2-3.5.3[c] and [d], and
+  CM.L2-3.4.5's objectives, which differ by one word ("defined",
+  "enforced"). A high score does not mean the same objective.
+- **What makes a pick safe:** the person reading the source beside each
+  candidate's text.
+- **What the floor does:** it removes noise, such as three guesses at
+  0.2, that invites a wrong click.
+- **Why 0.80:** on the real file the right objective scored 0.94 and
+  the two wrong ones 0.57 and 0.53, and a one-word difference in an
+  objective's text scores about 0.9.
+
+**The floor's effect on the real file's 61 near-match rows:**
+- **40 are offered at least one candidate.** Of those, 14 get two or
+  three, so the person has to read them; 297 and 298 are 0.99 against
+  0.93.
+- **21 are offered none,** and stay written by hand.
+- **7 of the 21 have a best score from 0.75 to 0.79.** Whether those
+  top candidates are right needs someone to read the text, and none is
+  quoted here (the customer's file). Jarrod's next walk tells whether
+  the floor moves.
+- **The floor is provisional:** one file is the evidence.
+
+**Verified:**
+- **Tests** (`test_ssp_import_session.py`):
+  - offered or not for each kind, written out;
+  - rounding to 1.0 does not make a near match exact;
+  - placement for each of the three kinds;
+  - nothing preselected, through HTTP and in the picker component (no
+    radio checked, Accept disabled);
+  - a candidate under the floor refused;
+  - a row with all candidates under the floor offers none;
+  - a confirmed near match lands as a draft with control_state, status
+    and SPRS unmoved.
+- **Mutations, each seen red on the bench:**
+  - the floor ignored;
+  - exactness read from the rounded score;
+  - every placement recorded as exact;
+  - the top candidate taken when none is named.
+- **Bench** (`wingrc_verify_1118n`, `a5c956a`):
+  - step 4: 2170 passed;
+  - ruff clean;
+  - `tsc -b` clean, vitest 554, build clean.
+- **Walk on the synthetic fixture:**
+  - the picker showed one radio, none checked, and Accept disabled;
+  - after the pick, the row read as a confirmed near match.
 
 **What `grounded_in` carries** (`PROVENANCE_KEYS`; `generation_model`
 stays null):

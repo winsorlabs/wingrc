@@ -22,7 +22,7 @@ export const KIND_LABELS: Record<SspMatchKind, string> = {
   ambiguous: "Same text as more than one objective: choose one",
   family_mismatch: "Exact text, but under another family's heading: choose one",
   no_family: "Exact text, but no family heading above it: choose one",
-  unmatched: "No objective's text matches",
+  unmatched: "No exact match: a close objective may be chosen",
 };
 
 export type RowState = "pending" | "conflict" | "cannot_accept" | "written" | "rejected";
@@ -45,9 +45,26 @@ export function startingFamily(v: SspImportView): string | null {
   return (open ?? v.families[0])?.key ?? null;
 }
 
+/** The fieldset's question: a person choosing among identical texts is a
+ * different act from confirming a near match, and is asked differently. */
+export function pickLegend(r: SspImportRow): string {
+  const near = r.candidates.some((c) => c.offered && !c.exact_text);
+  return near
+    ? "No objective's text matches exactly. Choose one only if its text says what this row says; nothing is chosen for you."
+    : "This row's text is word for word more than one objective's, or one outside its family. Choose which.";
+}
+
+/** The near-match score when the row was placed by a person confirming a
+ * near match, else null (ssp_import_session.placement, as the screen sees it). */
+export function nearMatchScore(r: SspImportRow): number | null {
+  const c = r.candidates.find((x) => x.objective_id === r.decided_objective_id);
+  return c && !c.exact_text ? c.score : null;
+}
+
 export function decidedLine(r: SspImportRow): string {
   const who = r.decided_by ? ` by ${r.decided_by}` : "";
-  const onto = r.decided_ref ?? r.objective_ref ?? "";
+  const near = nearMatchScore(r);
+  const onto = (r.decided_ref ?? r.objective_ref ?? "") + (near !== null && r.decision !== "rejected" ? ` as a near match (${near.toFixed(2)}), confirmed` : "");
   if (r.decision === "accepted") {
     return `Accepted onto ${onto}${who}. Draft written${r.resolution === "replaced" ? ", replacing the statement that was there" : ""}.`;
   }
