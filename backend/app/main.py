@@ -50,6 +50,7 @@ from .routers import (
     scheduled_jobs,
     scope,
     sprs_submissions,
+    ssp_imports,
 )
 from .routers import auth as auth_router
 from .routers import users as users_router
@@ -101,6 +102,7 @@ app.include_router(documents.router)
 app.include_router(list_definitions.router)
 app.include_router(list_evidence.router)
 app.include_router(document_evidence.router)
+app.include_router(ssp_imports.router)
 
 
 @lru_cache(maxsize=1)

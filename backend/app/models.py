@@ -1479,6 +1479,99 @@ class ImplementationStatement(Base):
     )
 
 
+class SspImportSession(Base):
+    """One customer SSP read into one assessment, decided row by row
+    (migration 0074; app/ssp_import_session.py holds the rules). The file
+    is pinned by hash and not kept."""
+
+    __tablename__ = "ssp_import_session"
+    __table_args__ = (
+        CheckConstraint("status IN ('open', 'completed', 'discarded')",
+                        name="ck_ssp_import_session_status"),
+        CheckConstraint("(status = 'open') = (closed_at IS NULL)",
+                        name="ck_ssp_import_session_closed"),
+        Index("uq_ssp_import_session_one_open", "assessment_id", unique=True,
+              postgresql_where=text("status = 'open'")),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    assessment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("assessment.id"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(20), server_default="open")
+    file_name: Mapped[str] = mapped_column(Text)
+    file_sha256: Mapped[str] = mapped_column(String(64))
+    file_size: Mapped[int] = mapped_column(Integer)
+    importer: Mapped[str] = mapped_column(String(40))
+    started_by: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    closed_by: Mapped[str | None] = mapped_column(Text)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SspImportRow(Base):
+    """One source row of an SSP import session and the decision on it.
+    Holds the statement text and the Control cell; of Notes and RACI, only
+    whether they were present."""
+
+    __tablename__ = "ssp_import_row"
+    __table_args__ = (
+        UniqueConstraint("session_id", "number", name="uq_ssp_import_row_number"),
+        CheckConstraint(
+            "match_kind IN ('exact', 'ambiguous', 'family_mismatch', 'no_family', 'unmatched')",
+            name="ck_ssp_import_row_kind"),
+        CheckConstraint("decision IN ('pending', 'accepted', 'edited', 'rejected')",
+                        name="ck_ssp_import_row_decision"),
+        CheckConstraint("resolution IS NULL OR resolution IN ('replaced', 'kept_existing')",
+                        name="ck_ssp_import_row_resolution"),
+        CheckConstraint("(decision IN ('accepted', 'edited')) = (statement_id IS NOT NULL)",
+                        name="ck_ssp_import_row_written"),
+        CheckConstraint("(match_kind = 'exact') = (matched_objective_id IS NOT NULL)",
+                        name="ck_ssp_import_row_exact"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ssp_import_session.id", ondelete="CASCADE"), index=True
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organization.id"), index=True
+    )
+    number: Mapped[int] = mapped_column(Integer)
+    heading: Mapped[str | None] = mapped_column(Text)
+    family: Mapped[str | None] = mapped_column(String(4))
+    control_text: Mapped[str] = mapped_column(Text)
+    source_status: Mapped[str | None] = mapped_column(Text)
+    notes_present: Mapped[bool] = mapped_column(Boolean)
+    raci_present: Mapped[bool] = mapped_column(Boolean)
+    statement: Mapped[str | None] = mapped_column(Text)
+    match_kind: Mapped[str] = mapped_column(String(20))
+    matched_objective_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("assessment_objective.id")
+    )
+    # [{"objective_id", "ref", "score"}], ranked; exact hits score 1.0.
+    candidates: Mapped[list] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
+    decision: Mapped[str] = mapped_column(String(20), server_default="pending")
+    resolution: Mapped[str | None] = mapped_column(String(20))
+    decided_objective_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("assessment_objective.id")
+    )
+    statement_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("implementation_statement.id")
+    )
+    decided_by: Mapped[str | None] = mapped_column(Text)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 # ---------------------------------------------------------------------------
 # Audit log: append-only compliance event record
 # ---------------------------------------------------------------------------

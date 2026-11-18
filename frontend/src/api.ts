@@ -1,4 +1,4 @@
-import type { ActivationChoice, ActivationPreview, ActivationResult, JudgedDecision, MoveVersionResult, ApiTokenRow, ArchivedEvidenceSection, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, EnvironmentData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, SnapshotStatus, TlsExpiry, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent, AdoptResult, TakeTemplateResult, ListEvidenceCandidate, ListEvidenceLink, ListEvidenceStatus, ListLinkEvent, TagRemovalCheck, DocumentEvidenceCandidate, DocumentTagsAdded } from "./types";
+import type { ActivationChoice, ActivationPreview, ActivationResult, JudgedDecision, MoveVersionResult, ApiTokenRow, ArchivedEvidenceSection, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, EnvironmentData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, SnapshotStatus, TlsExpiry, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent, AdoptResult, TakeTemplateResult, ListEvidenceCandidate, ListEvidenceLink, ListEvidenceStatus, ListLinkEvent, TagRemovalCheck, DocumentEvidenceCandidate, DocumentTagsAdded, SspConflict, SspDecisionIn, SspImportSummary, SspImportView } from "./types";
 
 const BASE = "/api";
 
@@ -106,6 +106,31 @@ async function send<T>(path: string, method: string, body?: unknown): Promise<T>
   if (!r.ok) throw new ApiError(detailText(d, `${r.status} ${r.statusText}`), r.status);
   return payload as T;
 }
+
+/** An SSP import row whose objective already has a statement (read when
+ * the row was decided). Carries that statement, so the screen can show both
+ * and the person can choose; nothing was written. */
+export class SspConflictError extends ApiError {
+  conflict: SspConflict;
+  constructor(conflict: SspConflict) {
+    super(conflict.message, 409);
+    this.conflict = conflict;
+  }
+}
+
+async function sspSend(path: string, init: RequestInit): Promise<SspImportView> {
+  const r = await fetch(`${BASE}${path}`, { credentials: "include", ...init });
+  const payload = await r.json().catch(() => ({}));
+  const d = payload.detail;
+  if (r.status === 409 && d && typeof d === "object" && d.reason === "conflict") {
+    throw new SspConflictError(d as SspConflict);
+  }
+  if (!r.ok) throw new ApiError(detailText(d, `${r.status} ${r.statusText}`), r.status);
+  return payload as SspImportView;
+}
+
+const sspBase = (orgId: string, assessmentId: string) =>
+  `/orgs/${orgId}/assessments/${assessmentId}/ssp-imports`;
 
 export const api = {
   getMe: async (): Promise<AuthUser | null> => {
@@ -256,6 +281,30 @@ export const api = {
     });
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   },
+
+  // SSP import review session (routers/ssp_imports.py). Each decision is
+  // its own request and commit; nothing is held here between them.
+  listSspImports: (orgId: string, assessmentId: string) =>
+    send<SspImportSummary[]>(sspBase(orgId, assessmentId), "GET"),
+  getSspImport: (orgId: string, assessmentId: string, sessionId: string) =>
+    sspSend(`${sspBase(orgId, assessmentId)}/${sessionId}`, { method: "GET" }),
+  startSspImport: (orgId: string, assessmentId: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return sspSend(sspBase(orgId, assessmentId), { method: "POST", body: form });
+  },
+  decideSspRow: (orgId: string, assessmentId: string, sessionId: string, rowId: string, body: SspDecisionIn) =>
+    sspSend(`${sspBase(orgId, assessmentId)}/${sessionId}/rows/${rowId}/decision`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  closeSspImport: (orgId: string, assessmentId: string, sessionId: string, outcome: "completed" | "discarded") =>
+    sspSend(`${sspBase(orgId, assessmentId)}/${sessionId}/close`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ outcome }),
+    }),
 
   getOrgs: () => req<Org[]>("/orgs"),
   createOrg: (name: string) =>

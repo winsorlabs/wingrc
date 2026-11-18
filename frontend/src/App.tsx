@@ -17,6 +17,7 @@ import { OrgProfileForm } from "./components/OrgProfileForm";
 import { ProductsPanel } from "./components/ProductsPanel";
 import { ReviewCyclesPanel } from "./components/ReviewCyclesPanel";
 import { RolesPanel } from "./components/RolesPanel";
+import { SspImportPanel } from "./components/SspImportPanel";
 import type { AssessmentsTab, LibraryTab, NavCategory, ScopeTab, SecurityTab, SystemDescriptionSection } from "./components/SideNav";
 import { DocumentsPanel } from "./components/DocumentsPanel";
 import { ListLibraryPanel } from "./components/ListLibraryPanel";
@@ -27,7 +28,7 @@ import { SnapshotBanner } from "./components/SnapshotBanner";
 import { TlsExpiryBanner } from "./components/TlsExpiryBanner";
 import { UsersPanel } from "./components/UsersPanel";
 import { useAuth } from "./hooks/useAuth";
-import { canDefineLists, canSeeApiTokens, canSeeAuditLog, canSeeEmail, canSeeIntegrations, canSeeScheduledJobs, canSeeToolsLibrary, canSeeUserDirectory, canSeeUsers } from "./lib/roles";
+import { canDefineLists, canImportSsp, canSeeApiTokens, canSeeAuditLog, canSeeEmail, canSeeIntegrations, canSeeScheduledJobs, canSeeToolsLibrary, canSeeUserDirectory, canSeeUsers } from "./lib/roles";
 import type { Assessment, OnboardingStatus, Org } from "./types";
 
 // "admin" is the deployment-tier area (Integrations today; G.9/G.11 land
@@ -342,6 +343,8 @@ export function App() {
                   canWrite={canWrite}
                   currentUserRole={user.role}
                 />
+              ) : assessmentsTab === "ssp-import" && canImportSsp(user.role) ? (
+                <SspImportPanel orgId={org.id} assessmentId={assessment.id} />
               ) : (
                 <div className="workspace-content">
                   <RolesPanel orgId={org.id} assessmentId={assessment.id} canWrite={canWrite} />

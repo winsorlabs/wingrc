@@ -226,3 +226,12 @@ export function canSeeSecurity(role: string | null | undefined): boolean {
 export function canEditPractitionerNotes(role: string | null | undefined): boolean {
   return role === "msp_admin";
 }
+
+// SSP import (routers/ssp_imports.py's IMPORT_ROLES): who may upload a
+// customer's SSP and decide its rows (Jarrod, 2026-11-18). Every route on
+// that router, the reads included, has this gate.
+export const SSP_IMPORT_ROLES = new Set(["msp_admin", "consultant_admin", "msp_engineer"]);
+
+export function canImportSsp(role: string | null | undefined): boolean {
+  return !!role && SSP_IMPORT_ROLES.has(role);
+}

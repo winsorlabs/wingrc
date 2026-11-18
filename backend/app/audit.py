@@ -11,6 +11,17 @@ Scoped to meaningful compliance mutations (signal, not firehose):
   evidence_task.update        — task status changed (open/collected/na)
   evidence_task.archive       — task archived on deactivation
   implementation_statement.upsert — statement created or updated
+  implementation_statement.import — a draft written from an SSP import row
+                                 (ssp_import_session.py); context names the
+                                 session and source row
+  implementation_statement.import_replace — an existing statement replaced
+                                 by an import row, only when the person named
+                                 it; before_value keeps the replaced body
+  ssp_import.start            — an SSP read into an import session (hash,
+                                 name, size, row counts; the file is not kept)
+  ssp_import.row_accept / row_edit / row_reject / row_keep_existing /
+  row_reopen                  — a person's decision on one import row
+  ssp_import.complete / ssp_import.discard — a session closed
   user.invite                — user invited (routers/users.py)
   user.role_change            — role changed via PATCH /users/{id}
   user.activation_change      — is_active changed via PATCH /users/{id}

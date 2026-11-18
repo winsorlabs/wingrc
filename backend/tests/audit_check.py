@@ -136,6 +136,9 @@ RULES: list[Rule] = [
                 "evidence.list_link", "evidence.list_move_forward", "evidence.list_unlink"}),
     _r("list_link_event", "INSERT", {"control_state"},
        reason="a list version's link history (L.10), beside the link's own audit row"),
+    _r("ssp_import_row", "INSERT", {"ssp_import_session"},
+       reason="an SSP import's source rows, written when the session starts and audited on "
+              "it (ssp_import.start); each later decision has a row of its own"),
     _r("list_version", "INSERT", {"list_definition"},
        reason="a list's versions, audited on the list"),
     _r("list_control_tag", None, {"list_definition"}, reason="a list's tags, audited on the list"),

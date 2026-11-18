@@ -14451,7 +14451,9 @@ later change to `.env` is Jarrod's. The Fernet key and the state-cookie
 key were already off their defaults. **Next:** option (b), `deploy.sh`'s
 named-service recreate, then the deactivated-account slice, then "A
 fresh install runs the app as a superuser", then "The app reaches MinIO
-as root".
+as root". **Ahead of all four, 2026-11-18 (Jarrod):** the SSP import's
+write path and review session ("Importing implementation statements
+from a customer's SSP"). The four follow in this order.
 
 ### HSTS: one day first -- decided 2026-11-17 (#108)
 
@@ -17276,26 +17278,27 @@ from the code, and only `sprs-rescore` was run on live.
 customer is handed, and as the app role it is an empty one, with
 nothing saying why.
 
-### Importing implementation statements from a customer's SSP -- planned 2026-11-10; preview built; cell fidelity built 2026-11-11
+### Importing implementation statements from a customer's SSP -- planned 2026-11-10; preview built; cell fidelity built 2026-11-11; write path and review session built 2026-11-18
 
 **What Jarrod wants.** A feature for every onboarding, not a one-off
 migration. A customer arriving with an SSP should not have to retype
 it. **The first slice writes nothing**, because the matching has to be
 proven against real files before anything lands in a tenant.
 
-**Where this stands (2026-11-11, after Jarrod's review of the preview):**
+**Where this stands (2026-11-18):**
 - **Built:**
   - `wingrc ssp-import-preview` (#97), which reads, matches, reports and
     writes nothing;
   - the synthetic fixture (#98);
-  - cell fidelity, the accuracy work (below).
-- **Next: nothing, until a second real SSP arrives in a different
-  format.** One example cannot shape an adapter interface.
+  - cell fidelity, the accuracy work (below);
+  - **the write path and the resumable review session, 2026-11-18**
+    (below, "The write path and the review session, built"). Jarrod put
+    it ahead of the queue that day.
+- **Format adapters wait for a second real SSP in a different format.**
+  One example cannot shape an adapter interface.
 - **Specified, not built:**
   - format adapters, with AI extraction;
-  - the resumable review session and its screen;
-  - diagrams;
-  - the write path.
+  - diagrams, the next slice.
 - **Stopped, by decision:**
   - duplicate detection;
   - the full-document hit rate.
@@ -17669,7 +17672,7 @@ from evidence when its file arrives:
 - **PDFs.** A text PDF loses its table structure in extraction, which
   makes it the prose case at best. A scanned one is refused by name.
 
-#### The review screen: one family at a time, resumable (specified 2026-11-11, not built)
+#### The review screen: one family at a time, resumable (specified 2026-11-11; built 2026-11-18, below)
 
 **Jarrod's design:** an approval page in the spirit of the Tool Import
 wizard. Work through one control family at a time, with approvals
@@ -17795,10 +17798,185 @@ universal-claims convention's other half, and a test asserting the row
 for a diagram view would hold it. Not written here: it is a test for
 existing code, offered rather than added to a docs record.
 
+#### The write path and the review session, built 2026-11-18
+
+`ssp_import_session.py`, `routers/ssp_imports.py`, migration 0074, and
+Assessments › SSP Import (`SspImportPanel.tsx`). The parse and the match
+are `importers/ssp_docx.py`, unchanged.
+
+**There was no persistence precedent to copy.** The Tool Import wizard
+keeps its draft in React `useState` (`ToolImportWizard.tsx`, 29 of
+them, nothing saved), so a reload loses every decision in it.
+`ReviewCycle` is document review, not import. The session here is new
+machinery, designed for this.
+
+**The session model.**
+- **One session is one file read into one assessment.** Each source row
+  is an `ssp_import_row` with its match (kind, the matched objective,
+  ranked candidates) and its decision: `pending`, `accepted`, `edited` or
+  `rejected`. A rejection may carry `kept_existing`, and an accept or
+  edit may carry `replaced`. The row records the objective it landed on,
+  the statement it wrote, who decided and when.
+- **Each decision is its own request and its own commit.** There is no
+  Save button and nothing is held in the browser, so a reload or a closed
+  tab loses nothing. An accepted row writes its draft at once: the spec
+  left that open, and writing at once is what makes "the session says
+  what it has written" true at every moment. Opening the screen writes
+  nothing.
+- **The file is pinned by SHA-256, name and size.** A revised SSP is a
+  new session.
+- **One open session per assessment,** held by a partial unique index
+  (`uq_ssp_import_session_one_open`), not only by the route's check. A
+  second upload answers 409 and names the open one.
+- **An abandoned session is visible and discardable.** Discard works at
+  any time and leaves the drafts already written, saying how many.
+  Finish requires every row decided. Closed sessions stay listed under
+  "Earlier imports" with their counts.
+
+**The staleness rule.** Whether an objective already has a statement is
+read when the row is decided, never from the session's start. If it
+has one, from a person, another row of the same file, or anywhere,
+accepting is a 409 that carries the statement, and nothing is written.
+The person then chooses:
+- **keep it:** the row is rejected with `kept_existing`;
+- **replace it:** the request must name the statement's id and the
+  `updated_at` it was shown, so an edit made after that is a new
+  conflict.
+
+Neither side wins by default. `uq_implementation_statement_identity`
+makes it structural, and an insert that races a hand edit is caught on
+that constraint and answered as the same conflict. The replaced body is
+kept in the audit row's `before_value`.
+
+**What a row may be accepted onto.**
+- `exact`: its matched objective only.
+- `ambiguous`, `family_mismatch`, `no_family`: the row's text is a
+  catalog objective's text word for word, but more than one objective, or
+  one outside the row's family, has it. The person picks one of those
+  candidates, and none is preselected.
+- `unmatched`: nothing. Its candidates are similarity guesses, shown for
+  reading. The brief said "unmatched rows cannot be accepted onto
+  anything"; that was read as this importer's `unmatched` kind. So the
+  sample's 3.1.1[c] ("including" for "(and other systems)", 0.94) does
+  not land, and is written by hand. Allowing a person to pick a
+  near-match is a decision not taken here; the rule "a near match is
+  worse than no match" stands.
+- A row with no statement text: nothing.
+
+**What `grounded_in` carries** (`PROVENANCE_KEYS`; `generation_model`
+stays null):
+- `source = "ssp_import"`, `importer`, `session_id`;
+- `file_name`, `file_sha256`;
+- `source_row`, `source_heading`, `source_control_text`;
+- `source_status_claim`: the source document's claim, never a status;
+- `match_kind`;
+- `decision` (`accepted` or `edited`), `decided_by`, `decided_at`.
+
+So a statement imported here is told apart from one typed or drafted,
+and from which file and row it came, a year later.
+
+**The file is not kept (Jarrod, 2026-11-18).**
+- **The choice:** storing it would put a customer's whole SSP in MinIO and
+  every snapshot, including what is never imported: RACI names and
+  email addresses, Notes, the "Met" claims, images. Discarding it keeps
+  the hash, so anyone holding the customer's copy can show it is the same
+  file, though WinGRC cannot produce the file itself. Jarrod chose to
+  discard.
+- **How:** the upload is parsed from a temporary file removed before the
+  request returns (tested by recording the path and checking it is
+  gone).
+- **What a row keeps:** the statement text, the Control cell, the source's
+  status claim, and only whether Notes and RACI were present.
+- **The diagram slice:** it will need the file again, as a re-upload
+  checked against the pinned hash.
+
+**Upload.**
+- **Who (Jarrod, 2026-11-18):** `msp_admin`, `consultant_admin` and
+  `msp_engineer`, on every route, the reads included. `customer_poc` and
+  `c3pao_assessor` get 403. The brief proposed admins only. Jarrod added
+  the engineer, who does the assessment work and can already write
+  statements by hand.
+- **Limits:**
+  - only a `.docx` that starts with a zip header;
+  - at most 20 MB.
+- **Refused by name, with no session created:**
+  - a file without the table;
+  - a table with no objective rows ("nothing to import").
+
+**Audit.** Each write has its own row:
+- `ssp_import.start`: hash, name, size and counts, with `file_kept: false`;
+- `ssp_import.row_accept`, `row_edit`, `row_reject`,
+  `row_keep_existing`, `row_reopen`;
+- `implementation_statement.import` and `.import_replace`;
+- `ssp_import.complete` and `.discard`.
+
+The source rows written at start have one `audit_check.py` rule, naming
+`ssp_import_session`.
+
+**The screen.**
+- **Layout:** a family list with "AC: 2 of 6 decided" per family and a
+  total line ("2 of 8 rows decided · 0 of 3 families complete · 1 draft
+  written"). It opens on the first family with an undecided row.
+- **The front of each row:** the source Control text, the statement, the
+  objective it lands on (or the candidates as radio buttons), and
+  Accept, Edit first, or Reject.
+- **Source details, collapsed:** the source's status claim, labelled as
+  never imported, whether Notes and RACI were present, and the catalog
+  text.
+- **A conflict** shows the existing statement and the two choices, and
+  no Accept.
+- **Not saved:** text being edited and not yet saved as a draft is lost
+  on reload; it is not a decision until it is saved.
+- **Colours:** existing tokens only. Each pair is measured in
+  `styles.css`; the lowest is 5.14:1.
+
+**Verified.**
+- **Tests:** `tests/test_ssp_import_session.py`, through real HTTP with
+  RLS per request:
+  - drafts land with their provenance, read back;
+  - control_state, status and SPRS unchanged across a whole import that
+    says Met on every row;
+  - a hand statement mid-session is a conflict, a stale replace is
+    refused, and a named replace wins;
+  - keep leaves the statement as it was;
+  - decisions survive a fresh client;
+  - two open sessions are refused by the route and by the index;
+  - unmatched, empty and wrong-objective accepts are refused, and reject
+    touches nothing;
+  - the role gate for each of the five roles;
+  - another org's session is not found, and the policy itself hides the
+    rows from `wingrc_app` in another org;
+  - refusals, and the file is not kept.
+- **Mutations, each seen red on the bench:**
+  - a replace that wins without naming the statement;
+  - an unmatched row accepted onto a guess;
+  - accepting marks the objective met;
+  - the temporary file kept.
+- **Bench** (`wingrc_verify_1118s`, `19cca0f` then `6bfc5e1`, own
+  project, no published ports; a web container reached only on the
+  bench network):
+  - step 4: 2170 passed, 41 skipped, with `WINGRC_AUDIT_COVERAGE` set;
+  - ruff clean;
+  - `tsc -b` clean, vitest 548 passed, build clean.
+- **Walk at 1366×768, synthetic fixture only:**
+  - the empty state;
+  - a family part-decided, where the unmatched row offers no Accept;
+  - a statement written by hand through the board's route mid-session,
+    then the tab reopened: progress unchanged, the row a conflict with
+    no Accept; Keep left it;
+  - control_state statuses unchanged throughout.
+- **The real sample**, through HTTP, counts only:
+  - 3 rows, all in AC, all "Met";
+  - [a] and [b] exact and accepted onto 3.1.1[a] and [b];
+  - [c] unmatched and not acceptable;
+  - control_state unchanged;
+  - the session discarded and the bench torn down.
+
+  **2 of 3 rows landed. Three rows in one family is not a hit rate**,
+  and none is claimed.
+
 #### Recorded, not built
 
-- **The write path:** draft statements with provenance, through the
-  review session above. Its audit rows follow CLAUDE.md's audit rules.
 - **Importing RACI** as contacts and assignments, with its consent
   question.
 - **AI-proposed matches** for rows in review: shown as proposals, and a
