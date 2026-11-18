@@ -14565,16 +14565,39 @@ only the evidence bucket the app needs. The storage host's GET-only limit
 keeps admin writes off nginx, but the backend reaches `minio:9000`
 directly.
 
-**The fix MinIO supports directly.** A service account (or user) for the
-app, with a policy confined to the one bucket: `s3:ListBucket` on it, and
-`s3:GetObject`, `s3:PutObject` and `s3:DeleteObject` on its objects. The
-app's keys become that account's; root is kept for administration only,
-and stays in `.env` only because MinIO's container reads it there. To
-settle in the slice, by reading the code, not from this list:
-- **The bucket is created by the app at start** (`storage.py`,
-  `_ensure_bucket`'s `create_bucket`). A scoped account cannot, so a fresh
-  install needs the bucket and the account made by an init step that holds
-  root, and `_ensure_bucket`'s fallback must fail clearly, not be granted.
+**Why the app holds root: it provisions its own storage.** `storage.py`'s
+`_ensure_bucket` creates the bucket when the app starts and finds none.
+An app that provisions at startup needs, at runtime, a permission it has
+no use for afterwards, and root is the shortest path to it. So this is
+the cause, not a detail of the fix (the brief, 2026-11-18; my first
+version of this entry called it a complication).
+
+**The fix is two steps, in this order.**
+1. **Move bucket creation out of the app's startup** into a provisioning
+   step that holds root: `deploy/generate-env.sh`'s path, a compose init
+   service, or a documented first-run command (which one, the slice
+   decides). The same step makes the app's account. At startup the app
+   checks that the bucket exists and refuses clearly when it doesn't; it
+   never creates it.
+2. **Then give the app a service account confined to the one bucket**
+   (`s3:ListBucket` on it; `s3:GetObject`, `s3:PutObject` and
+   `s3:DeleteObject` on its objects). The app's keys become that
+   account's. Root is kept for administration only, and stays in `.env`
+   only because MinIO's container reads it there.
+
+Swap the credential without step 1 and root comes back the first time
+someone deploys fresh: the new install's app cannot create its bucket,
+and the easy repair is to hand it root again.
+
+**The general shape: a privilege that exists because of a convenience at
+startup, not a decision.** This is the second. The first was compose's
+default Fernet key (item 1 of the compose entry): a dev convenience that
+made `crypto.py`'s fail-closed guard unreachable. Both were set up so a
+first start just works, and both left a permission or a key that nobody
+chose for production. When reviewing anything that runs at startup, ask
+what it needs that the running app does not.
+
+To settle in the slice, by reading the code, not from this list:
 - **Every storage caller's actions:** snapshots, restore (into an empty
   bucket), the restore test's throwaway stack, the vendor-document and logo
   presigning (a presigned URL carries the signer's rights, so logos and
@@ -14583,9 +14606,13 @@ settle in the slice, by reading the code, not from this list:
   keys, recreate `backend` and `worker` (not `minio`), check old app keys
   refused. Its rotation then never touches root. It goes in `docs/deployment.md`'s
   "Moving off a default credential", with the reads already there.
-- **Tests and mutations:** a bench run where the app's account is refused
-  an admin call and another bucket, and the snapshot and restore test
-  still pass.
+- **Tests and mutations:**
+  - a bench run where the app's account is refused an admin call and
+    another bucket, and the snapshot and restore test still pass;
+  - a fresh install through the provisioning step comes up with no root
+    in the app's environment;
+  - the app started against a missing bucket refuses rather than creates.
+    Mutation: put `create_bucket` back, and that test goes red.
 
 Not this slice's scope (#108 or #109); its own small entry, by the
 brief's instruction.
