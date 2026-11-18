@@ -51,9 +51,14 @@ describe("row state, each case written out", () => {
     expect(rowState(row({ decision: "rejected" }))).toBe("rejected");
   });
 
-  it("an undecided unmatched row never reads as acceptable, even with candidates", () => {
-    const r = row({ match_kind: "unmatched", acceptable_onto: [], candidates: [{ objective_id: "o", ref: "X", score: 0.94 }] });
+  it("an unmatched row with every candidate under the floor reads as not acceptable", () => {
+    const r = row({ match_kind: "unmatched", acceptable_onto: [], candidates: [{ objective_id: "o", ref: "X", score: 0.53, text: "t", exact_text: false, offered: false }] });
     expect(rowState(r)).toBe("cannot_accept");
+  });
+
+  it("an unmatched row with a near match above the floor is pending, for a person to place", () => {
+    const r = row({ match_kind: "unmatched", acceptable_onto: ["o"], candidates: [{ objective_id: "o", ref: "X", score: 0.94, text: "t", exact_text: false, offered: true }] });
+    expect(rowState(r)).toBe("pending");
   });
 });
 
