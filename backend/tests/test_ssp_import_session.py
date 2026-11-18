@@ -136,6 +136,9 @@ def _person(db_session, org_id, role="msp_engineer"):
     user = _make_fake_user(role=role, org_id=org_id, email=f"{uuid.uuid4().hex[:8]}@x.com",
                            display_name=f"Person {role}")
     _grant(db_session, user)
+    # Committed: a refused request rolls back, and an uncommitted grant
+    # would go with it, so the next request would be a 403 for no reason.
+    db_session.commit()
     return user
 
 
@@ -289,7 +292,8 @@ def test_a_whole_import_writes_drafts_with_provenance_and_moves_no_status(db_ses
     assert a.body == "We identify users in the directory."
     assert b.body == "Edited by a person.\n\nTwo paras."
     assert a.generation_model is None
-    assert tuple(a.grounded_in) == imp.PROVENANCE_KEYS
+    # JSONB does not keep key order, so the keys are compared as a set.
+    assert set(a.grounded_in) == set(imp.PROVENANCE_KEYS)
     assert a.grounded_in["source"] == "ssp_import"
     assert a.grounded_in["session_id"] == sid
     assert a.grounded_in["file_name"] == "CustomerSSP.docx"
