@@ -17855,12 +17855,24 @@ kept in the audit row's `before_value`.
   one outside the row's family, has it. The person picks one of those
   candidates, and none is preselected.
 - `unmatched`: nothing. Its candidates are similarity guesses, shown for
-  reading. The brief said "unmatched rows cannot be accepted onto
-  anything"; that was read as this importer's `unmatched` kind. So the
-  sample's 3.1.1[c] ("including" for "(and other systems)", 0.94) does
-  not land, and is written by hand. Allowing a person to pick a
-  near-match is a decision not taken here; the rule "a near match is
-  worse than no match" stands.
+  reading. The sample's 3.1.1[c] ("including" for "(and other systems)",
+  0.94) does not land, and is written by hand.
+
+  **This is a decision waiting on a number, not a settled one.**
+  - **What the brief meant:** "unmatched rows cannot be accepted onto
+    anything" meant the *matcher* never guesses.
+  - **What was built:** the stricter reading, that a person cannot
+    confirm a near match either. It is the safer of the two, and it
+    ships.
+  - **Its cost:** every near match is a statement typed by hand.
+  - **The number:** Jarrod's walk on the real file gives the rate.
+  - **If the rate is high:** the design always allowed a person to
+    confirm a close match. A person choosing a candidate is placement by
+    a human, which is what "a near match is worse than no match" asked
+    for, since that rule is about the matcher. The change would be one
+    kind added to `PICKABLE_KINDS`, with no candidate preselected. The
+    test that pins today's rule (`test_an_unmatched_row_cannot_be_accepted_…`)
+    changes with it.
 - A row with no statement text: nothing.
 
 **What `grounded_in` carries** (`PROVENANCE_KEYS`; `generation_model`
@@ -17925,8 +17937,20 @@ The source rows written at start have one `audit_check.py` rule, naming
   text.
 - **A conflict** shows the existing statement and the two choices, and
   no Accept.
-- **Not saved:** text being edited and not yet saved as a draft is lost
-  on reload; it is not a decision until it is saved.
+- **Not saved: text being edited, until it is saved as a draft.** It is
+  the one place "a reload loses nothing" is not true, so the screen says
+  so where it happens, not only here (2026-11-18, the brief's note: a
+  person who typed three paragraphs will not remember a caveat read
+  once).
+  - **Beside the text box:** "Not saved yet…".
+  - **At the top:** "Unsaved edit on row N…".
+  - **In the family list:** an "unsaved edit" mark.
+  - **Reload or close:** the browser warns (`beforeunload`).
+  - **Switching families:** the text is kept, held by the panel rather
+    than the row.
+  - **Not covered:** leaving the screen through the side navigation
+    discards it without a prompt. The app has no router to intercept
+    that, which is why the notices say "leave this screen".
 - **Colours:** existing tokens only. Each pair is measured in
   `styles.css`; the lowest is 5.14:1.
 

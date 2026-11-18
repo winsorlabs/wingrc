@@ -61,3 +61,16 @@ export function decidedLine(r: SspImportRow): string {
 export function shortHash(sha256: string): string {
   return sha256.slice(0, 12);
 }
+
+/** Rows with text typed into "Edit first" that differs from the source
+ * and has not been saved as a draft: the only thing on this screen a
+ * reload would lose. */
+export function unsavedRows(rows: SspImportRow[], edits: Record<string, string>): SspImportRow[] {
+  return rows.filter((r) => r.id in edits && edits[r.id] !== (r.statement ?? ""));
+}
+
+export function unsavedNotice(rows: SspImportRow[]): string {
+  const nums = rows.map((r) => r.number).sort((a, b) => a - b);
+  const which = nums.length === 1 ? `row ${nums[0]}` : `rows ${nums.join(", ")}`;
+  return `Unsaved edit on ${which}. Save it as a draft before reloading or leaving this screen, or it is lost.`;
+}
