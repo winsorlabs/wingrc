@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { ApiError, api } from "../api";
-import type { ActivationChoice, ActivationPreview, MoveVersionResult, ProductRow } from "../types";
+import type { ActivationChoice, ActivationPreview, MoveVersionResult, ProductRow, ResponsibilityChoice } from "../types";
 import { ActivationAsk } from "./ActivationAsk";
 
 interface Props {
@@ -30,6 +30,7 @@ export function ProductCard({
   const [error, setError] = useState<string | null>(null);
   const [ask, setAsk] = useState<ActivationPreview | null>(null);
   const [choices, setChoices] = useState<Record<string, ActivationChoice>>({});
+  const [respChoices, setRespChoices] = useState<Record<string, ResponsibilityChoice>>({});
   const [scoring, setScoring] = useState(false);
   const [askError, setAskError] = useState<string | null>(null);
   // Only the latest choice's score is shown; an earlier answer arriving
@@ -45,12 +46,13 @@ export function ProductCard({
     setError(null);
     try {
       const preview = await api.previewActivation(orgId, assessmentId, product.id);
-      if (preview.objectives.length === 0) {
+      if (preview.objectives.length === 0 && preview.responsibility.length === 0) {
         await api.activateProduct(orgId, assessmentId, product.id, []);
         onActivated();
         return;
       }
       setChoices(Object.fromEntries(preview.objectives.map((o) => [o.control_state_id, o.choice])));
+      setRespChoices(Object.fromEntries(preview.responsibility.map((r) => [r.control_state_id, r.choice])));
       setAskError(null);
       setAsk(preview);
     } catch (e: unknown) {
@@ -80,6 +82,12 @@ export function ProductCard({
     }
   }
 
+  // Responsibility does not move the score, so a choice needs no new
+  // preview: the confirm sends it, with what the person was shown.
+  function handleChooseResp(controlStateId: string, choice: ResponsibilityChoice) {
+    setRespChoices((prev) => ({ ...prev, [controlStateId]: choice }));
+  }
+
   async function handleConfirm() {
     if (!ask) return;
     setActivating(true);
@@ -93,6 +101,12 @@ export function ProductCard({
           control_state_id: o.control_state_id,
           shown_status: o.status,
           choice: choices[o.control_state_id] ?? o.choice,
+        })),
+        ask.responsibility.map((r) => ({
+          control_state_id: r.control_state_id,
+          shown_responsibility: r.responsibility,
+          tool_responsibility: r.tool_would_set,
+          choice: respChoices[r.control_state_id] ?? r.choice,
         }))
       );
       setAsk(null);
@@ -105,7 +119,8 @@ export function ProductCard({
         try {
           const fresh = await api.previewActivation(orgId, assessmentId, product.id);
           setChoices(Object.fromEntries(fresh.objectives.map((o) => [o.control_state_id, o.choice])));
-          setAsk(fresh.objectives.length > 0 ? fresh : null);
+          setRespChoices(Object.fromEntries(fresh.responsibility.map((r) => [r.control_state_id, r.choice])));
+          setAsk(fresh.objectives.length > 0 || fresh.responsibility.length > 0 ? fresh : null);
         } catch {
           // The refusal above stays on screen.
         }
@@ -267,10 +282,12 @@ export function ProductCard({
           productName={product.name}
           preview={ask}
           choices={choices}
+          respChoices={respChoices}
           scoring={scoring}
           busy={activating}
           error={askError}
           onChoose={handleChoose}
+          onChooseResp={handleChooseResp}
           onConfirm={handleConfirm}
           onCancel={handleCancel}
         />

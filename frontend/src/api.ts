@@ -1,4 +1,4 @@
-import type { ActivationChoice, ActivationPreview, ActivationResult, JudgedDecision, MoveVersionResult, ApiTokenRow, ArchivedEvidenceSection, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, EnvironmentData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, SnapshotStatus, TlsExpiry, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent, AdoptResult, TakeTemplateResult, ListEvidenceCandidate, ListEvidenceLink, ListEvidenceStatus, ListLinkEvent, TagRemovalCheck, DocumentEvidenceCandidate, DocumentTagsAdded, SspConflict, SspDecisionIn, SspImportSummary, SspImportView } from "./types";
+import type { ActivationChoice, ActivationPreview, ActivationResult, JudgedDecision, MoveVersionResult, ApiTokenRow, ArchivedEvidenceSection, AssetApproval, Assessment, AuditLogPage, AuthUser, BaselineControlDraft, BaselineImportPreview, BaselineImportResult, Contact, ControlStateRow, CreatedApiToken, DashboardData, EnvironmentData, DiagramUpload, DocumentIngestResult, DryRunResult, EvidenceRow, EvidenceTaskRow, FetchUrlsResult, Framework, IntegrationConnector, InvitedUser, LiongardContactSelection, LiongardEnvironmentMapping, LiongardEnvironmentOption, LiongardIdentityListResult, LiongardImportResult, LiongardUnmapResult, MembershipGrantResult, MfaEnrollData, MspOrg, OnboardingStatus, Org, OrgProfile, PasswordResetIssued, PractitionerNotesUpdate, ProductDetail, ProductDocumentItem, ProductFootprintRow, AssetApprovalResult, LiongardSyncResultDetail, LiongardSyncResultRow, ProductLibraryItem, ProductMetaDraft, ProductPublishState, ProductRow, ProductVersionItem, RaciAssignmentRow, ReviewCycle, ReviewCycleDetail, ReviewCycleFlag, ReviewCycleReviewer, ScheduledJob, ScopeChange, SnapshotStatus, TlsExpiry, ScopeEntity, SessionRow, SprsSubmission, StatementRow, StepUpIn, SystemDescriptionData, UrlSuggestion, UserDirectoryEntry, UserRow, DocumentApprovalRow, DocumentRow, DocumentDetail, DocumentVersionRow, DocumentVersionDetail, DocumentDiff, DocumentHistory, DocumentSaveConflict, DocumentType, ListViewData, ListViewSummary, LibraryListDetail, LibraryListSaveConflict, LibraryListSummary, LibraryListVersion, ListImportReport, LibraryListCreate, ListTagEvent, AdoptResult, TakeTemplateResult, ListEvidenceCandidate, ListEvidenceLink, ListEvidenceStatus, ListLinkEvent, TagRemovalCheck, DocumentEvidenceCandidate, DocumentTagsAdded, SspConflict, SspDecisionIn, SspImportSummary, SspImportView, ResponsibilityChoice, ResponsibilityDecision } from "./types";
 
 const BASE = "/api";
 
@@ -374,12 +374,13 @@ export const api = {
     orgId: string,
     assessmentId: string,
     productId: string,
-    decisions: JudgedDecision[]
+    decisions: JudgedDecision[],
+    responsibilityDecisions: ResponsibilityDecision[] = []
   ) =>
     send<ActivationResult>(
       `/orgs/${orgId}/assessments/${assessmentId}/products/${productId}/activate`,
       "POST",
-      { decisions }
+      { decisions, responsibility_decisions: responsibilityDecisions }
     ),
 
   // What activating would do to objectives a person judged, and the score
@@ -389,12 +390,29 @@ export const api = {
     orgId: string,
     assessmentId: string,
     productId: string,
-    choices: { control_state_id: string; choice: ActivationChoice }[] = []
+    choices: { control_state_id: string; choice: ActivationChoice }[] = [],
+    responsibilityChoices: { control_state_id: string; choice: ResponsibilityChoice }[] = []
   ) =>
     send<ActivationPreview>(
       `/orgs/${orgId}/assessments/${assessmentId}/products/${productId}/activation-preview`,
       "POST",
-      { choices }
+      { choices, responsibility_choices: responsibilityChoices }
+    ),
+
+  // A person sets an objective's responsibility: the only human write path
+  // (engine.set_responsibility). via says whether it came from the drawer's
+  // RACI suggestion; a person writes it either way.
+  setResponsibility: (
+    orgId: string,
+    assessmentId: string,
+    controlStateId: string,
+    responsibility: string,
+    via: "manual" | "raci_suggestion" = "manual"
+  ) =>
+    send<{ id: string; responsibility: string; responsibility_set_by: string | null; responsibility_set_at: string | null }>(
+      `/orgs/${orgId}/assessments/${assessmentId}/control-states/${controlStateId}/responsibility`,
+      "PUT",
+      { responsibility, via }
     ),
 
   // replacedBy: what the person says replaces it, or null. Never inferred.

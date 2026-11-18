@@ -310,6 +310,10 @@ class StatementOut(BaseModel):
     # without a second fetch of the whole control-states list just for this
     # one field — get_statements already loads states_by_obj below.
     responsibility: str | None = None
+    # Who set responsibility by hand (migration 0075), for the drawer's
+    # control; null when it is the default or a tool's value.
+    responsibility_set_by: str | None = None
+    responsibility_set_at: datetime | None = None
 
 
 class UpsertStatementIn(BaseModel):
@@ -1465,6 +1469,12 @@ def get_statements(
             status=existing[o.id].status if o.id in existing else None,
             control_discussion=ctrl.discussion,
             responsibility=states_by_obj[o.id].responsibility if o.id in states_by_obj else None,
+            responsibility_set_by=(
+                states_by_obj[o.id].responsibility_set_by if o.id in states_by_obj else None
+            ),
+            responsibility_set_at=(
+                states_by_obj[o.id].responsibility_set_at if o.id in states_by_obj else None
+            ),
         )
         for o in objectives
     ]

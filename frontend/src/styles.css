@@ -2658,3 +2658,16 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 @media (max-width: 800px) { .ssp-body { grid-template-columns: 1fr; } .ssp-families { position: static; } }
 /* An unsaved edit: --partial-fg on --partial-bg, 7.21:1 (measured above). */
 .ssp-unsaved { background: var(--partial-bg); color: var(--partial-fg); border-radius: 6px; padding: 0.4rem 0.75rem; font-size: 0.85rem; }
+
+/* -- Responsibility, set by a person (ResponsibilityControl.tsx) --
+   Existing pairs only: the suggestion is --partial-fg on --partial-bg
+   (7.21:1), its buttons --primary on --partial-bg (5.81:1), the
+   provenance line --muted on --surface (6.09:1), all measured 2026-11-18. */
+.resp-control { display: flex; flex-direction: column; gap: 0.35rem; margin: 0.5rem 0; }
+.resp-control-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.resp-control-label { font-weight: 600; font-size: 0.85rem; }
+.resp-control-meta { color: var(--muted); font-size: 0.8rem; }
+.resp-suggestion { background: var(--partial-bg); color: var(--partial-fg); border-radius: 6px; padding: 0.45rem 0.7rem; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; font-size: 0.85rem; }
+.resp-suggestion-actions { display: inline-flex; gap: 0.4rem; }
+.activation-ask-subhead { font-size: 0.95rem; font-weight: 600; margin-top: 0.75rem; }
+.activation-ask-note { color: var(--muted); font-size: 0.85rem; }

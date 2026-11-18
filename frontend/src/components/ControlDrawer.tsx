@@ -4,6 +4,7 @@ import { canEditPractitionerNotes } from "../lib/roles";
 import type { Contact, RaciAssignmentRow, ResolvedIdentity, StatementRow } from "../types";
 import { EvidenceSection } from "./EvidenceSection";
 import { RaciSection } from "./RaciSection";
+import { ResponsibilityControl } from "./ResponsibilityControl";
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString();
@@ -41,6 +42,8 @@ interface StatementItem {
   id: string | null;
   control_discussion: string | null;
   responsibility: string | null;
+  responsibility_set_by: string | null;
+  responsibility_set_at: string | null;
 }
 
 interface Props {
@@ -74,6 +77,8 @@ function fromRow(row: StatementRow): StatementItem {
     id: row.id,
     control_discussion: row.control_discussion,
     responsibility: row.responsibility,
+    responsibility_set_by: row.responsibility_set_by,
+    responsibility_set_at: row.responsibility_set_at,
   };
 }
 
@@ -475,6 +480,26 @@ export function ControlDrawer({
                 </fieldset>
                 {item.control_state_id && (
                   <>
+                    {item.responsibility && (
+                      <ResponsibilityControl
+                        orgId={orgId}
+                        assessmentId={assessmentId}
+                        controlStateId={item.control_state_id}
+                        responsibility={item.responsibility}
+                        setBy={item.responsibility_set_by}
+                        setAt={item.responsibility_set_at}
+                        assignments={raciAssignments.filter(
+                          (a) => a.control_state_id === item.control_state_id
+                        )}
+                        canWrite={canWrite}
+                        onChanged={(value, setBy, setAt) => {
+                          setItems((prev) => prev.map((x) => x.objective_id === item.objective_id
+                            ? { ...x, responsibility: value, responsibility_set_by: setBy, responsibility_set_at: setAt }
+                            : x));
+                          setRowsDirty(true);
+                        }}
+                      />
+                    )}
                     {/* Ownership before proof: RACI above Evidence in this
                         drawer, per G.7 Part 2's explicit placement call. */}
                     <RaciSection
