@@ -13999,7 +13999,8 @@ HEAD.
   that. A limit by path (the bucket only, no `/minio/` admin reads) was
   considered and not taken. The bucket's name is a setting, which would
   couple nginx to it, and the reads it would close are the ones the
-  password already guards.
+  password already guards. The brief agreed (2026-11-18): once the
+  methods are closed, tying nginx to the bucket name buys little.
 - **Shipped with the rotation:** `deploy.sh` brings the new nginx up
   before the MinIO hand step. So the window where the host is both open
   to writes and on a published credential closes in one session.
@@ -14382,13 +14383,29 @@ step and its reason in `hand-step-minio.md`.
      is a token row in the database, and the app's own role
      (`wingrc_app`) did not change.
 
+**Two things about the step that are easy to misread (the brief,
+2026-11-18):**
+- **A link issued before the change stops working at the change.** A
+  presigned URL is signed with the secret it was made under, so from
+  13:31:24Z MinIO refused any logo or vendor-document link issued
+  earlier. They live 300 seconds (`storage.py`'s default, used by both),
+  so the effect was at most a failed download that works on retry. It is
+  not a fault.
+- **The command's makeup is the correctness of the step.** The app's
+  storage keys are the root pair (below, "The app reaches MinIO as
+  root"), so `minio`, `backend` and `worker` must take the new value in
+  one recreate, or the app is refused in between. nginx is in it for its
+  address, and `--force-recreate` is what actually restarts it. Remove any
+  one and the step still looks complete.
+
 The rollback copies of `.env` lived in `~claude`, mode 600, and were
 deleted once Jarrod's checks passed. Jarrod then ran the `chown`:
 `.env` is `wladmin:wladmin 640` (read 2026-11-18), so `claude` can read it,
 which is all compose and `deploy.sh` need, and can no longer write it. A
 later change to `.env` is Jarrod's. The Fernet key and the state-cookie
 key were already off their defaults. **Next:** option (b), `deploy.sh`'s
-named-service recreate, then the deactivated-account slice.
+named-service recreate, then the deactivated-account slice, then "The
+app reaches MinIO as root".
 
 ### HSTS: one day first -- decided 2026-11-17 (#108)
 
@@ -14534,6 +14551,44 @@ account that has a password and no enrolment.
   - reactivation clears the marker.
 
   Mutations: each check dropped in turn, seen red.
+
+### The app reaches MinIO as root -- queued 2026-11-18 (the brief's finding), after the deactivated-account slice
+
+**The defect.** `WINGRC_STORAGE_ACCESS_KEY`/`SECRET_KEY` hold the same
+values as `MINIO_ROOT_USER`/`PASSWORD`, on live and in every install the
+guide describes. The IAM store holds no service account (read 2026-11-17
+and 2026-11-18), so the app has never had a scoped identity. The rotation
+(#108, live 2026-11-18) changed the password, not that. So a compromise
+of the backend or worker, or a leak of their environment, is root on the
+object store: MinIO's admin API, users, policies and every bucket, not
+only the evidence bucket the app needs. The storage host's GET-only limit
+keeps admin writes off nginx, but the backend reaches `minio:9000`
+directly.
+
+**The fix MinIO supports directly.** A service account (or user) for the
+app, with a policy confined to the one bucket: `s3:ListBucket` on it, and
+`s3:GetObject`, `s3:PutObject` and `s3:DeleteObject` on its objects. The
+app's keys become that account's; root is kept for administration only,
+and stays in `.env` only because MinIO's container reads it there. To
+settle in the slice, by reading the code, not from this list:
+- **The bucket is created by the app at start** (`storage.py`,
+  `_ensure_bucket`'s `create_bucket`). A scoped account cannot, so a fresh
+  install needs the bucket and the account made by an init step that holds
+  root, and `_ensure_bucket`'s fallback must fail clearly, not be granted.
+- **Every storage caller's actions:** snapshots, restore (into an empty
+  bucket), the restore test's throwaway stack, the vendor-document and logo
+  presigning (a presigned URL carries the signer's rights, so logos and
+  vendor documents are then signed by the scoped account).
+- **How a deployment moves:** make the account with root, set the app's
+  keys, recreate `backend` and `worker` (not `minio`), check old app keys
+  refused. Its rotation then never touches root. It goes in `docs/deployment.md`'s
+  "Moving off a default credential", with the reads already there.
+- **Tests and mutations:** a bench run where the app's account is refused
+  an admin call and another bucket, and the snapshot and restore test
+  still pass.
+
+Not this slice's scope (#108 or #109); its own small entry, by the
+brief's instruction.
 
 ### Live cannot say who signed in from where -- recorded 2026-11-17; urgent the day there are two users
 
