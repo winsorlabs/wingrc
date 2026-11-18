@@ -1,4 +1,4 @@
-import { canSeeApiTokens, canSeeAuditLog, canSeeSecurity, canSeeUsers } from "../lib/roles";
+import { canImportSsp, canSeeApiTokens, canSeeAuditLog, canSeeSecurity, canSeeUsers } from "../lib/roles";
 import { SideNavCategory, SideNavItem, SideNavRoot, SideNavSubitem, SideNavSubitems } from "./SideNavKit";
 import type { OnboardingStatus } from "../types";
 
@@ -31,7 +31,7 @@ export type ScopeTab =
 // RACI is assessment-scoped data (docs/PLAN-gui-restructure.md G.7's
 // 2026-09-09 move note) — "board" is the existing per-control assessment
 // view, "roles" is the Roles/RACI matrix, both live under Assessments now.
-export type AssessmentsTab = "board" | "roles";
+export type AssessmentsTab = "board" | "roles" | "ssp-import";
 export type SecurityTab = "users" | "api-tokens" | "audit-log";
 // Library is the org's document library (roadmap N.1/N.2). "all" is every
 // document; the rest are doc_type filters.
@@ -180,6 +180,11 @@ export function SideNav({
             <SideNavSubitem active={assessmentsTab === "roles"} onClick={() => onSelectAssessmentsTab("roles")}>
               Roles
             </SideNavSubitem>
+            {canImportSsp(currentUserRole) && (
+              <SideNavSubitem active={assessmentsTab === "ssp-import"} onClick={() => onSelectAssessmentsTab("ssp-import")}>
+                SSP Import
+              </SideNavSubitem>
+            )}
           </SideNavSubitems>
         )}
       </SideNavCategory>

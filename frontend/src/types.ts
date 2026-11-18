@@ -1933,3 +1933,93 @@ export interface ActivationResult {
     decided_by: "person" | "default";
   }[];
 }
+
+// SSP import review session (routers/ssp_imports.py). The file itself is
+// not kept; the session pins it by hash.
+export interface SspImportSummary {
+  id: string;
+  status: "open" | "completed" | "discarded";
+  file_name: string;
+  file_sha256: string;
+  file_size: number;
+  started_by: string | null;
+  started_at: string;
+  closed_by: string | null;
+  closed_at: string | null;
+  rows: number;
+  decided: number;
+  written: number;
+}
+
+export interface SspImportCandidate {
+  objective_id: string;
+  ref: string;
+  score: number;
+}
+
+export interface SspImportExisting {
+  id: string;
+  body: string;
+  status: string;
+  updated_at: string;
+  from_this_session: boolean;
+}
+
+export type SspMatchKind = "exact" | "ambiguous" | "family_mismatch" | "no_family" | "unmatched";
+export type SspDecision = "pending" | "accepted" | "edited" | "rejected";
+
+export interface SspImportRow {
+  id: string;
+  number: number;
+  family: string;
+  heading: string | null;
+  control_text: string;
+  statement: string | null;
+  source_status: string | null;
+  notes_present: boolean;
+  raci_present: boolean;
+  match_kind: SspMatchKind;
+  objective_id: string | null;
+  objective_ref: string | null;
+  objective_text: string | null;
+  candidates: SspImportCandidate[];
+  acceptable_onto: string[];
+  not_acceptable: string | null;
+  decision: SspDecision;
+  resolution: "replaced" | "kept_existing" | null;
+  decided_objective_id: string | null;
+  decided_ref: string | null;
+  statement_id: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  existing: SspImportExisting | null;
+  shares_objective_with: number[];
+}
+
+export interface SspImportFamily {
+  key: string;
+  heading: string;
+  total: number;
+  decided: number;
+}
+
+export interface SspImportView {
+  session: SspImportSummary;
+  families: SspImportFamily[];
+  families_complete: number;
+  rows: SspImportRow[];
+}
+
+export interface SspDecisionIn {
+  action: "accept" | "edit" | "reject" | "keep_existing" | "reopen";
+  objective_id?: string;
+  body?: string;
+  replace_statement_id?: string;
+  replace_updated_at?: string;
+}
+
+export interface SspConflict {
+  reason: "conflict";
+  message: string;
+  statement: { id: string; body: string; status: string; updated_at: string };
+}
