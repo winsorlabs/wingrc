@@ -354,7 +354,7 @@ function RowCard({ orgId, assessmentId, sessionId, row, onView }: {
 
           {shown && (
             <div className="ssp-conflict" role="group" aria-label="Existing statement">
-              <div className="ssp-row-q">{ref ?? "This objective"} already has a statement ({shown.status})</div>
+              <div className="ssp-conflict-title">{ref ?? "This objective"} already has a statement ({shown.status})</div>
               <div className="ssp-row-statement">{shown.body}</div>
               <div className="ssp-conflict-actions">
                 <button className="btn btn-ghost btn-sm" disabled={busy || !objectiveId}
