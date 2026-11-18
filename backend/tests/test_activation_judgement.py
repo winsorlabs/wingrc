@@ -85,6 +85,12 @@ def _product(db_session, fw, key, claims):
 
 @pytest.fixture
 def w(db_session: Session) -> dict:
+    return _world(db_session)
+
+
+def _world(db_session: Session) -> dict:
+    """Three controls, a product P covering all three and Q covering c3,
+    and a started assessment. Shared with tests/test_responsibility.py."""
     org = Organization(name=f"Judgement-{uuid.uuid4().hex[:6]}")
     fw = Framework(key=f"fw-judge-{uuid.uuid4().hex[:6]}", name="FW", version="r2")
     db_session.add_all([org, fw])

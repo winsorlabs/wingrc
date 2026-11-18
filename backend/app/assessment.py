@@ -396,3 +396,33 @@ def contributor_added_status(
             return current_status
         return ControlStatus.NEEDS_REVIEW
     return ControlStatus.PENDING_EVIDENCE
+
+
+class ResponsibilityChoice(StrEnum):
+    """A person's answer, at activation, for an objective whose
+    responsibility they set by hand and a tool would change."""
+
+    KEEP = "keep"
+    TAKE_TOOL = "take_tool"
+
+
+def is_responsibility_in_question(current: str, tool_value: str, set_by_person: bool) -> bool:
+    """Whether a tool would change a responsibility a person set. A value a
+    tool or the seed put there is not a judgement, and moves as it always
+    has; neither does a tool that would set the same value."""
+    return set_by_person and tool_value != current
+
+
+def tool_changed_responsibility(
+    current: str, tool_value: str, set_by_person: bool, choice: str | None = None
+) -> str:
+    """control_state.responsibility after a tool's arrival, departure or
+    version change. The status rule's counterpart, with the opposite
+    default: there, an unasked path defers a judgement to needs_review;
+    here there is no "needs review" responsibility, so an unasked path
+    keeps the person's value, and the caller records what the tool would
+    have set. Only TAKE_TOOL, a person's answer, replaces it.
+    Each case is written out in tests/test_responsibility.py."""
+    if not is_responsibility_in_question(current, tool_value, set_by_person):
+        return tool_value
+    return tool_value if choice == ResponsibilityChoice.TAKE_TOOL else current

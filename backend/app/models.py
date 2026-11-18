@@ -800,6 +800,10 @@ class ControlState(Base):
             " 'customer_owns', 'external_system')",
             name="ck_control_state_responsibility",
         ),
+        CheckConstraint(
+            "(responsibility_set_by IS NULL) = (responsibility_set_at IS NULL)",
+            name="ck_control_state_responsibility_set",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -817,6 +821,12 @@ class ControlState(Base):
     )
     status: Mapped[str] = mapped_column(String(20), default="not_met")
     responsibility: Mapped[str] = mapped_column(String(25), default="customer_owns")
+    # Who set `responsibility` by hand, and when (migration 0075). Null means
+    # the value is the seed default or a tool's; set, it is a person's
+    # judgement, which a tool never overwrites without asking
+    # (engine._tool_responsibility).
+    responsibility_set_by: Mapped[str | None] = mapped_column(Text)
+    responsibility_set_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     implementation_notes: Mapped[str | None] = mapped_column(Text)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(

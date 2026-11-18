@@ -36,12 +36,15 @@ from .assessment import (
     ControlStatus,
     OrgProductStatus,
     Responsibility,
+    ResponsibilityChoice,
     compute_sprs,
     contributor_added_status,
     deducting_controls,
     is_judgement_in_question,
+    is_responsibility_in_question,
     magic_loop_updates,
     resolve_contributor_responsibility,
+    tool_changed_responsibility,
 )
 from .audit import log_event
 from .models import (
@@ -71,6 +74,35 @@ class ActivationJudgementsChanged(Exception):
     """The judged objectives at confirm are not the ones the person was
     shown, or one moved since: they approved a change that is no longer the
     one that would happen."""
+
+
+def _tool_responsibility(
+    cs: ControlState, tool_value: str, choice: str | None = None,
+    asked: list | None = None,
+) -> str:
+    """The responsibility a tool's arrival, departure or version change
+    leaves on cs. A value a person set (responsibility_set_by) is kept
+    unless they chose to take the tool's. When the tool would change a
+    person's value, (cs, value, tool's value) is appended to `asked`, so
+    the caller can ask or say so. Every path that recomputes
+    responsibility goes through here (assessment.tool_changed_responsibility
+    holds the rule)."""
+    set_by_person = cs.responsibility_set_by is not None
+    if asked is not None and is_responsibility_in_question(
+        cs.responsibility, tool_value, set_by_person
+    ):
+        asked.append((cs, cs.responsibility, tool_value))
+    return tool_changed_responsibility(cs.responsibility, tool_value, set_by_person, choice)
+
+
+def _responsibility_note(prev: str, tool_value: str, new: str, choice: str | None) -> str:
+    """The history clause when a tool met a responsibility a person set."""
+    if new == prev and choice is None:
+        return (f"; responsibility kept at {prev}, set by a person "
+                f"(the tool would set {tool_value})")
+    if new == prev:
+        return f"; responsibility kept at {prev}, chosen by a person over {tool_value}"
+    return f"; responsibility set to {new} over {prev}, chosen by a person"
 
 
 def _scoring_inputs(
@@ -526,8 +558,16 @@ def activate_org_product(
     assessment_id: uuid.UUID,
     configuration_notes: str | None = None,
     decisions: dict[uuid.UUID, tuple[str, str]] | None = None,
+    responsibility_decisions: dict[uuid.UUID, tuple[str, str, str]] | None = None,
 ) -> dict:
     """Mark a product active and fire the magic loop for one assessment.
+
+    Responsibility a person set by hand (control_state.responsibility_set_by)
+    that this product would change is asked the same way:
+    responsibility_decisions carries, per control_state id, (the value
+    shown, the tool's value shown, ResponsibilityChoice). It must name
+    exactly those objectives, each unchanged, or ActivationJudgementsChanged
+    is raised. None means nobody was asked, and the person's value is kept.
 
     Judged objectives (Jarrod, 2026-11-03: ask at activation): where this
     product would be the first contributor to an objective a person judged
@@ -686,6 +726,16 @@ def activate_org_product(
             if decisions is not None
             else None
         ),
+        resp_decisions=(
+            {cs_id: choice for cs_id, (_, _, choice) in responsibility_decisions.items()}
+            if responsibility_decisions is not None
+            else None
+        ),
+        resp_expected=(
+            {cs_id: (shown, tool) for cs_id, (shown, tool, _) in responsibility_decisions.items()}
+            if responsibility_decisions is not None
+            else None
+        ),
     )
 
     # States that regained archived evidence need human re-confirmation, not pending.
@@ -739,6 +789,7 @@ def activate_org_product(
             "baseline_version_id": str(target_version_id),
             "sprs_score": sprs_after,
             "judged": result["judged"],
+            "responsibility": result["responsibility"],
         },
         context={
             "via": "product_activation",
@@ -758,9 +809,14 @@ def activation_preview(
     product_id: uuid.UUID,
     assessment_id: uuid.UUID,
     choices: dict[uuid.UUID, str] | None = None,
+    responsibility_choices: dict[uuid.UUID, str] | None = None,
 ) -> dict:
     """What activating this product would do to the objectives a person
     judged, and to the score, for the activation screen.
+
+    "responsibility" lists each objective whose responsibility a person
+    set by hand and this product would change, with the default (keep)
+    and what each answer gives. Responsibility does not move the score.
 
     Computed by running activate_org_product itself inside a savepoint and
     rolling it back, twice: once to find the judged objectives, once with
@@ -792,10 +848,13 @@ def activation_preview(
         savepoint.rollback()
 
     judged = [(uuid.UUID(j["control_state_id"]), j["from"]) for j in found["judged"]]
+    responsibility = _responsibility_asks(session, found["responsibility"],
+                                          responsibility_choices or {})
     if not judged:
         return {
             "sprs_now": sprs_now, "sprs_after": sprs_after,
             "objectives": [], "practices_starting": [],
+            "responsibility": responsibility,
         }
 
     given = choices or {}
@@ -843,7 +902,49 @@ def activation_preview(
         "sprs_after": sprs_after,
         "objectives": objectives,
         "practices_starting": sorted(deducting_after - deducting_now),
+        "responsibility": responsibility,
     }
+
+
+def _responsibility_asks(
+    session: Session, found: list[dict], choices: dict[uuid.UUID, str]
+) -> list[dict]:
+    """The activation screen's responsibility rows, from a run nobody was
+    asked in (each "from" is the person's value, "tool" the product's)."""
+    if not found:
+        return []
+    ids = [uuid.UUID(f["control_state_id"]) for f in found]
+    described = {
+        cs_id: (control_key, objective_key, text, set_by)
+        for cs_id, control_key, objective_key, text, set_by in session.execute(
+            select(
+                ControlState.id, Control.control_id, AssessmentObjective.objective_key,
+                AssessmentObjective.text, ControlState.responsibility_set_by,
+            )
+            .join(AssessmentObjective, ControlState.objective_id == AssessmentObjective.id)
+            .join(Control, AssessmentObjective.control_id == Control.id)
+            .where(ControlState.id.in_(ids))
+        )
+    }
+    rows = []
+    for f in found:
+        cs_id = uuid.UUID(f["control_state_id"])
+        control_key, objective_key, text, set_by = described[cs_id]
+        choice = choices.get(cs_id) or ResponsibilityChoice.KEEP
+        rows.append({
+            "control_state_id": str(cs_id),
+            "control_id": control_key,
+            "objective_key": objective_key,
+            "objective_text": text,
+            "responsibility": f["from"],
+            "set_by": set_by,
+            "tool_would_set": f["tool"],
+            "default": str(ResponsibilityChoice.KEEP),
+            "choice": str(choice),
+            "becomes": f["tool"] if choice == ResponsibilityChoice.TAKE_TOOL else f["from"],
+        })
+    rows.sort(key=lambda r: (r["control_id"], r["objective_key"], r["control_state_id"]))
+    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -877,6 +978,65 @@ def _seed_control_states(
     session.flush()
 
 
+RESPONSIBILITY_VIA = ("manual", "raci_suggestion")
+
+
+def set_responsibility(
+    session: Session,
+    org_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    control_state_id: uuid.UUID,
+    value: str,
+    actor: str,
+    via: str = "manual",
+) -> ControlState:
+    """A person sets an objective's responsibility: the only human write
+    path (docs/roadmap.md, "Responsibility had no human write path"). Marks
+    it as theirs (responsibility_set_by/_at), writes a history row and an
+    audit row. Status and the score do not move: responsibility is not
+    scored. `via` says whether they typed it or accepted the drawer's
+    suggestion from RACI; either way a person wrote it, and RACI never does.
+    Raises ValueError on an unknown value or via, LookupError when the
+    control_state is not this assessment's, or not visible."""
+    if value not in set(Responsibility):
+        raise ValueError(f"Unknown responsibility {value!r}")
+    if via not in RESPONSIBILITY_VIA:
+        raise ValueError(f"Unknown via {via!r}")
+    cs = session.scalars(
+        select(ControlState).where(
+            ControlState.id == control_state_id, ControlState.assessment_id == assessment_id
+        ).with_for_update()
+    ).first()
+    a = session.scalars(
+        select(Assessment).where(Assessment.id == assessment_id, Assessment.org_id == org_id)
+    ).first()
+    if cs is None or a is None:
+        raise LookupError("Control state not found")
+    prev = cs.responsibility
+    prev_by = cs.responsibility_set_by
+    cs.responsibility = value
+    cs.responsibility_set_by = actor
+    cs.responsibility_set_at = datetime.now(UTC)
+    how = "from the RACI suggestion" if via == "raci_suggestion" else "by hand"
+    session.add(ControlStateHistory(
+        control_state_id=cs.id,
+        previous_status=cs.status,
+        new_status=cs.status,
+        previous_responsibility=prev,
+        new_responsibility=value,
+        change_reason=f"Responsibility set to {value} {how} by {actor}",
+    ))
+    session.flush()
+    log_event(
+        session, org_id=org_id, action="control_state.responsibility_set",
+        entity_type="control_state", entity_id=cs.id,
+        before_value={"responsibility": prev, "set_by_person": prev_by is not None},
+        after_value={"responsibility": value},
+        context={"via": via, "assessment_id": str(assessment_id)},
+    )
+    return cs
+
+
 def _run_loop(
     session: Session,
     org_id: uuid.UUID,
@@ -886,6 +1046,8 @@ def _run_loop(
     decisions: dict[uuid.UUID, str] | None = None,
     path: str = "activation",
     expected: dict[uuid.UUID, str] | None = None,
+    resp_decisions: dict[uuid.UUID, str] | None = None,
+    resp_expected: dict[uuid.UUID, tuple[str, str]] | None = None,
 ) -> dict:
     """Core magic-loop logic: update states, write history, seed tasks.
 
@@ -904,6 +1066,13 @@ def _run_loop(
     record when nobody was asked. expected, given with decisions, is the
     status each was shown at: the judged set must be exactly its keys,
     each still at that status, or ActivationJudgementsChanged is raised.
+
+    resp_decisions and resp_expected are the same for a responsibility a
+    person set by hand that this product would change: the answer
+    (assessment.ResponsibilityChoice), and the (value, tool's value) the
+    person was shown. None means nobody was asked, and the person's value
+    is kept (_tool_responsibility). The returned "responsibility" lists
+    every such objective, asked or not.
     """
     product = session.get(Product, product_id)
     if product is None:
@@ -920,7 +1089,8 @@ def _run_loop(
     ).all()
 
     if not baseline_controls:
-        return {"objectives_updated": 0, "tasks_created": 0, "judged": []}
+        return {"objectives_updated": 0, "tasks_created": 0, "judged": [],
+                "responsibility": []}
 
     assessment = session.get(Assessment, assessment_id)
     if assessment is None:
@@ -968,7 +1138,8 @@ def _run_loop(
     # --- pure function: what THIS product's own baseline claims ---
     updates = magic_loop_updates(entries, objective_lookup)
     if not updates:
-        return {"objectives_updated": 0, "tasks_created": 0, "judged": []}
+        return {"objectives_updated": 0, "tasks_created": 0, "judged": [],
+                "responsibility": []}
 
     # --- pre-load existing control_states to avoid N+1 ---
     updated_obj_ids = {uuid.UUID(u["objective_id"]) for u in updates}
@@ -1012,6 +1183,8 @@ def _run_loop(
     new_contributor_rows: list[ControlStateContributor] = []
     judged_outcomes: list[dict] = []
     judged_seen: set[uuid.UUID] = set()
+    resp_asked: list[tuple[ControlState, str, str]] = []
+    resp_outcomes: list[dict] = []
     objectives_updated = 0
 
     for upd in updates:
@@ -1055,7 +1228,28 @@ def _run_loop(
         if choice is not None and choice not in set(ActivationChoice):
             raise ValueError(f"Unknown choice {choice!r}")
         state.status = contributor_added_status(prev_status, not had_prior_contributors, choice)
-        state.responsibility = resolve_contributor_responsibility(all_classifications)
+        tool_resp = resolve_contributor_responsibility(all_classifications)
+        n_asked = len(resp_asked)
+        resp_choice = resp_decisions.get(state.id) if resp_decisions is not None else None
+        if resp_choice is not None and resp_choice not in set(ResponsibilityChoice):
+            raise ValueError(f"Unknown responsibility choice {resp_choice!r}")
+        state.responsibility = _tool_responsibility(state, tool_resp, resp_choice, resp_asked)
+        resp_note = ""
+        if len(resp_asked) > n_asked:
+            if resp_expected is not None and resp_expected.get(state.id) != (prev_resp, tool_resp):
+                raise ActivationJudgementsChanged(
+                    "An objective you were asked about has changed, or a new one needs "
+                    "asking. Nothing was activated; review it again."
+                )
+            resp_note = _responsibility_note(prev_resp, tool_resp, state.responsibility,
+                                             resp_choice)
+            resp_outcomes.append({
+                "control_state_id": str(state.id),
+                "from": prev_resp,
+                "tool": tool_resp,
+                "to": state.responsibility,
+                "decided_by": "person" if resp_choice is not None else "default",
+            })
 
         if judged:
             reason = _judged_reason(product.name, prev_status, state.status, choice, path)
@@ -1068,6 +1262,7 @@ def _run_loop(
             reason = f"Contributor added: {product.name} (also covers this control)"
         else:
             reason = f"Magic loop: {product.name} activated"
+        reason += resp_note
         history_rows.append(
             ControlStateHistory(
                 control_state_id=state.id,
@@ -1081,6 +1276,11 @@ def _run_loop(
         objectives_updated += 1
 
     if expected is not None and set(expected) != judged_seen:
+        raise ActivationJudgementsChanged(
+            "An objective you were asked about has changed, or a new one needs "
+            "asking. Nothing was activated; review it again."
+        )
+    if resp_expected is not None and set(resp_expected) != {cs.id for cs, _, _ in resp_asked}:
         raise ActivationJudgementsChanged(
             "An objective you were asked about has changed, or a new one needs "
             "asking. Nothing was activated; review it again."
@@ -1104,6 +1304,7 @@ def _run_loop(
         "objectives_updated": objectives_updated,
         "tasks_created": tasks_created,
         "judged": judged_outcomes,
+        "responsibility": resp_outcomes,
     }
 
 
@@ -1434,11 +1635,14 @@ def deactivate_org_product(
 
         cs.status = ControlStatus.NEEDS_REVIEW
         if remaining:
-            cs.responsibility = resolve_contributor_responsibility(
+            tool_resp = resolve_contributor_responsibility(
                 [classification for classification, _ in remaining]
             )
+            cs.responsibility = _tool_responsibility(cs, tool_resp)
             other_names = ", ".join(sorted({name for _, name in remaining}))
             reason = f"Contributor removed: {product.name} (still covered by {other_names})"
+            if cs.responsibility != tool_resp:
+                reason += _responsibility_note(prev_resp, tool_resp, cs.responsibility, None)
         else:
             # Last contributor removed -- today's pre-existing behavior,
             # unchanged: responsibility is left exactly as it was, only
@@ -1746,6 +1950,10 @@ def move_org_product_version(
     controls_changed = 0
     # (control_state, status before, why, still covered by another tool)
     reviewed: list[tuple[ControlState, str, str, bool]] = []
+    # A responsibility a person set, which the move kept over the tool's:
+    # (control_state, kept value, tool's value). The move does not ask; it
+    # says so afterwards, in "responsibility_kept".
+    resp_kept: list[tuple[ControlState, str, str]] = []
 
     for ctrl_id in all_control_ids:
         old_bc = old_claims.get(ctrl_id)
@@ -1777,8 +1985,9 @@ def move_org_product_version(
                 prev_status, prev_resp = cs.status, cs.responsibility
                 cs.status = ControlStatus.NEEDS_REVIEW
                 if remaining:
-                    cs.responsibility = resolve_contributor_responsibility(
-                        [cls for _, _, cls in remaining]
+                    cs.responsibility = _tool_responsibility(
+                        cs, resolve_contributor_responsibility([cls for _, _, cls in remaining]),
+                        asked=resp_kept,
                     )
                     reason = (
                         f"Version move ({from_number}->{to_number}): {product.name} no "
@@ -1818,7 +2027,9 @@ def move_org_product_version(
                 # Nobody is asked on a move: a judged objective goes to
                 # needs_review, as every claim the move changes does.
                 cs.status = contributor_added_status(prev_status, not had_prior)
-                cs.responsibility = resolve_contributor_responsibility(all_classes)
+                cs.responsibility = _tool_responsibility(
+                    cs, resolve_contributor_responsibility(all_classes), asked=resp_kept
+                )
                 if is_judgement_in_question(prev_status, not had_prior):
                     reason = _judged_reason(
                         product.name, prev_status, cs.status, None, "baseline_version_move"
@@ -1856,7 +2067,9 @@ def move_org_product_version(
                 ]
                 prev_status, prev_resp = cs.status, cs.responsibility
                 cs.status = ControlStatus.NEEDS_REVIEW
-                cs.responsibility = resolve_contributor_responsibility(new_classes)
+                cs.responsibility = _tool_responsibility(
+                    cs, resolve_contributor_responsibility(new_classes), asked=resp_kept
+                )
                 history_rows.append(
                     ControlStateHistory(
                         control_state_id=cs.id,
@@ -1875,6 +2088,12 @@ def move_org_product_version(
                 controls_changed += 1
             # else: unchanged claim for this objective -- left alone (see
             # this function's own docstring for why).
+
+    kept_by_cs = {cs.id: (kept, tool) for cs, kept, tool in resp_kept}
+    for h in history_rows:
+        if h.control_state_id in kept_by_cs:
+            kept, tool = kept_by_cs[h.control_state_id]
+            h.change_reason += _responsibility_note(kept, tool, kept, None)
 
     if contributor_ids_to_delete:
         for row in session.scalars(
@@ -1951,6 +2170,19 @@ def move_org_product_version(
             "still_covered": still_covered,
         })
     set_to_needs_review.sort(key=lambda r: (r["control_id"], r["objective_key"]))
+    responsibility_kept = []
+    for cs, kept, tool in resp_kept:
+        o = objective_by_id[cs.objective_id]
+        responsibility_kept.append({
+            "control_state_id": cs.id,
+            "control_id": ctrl_uuid_to_str[o.control_id],
+            "objective_key": o.objective_key,
+            "objective_text": o.text,
+            "kept": kept,
+            "tool_would_set": tool,
+            "set_by": cs.responsibility_set_by,
+        })
+    responsibility_kept.sort(key=lambda r: (r["control_id"], r["objective_key"]))
 
     return {
         "controls_gained": controls_gained,
@@ -1960,6 +2192,10 @@ def move_org_product_version(
         "from_version": from_number,
         "to_version": to_number,
         "set_to_needs_review": set_to_needs_review,
+        # A responsibility a person set, kept over the new version's: the
+        # move does not ask, so it says (docs/roadmap.md, "Responsibility had
+        # no human write path").
+        "responsibility_kept": responsibility_kept,
     }
 
 
