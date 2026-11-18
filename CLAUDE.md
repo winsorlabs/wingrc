@@ -871,7 +871,11 @@ which is what makes a post-commit `refresh()`/`select()` work at all. A
 direct write leaves the recorded value stale and the hook would then
 re-apply the *wrong* org — `tests/test_rls_context.py` fails the build on
 one. **The app connects as `wingrc_app` — a non-owner role that cannot bypass
-RLS (cutover 2026-09-29).** Tenant isolation is enforced by the database,
+RLS (cutover 2026-09-29).** **On live, and on no fresh install:**
+compose's default is still the owner, a superuser, so RLS is off on a
+deployment that follows the guide (`docs/roadmap.md`, "A fresh install
+runs the app as a superuser", queued 2026-11-18). What follows describes
+a cut-over deployment. Tenant isolation is enforced by the database,
 not by router filtering: a query that forgets its org scope returns nothing
 rather than another tenant's rows. Every org-scoped table, directly or
 transitively, is policy-gated (migrations 0060/0061).
