@@ -3,11 +3,11 @@
 Tests run against a dedicated wingrc_test database — never the dev DB.
 The conftest auto-creates and migrates wingrc_test on session start (idempotent).
 
-Default test DB (docker-compose): postgresql+psycopg://wingrc:wingrc@db:5432/wingrc_test
-Override via WINGRC_TEST_DATABASE_URL.
-
-Run in-container:
-    docker compose exec backend pytest tests/ -q
+The database is WINGRC_TEST_DATABASE_URL. There is no default: unset,
+every test needing a database skips. Compose stopped supplying it on
+2026-11-18, so an in-container run passes it for that run
+(docs/bench-stack-verification.md, step 4, which also sets the count
+floor that fails a run where they all skipped).
 """
 from __future__ import annotations
 
