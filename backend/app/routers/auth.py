@@ -409,6 +409,36 @@ def _mfa_qr_data_uri(provisioning_uri: str) -> str:
     return qr.svg_data_uri(scale=4, border=2)
 
 
+def enrollment_refusal(user: User) -> str | None:
+    """Why this account may not enrol a new authenticator through the
+    pending-cookie path, or None.
+
+    Until 2026-11-17 both enrolment endpoints checked only that the user row
+    existed, so a forged pending cookie (signed with the public default key,
+    docs/roadmap.md "The auth state cookies were signed with a public key")
+    replaced any user's authenticator and issued a session. The key is no
+    longer forgeable; these refusals are so that a defect in how the cookie
+    is issued cannot reach that far again. Refused: an account already
+    enrolled (a replacement goes through the authenticated re-enrolment,
+    which asks for a step-up), removed, flagged for an administrator reset,
+    or locked out (tests/test_mfa_enroll_refusals.py).
+
+    Not refused: an inactive account. Invitees and accounts whose MFA an
+    administrator reset are inactive until they enrol here, and nothing on
+    the user row tells a deactivated account apart from them. That gap is
+    recorded with what closing it takes.
+    """
+    if user.mfa_enrolled:
+        return "MFA is already enrolled for this account"
+    if user.deleted_at is not None:
+        return "This account has been removed"
+    if user.requires_admin_reset:
+        return "Account requires administrator reset"
+    if user.locked_until and user.locked_until.replace(tzinfo=UTC) > datetime.now(UTC):
+        return "Account locked"
+    return None
+
+
 @router.post("/mfa/enroll")
 def mfa_enroll(
     db: Session = Depends(get_session),
@@ -434,6 +464,9 @@ def mfa_enroll(
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
+    refusal = enrollment_refusal(user)
+    if refusal:
+        raise HTTPException(status_code=403, detail=refusal)
 
     secret = pyotp.random_base32()
     totp = pyotp.TOTP(secret)
@@ -496,6 +529,9 @@ def mfa_enroll_confirm(
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
+    refusal = enrollment_refusal(user)
+    if refusal:
+        raise HTTPException(status_code=403, detail=refusal)
 
     user.totp_secret = totp_secret
     user.mfa_enrolled = True

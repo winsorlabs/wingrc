@@ -89,10 +89,17 @@ tc() {
     -f docker-compose.yml -f "$record/compose.restore.yml" "$@"
 }
 # The throwaway database is fresh, so its owner is the compose file's
-# POSTGRES_USER, whatever the source's .env says.
+# POSTGRES_USER, with the POSTGRES_PASSWORD compose resolves, whatever the
+# source's .env says WINGRC_DATABASE_URL is (live's names wingrc_app, which
+# a fresh cluster lacks). The password was the literal "wingrc" until
+# 2026-11-17; it is read here, kept in this shell and never printed.
+owner_pw="$(tc config --format json | python3 -c '
+import json, sys
+print(json.load(sys.stdin)["services"]["db"]["environment"]["POSTGRES_PASSWORD"])')"
 cli() {
-  tc run --rm --no-deps -T \
-    -e WINGRC_DATABASE_URL=postgresql+psycopg://wingrc:wingrc@db:5432/wingrc \
+  WINGRC_DATABASE_URL="postgresql+psycopg://wingrc:${owner_pw}@db:5432/wingrc" \
+    tc run --rm --no-deps -T \
+    -e WINGRC_DATABASE_URL \
     -e WINGRC_MIGRATION_DATABASE_URL= \
     "$@"
 }

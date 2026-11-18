@@ -3,6 +3,14 @@
 Planned features in build sequence. Items marked **Done** are shipped and tested.
 Items without a status are planned but not yet started.
 
+**Who decided, from 2026-11-17.** Entries before 2026-11-17 may credit
+Jarrod with reasoning that came from the brief, the advisor's notes Jarrod
+passes on. The two were not told apart until then, and those entries are
+not re-attributed. From 2026-11-17 an entry says which it was. A decision
+is Jarrod's. A finding, a recommendation or an instruction from the notes
+is the brief's. In a compliance product's own record, that is the
+difference between a decision and a recommendation.
+
 ---
 
 ## Done
@@ -13717,19 +13725,32 @@ configured.**
   tested against a tenant.
 
 **Was it used on live? Two answers, by path.**
-- **The enrol path: no evidence of use,** because a takeover by that
-  path leaves a trace. Confirm always writes `auth.mfa.enrolled`.
+- **The enrol path: accounted for, two rows attributed rather than
+  proven** (2026-11-17, with Jarrod). A takeover by that path leaves a
+  trace: confirm always writes `auth.mfa.enrolled`.
   - Live has 7, all between 2026-07-15 and 2026-09-04, none since.
   - Each was the user's first: no earlier `auth.mfa.enrolled`, and no
     earlier MFA login for the same user. A takeover of an enrolled
     account would show one.
   - The three deactivated users have no login or enrolment after
     deactivation, and are inactive today.
-  - What this does not rule out: an enrolment forged for a user who had
-    not yet enrolled, which would look like a first enrolment. The seven
-    fall in July to September, when accounts were being provisioned and
-    tested, and two belong to users since deleted. They were not each
-    confirmed with the person.
+  - A forged *first* enrolment would look like a real one, so the seven
+    were taken one by one to Jarrod:
+    - **#1, 07-15:** Jarrod's own account.
+    - **#2 to #5, 07-31 to 08-05:** each invited from Jarrod's account
+      (the `user.invite` row's actor) a minute or two before it enrolled.
+      Jarrod's testing; three were later deactivated and anonymised.
+    - **#6 and #7, 09-04:** no user row, and no invite, deletion or
+      anonymisation row. Each was created and removed outside any audited
+      path, the shape of the 2026-09-07 script ("A concrete case from
+      before the rules"). #6 had one failed password sign-in 72 seconds
+      before enrolling; #7 left nothing else. Jarrod: test accounts made by
+      him or by Claude while verifying. **Attributed, not proven,** since
+      neither the September transcripts nor anything in git that day
+      says. No row remains, so there was no account to re-enrol.
+    - Jarrod offered to remove the traces of the deleted users. Declined:
+      an audit row is the record of what happened, and erasing one is
+      what the 2026-09-07 script did wrong.
 - **The verify path: no evidence either way.**
   - **The audit log can't tell it apart.** A forged `verify` cookie plus
     the user's own TOTP writes the same `auth.login` row (`mfa: totp`)
@@ -13768,24 +13789,64 @@ is no defence for any other deployment, because a deployment that follows
     backend refused it (400).
 - **Tests:** `tests/test_auth_flow_secret.py`, two mutations seen red.
 
-**What it does not fix.** `/auth/mfa/enroll` still trusts its pending
-cookie for everything. The cookie is now unforgeable, but the endpoint
-still checks nothing about the user. It doesn't ask whether the user is
-active, already enrolled, locked out or flagged for an administrator
-reset. A defect anywhere in how that cookie is issued would again reach
-straight through to a session and a replaced authenticator. Recorded, not
-scoped: whoever touches MFA next should make enrolment refuse an enrolled
-or inactive user, as `/auth/mfa/verify` refuses an inactive one.
+**Enrolment stopped trusting the cookie for everything (#108, the
+compose-hardening slice, 2026-11-17).** Checking only that the user row
+existed is what turned a forged cookie into a full bypass rather than a
+nuisance. The cookie can no longer be forged; enrolment refuses anyway,
+so a defect in how one is issued cannot reach as far again.
+`routers/auth.py:enrollment_refusal`, at `/auth/mfa/enroll` and again at
+`/auth/mfa/enroll/confirm` (the account can change between the two),
+refuses an account that is:
+- already enrolled: a replacement goes through the authenticated
+  re-enrolment, which asks for a step-up;
+- removed (`deleted_at`);
+- flagged for an administrator reset;
+- locked out.
 
-### The compose file ships default credentials: one let anyone take over an account, one makes credential encryption decorative -- a product defect, first
+`tests/test_mfa_enroll_refusals.py` writes each case out, at both calls,
+and checks a refused confirm leaves the secret, the flag and `is_active`
+as they were. Mutations seen red on the bench:
+- the enrolled check dropped (2 failed);
+- the locked check dropped (2);
+- confirm left unchecked (4);
+- inactive accounts refused as well, which broke invitees and MFA resets
+  (10).
+
+The removed and reset-flag checks were not mutated one by one.
+
+**Still not refused: an inactive account, because nothing tells a
+deactivated one from one waiting to enrol.** Invitees, and accounts whose
+MFA an administrator reset (`user.mfa_reset` sets `is_active = False`
+until re-enrolment), are inactive until they enrol, and refusing them
+would break both. The user row has no deactivation marker beyond
+`deleted_at`. The gap is narrow, and it reaches the real sign-in too:
+- `/auth/login` does not check `is_active`;
+- so an account deactivated after setting its password and before
+  enrolling can sign in, enrol, and be reactivated by confirm;
+- an enrolled deactivated account cannot, because `/auth/mfa/verify`
+  refuses an inactive user.
+
+Closing it takes a marker set by deactivation and cleared by
+reactivation (a `deactivated_at` column), checked at `/auth/login` and at
+enrolment. That is a migration, so it was not built in #108. The
+2026-11-17 brief made it its own slice, next and before production ("A deactivated
+account that never enrolled can sign in and reactivate itself").
+
+### The compose file ships default credentials: one let anyone take over an account, one makes credential encryption decorative -- a product defect, first; fixed 2026-11-17 (#108)
 
 **Found 2026-10-23, with three defaults; a fourth found 2026-11-17.**
 Four defaults, in order of consequence:
 - **The state-cookie key let someone in.** It is first.
+- **MinIO's root credential reads, writes and deletes every tenant's
+  evidence from the LAN.** nginx proxies the storage host to MinIO's
+  whole API. Second since 2026-11-17, when that was read from
+  `nginx.conf`; until then this bullet grouped MinIO with Postgres
+  (the correction under item 2, below).
 - **The Fernet key leaves the deployment.** It decrypts data in every
   database copy.
-- **The MinIO and Postgres defaults** let in an attacker who already has
-  network access to the deployment.
+- **The Postgres owner's default** needs a shell on the host or the
+  compose network: the database port is not published, and nginx
+  proxies nothing to it.
 
 **0. The state-cookie HMAC key: a sign-in with no factor at all.** Its
 own entry, above ("The auth state cookies were signed with a public
@@ -13805,9 +13866,10 @@ a key committed to a public repo. A deployment that does not set its own
 encrypts every integration credential an operator enters (Liongard, the
 AI provider, SMTP) under a key anyone can read. Whoever holds a copy of
 the database can then decrypt all of them. Database copies move
-routinely: backups, `pg_dump`s, restore tests, cloud storage. MinIO's
-and the owner's defaults stay inside the compose network; this one
-leaves with every backup.
+routinely: backups, `pg_dump`s, restore tests, cloud storage. The
+owner's default stays inside the compose network; this one leaves with
+every backup. (This sentence said MinIO's stayed inside too. It did not;
+see the correction under item 2.)
 
 `docs/deployment.md` does not mention the key at all. Only a
 commented-out line in `.env.example` does. So an operator who follows
@@ -13871,6 +13933,88 @@ runs on the public defaults. A default credential is a weak setting.
 This is worse: a false claim about the product's security posture, in
 the guide a customer reads first, which ignores the operator who did the
 right thing without saying so.
+
+**Correction, 2026-11-17: MinIO's default was reachable from the LAN,
+and the October assessment never read the nginx config.** On 2026-10-23
+this entry said MinIO's and the owner's defaults "stay inside the
+compose network", and the opening bullets written 2026-11-17 (#107)
+still put MinIO with Postgres, behind network access to the deployment.
+Both were wrong, in the direction that made MinIO look less urgent than
+it was. Since 2026-09-08 (`e8484dd`), `deploy/nginx/nginx.conf` has
+proxied `location /` on `storage.dev.wingrc.us` to `minio:9000`. That
+is the whole S3 API, and MinIO's admin API on the same port, not only
+the presigned GETs the host exists for (logos and vendor documents;
+evidence streams through the backend). nginx publishes 443 on the host
+and picks a server block by the Host header, so any LAN client that can
+reach the host's address can send that name and talk to MinIO. With
+`wingrc`/`wingrc-dev-secret`, published in this repo, it can read,
+write and delete every tenant's evidence (one bucket, keyed by org) and
+administer MinIO itself. The assessment was made from the compose file,
+without reading the config that decides what leaves the compose
+network. The 2026-11-17 brief found it, by reading that config. It moved MinIO's
+rotation ahead of the tooling that would have let `deploy.sh` do it
+(the migration, below).
+- **Was it used? No evidence either way, for objects.** MinIO keeps no
+  access log here, and nginx's goes back only to the last deploy ("Live
+  cannot say who signed in from where").
+- **One trace can be read, and it is the only evidence there is.**
+  Changing a password stops new use of it. It does not undo what was done
+  with it. Root can add IAM users, service accounts and a bucket policy
+  for anonymous readers, and each keeps working under its own name after
+  the rotation. That is easy to miss, because the rotation feels like the
+  fix. So the general rule is in `docs/deployment.md`, "Moving off a
+  default credential": check what was created with the old credential.
+  Read on live 2026-11-17, before the change:
+  - **MinIO's IAM store** (`.minio.sys/config/iam`, read from the volume
+    read-only) holds only its format file: no users, no service accounts,
+    no STS credentials;
+  - **anonymous requests are refused:** a bucket listing, the bucket
+    root, and a GET and HEAD of a real object, all 403;
+  - **Postgres** has only `wingrc` and `wingrc_app`.
+
+  MinIO keeps no access log here, so this read is all there is. A clean
+  read means "no foothold visible today", not "never used". The migration
+  reads it again just before the change.
+- **The bound:** live is LAN-only (the state-cookie entry).
+
+**The storage host carries reads only (2026-11-17, #108, the brief's
+instruction).** `limit_except GET` on its one location; GET also admits
+HEAD.
+- **Checked first:** nothing writes through it. Every upload, delete,
+  snapshot and restore goes to `http://minio:9000` inside the compose
+  network (`storage.py`'s `_s3`). The public client signs `get_object`
+  URLs and nothing else. Signing makes no request. The host's legitimate
+  traffic is logos and vendor documents, both GETs. Live's nginx log
+  since the last deploy agrees, but it is a few hours old, so the code is
+  the evidence.
+- **Why it outlasts the password:** a password protects until it leaks.
+  With the restriction, a leaked credential still cannot overwrite or
+  delete a piece of evidence through that host, or administer MinIO
+  (admin writes are PUT, POST and DELETE). Evidence is the asset a
+  restore cannot fully replace, because the only copy of a deleted object
+  is a snapshot older than the deletion.
+- **What it does not stop:** signed reads. A leaked credential can still
+  read evidence through the host, and only the password change stops
+  that. A limit by path (the bucket only, no `/minio/` admin reads) was
+  considered and not taken. The bucket's name is a setting, which would
+  couple nginx to it, and the reads it would close are the ones the
+  password already guards.
+- **Shipped with the rotation:** `deploy.sh` brings the new nginx up
+  before the MinIO hand step. So the window where the host is both open
+  to writes and on a published credential closes in one session.
+- **Seen working on the bench**, with the branch's nginx in front of
+  MinIO and requests signed with the root pair, as a leaked credential
+  would be:
+  - GET 200, with the body intact;
+  - HEAD 200;
+  - PUT, DELETE and POST each 403 from nginx;
+  - the object's sha256 unchanged.
+
+  With `limit_except` removed, the same signed PUT overwrote the object
+  and the DELETE removed it.
+- **Held by** `tests/test_nginx_storage_methods.py`: every proxied
+  location on the storage host refuses everything but GET. Widened to
+  `GET POST PUT DELETE`, it fails.
 
 **3. The database owner.** `POSTGRES_PASSWORD: wingrc` is also a
 literal. That role owns every table and bypasses RLS. The repo is
@@ -13986,6 +14130,390 @@ becomes yours, silently, while the mode is copied. Live's `.env` is now
 compare owner and mode with what was there before. The prior owner was
 not recorded, which is how this went unseen.
 
+**Built 2026-11-17 (#108).** The fix above, as written, with a fifth
+literal added to step 1, and what verifying it found.
+
+**The fifth: `WINGRC_ENVIRONMENT`, a literal that left every cookie without
+Secure** (found 2026-11-17, not in any entry before).
+- **The defect:** compose wrote `WINGRC_ENVIRONMENT: development`, a
+  literal no `.env` could reach. `.env.example` and the guide's step 1 both
+  told the operator to set `production`. **Live's own `.env` did: it has
+  said `WINGRC_ENVIRONMENT=production` all along** (read 2026-11-17), and
+  compose ignored it. That makes it the same defect as the MinIO keys:
+  configuration the guide expects, hard-coded where configuration cannot
+  reach, overriding the operator who did the right thing without a word.
+- **The consequence:** `auth.py` puts Secure on a cookie only under
+  `production`, so live has issued the session cookie and the three
+  sign-in state cookies without Secure, from the start.
+- **What else `environment` gates,** read before requiring it: nothing but
+  those four cookie helpers and `wingrc reset-dev`'s guard, which already
+  refused anything but `development`. So requiring it widened nothing.
+- **The exposure, bounded from the code.** The brief's bound was that a
+  browser attaches the cookie to `http://dev.wingrc.us` before the
+  redirect arrives. Narrower in fact:
+  - the session cookie's path is `/api` and the state cookies' is
+    `/api/auth`, so a browser attaches them only to a request under
+    `/api`;
+  - typing the hostname, or opening any page of the app, sends none, and
+    the app's own API calls go over HTTPS from the HTTPS page;
+  - it crossed in plain text only on a plain-HTTP request under `/api`,
+    for example a link or bookmark to `http://dev.wingrc.us/api/…`, which
+    `SameSite=Lax` allows as a top-level navigation. nginx's 301 came
+    after the cookie had crossed;
+  - and live is LAN-only.
+
+  Real, bounded, not an emergency.
+- **Two of the brief's own errors, recorded at its request
+  (2026-11-17):**
+  - **Its cookie bound was overstated.** It said typing the hostname
+    over HTTP would send the cookie. The cookies are scoped to `/api`, so
+    it would not, and the narrower bound above stands.
+  - **"Merged #107" meant "approved, pending Jarrod".** Its notes had
+    said "Merged #103", "Merged #107" and so on for PRs it approved. It
+    merges nothing; Jarrod does. That is why this slice found #107 still
+    open against the note, and carried it. Read any past "merged" in a
+    brief that way.
+- **The fix:** compose requires it with no default. `config.py` accepts
+  only `development` or `production` and refuses anything else at
+  startup, so a typo such as `Production` cannot quietly mean "not
+  production". Live needs no edit for this one: its `.env` already says
+  `production`, and the deploy makes it count.
+- **Tests:** `tests/test_cookie_secure.py` holds Secure present under
+  `production` and absent under `development` on all four helpers, by
+  name. It also checks that nothing outside `auth.py` sets a cookie, so the
+  four are all of them. Mutations seen red: one helper's `secure` forced
+  off; compose's literal brought back.
+- **HSTS** is the belt, its own entry ("HSTS: one day first"). Secure is
+  the fix: it stops the cookie going over HTTP at all, where HSTS stops
+  the request being made. If only one shipped, it would be Secure.
+
+**What was built:**
+1. **Compose refuses without each credential, and names it.**
+   - **Required (`${NAME:?NAME is required -- set it in .env, see
+     docs/deployment.md}`):** `WINGRC_ENVIRONMENT`, `POSTGRES_PASSWORD`,
+     `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `WINGRC_STORAGE_ACCESS_KEY`,
+     `WINGRC_STORAGE_SECRET_KEY` and `WINGRC_CREDENTIAL_ENCRYPTION_KEYS`;
+     `WINGRC_AUTH_FLOW_SECRET` since #106. None has a default or a literal.
+   - **The database URLs** are built from `POSTGRES_PASSWORD`, so
+     `wingrc:wingrc` is gone from the file.
+   - **The test:** `tests/test_compose_required.py`.
+2. **`docs/deployment.md` step 1:**
+   - a table of every required value: what it is, and whether the
+     generator fills it;
+   - `.env` at mode 600 or 640;
+   - how to generate each value, the Fernet key included;
+   - that Postgres and MinIO read theirs only at first start;
+   - the owner's password must be URL-safe.
+3. **"Moving off a default credential",** a new section of the guide: the
+   owner's procedure, as tested, and MinIO's, below.
+4. **`.env.example`:** empty values for every required variable, each
+   explained. Its line-2 owner URL at `localhost`, the one that became
+   live's stale duplicate, is gone.
+
+**Beyond the four:**
+- **`deploy/generate-env.sh`:** fills every empty required secret with a
+  fresh value and prints names only. It never overwrites a value, rewrites
+  the file in place (owner and mode kept), and makes the storage keys
+  equal to MinIO's root pair. Used by a fresh install and by the bench
+  procedure's new step.
+- **`deploy/restore-test.sh`:** read its throwaway owner's password as the
+  literal `wingrc`, and would have broken on the next live run. It now
+  takes `POSTGRES_PASSWORD` from compose, held in the shell and never
+  printed.
+- **Enrolment refusals:** the auth entry above ("Enrolment stopped
+  trusting the cookie for everything").
+- **README's quick start and a CI comment** follow. CI is unaffected: its
+  jobs use their own service containers and never run compose, confirmed
+  by grep and by the green run.
+
+**`config.py`'s secrets with defaults, as a list (2026-11-17).** The
+October search missed the state-cookie key because it read only the
+compose file. Every setting in `config.py`:
+
+| Setting | Default before | Now |
+|---|---|---|
+| `auth_flow_secret` | a public literal | none, refused when weak (#106) |
+| `storage_access_key`, `storage_secret_key` | `wingrc`, `wingrc-dev-secret` | none; `storage.py` refuses an endpoint without both, by name |
+| `database_url` | the owner's URL, with the password `wingrc` | the same URL with no password; an engine is built from it at import, so it keeps a default |
+| `credential_encryption_keys`, `entra_client_secret` | none already | unchanged |
+
+Not secrets, listed so the list is whole:
+- `environment`: now only two values. Its default, `development`, remains
+  for a process started by hand; compose requires it.
+- `entra_redirect_uri`: a `localhost` URL.
+- `cors_origins`: `localhost` and the dev server's LAN address on two ports.
+
+None was changed. Test-only credentials (CI's throwaway database, the
+fallback URL in `conftest.py`) stay: no deployment reaches them.
+
+**Verification (bench, wl-util-1; own projects, no ports).**
+- **Each required value missing, one at a time:** `config` and `up` both
+  exit 1 with `required variable NAME is missing a value: NAME is
+  required -- set it in .env, see docs/deployment.md`, and create no
+  container. All eight were run.
+- **`WINGRC_ENVIRONMENT=Production`:** refused at startup:
+  `Input should be 'development' or 'production'`.
+- **`crypto.py`'s fail-closed refusal, seen firing for the first time.**
+  Through compose it had never been reachable. With the key empty in the
+  branch's backend image:
+  - `encrypt_credential` and `decrypt_credential` each raised
+    `WINGRC_CREDENTIAL_ENCRYPTION_KEYS is not set — refusing to store or
+    read third-party credentials without an encryption key`;
+  - `PUT /integrations/liongard/credential`, every field filled, answered
+    500 with that sentence and wrote no row (0 before, 0 after).
+
+  A guard that has never fired is not yet a guard. This one has now.
+- **The generator, run as the bench procedure writes it:**
+  - it filled seven names, and a second run filled nothing;
+  - the file stayed at 600, with the storage keys equal to the root pair;
+  - values were URL-safe; none was printed.
+- **The full suite:** 2151 passed, 35 skipped; ruff clean.
+- **Secure on a real response:** each of the four helpers, through the
+  backend's own settings: present under `production` and absent under
+  `development`.
+- **The owner's procedure, as written in the guide, over the network:**
+  - before the change, the initial password was accepted and the new one
+    refused;
+  - after it, the reverse;
+  - the recreated backend migrated through the new password, and `/health`
+    read `database: ok`.
+
+  **The first pass of this check could not fail.** It tried each password
+  over `127.0.0.1` inside the database container, which the Postgres image
+  trusts without a password, so both read "accepted". The old password
+  "accepted" after an `ALTER` that exited 0 was the tell. It is the
+  invariant "a check must actually check", met again in a bench script.
+- **MinIO, on live's image (`14cea493d9a3`, `RELEASE.2025-09-07`):**
+  - an object written before the change read back after, with the same
+    sha256;
+  - the old password was refused (`SignatureDoesNotMatch`).
+- **`restore-test.sh`, changed:** passed on a snapshot of a bench stack.
+- **HSTS as served:** both hosts, through the branch's nginx with a
+  throwaway certificate (the HSTS entry).
+- **CI:** green.
+
+**MinIO's procedure, read before written.**
+- **What MinIO says:** keep `MINIO_ROOT_USER` and change only the
+  password, then restart. Access keys made under the root user depend on
+  it staying the same. A third-party guide says the root values only
+  apply at first start; the bench above shows they apply on recreate,
+  on live's image.
+- **What live has:** live's MinIO holds no IAM users or service accounts
+  (`.minio.sys/config/iam` has only its format file), and the backend uses
+  the root pair directly.
+- **The step `deploy.sh` cannot take.** `deploy.sh` recreates only
+  `backend`, `worker` and `nginx` (`--no-deps`). MinIO's password changes
+  only when `minio` is recreated, at the same moment as the backend gets
+  the new secret, or storage fails in between. That is a hand
+  `docker compose up` on live, which the deploy rule forbids, so it was
+  Jarrod's call.
+- **Decided 2026-11-17 (the brief, passed on by Jarrod): the recorded
+  hand step now, and `deploy.sh`'s named-service recreate afterwards.**
+  I had recommended the tooling first. The brief overruled that, because
+  of the LAN reach
+  above: the most urgent item in this slice does not wait behind a
+  tooling improvement. The step is one documented, deliberate act, run
+  with Jarrod present and recorded in the deploy record with its reason.
+  That is not the detached-checkout incidents, which were an undocumented
+  assumption followed at a terminal.
+- **The step:** `docker compose up -d --no-deps minio backend worker
+  nginx`, after the new password is in `.env`. nginx is in it although
+  its config does not change. `proxy_pass http://minio:9000` names a
+  fixed host, which nginx resolves once, when it starts, and a recreated
+  `minio` can come back on another address. My first version of this
+  step left nginx out.
+- **Afterwards, its own small slice:** `deploy.sh` gains a way to
+  recreate a named service, so the next rotation needs no hand step.
+
+**Live migration:** not yet run; it follows the merge (below, when run).
+
+### HSTS: one day first -- decided 2026-11-17 (#108)
+
+**On, at `max-age=86400`, with no `includeSubDomains`,** on both hosts the
+deployment serves over TLS. It was commented out with sound reasoning:
+browsers cache HSTS and then refuse plain HTTP, and a certificate error,
+for the whole `max-age`, with no server-side way to clear it early. This
+deployment's certificate has already lapsed once, for three days in
+October, and was renewed by hand. So not the two-year header that was
+commented out: one day caps a lockout from a lapse at one day. It closes
+the plain-HTTP first request after a browser's first visit. Secure on the
+cookies is the real fix, and this is the belt.
+
+**The storage host had a year already, from MinIO.** MinIO sends
+`Strict-Transport-Security: max-age=31536000; includeSubDomains` on every
+response, and live served it through nginx on `storage.dev.wingrc.us`.
+Nothing set it in `nginx.conf`, so nobody knew. That host shares the
+app's certificate, so a lapse would have locked a browser that had been
+there out of what the host serves for up to a year: organisation logos
+and the vendor documents behind a product baseline (presigned URLs).
+Evidence downloads are not among them: they stream through the backend
+on the app host, since 2026-09-14 (`99db755`). This paragraph said
+"every evidence download" when #108 was opened, from the comments in
+`nginx.conf`, `docker-compose.yml` and `docs/deployment.md`. Those
+comments had been stale since that change, and all three are corrected.
+It was found on the bench, by reading
+the header as served; the first version of the test read only
+`nginx.conf` and passed. Now `proxy_hide_header` drops MinIO's, and the
+host sends the app's one day. A browser that cached the year takes the
+day on its next visit there.
+
+**October's lapse: HSTS did not block evidence downloads, which never
+touched this host (the brief's connection, checked 2026-11-17).** The
+proposed link was this: item W records three days of evidence downloads
+failing on the expired certificate, and MinIO's year made that a hard
+block, not a warning anyone could click through. Read against the code
+and live, half of it holds:
+- **The header was being served then.** The MinIO image is
+  `RELEASE.2025-09-07` (`14cea493d9a3`), its container was created
+  2026-09-22, and nginx hid nothing.
+- **Evidence downloads were not on the storage host.** Since 2026-09-14
+  they have streamed through the backend on `dev.wingrc.us`, which sent
+  no HSTS. In October they met the app's own certificate warning, which
+  could be clicked through. Item W's "signed URLs on `storage.dev`" for
+  evidence was already out of date when it was written; it is corrected.
+- **What the storage host did serve in October:** logos and vendor
+  documents.
+  - **Logos are images.** A browser never offers a click-through for a
+    certificate error on an image, with or without HSTS, so they failed
+    either way.
+  - **A vendor document opens by navigation** (a 302 to a presigned
+    URL). For a browser that had loaded anything from the storage host
+    over a valid certificate before the lapse, a logo included, HSTS
+    made that error final. Without HSTS it would have been a
+    click-through warning.
+
+So the year made the lapse final on the storage host, but what it
+reached in October was vendor documents for administrators, not
+evidence. Whether anyone met it is not recorded.
+
+`tests/test_nginx_hsts.py` holds:
+- one day on both hosts;
+- no `includeSubDomains`;
+- MinIO's header hidden;
+- no location block adding a header of its own, which in nginx drops the
+  server's.
+
+**Lengthening is a deliberate act, with a condition.** Not before two
+consecutive renewals have gone through with no lapse and the expiry alarm
+green between them. Today renewal is by hand: the banner opens 2026-12-16
+for the certificate that expires 2027-01-15, and the next renewal falls
+about 90 days later. So the earliest is spring 2027.
+- **Then one step at a time:** a week, then a month, each its own decision
+  and its own change to the test.
+- **`includeSubDomains` only after** every name under the domain that
+  serves HTTPS has been listed and checked.
+- **Never preload** without both.
+
+Jumping straight to two years is the mistake this records against.
+
+### A deactivated account that never enrolled can sign in and reactivate itself -- next, before production (decided 2026-11-17)
+
+**An access-control defect with a clear exploit path and a one-column
+fix.** It was found while building #108's enrolment refusals, and first
+recorded there for "whoever touches MFA next". The 2026-11-17 brief
+made it its own slice, queued next.
+
+**The path, read from the code:**
+1. An administrator deactivates an account (`users.deactivate_user`, or
+   `patch_user` with `is_active=False`). That sets `is_active = False`
+   and revokes its sessions.
+2. If the account had set its password but not yet enrolled, its owner
+   signs in again. `/auth/login` checks the password, the lockout and
+   `requires_admin_reset`, but not `is_active`. It answers
+   `{"next": "enroll"}`.
+3. `/auth/mfa/enroll/confirm` sets `mfa_enrolled` and
+   **`is_active = True`**. The deactivation is undone by the person it
+   was meant to stop, with no administrator involved. The audit log
+   shows `auth.mfa.enrolled`, not a reactivation.
+
+An enrolled account cannot do this: `/auth/mfa/verify` refuses an
+inactive user, and so does session resolution.
+
+**A second path, found while writing this entry: the SSO callback.**
+`routers/auth.py`'s Entra callback treats any inactive user as a first
+SSO sign-in ("First SSO login -- activate the user") and sets
+`is_active = True`, enrolled or not. It checks `requires_admin_reset`,
+not deactivation. So, on a deployment with SSO, a deactivated user whose
+Entra account still works is reactivated by signing in. SSO is not
+configured on live (its callback answers 501), so live cannot reach this
+path.
+
+**Live today: no account is in that state.** A read on 2026-11-17
+(counts only) found 5 users, none both inactive and not removed. The
+three deactivations in the audit log are all of accounts since
+anonymized. So the defect is real and unreachable on live today. It
+becomes reachable the first time an administrator deactivates an
+account that has a password and no enrolment.
+
+**The fix:**
+- **Migration 0074:** `user.deactivated_at` (and who did it). It is set
+  by both deactivation paths and cleared only by an administrator's
+  reactivation.
+- **Refused while it is set:**
+  - `/auth/login`;
+  - `/auth/mfa/enroll` and `/auth/mfa/enroll/confirm`
+    (`enrollment_refusal`);
+  - the SSO callback.
+
+  Invitees and accounts whose MFA an administrator reset leave it NULL,
+  so they still enrol. That is why #108 could not use `is_active`
+  ("Still not refused: an inactive account" in the auth entry).
+- **Backfill:** an inactive account that is enrolled can only be
+  deactivated, because a reset clears enrolment. An inactive account
+  that is not enrolled is ambiguous: an invitee, a reset, or a
+  deactivation. The migration decides it from the audit log's latest
+  `user.deactivate`, or `is_active` change, against a later reactivation.
+  It says how many rows each rule set. On live today the set is empty.
+- **Tests write each path out:**
+  - login, enrol and confirm, refused;
+  - the SSO callback, refused;
+  - an invitee and an MFA reset, still enrolling;
+  - reactivation clears the marker.
+
+  Mutations: each check dropped in turn, seen red.
+
+### Live cannot say who signed in from where -- recorded 2026-11-17; urgent the day there are two users
+
+**Found answering whether #106's forged-cookie route was used.** For the
+`verify` path, live could give no answer either way ("The auth state
+cookies were signed with a public key"). The reasons are structural, not
+accidental, and each has its own cost to change:
+
+- **The session row records no source address.** `user_session` holds
+  the user, the org, the token hash and the times. Nothing says where a
+  sign-in came from. *To change:* a client address and user agent on the
+  row at creation (`auth.get_client_ip` already exists). One migration,
+  small. An address is personal data, so it is kept for as long as the
+  session row is.
+- **A successful password check writes no audit row.** Only a failure
+  does (`auth.login.failed`). A real sign-in and a forged `verify` cookie
+  plus the user's TOTP therefore leave identical evidence: one
+  `auth.login` row with `mfa: totp`. *To change:* a decision, not a fix.
+  - **An audit row per successful password check** doubles the sign-in
+    rows, for evidence that matters only when something is wrong.
+  - **Recording on the session row how it was reached** (password then
+    TOTP, a reset, an invite) costs no extra row, but is read only by
+    someone who knows to look there.
+
+  Each trades volume against evidence. Whoever picks it up chooses.
+- **The logs reach back only to the most recent deploy.** nginx and the
+  backend log to the container's stdout, Docker's `json-file` driver
+  keeps that log with the container, and every deploy recreates the
+  containers. On 2026-11-17 both logs began at 14:36 UTC, that day's
+  deploy. **So this deployment's log retention is "since the most recent
+  deploy".** For a CMMC product, that is worth saying plainly: AU.L2-3.3.1
+  asks for audit records retained long enough to investigate. The
+  database's `audit_log` is kept. The request logs that would show a
+  source address are not. *To change:* a volume.
+  - **Simplest:** nginx's `access_log` written to a named volume with a
+    rotation and a stated retention.
+  - **Alternatives:** a host logging driver (`journald`), or shipping off
+    the host, which is the version that survives losing the host.
+
+**Not urgent at one user. It becomes urgent the day there are two**,
+because then "was that sign-in really them?" is a question someone will
+ask, and today none of the three sources can answer it.
+
 ### A machine account for Claude -- future, if a second person ever touches this repo
 
 **Recorded 2026-10-24.** Claude opens PRs with the `winsorlabs` OAuth
@@ -14036,6 +14564,14 @@ monitoring build-out.
 | Entra SSO client secret | up to 24 months, set in Entra | nothing | not configured on live; becomes a row the day it is |
 | API tokens (`wingrc_…`) | per token, `expires_at` | the token itself stops working | none live |
 
+**A rotation does not revoke what the old credential made (2026-11-17).**
+For any row above, after a rotation, list what the old credential could
+have created and check it against what is expected. Where nothing
+records use, a clean list means "no foothold visible today". The
+procedure and the per-credential reads are in `docs/deployment.md`,
+"Moving off a default credential"; the first time it was applied is the
+MinIO correction in the compose item.
+
 **Public-CA issuance for this name is DNS-01 or nothing while the
 deployment is LAN-only.** HTTP-01 needs Let's Encrypt to reach port 80 on
 a public address; there is none and that is deliberate. Do not re-propose
@@ -14065,7 +14601,14 @@ renewal closed if wrong. Not worth it while live is a LAN dev box; revisit
 with "goes public" below.
 
 **What the outage cost:** browser-facing evidence downloads and logos
-(signed URLs on `storage.dev`) hit the same warning for three days. The
+(signed URLs on `storage.dev`) hit the same warning for three days.
+**Corrected 2026-11-17:** only logos and vendor documents were on
+`storage.dev`. Evidence downloads had streamed through the backend on
+the app's own host since 2026-09-14 (`99db755`), so they met the app's
+warning, which could be clicked through. Logos fail on a certificate
+error regardless. A vendor document on the storage host could not be
+clicked through for a browser that had been there before, because the
+host was serving MinIO's own year of HSTS ("HSTS: one day first"). The
 app itself was unaffected -- backend and worker reach MinIO at
 `http://minio:9000` inside the compose network and never touch the
 certificate, and their logs since 2026-10-14 hold no TLS errors. That

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -10,8 +11,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="WINGRC_", env_file=".env")
 
-    # Default points at the docker-compose Postgres service.
-    database_url: str = "postgresql+psycopg://wingrc:wingrc@localhost:5432/wingrc"
+    # A local default with no credential in it: until 2026-11-17 it carried
+    # the owner's password, `wingrc`. Compose builds the real URL from
+    # POSTGRES_PASSWORD; anything else sets WINGRC_DATABASE_URL. An engine is
+    # built from this at import, so it keeps a default rather than None.
+    database_url: str = "postgresql+psycopg://wingrc@localhost:5432/wingrc"
     # Connection alembic uses, and ONLY alembic (app/migrations/env.py).
     #
     # It exists because running migrations and serving requests want
@@ -30,7 +34,12 @@ class Settings(BaseSettings):
     # "the migration ran fine".
     migration_database_url: str | None = None
     app_name: str = "WinGRC"
-    environment: str = "development"
+    # "production" puts Secure on every cookie (auth.py); "development"
+    # lets `wingrc reset-dev` run (cli.py). Nothing else reads it. Any other
+    # value refuses at startup, so a typo such as "Production" cannot
+    # silently issue cookies without Secure. Compose requires it with no
+    # default; this default is for a process started by hand.
+    environment: Literal["development", "production"] = "development"
 
     # The URL a browser uses to reach this deployment -- the backend has no
     # other way to know it (nginx terminates the real hostname; there's no
@@ -92,8 +101,11 @@ class Settings(BaseSettings):
     # resolves only through LAN hosts files, which containers do not read.
     tls_check_connect_host: str = "nginx"
     tls_check_connect_port: int = 443
-    storage_access_key: str = "wingrc"
-    storage_secret_key: str = "wingrc-dev-secret"
+    # No defaults: they were MinIO's dev credentials, public in this repo.
+    # storage.py refuses to build a client with storage_endpoint set and
+    # either of these unset.
+    storage_access_key: str | None = None
+    storage_secret_key: str | None = None
     storage_bucket: str = "evidence"
     storage_region: str = "us-east-1"
 

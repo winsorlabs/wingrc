@@ -43,7 +43,9 @@ React 19 (Vite) · FastAPI (Python 3.13) · PostgreSQL 18 + pgvector · SQLAlche
 
 ### Run the stack
 ```bash
-cp .env.example .env
+cp .env.example .env && chmod 600 .env
+sed -i 's/^WINGRC_ENVIRONMENT=$/WINGRC_ENVIRONMENT=development/' .env
+deploy/generate-env.sh            # fills every required secret; prints names only
 docker compose up --build         # Postgres 18 + MinIO + API + frontend
 # API:        http://localhost:8000/health
 # API docs:   http://localhost:8000/docs
@@ -68,6 +70,7 @@ the importer at your own workbook to populate a real environment.
 
 ### First run
 ```bash
+# .env as in "Run the stack" above: compose refuses to start without it
 docker compose up --build   # builds the image, starts Postgres + MinIO + backend + frontend
 ```
 
@@ -112,7 +115,7 @@ docker compose restart backend
 cd backend
 pip install --no-deps -r requirements.lock   # the versions CI and the image use
 pip install --no-deps --no-build-isolation -e ".[dev,ai]"
-export WINGRC_DATABASE_URL=postgresql+psycopg://wingrc:wingrc@localhost:5432/wingrc
+export WINGRC_DATABASE_URL=postgresql+psycopg://wingrc:YOUR_PASSWORD@localhost:5432/wingrc
 alembic upgrade head
 uvicorn app.main:app --reload
 ```
