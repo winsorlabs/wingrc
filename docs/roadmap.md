@@ -13142,6 +13142,20 @@ and the list. Five is an afternoon's work, done in place. Fifty means
 choosing the load-bearing ones, the claims a reader would act on. The
 count decides which, so nothing is fixed before it exists.
 
+**Known untrue, found before the sweep.** The sweep starts from these.
+Each is fixed when its file is touched, or by the sweep, whichever is
+first.
+- **`backend/app/scheduler.py`'s module docstring** says the CLI and
+  worker "both connect via the same `db.py:SessionLocal`, the owner
+  role". It has been untrue of live since the 2026-09-29 cutover: they
+  connect as `wingrc_app`. That is seven weeks before it was noticed
+  (2026-11-18, "A fresh install runs the app as a superuser"). It is
+  still true of a fresh install, which is its own defect.
+- **`backend/app/health.py`'s docstring** says the nginx build header "is
+  present only when the request came through nginx". A forged direct call
+  disproves it (recorded 2026-10-28, in "`/health` reports a commit per
+  component").
+
 ### An objective's history says who changed it
 
 **Recorded 2026-10-20, split from the item above on purpose.** Once
@@ -14570,12 +14584,19 @@ owner unless `FORCE ROW LEVEL SECURITY` is set, and migration 0060 says
 it is set on no table. It goes further than the brief's reading: `wingrc`
 is the image's `POSTGRES_USER`, a superuser (`rolsuper` and
 `rolbypassrls` both true on live, read 2026-11-18). Postgres skips RLS
-for a superuser even with FORCE. So setting FORCE would not have fixed
-it; only the role does. Every policy from 0001 to 0061 is inert on a
+for a superuser even with FORCE. Every policy from 0001 to 0061 is inert on a
 fresh install, and tenant isolation rests on the routers'
 `require_org_access` alone. A query that forgets its org scope returns
 another tenant's rows, which CLAUDE.md says the database prevents.
 CLAUDE.md's sentence is true of live and was never true of the product.
+
+**`FORCE ROW LEVEL SECURITY` is not the fix. Do not write that
+migration.** It is the obvious answer, since 0060 names it and the brief
+reasoned from it. FORCE makes a table's *owner* obey RLS. It does nothing
+for a superuser, who is exempt with or without it, and the app here
+connects as one. A migration setting FORCE on every table would change
+nothing on a fresh install, and every test would still pass. Only
+changing the role the app connects as works.
 
 **Live is not affected, checked 2026-11-18:** the backend and worker
 connect as `wingrc_app`, not a superuser, without `BYPASSRLS` (cut over
@@ -14598,9 +14619,10 @@ repo is public.
   restore. All are provisioning or administration, run as the owner
   through the migration URL or the override (`docs/deployment.md`,
   "The CLI runs as the app role").
-- **One stale claim found on the way:** `scheduler.py`'s docstring says
-  `db.py:SessionLocal` is "the owner role". On live it is `wingrc_app`.
-  Reword it when that file is touched (CLAUDE.md, the docstring rule).
+- **One untrue claim found on the way:** `scheduler.py`'s docstring says
+  `db.py:SessionLocal` is "the owner role". It has been untrue of live
+  since the 2026-09-29 cutover. Recorded in "Docstrings' universal
+  claims", where the next sweep starts.
 
 **The same defect as MinIO's, with the same cause and fix.**
 Provisioning needs a privilege the running app does not: DDL here, bucket
@@ -14634,6 +14656,22 @@ a leak of the runtime's environment, which hands over the superuser. That
 is MinIO's blast-radius finding again, on Postgres. The fix below moves
 migrations out of the app's start, so the runtime no longer needs that
 URL at all.
+- **`WINGRC_TEST_DATABASE_URL` removed from compose, 2026-11-18 (the
+  brief's instruction, pulled ahead of the queue).** It had only a cost.
+  Checked first:
+  - no code under `backend/app` reads it;
+  - `deploy.sh`, the snapshot scripts and the restore test do not;
+  - the tests do, from the environment (`conftest._test_db_url`). The
+    bench's step 4 and the README ran `pytest` inside the container,
+    where compose put it. Without it every integration test there skips
+    silently, because the bench sets no count floor. So step 4 now passes
+    the URL for that run, built from the container's owner URL, and sets
+    `WINGRC_MIN_TESTS_RUN`.
+
+  `tests/test_compose_required.py` fails if the variable comes back. It
+  leaves live's environment at the next deploy, whichever slice that is.
+  That leaves `WINGRC_MIGRATION_DATABASE_URL`, which is the real work, in
+  the fix below.
 
 **The fix, to settle in the slice:**
 1. **Provisioning holds the owner; the runtime never does.** A one-shot
@@ -14645,7 +14683,7 @@ URL at all.
 2. **Compose's default becomes `wingrc_app`,** built from a new required
    `WINGRC_APP_DB_PASSWORD` that `generate-env.sh` fills. The owner URL is
    passed only to the provisioning step and the snapshot and CLI paths
-   that need it. `WINGRC_TEST_DATABASE_URL` leaves the runtime anchor.
+   that need it. (`WINGRC_TEST_DATABASE_URL` already left, above.)
 3. **The guide:** step 1 provisions as the owner and serves as
    `wingrc_app`. "Database roles" stops saying a fresh install should
    leave the split unset, and "Moving off a default credential" gains

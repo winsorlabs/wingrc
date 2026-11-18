@@ -12,7 +12,11 @@ x-backend-env: &backend-env
   # password is written in this file (docs/roadmap.md, "The compose file
   # ships default credentials").
   WINGRC_DATABASE_URL: ${WINGRC_DATABASE_URL:-postgresql+psycopg://wingrc:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required -- set it in .env, see docs/deployment.md}@db:5432/wingrc}
-  WINGRC_TEST_DATABASE_URL: postgresql+psycopg://wingrc:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required -- set it in .env, see docs/deployment.md}@db:5432/wingrc_test
+  # No WINGRC_TEST_DATABASE_URL here (removed 2026-11-18): it carried the
+  # owner's password, a superuser, into every deployment's backend and
+  # worker, and nothing at runtime reads it. A test run inside a container
+  # passes it for that run (docs/bench-stack-verification.md, step 4).
+  # tests/test_compose_required.py holds this.
   # Connection `alembic upgrade head` uses, and nothing else. Unset here on
   # purpose: WINGRC_DATABASE_URL above is still the owning role, which can
   # run DDL, so migrations work without it today.

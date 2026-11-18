@@ -97,7 +97,7 @@ docker compose exec backend alembic upgrade head
 ```bash
 docker compose up           # no rebuild needed for Python/YAML changes
 docker compose exec backend pytest -q                    # unit tests
-docker compose exec backend pytest -q -m integration    # requires DB
+docker compose exec backend sh -c 'WINGRC_TEST_DATABASE_URL="${WINGRC_DATABASE_URL%/wingrc}/wingrc_test" pytest -q -m integration'  # requires DB; see docs/bench-stack-verification.md, step 4
 docker compose exec backend wingrc seed-catalog         # load CMMC catalog
 docker compose exec backend ruff check .                # lint
 ```
