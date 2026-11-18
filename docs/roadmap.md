@@ -16691,6 +16691,136 @@ A kept objective is not named; nothing about it changed.
 `test_preview_says_which_practices_already_deduct` holds both fields to
 the run that computes the score.
 
+### Responsibility had no human write path -- fixed 2026-11-18 (Jarrod's live walk)
+
+**What Jarrod found:** responsibility could not be set. It is
+`control_state.responsibility`, printed in the bundle's customer
+responsibility matrix and the SSP for every control, whatever its status:
+an assessor-facing compliance claim.
+
+**What the code showed** (checked, not taken from the brief):
+- **Seeded:** `customer_owns` (`_seed_control_states`, and
+  `backfill_missing_control_states`).
+- **Recomputed from the tools covering it,** on every contributor added
+  (`_run_loop`, not only the first), on deactivation when other tools
+  remain (`deactivate_org_product`), and three ways in a version move.
+  The brief listed activation and version move. Deactivation was a
+  fourth writer, and it is covered here too.
+- **No request body set it.** The `responsibility` field in
+  `routers/assessments.py` is on an output model.
+
+So it defaulted to Customer and moved only when a tool did.
+
+**The fix: a person sets it, and that is the source of truth.**
+- **`PUT …/control-states/{id}/responsibility`** (`engine.set_responsibility`):
+  - writes the value and marks it a person's
+    (`responsibility_set_by`/`_at`, migration 0075);
+  - writes a history row in the shape the engine already uses
+    (`previous_responsibility`/`new_responsibility`, with who and how);
+  - writes an audit row, `control_state.responsibility_set`, whose
+    `via` says whether it was typed or came from the RACI suggestion.
+- **Status and score do not move.** Responsibility is not scored.
+- **Gate:** the router's `require_write`, the same as editing a status,
+  so every role but `c3pao_assessor`. That is the nearest precedent, not
+  a new decision, and `customer_poc` is included as it is for status.
+- **The drawer** shows the value, who set it (or that nobody has: "the
+  default, or the tools covering this objective"), and a select to change
+  it.
+
+**Not derived from RACI; suggested from it.** Jarrod proposed deriving
+it: an MSP contact Responsible makes it Provider, both makes it Shared.
+The brief, and this slice, kept the instinct and declined the automation,
+for two reasons:
+- **It is the activation defect again.** A tool's arrival used to
+  overwrite a status a person set, and the fix was to ask. A RACI
+  assignment silently rewriting an assessor-facing claim is the same
+  shape, and would be the second instance.
+- **It would make a loop.** The drawer already suggests RACI contacts
+  from responsibility (`lib/raci.ts`'s `suggestedAffiliation`). If RACI
+  then set responsibility, each would derive from the other, and neither
+  would be the source of truth.
+
+So suggestions point both ways and only a person writes. **The
+suggestion's content is Jarrod's mapping** (`lib/raci.ts`'s
+`suggestedResponsibility`):
+- MSP contact(s) Responsible only → `provider_satisfies` (Provider);
+- MSP and customer contacts both Responsible → `shared`;
+- customer contact(s) Responsible only → `customer_owns`.
+
+Only R counts, and only the `msp` and `customer` affiliations. An mssp,
+government or other contact Responsible suggests nothing, because the
+mapping does not say what it means. **`external_system`** is an external
+authorized system that is responsible, such as a FedRAMP cloud provider
+(`assessment.py`). It has no RACI shape and is set by hand only. The
+suggestion is shown beside the control, as "You've made an MSP contact
+Responsible here. Set responsibility to Provider?", with Set and
+Dismiss. It writes only on Set. A RACI change through the API writes no
+responsibility (`test_a_raci_change_alone_never_writes_responsibility`).
+
+**The consequence most likely to be missed: tools must now ask.** Once a
+person can set it, a tool recomputing it would overwrite a human
+judgement, exactly what the activation slice fixed for status. Every
+recompute now goes through `engine._tool_responsibility`, with
+`assessment.tool_changed_responsibility` holding the rule:
+- **Nobody set it:** the tool's value, as before.
+- **A person set it and the tool agrees:** nothing to ask.
+- **A person set it and the tool differs, at activation:** asked. The
+  preview lists it beside the judged statuses (`responsibility`), on the
+  same screen, defaulting to **keep**. The confirm sends what was shown.
+  A value changed since, or one not answered, refuses as a status does
+  ("Nothing was activated"). The machinery is reused, not duplicated.
+- **A path nobody is asked in** (an API call that sends no answers, or a
+  new assessment's activations): **keeps the person's value** and records
+  the tool's in the history line. This is the status rule with the
+  opposite default. There an unasked path defers to `needs_review`;
+  there is no "needs review" responsibility, so the person's value
+  stands.
+- **Deactivation** with other tools remaining: keeps it.
+- **A version move does not ask** (its 2026-11-05 design is to tell
+  afterwards), so it keeps the person's value and lists it in
+  `responsibility_kept`. The summary says "kept at External system (set
+  by …); v2 says Provider". So the version-move path needed the same
+  rule, and it now tells rather than asks, as it does for status.
+
+**Verified:**
+- **Tests** (`tests/test_responsibility.py`):
+  - the rule, each case written out;
+  - the endpoint's write, history, audit row and unmoved score;
+  - the role gate for all five roles;
+  - the suggestion recorded as one;
+  - RACI never writes it;
+  - activation: nobody asked keeps; asked keep and take; the preview
+    asks and writes nothing; stale and unanswered answers refuse;
+  - a value nobody set still moves with the tool;
+  - deactivation and a version move keep it, and the move lists it.
+- **Frontend:** the suggestion rule, each case; the control shows the
+  suggestion and writes only on a click, as `raci_suggestion`; Dismiss
+  writes nothing; the activation dialog asks, defaults to keep, and sends
+  what was shown.
+- **Mutations, each seen red on the bench:**
+  - a tool ignoring who set it (8 red);
+  - "take the tool's" ignored (2);
+  - a stale answer accepted (1);
+  - a hand-set value not marked as a person's (13).
+- **Bench** (`wingrc_verify_1118r`, `e5776c7`, catalog and RocketCyber
+  seeded):
+  - step 4: 2189 passed;
+  - ruff clean;
+  - `tsc -b` clean, vitest 560, build clean;
+  - torn down; host lists unchanged.
+- **Walk at 1366×768,** on AU.L2-3.3.1[a] with the MSP contact
+  Responsible:
+  - the drawer read "Not set by a person: the default, or the tools
+    covering this objective" and offered "Set responsibility to
+    Provider?", having written nothing;
+  - External system was saved by hand ("Set by Bench Admin on …");
+  - activating RocketCyber, which would set Provider, asked first,
+    defaulting to keep, and wrote nothing while asking;
+  - activating with the default kept External system.
+- **One wording not changed:** with only responsibility asked, the
+  dialog's heading still says "would change an objective you judged",
+  the status ask's sentence.
+
 ### The version move could ask, as activation does -- not started
 
 **Recorded 2026-11-05. Not warranted yet.** Since the move now says

@@ -577,7 +577,7 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
 | `backend/app/snapshots.py` | Local snapshots (item S): the database and the object store as one set, with a manifest. **Not a backup**: same host as the data. A database restored without its objects renders every attachment present with no bytes, and row counts and SPRS pass on it, so `snapshot-verify` fetches every object a row names. A restore goes only into an empty database and bucket. The Fernet key is not in a snapshot, so nothing restores credentials without it. The age reader counts only sets with a manifest, and msp_admin's banner (`SnapshotBanner.tsx`, the TLS banner's path) fires past 50 hours or on none. `deploy/restore-test.sh` is the test and its mutation check; `docs/deployment.md`, "Local snapshots", is the operator's page |
 | `backend/app/audit.py` | `log_event()` — writes `AuditLog` rows; also the actor-resolution helpers both audit views share |
 | `backend/app/rls.py` | The only place `app.current_org` is written, plus the `after_begin` hook that makes it survive a commit — read before touching anything org-scoped |
-| `backend/app/migrations/` | Alembic migrations (currently 0001–0074) |
+| `backend/app/migrations/` | Alembic migrations (currently 0001–0075) |
 | `backend/baselines/` | YAML product baselines (`rocketcyber.yaml`, …) — not repo-root `baselines/`; `seeds/baselines.py:_BASELINES_DIR` resolves here, and a stale repo-root duplicate that drifted out of sync with a real coverage_basis reclassification was removed 2026-09-19 (see `docs/roadmap.md`'s tenant lifecycle consolidation pass entry) |
 | `docs/fips.md` | FIPS 140-2/140-3 crypto boundary documentation |
 | `docs/architecture.md` | Authoritative architecture description (the five layers) — companion to this file's terse session version |
@@ -678,7 +678,24 @@ writeup.
   judged status since 2026-11-03: the person's answer, or
   `needs_review`), a later one leaves status alone, and nothing sets
   `met`. `responsibility` is written at once, and the bundle's CRM prints
-  it as stated. `assists` is credited like `customer_system`.
+  it as stated, unless a person set it (2026-11-18 below).
+  `assists` is credited like `customer_system`.
+- **Responsibility is a person's to set, and a tool asks before
+  overwriting one (2026-11-18, migration 0075).**
+  - **Before:** nothing but a tool could set it.
+  - **Now:** `PUT …/control-states/{id}/responsibility` sets it and marks
+    it a person's (`responsibility_set_by`).
+  - **Every recompute goes through `engine._tool_responsibility`:**
+    - activation asks, on the same screen and with the same "changed
+      since shown" refusal as a judged status;
+    - a path nobody is asked in keeps the person's value and records what
+      the tool would have set;
+    - deactivation keeps it;
+    - a version move keeps it and says so (`responsibility_kept`).
+  - **RACI never writes it.** The drawer suggests it from RACI (Jarrod's
+    mapping) and a person clicks. RACI and responsibility each suggest
+    the other, and only a person writes either (`docs/roadmap.md`,
+    "Responsibility had no human write path").
   `candidate_state` was never read, and migration 0072 dropped it. That
   is the gate for bulk-accepting AI recommendations of these values:
   `docs/roadmap.md`'s "The Tool Import wizard: each row a decision a
