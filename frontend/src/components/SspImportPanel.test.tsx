@@ -1,3 +1,6 @@
+// @vitest-environment jsdom
+//
+// The SSP import picker: only offered candidates, with their catalog text, and none preselected.
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { RowCard } from "./SspImportPanel";
