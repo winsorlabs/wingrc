@@ -48,6 +48,7 @@ from ..engine import (
     move_org_product_version,
     recompute_sprs,
     reopen_assessment,
+    set_responsibility,
     start_assessment,
 )
 from ..models import (
@@ -140,12 +141,32 @@ class JudgedDecisionIn(BaseModel):
     choice: Literal["keep", "needs_review"]
 
 
+class ResponsibilityDecisionIn(BaseModel):
+    control_state_id: uuid.UUID
+    # What the person was shown: their value and the tool's. A mismatch at
+    # confirm refuses, as for a status.
+    shown_responsibility: str
+    tool_responsibility: str
+    choice: Literal["keep", "take_tool"]
+
+
 class ActivateIn(BaseModel):
     configuration_notes: str | None = None
     # Absent: nobody was asked, and every judged objective goes to
     # needs_review. Present (even empty): the person's answer for exactly
     # the judged objectives the preview showed (engine.activate_org_product).
     decisions: list[JudgedDecisionIn] | None = None
+    # The same for a responsibility a person set that this tool would
+    # change. Absent: nobody was asked, and the person's value is kept.
+    responsibility_decisions: list[ResponsibilityDecisionIn] | None = None
+
+
+class ResponsibilityOutcomeOut(BaseModel):
+    control_state_id: uuid.UUID
+    responsibility_before: str
+    tool_responsibility: str
+    responsibility_after: str
+    decided_by: Literal["person", "default"]
 
 
 class JudgedOutcomeOut(BaseModel):
@@ -157,6 +178,7 @@ class JudgedOutcomeOut(BaseModel):
 
 
 class ActivateOut(BaseModel):
+    responsibility: list[ResponsibilityOutcomeOut] = []
     objectives_updated: int
     tasks_created: int
     judged: list[JudgedOutcomeOut] = []
@@ -167,8 +189,27 @@ class PreviewChoiceIn(BaseModel):
     choice: Literal["keep", "needs_review"]
 
 
+class PreviewResponsibilityChoiceIn(BaseModel):
+    control_state_id: uuid.UUID
+    choice: Literal["keep", "take_tool"]
+
+
 class ActivationPreviewIn(BaseModel):
     choices: list[PreviewChoiceIn] = []
+    responsibility_choices: list[PreviewResponsibilityChoiceIn] = []
+
+
+class ResponsibilityAskOut(BaseModel):
+    control_state_id: uuid.UUID
+    control_id: str
+    objective_key: str
+    objective_text: str
+    responsibility: str
+    set_by: str | None
+    tool_would_set: str
+    default: Literal["keep", "take_tool"]
+    choice: Literal["keep", "take_tool"]
+    becomes: str
 
 
 class JudgedObjectiveOut(BaseModel):
@@ -188,6 +229,7 @@ class ActivationPreviewOut(BaseModel):
     sprs_after: int | None
     objectives: list[JudgedObjectiveOut]
     practices_starting: list[str]
+    responsibility: list[ResponsibilityAskOut] = []
 
 
 class ProductOut(BaseModel):
@@ -268,6 +310,10 @@ class StatementOut(BaseModel):
     # without a second fetch of the whole control-states list just for this
     # one field — get_statements already loads states_by_obj below.
     responsibility: str | None = None
+    # Who set responsibility by hand (migration 0075), for the drawer's
+    # control; null when it is the default or a tool's value.
+    responsibility_set_by: str | None = None
+    responsibility_set_at: datetime | None = None
 
 
 class UpsertStatementIn(BaseModel):
@@ -312,6 +358,16 @@ class MovedToReviewOut(BaseModel):
     still_covered: bool
 
 
+class ResponsibilityKeptOut(BaseModel):
+    control_state_id: uuid.UUID
+    control_id: str
+    objective_key: str
+    objective_text: str
+    kept: str
+    tool_would_set: str
+    set_by: str | None
+
+
 class MoveVersionOut(BaseModel):
     controls_gained: int
     controls_lost: int
@@ -322,6 +378,8 @@ class MoveVersionOut(BaseModel):
     # What the move left at needs_review and why, for the screen to say
     # once afterwards; the move does not ask (2026-11-05).
     set_to_needs_review: list[MovedToReviewOut]
+    # A responsibility a person set, kept over the new version's value.
+    responsibility_kept: list[ResponsibilityKeptOut] = []
 
 
 class EvidenceTaskStateRef(BaseModel):
@@ -364,6 +422,10 @@ class ControlStateOut(BaseModel):
     objective_text: str
     status: str
     responsibility: str
+    # Set when a person set responsibility by hand (migration 0075); null
+    # means the seed default or a tool's value.
+    responsibility_set_by: str | None = None
+    responsibility_set_at: datetime | None = None
     contributors: list[ContributorOut] = []
     statement_status: str | None = None
     # Live links only: archived evidence is shown on the objective and never
@@ -672,6 +734,12 @@ def activate_product(
             assessment_id=assessment_id,
             configuration_notes=body.configuration_notes,
             decisions=decisions,
+            responsibility_decisions=(
+                {d.control_state_id: (d.shown_responsibility, d.tool_responsibility, d.choice)
+                 for d in body.responsibility_decisions}
+                if body.responsibility_decisions is not None
+                else None
+            ),
         )
     except ActivationJudgementsChanged as e:
         session.rollback()
@@ -699,6 +767,16 @@ def activate_product(
                 decided_by=j["decided_by"],
             )
             for j in result["judged"]
+        ],
+        responsibility=[
+            ResponsibilityOutcomeOut(
+                control_state_id=r["control_state_id"],
+                responsibility_before=r["from"],
+                tool_responsibility=r["tool"],
+                responsibility_after=r["to"],
+                decided_by=r["decided_by"],
+            )
+            for r in result["responsibility"]
         ],
     )
 
@@ -729,6 +807,9 @@ def preview_activation(
         preview = activation_preview(
             session, org_id, product_id, assessment_id,
             choices={c.control_state_id: c.choice for c in body.choices},
+            responsibility_choices={
+                c.control_state_id: c.choice for c in body.responsibility_choices
+            },
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
@@ -980,6 +1061,8 @@ def list_control_states(
             objective_text=obj.text,
             status=cs.status,
             responsibility=cs.responsibility,
+            responsibility_set_by=cs.responsibility_set_by,
+            responsibility_set_at=cs.responsibility_set_at,
             contributors=contributors_by_cs.get(cs.id, []),
             statement_status=imp_stmt.status if imp_stmt is not None else None,
             evidence_count=ev_count or 0,
@@ -1217,6 +1300,65 @@ def move_product_version(
     return MoveVersionOut(**result)
 
 
+# Who may set responsibility: the MSP's side only. customer_poc is not
+# here on purpose (set_control_state_responsibility says why), and
+# c3pao_assessor never writes. Mirrored by frontend/src/lib/roles.ts's
+# canSetResponsibility.
+RESPONSIBILITY_ROLES = ("msp_admin", "consultant_admin", "msp_engineer")
+
+
+class SetResponsibilityIn(BaseModel):
+    responsibility: Literal["provider_satisfies", "shared", "customer_owns", "external_system"]
+    # "raci_suggestion" when the person accepted the drawer's suggestion
+    # from RACI; a person writes it either way.
+    via: Literal["manual", "raci_suggestion"] = "manual"
+
+
+class SetResponsibilityOut(BaseModel):
+    id: uuid.UUID
+    responsibility: str
+    responsibility_set_by: str | None
+    responsibility_set_at: datetime | None
+
+
+@router.put(
+    "/assessments/{assessment_id}/control-states/{control_state_id}/responsibility",
+    response_model=SetResponsibilityOut,
+)
+def set_control_state_responsibility(
+    org_id: uuid.UUID,
+    assessment_id: uuid.UUID,
+    control_state_id: uuid.UUID,
+    body: SetResponsibilityIn,
+    session: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(require_org_access(*RESPONSIBILITY_ROLES)),
+) -> SetResponsibilityOut:
+    """The only human write path for responsibility (engine.set_responsibility).
+
+    Gated to the MSP's side (RESPONSIBILITY_ROLES; the brief, 2026-11-18),
+    narrower than a status edit. Responsibility crosses the boundary
+    between two organisations: a customer setting provider_satisfies would
+    assert the MSP's obligations, in the matrix an assessor reads, as the
+    party it benefits. A status is a statement about the customer's own
+    system, so it stays open to customer_poc. A tool never overwrites the
+    value without asking (engine._tool_responsibility); RACI never writes
+    it."""
+    try:
+        cs = set_responsibility(
+            session, org_id, assessment_id, control_state_id, body.responsibility,
+            actor=current_user.display_name or current_user.email, via=body.via,
+        )
+    except LookupError as e:
+        session.rollback()
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    session.commit()
+    return SetResponsibilityOut(
+        id=cs.id, responsibility=cs.responsibility,
+        responsibility_set_by=cs.responsibility_set_by,
+        responsibility_set_at=cs.responsibility_set_at,
+    )
+
+
 @router.patch(
     "/assessments/{assessment_id}/control-states/{control_state_id}",
     response_model=PatchControlStateOut,
@@ -1340,6 +1482,12 @@ def get_statements(
             status=existing[o.id].status if o.id in existing else None,
             control_discussion=ctrl.discussion,
             responsibility=states_by_obj[o.id].responsibility if o.id in states_by_obj else None,
+            responsibility_set_by=(
+                states_by_obj[o.id].responsibility_set_by if o.id in states_by_obj else None
+            ),
+            responsibility_set_at=(
+                states_by_obj[o.id].responsibility_set_at if o.id in states_by_obj else None
+            ),
         )
         for o in objectives
     ]

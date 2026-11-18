@@ -7,6 +7,7 @@
  * this writes the sentences.
  */
 
+import { RESPONSIBILITY_LABELS } from "../lib/raci";
 import type { MoveVersionResult, MovedToReview } from "../types";
 import { STATUS_CLASS, STATUSES } from "./ObjectiveRow";
 
@@ -65,6 +66,26 @@ export function VersionMoveSummary({
             </li>
           ))}
         </ul>
+      )}
+      {(result.responsibility_kept ?? []).length > 0 && (
+        <>
+          <div>
+            Responsibility a person set was kept where v{result.to_version} would change it; change it on the
+            objective if v{result.to_version} is right:
+          </div>
+          <ul className="version-move-summary-rows">
+            {result.responsibility_kept.map((r) => (
+              <li key={`resp-${r.control_state_id}`}>
+                <span className="version-move-summary-key">
+                  {r.control_id}[{r.objective_key}]
+                </span>{" "}
+                kept at {RESPONSIBILITY_LABELS[r.kept] ?? r.kept}
+                {r.set_by ? ` (set by ${r.set_by})` : ""}; v{result.to_version} says{" "}
+                {RESPONSIBILITY_LABELS[r.tool_would_set] ?? r.tool_would_set}.
+              </li>
+            ))}
+          </ul>
+        </>
       )}
       {result.tasks_created > 0 && (
         <div>

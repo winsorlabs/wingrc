@@ -16691,6 +16691,155 @@ A kept objective is not named; nothing about it changed.
 `test_preview_says_which_practices_already_deduct` holds both fields to
 the run that computes the score.
 
+### Responsibility had no human write path -- fixed 2026-11-18 (Jarrod's live walk)
+
+**What Jarrod found:** responsibility could not be set. It is
+`control_state.responsibility`, printed in the bundle's customer
+responsibility matrix and the SSP for every control, whatever its status:
+an assessor-facing compliance claim.
+
+**What the code showed** (checked, not taken from the brief):
+- **Seeded:** `customer_owns` (`_seed_control_states`, and
+  `backfill_missing_control_states`).
+- **Recomputed from the tools covering it,** on every contributor added
+  (`_run_loop`, not only the first), on deactivation when other tools
+  remain (`deactivate_org_product`), and three ways in a version move.
+  The brief listed activation and version move. Deactivation was a
+  fourth writer, and it is covered here too.
+- **No request body set it.** The `responsibility` field in
+  `routers/assessments.py` is on an output model.
+
+So it defaulted to Customer and moved only when a tool did.
+
+**The fix: a person sets it, and that is the source of truth.**
+- **`PUT …/control-states/{id}/responsibility`** (`engine.set_responsibility`):
+  - writes the value and marks it a person's
+    (`responsibility_set_by`/`_at`, migration 0075);
+  - writes a history row in the shape the engine already uses
+    (`previous_responsibility`/`new_responsibility`, with who and how);
+  - writes an audit row, `control_state.responsibility_set`, whose
+    `via` says whether it was typed or came from the RACI suggestion.
+- **Status and score do not move.** Responsibility is not scored.
+- **Gate: the MSP's side only.** `msp_admin`, `consultant_admin` and
+  `msp_engineer` (`RESPONSIBILITY_ROLES`), narrowed by the brief on
+  2026-11-18 from the first version's status-edit gate. The asymmetry
+  decides it:
+  - A customer setting "we own this" is a statement about themselves.
+  - A customer setting `provider_satisfies` would assert the MSP's
+    obligations, printed in the customer responsibility matrix an
+    assessor reads, made by the party it benefits, in a document the MSP
+    signs off.
+  - A status is a statement about the customer's own system, so status
+    editing stays open to `customer_poc`.
+
+  Responsibility crosses the boundary between two organisations, so it
+  is set on the MSP's side. `test_a_customer_may_set_a_status_but_not_responsibility`
+  holds the asymmetry. In the drawer, `customer_poc` sees the value
+  read-only, with no suggestion.
+- **Recorded, not built: a customer's say.** If customers should take
+  part, the honest shape is a suggestion they raise and the MSP accepts,
+  the same pattern as the RACI prompt, not a direct write.
+- **The drawer** shows the value, who set it (or that nobody has: "the
+  default, or the tools covering this objective"), and a select to change
+  it.
+
+**Not derived from RACI; suggested from it.** Jarrod proposed deriving
+it: an MSP contact Responsible makes it Provider, both makes it Shared.
+The brief, and this slice, kept the instinct and declined the automation,
+for two reasons:
+- **It is the activation defect again.** A tool's arrival used to
+  overwrite a status a person set, and the fix was to ask. A RACI
+  assignment silently rewriting an assessor-facing claim is the same
+  shape, and would be the second instance.
+- **It would make a loop.** The drawer already suggests RACI contacts
+  from responsibility (`lib/raci.ts`'s `suggestedAffiliation`). If RACI
+  then set responsibility, each would derive from the other, and neither
+  would be the source of truth.
+
+So suggestions point both ways and only a person writes. **The
+suggestion's content is Jarrod's mapping** (`lib/raci.ts`'s
+`suggestedResponsibility`):
+- MSP contact(s) Responsible only → `provider_satisfies` (Provider);
+- MSP and customer contacts both Responsible → `shared`;
+- customer contact(s) Responsible only → `customer_owns`.
+
+Only R counts, and only the `msp` and `customer` affiliations. An mssp,
+government or other contact Responsible suggests nothing, because the
+mapping does not say what it means. **`external_system`** is an external
+authorized system that is responsible, such as a FedRAMP cloud provider
+(`assessment.py`). It has no RACI shape and is set by hand only. The
+suggestion is shown beside the control, as "You've made an MSP contact
+Responsible here. Set responsibility to Provider?", with Set and
+Dismiss. It writes only on Set. A RACI change through the API writes no
+responsibility (`test_a_raci_change_alone_never_writes_responsibility`).
+
+**The consequence most likely to be missed: tools must now ask.** Once a
+person can set it, a tool recomputing it would overwrite a human
+judgement, exactly what the activation slice fixed for status. Every
+recompute now goes through `engine._tool_responsibility`, with
+`assessment.tool_changed_responsibility` holding the rule:
+- **Nobody set it:** the tool's value, as before.
+- **A person set it and the tool agrees:** nothing to ask.
+- **A person set it and the tool differs, at activation:** asked. The
+  preview lists it beside the judged statuses (`responsibility`), on the
+  same screen, defaulting to **keep**. The confirm sends what was shown.
+  A value changed since, or one not answered, refuses as a status does
+  ("Nothing was activated"). The machinery is reused, not duplicated.
+- **A path nobody is asked in** (an API call that sends no answers, or a
+  new assessment's activations): **keeps the person's value** and records
+  the tool's in the history line. This is the status rule with the
+  opposite default. There an unasked path defers to `needs_review`;
+  there is no "needs review" responsibility, so the person's value
+  stands.
+- **Deactivation** with other tools remaining: keeps it.
+- **A version move does not ask** (its 2026-11-05 design is to tell
+  afterwards), so it keeps the person's value and lists it in
+  `responsibility_kept`. The summary says "kept at External system (set
+  by …); v2 says Provider". So the version-move path needed the same
+  rule, and it now tells rather than asks, as it does for status.
+
+**Verified:**
+- **Tests** (`tests/test_responsibility.py`):
+  - the rule, each case written out;
+  - the endpoint's write, history, audit row and unmoved score;
+  - the role gate for all five roles;
+  - the suggestion recorded as one;
+  - RACI never writes it;
+  - activation: nobody asked keeps; asked keep and take; the preview
+    asks and writes nothing; stale and unanswered answers refuse;
+  - a value nobody set still moves with the tool;
+  - deactivation and a version move keep it, and the move lists it.
+- **Frontend:** the suggestion rule, each case; the control shows the
+  suggestion and writes only on a click, as `raci_suggestion`; Dismiss
+  writes nothing; the activation dialog asks, defaults to keep, and sends
+  what was shown.
+- **Mutations, each seen red on the bench:**
+  - a tool ignoring who set it (8 red);
+  - "take the tool's" ignored (2);
+  - a stale answer accepted (1);
+  - a hand-set value not marked as a person's (13).
+- **Bench** (`wingrc_verify_1118r`, `e5776c7`, catalog and RocketCyber
+  seeded):
+  - step 4: 2189 passed;
+  - ruff clean;
+  - `tsc -b` clean, vitest 560, build clean;
+  - torn down; host lists unchanged.
+- **Walk at 1366×768,** on AU.L2-3.3.1[a] with the MSP contact
+  Responsible:
+  - the drawer read "Not set by a person: the default, or the tools
+    covering this objective" and offered "Set responsibility to
+    Provider?", having written nothing;
+  - External system was saved by hand ("Set by Bench Admin on …");
+  - activating RocketCyber, which would set Provider, asked first,
+    defaulting to keep, and wrote nothing while asking;
+  - activating with the default kept External system.
+- **The dialog's heading names what the person did** (fixed 2026-11-18,
+  the brief's note). It had said "would change an objective you judged"
+  even when only a responsibility was asked, which reads as wrong to
+  someone who set responsibility and nothing else. `askHeading` now says
+  "a responsibility you set", "an objective you judged", or both,
+  each case written out in `ActivationAsk.test.ts`.
+
 ### The version move could ask, as activation does -- not started
 
 **Recorded 2026-11-05. Not warranted yet.** Since the move now says
@@ -17864,6 +18013,26 @@ kept in the audit row's `before_value`.
 
 #### A person may confirm a near match (2026-11-18, after Jarrod's live walk)
 
+**The score cannot carry correctness. That is why the picker requires
+a person.** On the CMMC catalog, 168 pairs of *genuinely different*
+objectives in one family score 0.80 or more against each other, up to
+0.98. IA.L2-3.5.3[c] and [d] score 0.98, and CM.L2-3.4.5's objectives
+differ by one word ("defined", "enforced"). A row can be one word away
+from the right objective and one word away from a wrong one, and the
+score is the same either way.
+
+**Do not auto-accept above a threshold.** It is the obvious future
+"improvement", and this finding is what makes it wrong. No threshold
+separates a near match to the right objective from a near match to its
+sibling, so an automatic accept above one would file a statement under
+the wrong objective, in a document an assessor reads, without anyone
+having looked. Only a person reading the row's text beside each
+candidate's catalog text can tell them apart. The picker shows both for
+that reason, and preselects nothing. This is not colour: it is the
+reason for the design, and a change to automate placement has to answer
+it first. `ssp_import_session.NEAR_MATCH_FLOOR`'s comment says the same
+where the next person will read it.
+
 **The decision that waited on a number, and the number.**
 - **The rule as built:** the stricter reading of "the matcher never
   guesses", that a person could not confirm a near match either. It was
@@ -17906,29 +18075,24 @@ kept in the audit row's `before_value`.
   An assessor can tell a verbatim match from a judgement call. The
   screen says "Accepted onto … as a near match (0.94), confirmed by …".
 
-**The floor is 0.80, and it is not a safety margin.**
-- **Why no floor can be one:** distinct objectives in one family are
-  often near-identical. On the CMMC catalog, 168 such pairs score 0.80
-  or above against each other, up to 0.98: IA.L2-3.5.3[c] and [d], and
-  CM.L2-3.4.5's objectives, which differ by one word ("defined",
-  "enforced"). A high score does not mean the same objective.
-- **What makes a pick safe:** the person reading the source beside each
-  candidate's text.
-- **What the floor does:** it removes noise, such as three guesses at
-  0.2, that invites a wrong click.
-- **Why 0.80:** on the real file the right objective scored 0.94 and
-  the two wrong ones 0.57 and 0.53, and a one-word difference in an
-  objective's text scores about 0.9.
+**The floor is 0.80, and it is not a safety margin.** No floor can be
+one (above). Correctness is the person's; the floor's only job is not
+to waste the reviewer's time on candidates not worth reading, such as
+three guesses at 0.2. Why 0.80: on the real file the right objective
+scored 0.94 and the two wrong ones 0.57 and 0.53, and a one-word
+difference in an objective's text scores about 0.9.
 
 **The floor's effect on the real file's 61 near-match rows:**
 - **40 are offered at least one candidate.** Of those, 14 get two or
   three, so the person has to read them; 297 and 298 are 0.99 against
   0.93.
 - **21 are offered none,** and stay written by hand.
-- **7 of the 21 have a best score from 0.75 to 0.79.** Whether those
-  top candidates are right needs someone to read the text, and none is
-  quoted here (the customer's file). Jarrod's next walk tells whether
-  the floor moves.
+- **7 of the 21 have a best score from 0.75 to 0.79.** This is not a
+  safety question, since the person decides every placement either
+  way. The criterion is only whether those candidates are worth
+  reading. Jarrod can judge that by looking at them (none is quoted
+  here; it is the customer's file), and lowering the floor costs nothing
+  but attention.
 - **The floor is provisional:** one file is the evidence.
 
 **Verified:**

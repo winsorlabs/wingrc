@@ -173,6 +173,8 @@ export interface ControlStateRow {
   objective_text: string;
   status: string;
   responsibility: string;
+  responsibility_set_by?: string | null;
+  responsibility_set_at?: string | null;
   contributors: Contributor[];
   statement_status: string | null;
   evidence_count: number;
@@ -250,6 +252,9 @@ export interface StatementRow {
   // G.7 Part 2: drives RaciSection's MSP-vs-customer suggestion inline in
   // the drawer -- see StatementOut's own comment on the backend side.
   responsibility: string | null;
+  /** Who set responsibility by hand (migration 0075); null for a default or a tool's value. */
+  responsibility_set_by: string | null;
+  responsibility_set_at: string | null;
 }
 
 export interface EvidenceRow {
@@ -1893,6 +1898,8 @@ export interface ActivationPreview {
   objectives: JudgedObjective[];
   /** Practices that lose their points only after these choices. */
   practices_starting: string[];
+  /** Responsibilities a person set that this tool would change. */
+  responsibility: ResponsibilityAsk[];
 }
 
 export interface JudgedDecision {
@@ -1921,6 +1928,41 @@ export interface MoveVersionResult {
   from_version: number | null;
   to_version: number;
   set_to_needs_review: MovedToReview[];
+  /** A responsibility a person set, kept over the new version's value: the move does not ask. */
+  responsibility_kept: ResponsibilityKept[];
+}
+
+export interface ResponsibilityKept {
+  control_state_id: string;
+  control_id: string;
+  objective_key: string;
+  objective_text: string;
+  kept: string;
+  tool_would_set: string;
+  set_by: string | null;
+}
+
+export type ResponsibilityChoice = "keep" | "take_tool";
+
+/** A responsibility a person set that this tool would change: asked at activation. */
+export interface ResponsibilityAsk {
+  control_state_id: string;
+  control_id: string;
+  objective_key: string;
+  objective_text: string;
+  responsibility: string;
+  set_by: string | null;
+  tool_would_set: string;
+  default: ResponsibilityChoice;
+  choice: ResponsibilityChoice;
+  becomes: string;
+}
+
+export interface ResponsibilityDecision {
+  control_state_id: string;
+  shown_responsibility: string;
+  tool_responsibility: string;
+  choice: ResponsibilityChoice;
 }
 
 export interface ActivationResult {

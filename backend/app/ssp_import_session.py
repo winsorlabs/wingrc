@@ -99,8 +99,14 @@ _ZIP_MAGIC = b"PK\x03\x04"
 # A near match below this is not offered (2026-11-18). On the real file the
 # near-match row's right objective scored 0.94 and the two wrong ones 0.57
 # and 0.53; a one-word difference in an objective's text scores about 0.9.
-# Provisional: one real row is the evidence. The module docstring says
-# why no floor can make a pick safe on its own.
+# Provisional: one real row is the evidence. Its only job is not to waste
+# a reviewer's time on candidates not worth reading.
+#
+# Do not auto-accept above any threshold. Different objectives in one
+# family score up to 0.98 against each other (168 pairs at 0.80 or more on
+# the CMMC catalog), so the score cannot carry correctness: a person reading
+# both texts is what places a row (docs/roadmap.md, "A person may confirm a
+# near match").
 NEAR_MATCH_FLOOR = 0.80
 
 PLACEMENTS = ("exact_match", "person_chose_exact_text", "person_confirmed_near_match")

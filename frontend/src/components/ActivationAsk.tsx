@@ -13,7 +13,8 @@
  */
 
 import { useEffect } from "react";
-import type { ActivationChoice, ActivationPreview } from "../types";
+import { RESPONSIBILITY_LABELS } from "../lib/raci";
+import type { ActivationChoice, ActivationPreview, ResponsibilityChoice } from "../types";
 import { STATUS_CLASS, STATUSES } from "./ObjectiveRow";
 
 const LABEL: Record<string, string> = Object.fromEntries(STATUSES.map((s) => [s.value, s.label]));
@@ -45,14 +46,26 @@ function scoreLine(preview: ActivationPreview): string {
   return line;
 }
 
+/** The dialog's heading, naming what a person did: a status they judged,
+ * a responsibility they set, or both. "an objective you judged" alone
+ * reads as wrong to someone who only set responsibility. */
+export function askHeading(productName: string, statuses: number, responsibilities: number): string {
+  const judged = statuses === 1 ? "an objective you judged" : `${statuses} objectives you judged`;
+  const set = responsibilities === 1 ? "a responsibility you set" : `${responsibilities} responsibilities you set`;
+  const what = statuses && responsibilities ? `${judged} and ${set}` : statuses ? judged : set;
+  return `Activating ${productName} would change ${what}`;
+}
+
 export function ActivationAsk({
   productName,
   preview,
   choices,
+  respChoices,
   scoring,
   busy,
   error,
   onChoose,
+  onChooseResp,
   onConfirm,
   onCancel,
 }: {
@@ -60,11 +73,13 @@ export function ActivationAsk({
   /** The server's last answer; its score is for the choices it was asked. */
   preview: ActivationPreview;
   choices: Record<string, ActivationChoice>;
+  respChoices: Record<string, ResponsibilityChoice>;
   /** True while the score for the current choices is being computed. */
   scoring: boolean;
   busy: boolean;
   error: string | null;
   onChoose: (controlStateId: string, choice: ActivationChoice) => void;
+  onChooseResp: (controlStateId: string, choice: ResponsibilityChoice) => void;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -76,7 +91,7 @@ export function ActivationAsk({
     return () => window.removeEventListener("keydown", onKey);
   }, [onCancel]);
 
-  const n = preview.objectives.length;
+  const n = preview.objectives.length + preview.responsibility.length;
   return (
     <div className="modal-overlay" onClick={onCancel}>
       <div
@@ -87,15 +102,14 @@ export function ActivationAsk({
         onClick={(e) => e.stopPropagation()}
       >
         <h2 id="activation-ask-title">
-          {n === 1
-            ? `Activating ${productName} would change an objective you judged`
-            : `Activating ${productName} would change ${n} objectives you judged`}
+          {askHeading(productName, preview.objectives.length, preview.responsibility.length)}
         </h2>
         <p>
           {productName} covers {n === 1 ? "it" : "these"}, and {n === 1 ? "it was" : "each was"} set by a person.
           Choose what {n === 1 ? "it" : "each"} becomes. Nothing changes until you activate; Cancel leaves{" "}
           {productName} inactive.
         </p>
+        {preview.objectives.length > 0 && (
         <div className="activation-ask-rows">
           <table>
             <thead>
@@ -146,6 +160,52 @@ export function ActivationAsk({
             </tbody>
           </table>
         </div>
+        )}
+        {preview.responsibility.length > 0 && (
+          <div className="activation-ask-rows">
+            <h3 className="activation-ask-subhead">Responsibility a person set</h3>
+            <p className="activation-ask-note">
+              {productName} would change who is responsible. Keeping the person's value is the default.
+            </p>
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Objective</th>
+                  <th scope="col">Set by a person</th>
+                  <th scope="col">Becomes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.responsibility.map((r) => {
+                  const choice = respChoices[r.control_state_id] ?? r.choice;
+                  return (
+                    <tr key={r.control_state_id}>
+                      <td>
+                        <div className="activation-ask-key">{r.control_id}[{r.objective_key}]</div>
+                        <div className="activation-ask-text">{r.objective_text}</div>
+                      </td>
+                      <td>
+                        {RESPONSIBILITY_LABELS[r.responsibility] ?? r.responsibility}
+                        {r.set_by ? <div className="activation-ask-text">by {r.set_by}</div> : null}
+                      </td>
+                      <td>
+                        <select
+                          aria-label={`Responsibility for ${r.control_id}[${r.objective_key}]`}
+                          value={choice}
+                          disabled={busy}
+                          onChange={(e) => onChooseResp(r.control_state_id, e.target.value as ResponsibilityChoice)}
+                        >
+                          <option value="keep">Keep {RESPONSIBILITY_LABELS[r.responsibility] ?? r.responsibility} (default)</option>
+                          <option value="take_tool">{RESPONSIBILITY_LABELS[r.tool_would_set] ?? r.tool_would_set}, as {productName} says</option>
+                        </select>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
         <p className="activation-ask-score" aria-live="polite">
           {scoring ? "Working out the score for these choices…" : scoreLine(preview)}
         </p>

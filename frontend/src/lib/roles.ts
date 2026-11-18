@@ -235,3 +235,14 @@ export const SSP_IMPORT_ROLES = new Set(["msp_admin", "consultant_admin", "msp_e
 export function canImportSsp(role: string | null | undefined): boolean {
   return !!role && SSP_IMPORT_ROLES.has(role);
 }
+
+// Who may set an objective's responsibility (routers/assessments.py's
+// RESPONSIBILITY_ROLES): the MSP's side only, narrower than a status edit.
+// Responsibility crosses between two organisations, so a customer setting
+// "provider_satisfies" would assert the MSP's obligations. Others see the
+// value read-only.
+export const RESPONSIBILITY_ROLES = new Set(["msp_admin", "consultant_admin", "msp_engineer"]);
+
+export function canSetResponsibility(role: string | null | undefined): boolean {
+  return !!role && RESPONSIBILITY_ROLES.has(role);
+}
