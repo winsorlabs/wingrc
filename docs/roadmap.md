@@ -14404,8 +14404,9 @@ deleted once Jarrod's checks passed. Jarrod then ran the `chown`:
 which is all compose and `deploy.sh` need, and can no longer write it. A
 later change to `.env` is Jarrod's. The Fernet key and the state-cookie
 key were already off their defaults. **Next:** option (b), `deploy.sh`'s
-named-service recreate, then the deactivated-account slice, then "The
-app reaches MinIO as root".
+named-service recreate, then the deactivated-account slice, then "A
+fresh install runs the app as a superuser", then "The app reaches MinIO
+as root".
 
 ### HSTS: one day first -- decided 2026-11-17 (#108)
 
@@ -14551,6 +14552,119 @@ account that has a password and no enrolment.
   - reactivation clears the marker.
 
   Mutations: each check dropped in turn, seen red.
+
+### A fresh install runs the app as a superuser, so row-level security is off -- queued 2026-11-18 (the brief's finding), after the deactivated-account slice, before "The app reaches MinIO as root"
+
+**The defect.** `docker-compose.yml`'s `WINGRC_DATABASE_URL` defaults to
+the owner, `wingrc`, built from `POSTGRES_PASSWORD`. The comment beside
+it says so on purpose: "a fresh install has no wingrc_app password yet".
+The comment under it adds that the owner "can run DDL, so migrations
+work without it today". `docs/deployment.md` agrees ("Leave it unset...
+including on a fresh install"), and its step 1 never switches the app
+to `wingrc_app`. No page in `docs/` says how: the only written
+`ALTER ROLE wingrc_app PASSWORD` is in this file, in the bench entry. So
+a fresh install, following the guide, serves every request as `wingrc`.
+
+**What that turns off.** Postgres skips row-level security for a table's
+owner unless `FORCE ROW LEVEL SECURITY` is set, and migration 0060 says
+it is set on no table. It goes further than the brief's reading: `wingrc`
+is the image's `POSTGRES_USER`, a superuser (`rolsuper` and
+`rolbypassrls` both true on live, read 2026-11-18). Postgres skips RLS
+for a superuser even with FORCE. So setting FORCE would not have fixed
+it; only the role does. Every policy from 0001 to 0061 is inert on a
+fresh install, and tenant isolation rests on the routers'
+`require_org_access` alone. A query that forgets its org scope returns
+another tenant's rows, which CLAUDE.md says the database prevents.
+CLAUDE.md's sentence is true of live and was never true of the product.
+
+**Live is not affected, checked 2026-11-18:** the backend and worker
+connect as `wingrc_app`, not a superuser, without `BYPASSRLS` (cut over
+2026-09-29, recorded above). The product ships the other way, and the
+repo is public.
+
+**Nothing at runtime needs the owner (checked 2026-11-18).**
+- **The code:** no request or worker path runs DDL. The only owner-only
+  statements outside migrations are `snapshots.py`'s restore (`CREATE
+  ROLE`) and the `row_security = off` counts in `snapshots.py` and
+  `engine.every_tenant_assessments`. The snapshot commands connect
+  through `WINGRC_MIGRATION_DATABASE_URL`, and the count serves CLI
+  commands run with the owner override. Cross-tenant worker jobs go
+  through SECURITY DEFINER functions (`scheduler.py`'s rule).
+- **Live:** the backend and worker have run as `wingrc_app` for seven
+  weeks, with migrations on the separate URL.
+- **What needs the owner, and already has its path:** migrations;
+  `wingrc-admin` (the first org and user); `seed*`, `reset-dev`,
+  `sprs-rescore`, `backfill-missing-control-states`; snapshots and
+  restore. All are provisioning or administration, run as the owner
+  through the migration URL or the override (`docs/deployment.md`,
+  "The CLI runs as the app role").
+- **One stale claim found on the way:** `scheduler.py`'s docstring says
+  `db.py:SessionLocal` is "the owner role". On live it is `wingrc_app`.
+  Reword it when that file is touched (CLAUDE.md, the docstring rule).
+
+**The same defect as MinIO's, with the same cause and fix.**
+Provisioning needs a privilege the running app does not: DDL here, bucket
+creation there. Startup was made to provision, so the runtime kept the
+privilege. Move provisioning out, and the runtime role can be the
+restricted one. For Postgres the owner runs migrations and the app gets
+`wingrc_app`. For MinIO, root creates the bucket and the app gets a
+scoped account. Two subsystems, one shape.
+
+**#108 closed the credentials question and left the privilege question
+open behind it.** It made every credential required and generated, and
+left the *role* the app uses at the owner. The two looked like one thing.
+The reason the default stayed the owner ("no shippable default for a
+credential", 2026-09-29) no longer holds: `deploy/generate-env.sh` now
+generates every required secret. It could generate `wingrc_app`'s too.
+
+**The most consequential of the three startup conveniences.**
+- **The Fernet default** made a guard unreachable.
+- **MinIO's root** widened what a compromise of the backend reaches.
+- **This one** turns off the control that keeps tenants apart, in a
+  multi-tenant compliance product.
+
+**Found while checking: the owner's password sits in the runtime's
+environment on live too.** The backend and worker both carry
+`WINGRC_MIGRATION_DATABASE_URL` (the backend runs migrations as it
+starts) and `WINGRC_TEST_DATABASE_URL`, both `wingrc`, a superuser.
+`WINGRC_TEST_DATABASE_URL` is compose's literal in the shared anchor; no
+runtime code reads it. So the cutover protects against a query that
+forgets its scope, which is what RLS is for. It does not protect against
+a leak of the runtime's environment, which hands over the superuser. That
+is MinIO's blast-radius finding again, on Postgres. The fix below moves
+migrations out of the app's start, so the runtime no longer needs that
+URL at all.
+
+**The fix, to settle in the slice:**
+1. **Provisioning holds the owner; the runtime never does.** A one-shot
+   step (a compose `migrate` service, or a documented first-run command)
+   runs migrations, sets `wingrc_app`'s password from `.env`, and exits.
+   The backend's start stops running `alembic upgrade head`. It checks
+   that the schema is at head and refuses clearly when it isn't.
+   `deploy.sh` runs the step before recreating the app.
+2. **Compose's default becomes `wingrc_app`,** built from a new required
+   `WINGRC_APP_DB_PASSWORD` that `generate-env.sh` fills. The owner URL is
+   passed only to the provisioning step and the snapshot and CLI paths
+   that need it. `WINGRC_TEST_DATABASE_URL` leaves the runtime anchor.
+3. **The guide:** step 1 provisions as the owner and serves as
+   `wingrc_app`. "Database roles" stops saying a fresh install should
+   leave the split unset, and "Moving off a default credential" gains
+   the move for a deployment still serving as the owner.
+4. **Tests and mutations:**
+   - a fresh bench install through the guide serves as a non-superuser
+     without `BYPASSRLS`, with no owner URL in the backend's environment;
+   - a cross-tenant read through the app is refused there;
+   - mutation: compose's default put back to the owner, and the test
+     goes red.
+
+   This is also "The bench runs as the owner" fixed by construction: a
+   bench built by the guide runs as the app role.
+
+**Order:** first of the two startup-privilege entries, by the brief's
+recommendation. It decides tenant isolation, and MinIO's decides blast
+radius. Both after the deactivated-account slice, which is next. The
+move for an existing deployment is a migration-day step like #108's, and
+live needs only the environment part: it already serves as `wingrc_app`.
 
 ### The app reaches MinIO as root -- queued 2026-11-18 (the brief's finding), after the deactivated-account slice
 
