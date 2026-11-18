@@ -14668,7 +14668,15 @@ URL at all.
     the URL for that run, built from the container's owner URL, and sets
     `WINGRC_MIN_TESTS_RUN`.
 
-  `tests/test_compose_required.py` fails if the variable comes back. It
+  **On the bench** (`wingrc_verify_1118t`, `0e25b0e`): the variable was
+  absent from the backend's environment. The new step 4 ran 2151 passed,
+  41 skipped. The old command with the floor ran 803 and skipped 1389, and
+  failed on "count floor not met"; without the floor it would have passed.
+  My first floor, 500, would have passed it too, because about 800 tests
+  run with no database. The floor is 1500.
+
+  `tests/test_compose_required.py` fails if the variable comes back (seen
+  red with it put back). It
   leaves live's environment at the next deploy, whichever slice that is.
   That leaves `WINGRC_MIGRATION_DATABASE_URL`, which is the real work, in
   the fix below.
