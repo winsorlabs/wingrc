@@ -173,8 +173,8 @@ export interface ControlStateRow {
   objective_text: string;
   status: string;
   responsibility: string;
-  responsibility_set_by: string | null;
-  responsibility_set_at: string | null;
+  responsibility_set_by?: string | null;
+  responsibility_set_at?: string | null;
   contributors: Contributor[];
   statement_status: string | null;
   evidence_count: number;

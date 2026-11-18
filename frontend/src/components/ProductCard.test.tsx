@@ -86,7 +86,7 @@ function judged(over: Partial<JudgedObjective>): JudgedObjective {
 }
 
 function preview(objectives: JudgedObjective[], now = 104, after = 101, starting: string[] = []): ActivationPreview {
-  return { sprs_now: now, sprs_after: after, objectives, practices_starting: starting };
+  return { sprs_now: now, sprs_after: after, objectives, practices_starting: starting, responsibility: [] };
 }
 
 function mountInactive() {
@@ -103,6 +103,29 @@ function mountInactive() {
 }
 
 describe("ProductCard activation", () => {
+  it("asks about a responsibility a person set, keeps it by default, and sends what was shown", async () => {
+    vi.mocked(api.previewActivation).mockResolvedValue({
+      ...preview([], 101, 101),
+      responsibility: [{
+        control_state_id: "cs9", control_id: "AC.L2-3.1.2", objective_key: "a", objective_text: "t",
+        responsibility: "external_system", set_by: "Pat", tool_would_set: "provider_satisfies",
+        default: "keep", choice: "keep", becomes: "external_system",
+      }],
+    });
+    const onActivated = mountInactive();
+    fireEvent.click(screen.getByRole("button", { name: "Activate" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(api.activateProduct).not.toHaveBeenCalled();
+    const select = within(dialog).getByLabelText("Responsibility for AC.L2-3.1.2[a]") as HTMLSelectElement;
+    expect(select.value).toBe("keep");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Activate Heimdal" }));
+    await waitFor(() => expect(onActivated).toHaveBeenCalled());
+    expect(api.activateProduct).toHaveBeenCalledWith("o", "a", "p", [], [{
+      control_state_id: "cs9", shown_responsibility: "external_system",
+      tool_responsibility: "provider_satisfies", choice: "keep",
+    }]);
+  });
+
   it("activates at once when nothing a person judged would change", async () => {
     vi.mocked(api.previewActivation).mockResolvedValue(preview([], 101, 101));
     const onActivated = mountInactive();

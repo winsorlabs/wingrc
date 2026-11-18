@@ -30,7 +30,7 @@ function row(over: Partial<MovedToReview>): MovedToReview {
 function result(rows: MovedToReview[], tasks = 0): MoveVersionResult {
   return {
     controls_gained: 0, controls_lost: 0, controls_changed: 0, tasks_created: tasks,
-    from_version: 1, to_version: 2, set_to_needs_review: rows,
+    from_version: 1, to_version: 2, set_to_needs_review: rows, responsibility_kept: [],
   };
 }
 
