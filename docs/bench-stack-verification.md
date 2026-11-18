@@ -109,7 +109,23 @@ bench work.
    backend worker` before re-running tests -- an edit is invisible until
    then. A negative control (old file swapped in) needs the same rebuild,
    then `git checkout --` and a rebuild to restore.
-4. Backend: `docker compose -p wingrc_verify_<date> exec backend pytest -q`
+4. Backend, with the test database passed for this run only:
+
+   ```bash
+   docker compose -p wingrc_verify_<date> exec -T backend sh -c \
+     'base="${WINGRC_MIGRATION_DATABASE_URL:-$WINGRC_DATABASE_URL}"
+      WINGRC_TEST_DATABASE_URL="${base%/wingrc}/wingrc_test" WINGRC_MIN_TESTS_RUN=1500 pytest -q'
+   ```
+
+   Compose no longer puts `WINGRC_TEST_DATABASE_URL` in the container
+   (2026-11-18): it is the owner's, a superuser, and it sat in every
+   deployment's environment, live's included, for nothing. Without it every
+   integration test skips, so the count floor is part of the command: a
+   run that skipped them fails instead of passing. The floor sits between
+   the two counts: about 840 tests run with no database and about 2150
+   with one (2026-11-17). CI's 500 would not tell them apart here. Raise it
+   as the suite grows; never lower it to make a run pass. The URL is built from
+   the owner URL already in the container, so nothing is typed.
    (full suite, not just `-m "not integration"` — that's the local-only
    subset). **The full suite in one process, never a per-file run.**
    Running a file in isolation is a different experiment, not a cheaper

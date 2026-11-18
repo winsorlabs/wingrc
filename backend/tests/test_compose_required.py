@@ -53,12 +53,24 @@ def test_each_is_required_with_no_default(compose, where, key):
     assert re.fullmatch(pattern, value), value
 
 
-def test_the_database_urls_carry_no_password_literal(compose):
+def test_the_database_url_carries_no_password_literal(compose):
     doc, _ = compose
-    env = doc["x-backend-env"]
-    for key in ("WINGRC_DATABASE_URL", "WINGRC_TEST_DATABASE_URL"):
-        assert "${POSTGRES_PASSWORD:?" in env[key], f"{key}: {env[key]}"
-        assert "wingrc:wingrc@" not in env[key], env[key]
+    url = doc["x-backend-env"]["WINGRC_DATABASE_URL"]
+    assert "${POSTGRES_PASSWORD:?" in url, url
+    assert "wingrc:wingrc@" not in url, url
+
+
+def test_no_test_database_url_in_any_service(compose):
+    """The test URL is the owner's, a superuser, and nothing at runtime
+    reads it, so no deployment's environment carries it (removed
+    2026-11-18). Tests inside a container get it for that run only."""
+    doc, text = compose
+    assert "WINGRC_TEST_DATABASE_URL" not in doc["x-backend-env"]
+    for name, svc in doc["services"].items():
+        env = svc.get("environment") or {}
+        keys = env if isinstance(env, dict) else [e.split("=", 1)[0] for e in env]
+        assert "WINGRC_TEST_DATABASE_URL" not in keys, name
+    assert "wingrc_test" not in text
 
 
 @pytest.mark.parametrize("literal", ["wingrc-dev-secret", "DFKuK2mEIJ", ":-dev:"])
