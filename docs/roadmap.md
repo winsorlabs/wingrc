@@ -10031,6 +10031,16 @@ attempt:
 C2 matters as much as B2: without it, C1 passing would only show the guard
 *didn't* fire, not that the environment variable is what stops it.
 
+**Where it has held since.** 2026-11-18: removing
+`WINGRC_TEST_DATABASE_URL` from compose would have made the bench's
+in-container `pytest` skip every integration test and pass, the June
+defect in a new place. The bench step now sets a floor of 1500, and the
+old command failed against it (803 run). A floor has to sit above the
+no-database count of the run it guards. 500 would not have, because
+the bench runs the whole suite (about 800 with no database), not CI's
+`-m integration` (the 2026-11-18 removal, under "A fresh install runs
+the app as a superuser").
+
 **An incidental finding, not fixed here:** both mutations report **28 tests
 running with no database at all**, meaning 28 tests carry
 `@pytest.mark.integration` without needing one. That is the mirror image of
@@ -14675,6 +14685,17 @@ URL at all.
   My first floor, 500, would have passed it too, because about 800 tests
   run with no database. The floor is 1500.
 
+  **This was the June integration-job defect, about to recur in a new
+  place.** From 2026-06-30 to 2026-09-03 CI's `integration` job set
+  `WINGRC_DATABASE_URL` but not `WINGRC_TEST_DATABASE_URL`, so every
+  integration test skipped and the job was green for nine weeks
+  (`afdea25`). That one was discovered. This one was prevented: the
+  search for what reads the variable found step 4 before the change
+  merged, and the count floor is what makes the bench command fail
+  rather than pass if it happens again. The control run shows it
+  failing. The floor itself is "A silently-skipping test job now fails"
+  (2026-09-30).
+
   `tests/test_compose_required.py` fails if the variable comes back (seen
   red with it put back). It
   leaves live's environment at the next deploy, whichever slice that is.
@@ -14704,7 +14725,9 @@ URL at all.
      goes red.
 
    This is also "The bench runs as the owner" fixed by construction: a
-   bench built by the guide runs as the app role.
+   bench built by the guide runs as the app role. It breaks
+   `docs/bench-stack-verification.md` step 4, which reads the owner URL
+   from the backend's environment; that entry's cost list says how.
 
 **Order:** first of the two startup-privilege entries, by the brief's
 recommendation. It decides tenant isolation, and MinIO's decides blast
@@ -17115,9 +17138,19 @@ configuration, reproduced:
 - **Bench CLI runs:** these then need the owner override, as live's do.
   That is the point, but it is also friction on every bench run of a
   command.
-- **Tests:** unaffected. The suite connects through
-  `WINGRC_TEST_DATABASE_URL`, as the owner, and sets the role per
-  request itself.
+- **Tests:** unaffected in what they exercise. The suite connects
+  through `WINGRC_TEST_DATABASE_URL`, as the owner, which it needs to
+  build the test database, and sets the role per request itself.
+- **Bench step 4's command changes.** Since 2026-11-18 compose no
+  longer supplies the test URL, and `docs/bench-stack-verification.md`
+  step 4 builds it from
+  `${WINGRC_MIGRATION_DATABASE_URL:-$WINGRC_DATABASE_URL}` in the
+  backend's environment. That line works only because the bench's
+  backend holds the owner, and it is the one line of a bench command
+  where this entry shows. With the bench on the app role, and the
+  superuser fix's step 2 (the owner URL leaves the backend), the
+  fallback names `wingrc_app`, which cannot create the test database.
+  The step then takes the owner URL from wherever provisioning gets it.
 - **Live-copy rehearsals:** these become faithful, which is the main
   gain. The snapshot commands already use the owner URL and
   `row_security = off`, so they keep working.

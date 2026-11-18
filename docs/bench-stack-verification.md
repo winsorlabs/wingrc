@@ -126,6 +126,14 @@ bench work.
    with one (2026-11-17). CI's 500 would not tell them apart here. Raise it
    as the suite grows; never lower it to make a run pass. The URL is built from
    the owner URL already in the container, so nothing is typed.
+   **That makes the tests connect as the owner, a superuser.** That is
+   right for tests: they need DDL to build the test database, and the
+   fixture switches to `wingrc_app` per request. But it works only
+   because the bench's backend holds the owner, the condition behind
+   `docs/roadmap.md`'s "The bench runs as the owner, so it cannot see an
+   RLS defect". This line changes when that is fixed: with the owner URL
+   out of the backend, the fallback names `wingrc_app`, which cannot
+   create the test database. That entry's cost list says how.
    (full suite, not just `-m "not integration"` — that's the local-only
    subset). **The full suite in one process, never a per-file run.**
    Running a file in isolation is a different experiment, not a cheaper
