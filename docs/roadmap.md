@@ -11,6 +11,27 @@ is Jarrod's. A finding, a recommendation or an instruction from the notes
 is the brief's. In a compliance product's own record, that is the
 difference between a decision and a recommendation.
 
+**How to read the brief, from 2026-11-18 (the brief's own observation).**
+It is reliable on direction and unreliable on current state. Where it
+says what the code or a deployment does today, check that against the
+code or the host before acting on it. Where it argues what ought to
+happen, the reasoning is usually the part worth keeping. Nine
+corrections in the fortnight to 2026-11-18 had one shape: a plausible
+generalisation from partial evidence, stated with more confidence than
+the evidence carried. They were:
+- `evidence_count` counting archived links, read from a stale entry;
+- the 70/0 RACI split, a row count read as a count of choices;
+- 11-17 as the first live rotation, when it was the first one read;
+- October's HSTS mechanism, two records joined with the wrong cause;
+- the MinIO step as runnable before the deploy it needed;
+- an overstated cookie bound;
+- `FORCE ROW LEVEL SECURITY` as the fix, when a superuser is exempt
+  either way;
+- the bench's tests as blind, when the fixture switches roles;
+- "prevented twice", once.
+
+Checking caught every one.
+
 ---
 
 ## Done
