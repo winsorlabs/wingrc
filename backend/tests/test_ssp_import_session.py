@@ -92,18 +92,48 @@ def _row(**kw):
 def test_what_a_row_may_be_accepted_onto_written_out():
     oid = uuid.uuid4()
     c1, c2 = str(uuid.uuid4()), str(uuid.uuid4())
+    same = "Shared text."
     cands = [{"objective_id": c1, "ref": "X[a]", "score": 1.0},
              {"objective_id": c2, "ref": "Y[a]", "score": 1.0}]
-    assert imp.acceptable_onto(_row(matched_objective_id=oid)) == (str(oid),)
+    texts = {c1: same, c2: same}
+    assert imp.acceptable_onto(_row(matched_objective_id=oid), {}) == (str(oid),)
     for kind in ("ambiguous", "family_mismatch", "no_family"):
-        assert imp.acceptable_onto(_row(match_kind=kind, matched_objective_id=None,
-                                        candidates=cands)) == (c1, c2), kind
-    assert imp.acceptable_onto(_row(match_kind="unmatched", matched_objective_id=None,
-                                    candidates=cands)) == ()
-    assert imp.acceptable_onto(_row(statement=None)) == ()
-    assert "near match" in imp.why_not_acceptable(
-        _row(match_kind="unmatched", matched_objective_id=None))
-    assert "no statement text" in imp.why_not_acceptable(_row(statement=None))
+        r = _row(match_kind=kind, matched_objective_id=None, candidates=cands,
+                 control_text=same)
+        assert imp.acceptable_onto(r, texts) == (c1, c2), kind
+        assert [o.exact_text for o in imp.offers(r, texts)] == [True, True]
+
+    # Near matches: offered at or above the floor, and only those.
+    near, mid, low = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    fuzzy = [{"objective_id": near, "ref": "N[c]", "score": 0.94},
+             {"objective_id": mid, "ref": "M[b]", "score": 0.80},
+             {"objective_id": low, "ref": "L[a]", "score": 0.79}]
+    ftexts = {near: "Devices (and other systems) are identified.",
+              mid: "Something else.", low: "Another thing."}
+    r = _row(match_kind="unmatched", matched_objective_id=None, candidates=fuzzy,
+             control_text="Devices including other systems are identified.")
+    assert imp.acceptable_onto(r, ftexts) == (near, mid)
+    assert [(o.ref, o.offered, o.exact_text) for o in imp.offers(r, ftexts)] == [
+        ("N[c]", True, False), ("M[b]", True, False), ("L[a]", False, False)]
+    assert imp.placement(r, near, ftexts) == ("person_confirmed_near_match", 0.94)
+    below = _row(match_kind="unmatched", matched_objective_id=None, candidates=fuzzy[2:],
+                 control_text="x")
+    assert imp.acceptable_onto(below, ftexts) == ()
+    assert "0.80 similarity floor" in imp.why_not_acceptable(below, ftexts)
+
+    # A long near match can round to 1.0; exactness is read from the text.
+    rounded = [{"objective_id": near, "ref": "N[c]", "score": 1.0}]
+    r = _row(match_kind="no_family", matched_objective_id=None, candidates=rounded,
+             control_text="Devices including other systems are identified.")
+    assert imp.offers(r, ftexts)[0].exact_text is False
+    assert imp.placement(r, near, ftexts) == ("person_confirmed_near_match", 1.0)
+    exact_pick = _row(match_kind="ambiguous", matched_objective_id=None, candidates=cands,
+                      control_text=same)
+    assert imp.placement(exact_pick, c2, texts) == ("person_chose_exact_text", None)
+    assert imp.placement(_row(matched_objective_id=oid), str(oid), {}) == ("exact_match", None)
+
+    assert imp.acceptable_onto(_row(statement=None), {}) == ()
+    assert "no statement text" in imp.why_not_acceptable(_row(statement=None), {})
 
 
 def test_progress_counts_per_family_in_file_order():
@@ -276,7 +306,11 @@ def test_a_whole_import_writes_drafts_with_provenance_and_moves_no_status(db_ses
     assert set(rows[4]["acceptable_onto"]) == {str(o[("AC.L2-3.1.2", "a")].id), pick}
     r =_decide(c, w, sid, rows[4]["id"], action="accept", objective_id=pick)
     assert r.status_code == 200, r.text
-    for n in (3, 5, 6):
+    near = str(o[("AC.L2-3.1.1", "c")].id)
+    assert rows[3]["acceptable_onto"] == [near], "only the near match above the floor"
+    r = _decide(c, w, sid, rows[3]["id"], action="accept", objective_id=near)
+    assert r.status_code == 200, r.text
+    for n in (5, 6):
         assert _decide(c, w, sid, rows[n]["id"], action="reject").status_code == 200
     done = c.post(f"{BASE.format(org=w['org'].id, a=w['a'].id)}/{sid}/close",
                   json={"outcome": "completed"})
@@ -285,7 +319,15 @@ def test_a_whole_import_writes_drafts_with_provenance_and_moves_no_status(db_ses
 
     st = _statements(db_session, w["a"])
     assert set(st) == {o[("AC.L2-3.1.1", "a")].id, o[("AC.L2-3.1.1", "b")].id,
-                       o[("AC.L2-3.1.3", "a")].id}
+                       o[("AC.L2-3.1.1", "c")].id, o[("AC.L2-3.1.3", "a")].id}
+    # Exact, a person's choice among exact texts, a person confirming a
+    # near match, and an edit: each told apart in the record.
+    c_ = st[o[("AC.L2-3.1.1", "c")].id]
+    assert (c_.status, c_.body) == ("draft", "Devices are enrolled before they connect.")
+    assert c_.grounded_in["placement"] == "person_confirmed_near_match"
+    assert c_.grounded_in["near_match_score"] >= imp.NEAR_MATCH_FLOOR
+    assert [x["ref"] for x in c_.grounded_in["candidates_offered"]] == ["AC.L2-3.1.1[c]"]
+    assert c_.grounded_in["candidates_offered"][0]["exact_text"] is False
     a = st[o[("AC.L2-3.1.1", "a")].id]
     b = st[o[("AC.L2-3.1.1", "b")].id]
     assert a.status == b.status == "draft"
@@ -305,6 +347,12 @@ def test_a_whole_import_writes_drafts_with_provenance_and_moves_no_status(db_ses
     assert b.grounded_in["decision"] == "edited"
     assert a.grounded_in["decided_by"] == "Person msp_engineer"
     assert st[o[("AC.L2-3.1.3", "a")].id].grounded_in["match_kind"] == "ambiguous"
+    assert (a.grounded_in["placement"], a.grounded_in["near_match_score"]) == ("exact_match", None)
+    assert (b.grounded_in["placement"], b.grounded_in["decision"]) == ("exact_match", "edited")
+    picked = st[o[("AC.L2-3.1.3", "a")].id].grounded_in
+    assert (picked["placement"], picked["near_match_score"]) == ("person_chose_exact_text", None)
+    assert {x["ref"] for x in picked["candidates_offered"]} == {"AC.L2-3.1.2[a]",
+                                                                "AC.L2-3.1.3[a]"}
     assert _posture(db_session, w["a"]) == before, "control_state, status and SPRS must not move"
     actions = set(db_session.scalars(select(AuditLog.action).where(
         AuditLog.entity_type == "implementation_statement",
@@ -426,20 +474,37 @@ def test_two_open_sessions_on_one_assessment_are_refused(db_session, world):
 
 
 @pytest.mark.integration
-def test_an_unmatched_row_cannot_be_accepted_and_reject_touches_nothing(db_session, world):
+def test_a_near_match_lands_only_where_a_person_puts_it_and_below_the_floor_nowhere(
+        db_session, world):
     w = world
     user = _person(db_session, w["org"].id)
     c = _as(db_session, user)
     view = _upload(c, w).json()
     sid, rows = view["session"]["id"], _rows(view)
-    assert rows[3]["candidates"][0]["ref"] == "AC.L2-3.1.1[c]", (
-        "fixture must give the unmatched row a close candidate, or this test proves nothing")
+    near = rows[3]
+    assert near["match_kind"] == "unmatched" and near["candidates"][0]["ref"] == "AC.L2-3.1.1[c]", (
+        "fixture must give the near-match row a close candidate, or this test proves nothing")
+    offered = [x for x in near["candidates"] if x["offered"]]
+    hidden = [x for x in near["candidates"] if not x["offered"]]
+    assert [x["ref"] for x in offered] == ["AC.L2-3.1.1[c]"]
+    assert hidden and all(x["score"] < near["near_match_floor"] for x in hidden)
+    assert offered[0]["text"].startswith("Devices (and other systems)"), "catalog text, to read"
+    # Nothing preselected: the row has no objective until a person names one.
+    assert near["objective_id"] is None and near["decided_objective_id"] is None
+    unchosen = _decide(c, w, sid, near["id"], action="accept")
+    assert unchosen.status_code == 422 and "None is chosen for you" in unchosen.text
+    below = _decide(c, w, sid, near["id"], action="accept", objective_id=hidden[0]["objective_id"])
+    assert below.status_code == 422, "a candidate under the floor is not offered"
+    assert _statements(db_session, w["a"]) == {}
+
+    # A row whose every candidate is under the floor offers none.
+    far = rows[5]
+    assert far["acceptable_onto"] == [] and not any(x["offered"] for x in far["candidates"])
+    assert "similarity floor" in far["not_acceptable"]
     for body in ({"action": "accept"},
-                 {"action": "accept", "objective_id": rows[3]["candidates"][0]["objective_id"]},
-                 {"action": "edit", "body": "x",
-                  "objective_id": rows[3]["candidates"][0]["objective_id"]}):
-        r = _decide(c, w, sid, rows[3]["id"], **body)
-        assert r.status_code == 422, (body, r.text)
+                 {"action": "accept", "objective_id": far["candidates"][0]["objective_id"]}):
+        assert _decide(c, w, sid, far["id"], **body).status_code == 422
+
     nothing = _decide(c, w, sid, rows[6]["id"], action="accept")
     assert nothing.status_code == 422 and "no statement text" in nothing.text
     wrong = _decide(c, w, sid, rows[4]["id"], action="accept",
@@ -447,9 +512,18 @@ def test_an_unmatched_row_cannot_be_accepted_and_reject_touches_nothing(db_sessi
     assert wrong.status_code == 422, "an ambiguous row lands only on one of its candidates"
     unchosen = _decide(c, w, sid, rows[4]["id"], action="accept")
     assert unchosen.status_code == 422, "an ambiguous row's objective is never chosen for them"
+
+    before = _posture(db_session, w["a"])
+    landed = _decide(c, w, sid, near["id"], action="accept",
+                     objective_id=offered[0]["objective_id"])
+    assert landed.status_code == 200, landed.text
+    st = _statements(db_session, w["a"])
+    assert set(st) == {w["objectives"][("AC.L2-3.1.1", "c")].id}
+    assert st[w["objectives"][("AC.L2-3.1.1", "c")].id].status == "draft"
+    assert _posture(db_session, w["a"]) == before, "a confirmed near match moves no status"
     before = _posture(db_session, w["a"])
     assert _decide(c, w, sid, rows[1]["id"], action="reject").status_code == 200
-    assert _statements(db_session, w["a"]) == {}
+    assert len(_statements(db_session, w["a"])) == 1, "reject wrote nothing"
     assert _posture(db_session, w["a"]) == before
     done = c.post(f"{BASE.format(org=w['org'].id, a=w['a'].id)}/{sid}/close",
                   json={"outcome": "completed"})

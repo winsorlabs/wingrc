@@ -29,17 +29,26 @@ that is a new conflict. Neither side ever wins by default. The unique
 constraint `uq_implementation_statement_identity` makes this structural:
 two statements on one objective cannot exist.
 
-**What a row may be accepted onto.**
+**What a row may be accepted onto** (`offers`). The matcher never
+guesses; a person may place.
 - `exact`: its matched objective, and only that.
-- `ambiguous`, `family_mismatch`, `no_family`: the row's text is a
-  catalog objective's text, word for word, but more than one objective
-  or the wrong family has it. A person picks one of those candidates; none
-  is chosen for them.
-- `unmatched`: nothing. Its candidates are similarity guesses, shown for
-  reading, and a near match is worse than no match (the importer's
-  docstring). Its statement is written by hand if it belongs anywhere.
-- A row with no statement text: nothing, because there is nothing to
-  write.
+- Otherwise, a candidate the person picks, never one picked for them:
+  - a candidate whose catalog text is the row's text word for word
+    (ambiguous, out of family, or under no heading), always;
+  - a near match, only at or above `NEAR_MATCH_FLOOR`. Whether a
+    candidate is exact text is read from the catalog text itself, not
+    from its rounded score, which can round a long near match up to 1.0.
+- Nothing, when there is no statement text, or when no candidate is
+  offered.
+
+**The floor is not a safety margin** (measured 2026-11-18 on the CMMC
+catalog). 168 pairs of *different* objectives in one family score 0.80
+or more against each other, up to 0.98: IA.L2-3.5.3[c] and [d],
+CM.L2-3.4.5's objectives. A high score does not mean the same objective.
+The floor only drops noise; what makes a pick safe is the person
+reading the source beside each candidate's catalog text, which the
+screen shows. The accepted statement records which kind of placement it
+was (`grounded_in["placement"]`), the score, and every candidate offered.
 
 **The file is not kept (Jarrod, 2026-11-18).** It is parsed from a
 temporary file that is removed before the request returns. The session
@@ -87,14 +96,19 @@ IMPORTER = "ssp_docx"
 MAX_BYTES = 20 * 1024 * 1024
 _ZIP_MAGIC = b"PK\x03\x04"
 
-# The kinds a person may accept onto one of the row's candidates: the
-# row's text is some objective's catalog text, exactly. `unmatched` is not
-# here: its candidates are guesses.
-PICKABLE_KINDS = frozenset({"ambiguous", "family_mismatch", "no_family"})
+# A near match below this is not offered (2026-11-18). On the real file the
+# near-match row's right objective scored 0.94 and the two wrong ones 0.57
+# and 0.53; a one-word difference in an objective's text scores about 0.9.
+# Provisional: one real row is the evidence. The module docstring says
+# why no floor can make a pick safe on its own.
+NEAR_MATCH_FLOOR = 0.80
+
+PLACEMENTS = ("exact_match", "person_chose_exact_text", "person_confirmed_near_match")
 
 PROVENANCE_KEYS = (
     "source", "importer", "session_id", "file_name", "file_sha256", "source_row",
     "source_heading", "source_control_text", "source_status_claim", "match_kind",
+    "placement", "near_match_score", "candidates_offered",
     "decision", "decided_by", "decided_at",
 )
 
@@ -272,6 +286,7 @@ class RowView:
     decided_ref: str | None
     acceptable_onto: tuple[str, ...]  # objective ids, as strings
     not_acceptable: str | None
+    offers: tuple[Offer, ...]
     existing: ExistingStatement | None  # on the matched objective, read now
     shares_objective_with: tuple[int, ...]  # other rows exact-matched to it
 
@@ -296,24 +311,73 @@ def family_key(row: SspImportRow) -> str:
     return row.family or NO_FAMILY
 
 
-def why_not_acceptable(row: SspImportRow) -> str | None:
+@dataclass(frozen=True)
+class Offer:
+    objective_id: str
+    ref: str
+    score: float
+    text: str
+    exact_text: bool  # the catalog text is the row's text, after normalisation
+    offered: bool  # a person may accept the row onto it
+
+
+def offers(row: SspImportRow, texts: dict[str, str]) -> list[Offer]:
+    """The row's candidates, each marked exact text or near, and offered or
+    not. `texts` is the catalog text by objective id. An exact row's
+    objective is not a candidate: it is the match."""
+    if row.match_kind == "exact":
+        return []
+    src = ssp_docx.normalise(row.control_text)
+    out = []
+    for c in row.candidates:
+        text = texts.get(c["objective_id"], "")
+        exact = bool(text) and ssp_docx.normalise(text) == src
+        out.append(Offer(c["objective_id"], c["ref"], c["score"], text, exact,
+                         exact or c["score"] >= NEAR_MATCH_FLOOR))
+    return out
+
+
+def why_not_acceptable(row: SspImportRow, texts: dict[str, str]) -> str | None:
     if not row.statement:
         return "The source row has no statement text, so there is nothing to write."
-    if row.match_kind == "unmatched":
-        return ("No objective's text matches this row. Its candidates are similarity "
-                "guesses, and a near match is worse than none: write it by hand if it "
-                "belongs anywhere.")
+    if row.match_kind != "exact" and not any(o.offered for o in offers(row, texts)):
+        return (f"No objective's text matches this row, and no candidate reaches the "
+                f"{NEAR_MATCH_FLOOR:.2f} similarity floor. Write it by hand if it belongs "
+                "anywhere.")
     return None
 
 
-def acceptable_onto(row: SspImportRow) -> tuple[str, ...]:
-    if why_not_acceptable(row):
+def acceptable_onto(row: SspImportRow, texts: dict[str, str]) -> tuple[str, ...]:
+    if why_not_acceptable(row, texts):
         return ()
     if row.match_kind == "exact":
         return (str(row.matched_objective_id),)
-    if row.match_kind in PICKABLE_KINDS:
-        return tuple(c["objective_id"] for c in row.candidates)
-    return ()
+    return tuple(o.objective_id for o in offers(row, texts) if o.offered)
+
+
+def placement(
+    row: SspImportRow, objective_id: str, texts: dict[str, str]
+) -> tuple[str, float | None]:
+    """How the row came to be on this objective, and the near-match score
+    when it was a person confirming one."""
+    if row.match_kind == "exact":
+        return "exact_match", None
+    o = next(o for o in offers(row, texts) if o.objective_id == objective_id)
+    if o.exact_text:
+        return "person_chose_exact_text", None
+    return "person_confirmed_near_match", o.score
+
+
+def _candidate_texts(session: Session, rows: list[SspImportRow]) -> dict[str, str]:
+    ids = {uuid.UUID(c["objective_id"]) for r in rows for c in r.candidates}
+    if not ids:
+        return {}
+    return {
+        str(oid): text for oid, text in session.execute(
+            select(AssessmentObjective.id, AssessmentObjective.text)
+            .where(AssessmentObjective.id.in_(ids))
+        )
+    }
 
 
 def progress(rows: list[SspImportRow]) -> list[FamilyProgress]:
@@ -360,6 +424,7 @@ def view(
         ):
             existing[st.objective_id] = st
     written_ids = {r.statement_id for r in rows if r.statement_id}
+    texts = _candidate_texts(session, rows)
     by_objective: dict[uuid.UUID, list[int]] = {}
     for r in rows:
         if r.matched_objective_id:
@@ -374,8 +439,9 @@ def view(
             objective_ref=labels.get(r.matched_objective_id, (None, None))[0],
             objective_text=labels.get(r.matched_objective_id, (None, None))[1],
             decided_ref=labels.get(r.decided_objective_id, (None, None))[0],
-            acceptable_onto=acceptable_onto(r),
-            not_acceptable=why_not_acceptable(r),
+            acceptable_onto=acceptable_onto(r, texts),
+            not_acceptable=why_not_acceptable(r, texts),
+            offers=tuple(offers(r, texts)),
             existing=ExistingStatement(st.id, st.body, st.status, st.updated_at,
                                        st.id in written_ids) if st else None,
             shares_objective_with=tuple(
@@ -418,7 +484,8 @@ ACTIONS = ("accept", "edit", "reject", "keep_existing", "reopen")
 
 
 def _provenance(s: SspImportSession, r: SspImportRow, decision: str, actor: str,
-                at: datetime) -> dict:
+                at: datetime, objective_id: str, texts: dict[str, str]) -> dict:
+    how, score = placement(r, objective_id, texts)
     p = {
         "source": "ssp_import",
         "importer": s.importer,
@@ -431,6 +498,15 @@ def _provenance(s: SspImportSession, r: SspImportRow, decision: str, actor: str,
         # The source document's claim about the control, never a status here.
         "source_status_claim": r.source_status,
         "match_kind": r.match_kind,
+        # A verbatim match, a person choosing among exact texts, or a person
+        # confirming a near match: told apart for an assessor.
+        "placement": how,
+        "near_match_score": score,
+        # What the person was shown to choose from, as shown.
+        "candidates_offered": [
+            {"ref": o.ref, "score": o.score, "exact_text": o.exact_text}
+            for o in offers(r, texts) if o.offered
+        ],
         "decision": decision,
         "decided_by": actor,
         "decided_at": at.isoformat(),
@@ -497,14 +573,15 @@ def decide(
         _log_row(session, s, r, "ssp_import.row_reject", {"decision": "pending"})
         return r
 
-    allowed = acceptable_onto(r)
+    texts = _candidate_texts(session, [r])
+    allowed = acceptable_onto(r, texts)
     if not allowed:
-        raise Refused(422, why_not_acceptable(r) or "This row cannot be accepted.")
+        raise Refused(422, why_not_acceptable(r, texts) or "This row cannot be accepted.")
     if objective_id is None and r.match_kind == "exact":
         objective_id = r.matched_objective_id
     if objective_id is None:
-        raise Refused(422, ("This row's text matches more than one objective, or one outside "
-                            "its family: choose which objective it belongs to."))
+        raise Refused(422, ("This row has no exact match of its own: choose which objective "
+                            "it belongs to. None is chosen for you."))
     if str(objective_id) not in allowed:
         raise Refused(422, "That objective is not one this row can be accepted onto.")
     st = _existing(session, assessment_id, objective_id)
@@ -525,7 +602,7 @@ def decide(
     else:
         text = r.statement
     decision = "edited" if action == "edit" else "accepted"
-    prov = _provenance(s, r, decision, actor, at)
+    prov = _provenance(s, r, decision, actor, at, str(objective_id), texts)
     ref = _ref(session, objective_id)
 
     if st is not None:

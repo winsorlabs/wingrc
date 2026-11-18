@@ -7,6 +7,7 @@ import {
   familyProgress,
   KIND_LABELS,
   overallProgress,
+  pickLegend,
   rowState,
   shortHash,
   startingFamily,
@@ -279,7 +280,7 @@ function FamilyRows({ orgId, assessmentId, view, family, onView, edits, onEdit }
   );
 }
 
-function RowCard({ orgId, assessmentId, sessionId, row, onView, edit, onEdit }: {
+export function RowCard({ orgId, assessmentId, sessionId, row, onView, edit, onEdit }: {
   orgId: string;
   assessmentId: string;
   sessionId: string;
@@ -381,7 +382,8 @@ function RowCard({ orgId, assessmentId, sessionId, row, onView, edit, onEdit }: 
           {row.not_acceptable}
           {row.candidates.length > 0 && (
             <div className="ssp-meta">
-              Closest objectives, for reading only: {row.candidates.map((c) => `${c.ref} (${c.score.toFixed(2)})`).join(", ")}
+              Closest objectives, all below the {row.near_match_floor.toFixed(2)} floor and not offered:{" "}
+              {row.candidates.map((c) => `${c.ref} (${c.score.toFixed(2)})`).join(", ")}
             </div>
           )}
           <div><button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => decide({ action: "reject" })}>Reject</button></div>
@@ -392,18 +394,28 @@ function RowCard({ orgId, assessmentId, sessionId, row, onView, edit, onEdit }: 
         <>
           {pickable && (
             <fieldset className="ssp-pick">
-              <legend>Which objective is this row's?</legend>
-              {row.candidates.map((c) => (
-                <label key={c.objective_id}>
+              <legend>{pickLegend(row)}</legend>
+              {row.candidates.filter((c) => c.offered).map((c) => (
+                <label key={c.objective_id} className="ssp-pick-option">
                   <input
                     type="radio"
                     name={`pick-${row.id}`}
                     checked={pick === c.objective_id}
                     onChange={() => setPick(c.objective_id)}
-                  />{" "}
-                  {c.ref}
+                  />
+                  <span>
+                    <span className="ssp-row-target">{c.ref}</span>{" "}
+                    <span className="ssp-meta">{c.exact_text ? "same text" : `near match, ${c.score.toFixed(2)}`}</span>
+                    <span className="ssp-pick-text">{c.text}</span>
+                  </span>
                 </label>
               ))}
+              {row.candidates.some((c) => !c.offered) && (
+                <div className="ssp-meta">
+                  Below the {row.near_match_floor.toFixed(2)} floor, not offered:{" "}
+                  {row.candidates.filter((c) => !c.offered).map((c) => `${c.ref} (${c.score.toFixed(2)})`).join(", ")}
+                </div>
+              )}
             </fieldset>
           )}
 

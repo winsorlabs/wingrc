@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decidedLine, familyProgress, overallProgress, rowState, startingFamily, unsavedNotice, unsavedRows } from "./sspImport";
+import { decidedLine, familyProgress, nearMatchScore, overallProgress, pickLegend, rowState, startingFamily, unsavedNotice, unsavedRows } from "./sspImport";
 import type { SspImportRow, SspImportView } from "../types";
 
 function row(over: Partial<SspImportRow> = {}): SspImportRow {
@@ -7,7 +7,7 @@ function row(over: Partial<SspImportRow> = {}): SspImportRow {
     id: "r1", number: 1, family: "AC", heading: "8.1 Access Control", control_text: "t",
     statement: "s", source_status: "Met", notes_present: false, raci_present: true,
     match_kind: "exact", objective_id: "o1", objective_ref: "AC.L2-3.1.1[a]", objective_text: "t",
-    candidates: [], acceptable_onto: ["o1"], not_acceptable: null, decision: "pending",
+    candidates: [], near_match_floor: 0.8, acceptable_onto: ["o1"], not_acceptable: null, decision: "pending",
     resolution: null, decided_objective_id: null, decided_ref: null, statement_id: null,
     decided_by: null, decided_at: null, existing: null, shares_objective_with: [],
     ...over,
@@ -82,5 +82,25 @@ describe("unsaved edits", () => {
       "Unsaved edit on row 4. Save it as a draft before reloading or leaving this screen, or it is lost.");
     expect(unsavedNotice([row({ number: 7 }), row({ number: 2 })])).toBe(
       "Unsaved edit on rows 2, 7. Save it as a draft before reloading or leaving this screen, or it is lost.");
+  });
+});
+
+describe("near matches", () => {
+  const near = { objective_id: "c", ref: "AC.L2-3.1.1[c]", score: 0.94, text: "Devices (and other systems) ...", exact_text: false, offered: true };
+  const low = { objective_id: "b", ref: "AC.L2-3.1.1[b]", score: 0.57, text: "Processes ...", exact_text: false, offered: false };
+  const same = { objective_id: "x", ref: "X[a]", score: 1, text: "t", exact_text: true, offered: true };
+
+  it("asks a near-match question differently from a choice among identical texts", () => {
+    expect(pickLegend(row({ match_kind: "unmatched", candidates: [near, low] }))).toMatch(/^No objective's text matches exactly/);
+    expect(pickLegend(row({ match_kind: "ambiguous", candidates: [same] }))).toMatch(/word for word/);
+  });
+
+  it("says a confirmed near match as one, with its score", () => {
+    const r = row({ match_kind: "unmatched", candidates: [near, low], decision: "accepted", decided_objective_id: "c", decided_ref: "AC.L2-3.1.1[c]", decided_by: "Pat", statement_id: "s" });
+    expect(nearMatchScore(r)).toBe(0.94);
+    expect(decidedLine(r)).toBe("Accepted onto AC.L2-3.1.1[c] as a near match (0.94), confirmed by Pat. Draft written.");
+    const picked = row({ match_kind: "ambiguous", candidates: [same], decision: "accepted", decided_objective_id: "x", decided_ref: "X[a]" });
+    expect(nearMatchScore(picked)).toBeNull();
+    expect(decidedLine(picked)).toBe("Accepted onto X[a]. Draft written.");
   });
 });

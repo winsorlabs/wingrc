@@ -68,6 +68,9 @@ class CandidateOut(BaseModel):
     objective_id: uuid.UUID
     ref: str
     score: float
+    text: str  # the catalog text, to read against the source's
+    exact_text: bool
+    offered: bool  # at or above the near-match floor, or exact text
 
 
 class ExistingOut(BaseModel):
@@ -93,6 +96,7 @@ class RowOut(BaseModel):
     objective_ref: str | None
     objective_text: str | None
     candidates: list[CandidateOut]
+    near_match_floor: float
     acceptable_onto: list[uuid.UUID]
     not_acceptable: str | None
     decision: str
@@ -150,7 +154,10 @@ def _session_out(v: imp.SessionView) -> SessionOut:
             notes_present=rv.row.notes_present, raci_present=rv.row.raci_present,
             match_kind=rv.row.match_kind, objective_id=rv.row.matched_objective_id,
             objective_ref=rv.objective_ref, objective_text=rv.objective_text,
-            candidates=[CandidateOut(**c) for c in rv.row.candidates],
+            candidates=[CandidateOut(objective_id=uuid.UUID(o.objective_id), ref=o.ref,
+                                     score=o.score, text=o.text, exact_text=o.exact_text,
+                                     offered=o.offered) for o in rv.offers],
+            near_match_floor=imp.NEAR_MATCH_FLOOR,
             acceptable_onto=[uuid.UUID(x) for x in rv.acceptable_onto],
             not_acceptable=rv.not_acceptable, decision=rv.row.decision,
             resolution=rv.row.resolution, decided_objective_id=rv.row.decided_objective_id,

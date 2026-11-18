@@ -2658,3 +2658,6 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 @media (max-width: 800px) { .ssp-body { grid-template-columns: 1fr; } .ssp-families { position: static; } }
 /* An unsaved edit: --partial-fg on --partial-bg, 7.21:1 (measured above). */
 .ssp-unsaved { background: var(--partial-bg); color: var(--partial-fg); border-radius: 6px; padding: 0.4rem 0.75rem; font-size: 0.85rem; }
+.ssp-pick-option { display: flex; gap: 0.5rem; align-items: flex-start; padding: 0.25rem 0; }
+.ssp-pick-option input { margin-top: 0.3rem; }
+.ssp-pick-text { display: block; max-width: 75ch; }

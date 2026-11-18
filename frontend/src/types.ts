@@ -1955,6 +1955,9 @@ export interface SspImportCandidate {
   objective_id: string;
   ref: string;
   score: number;
+  text: string; // the catalog text, read against the source's
+  exact_text: boolean;
+  offered: boolean; // exact text, or a near match at or above the floor
 }
 
 export interface SspImportExisting {
@@ -1983,6 +1986,7 @@ export interface SspImportRow {
   objective_ref: string | null;
   objective_text: string | null;
   candidates: SspImportCandidate[];
+  near_match_floor: number;
   acceptable_onto: string[];
   not_acceptable: string | null;
   decision: SspDecision;
