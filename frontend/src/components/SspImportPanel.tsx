@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiError, SspConflictError } from "../api";
 import {
   decidedLine,
+  unsavedNotice,
+  unsavedRows,
   familyProgress,
   KIND_LABELS,
   overallProgress,
@@ -28,6 +30,31 @@ export function SspImportPanel({ orgId, assessmentId }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  // Text typed into "Edit first" and not yet saved as a draft. The one
+  // thing on this screen that is not saved as it is made, so it lives here
+  // (it survives switching families) and the browser warns before a
+  // reload or close discards it.
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const unsaved = view ? unsavedRows(view.rows, edits) : [];
+
+  useEffect(() => {
+    if (unsaved.length === 0) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [unsaved.length]);
+
+  function setEdit(rowId: string, text: string | null) {
+    setEdits((m) => {
+      const next = { ...m };
+      if (text === null) delete next[rowId];
+      else next[rowId] = text;
+      return next;
+    });
+  }
 
   function load() {
     setError(null);
@@ -128,6 +155,11 @@ export function SspImportPanel({ orgId, assessmentId }: Props) {
               </div>
             </div>
             <div className="ssp-progress" aria-live="polite">{overallProgress(view)}</div>
+            {unsaved.length > 0 && (
+              <div className="ssp-unsaved" role="status">
+                {unsavedNotice(unsaved)}
+              </div>
+            )}
           </div>
 
           <div className="ssp-body">
@@ -141,6 +173,7 @@ export function SspImportPanel({ orgId, assessmentId }: Props) {
                 >
                   <span className="ssp-family-name">{f.heading}</span>
                   <span className="ssp-family-count">
+                    {unsaved.some((r) => r.family === f.key) ? "unsaved edit · " : ""}
                     {f.decided === f.total ? "✓ " : ""}{f.decided}/{f.total}
                   </span>
                 </button>
@@ -154,6 +187,8 @@ export function SspImportPanel({ orgId, assessmentId }: Props) {
                   view={view}
                   family={family}
                   onView={setView}
+                  edits={edits}
+                  onEdit={setEdit}
                 />
               )}
             </section>
@@ -212,12 +247,14 @@ function fmt(iso: string | null): string {
   return new Date(iso).toLocaleString();
 }
 
-function FamilyRows({ orgId, assessmentId, view, family, onView }: {
+function FamilyRows({ orgId, assessmentId, view, family, onView, edits, onEdit }: {
   orgId: string;
   assessmentId: string;
   view: SspImportView;
   family: string;
   onView: (v: SspImportView) => void;
+  edits: Record<string, string>;
+  onEdit: (rowId: string, text: string | null) => void;
 }) {
   const rows = useMemo(() => view.rows.filter((r) => r.family === family), [view, family]);
   const f = view.families.find((x) => x.key === family);
@@ -226,23 +263,34 @@ function FamilyRows({ orgId, assessmentId, view, family, onView }: {
       {f && <h2 className="ssp-family-title">{f.heading} <span className="ssp-meta">{familyProgress(f)}</span></h2>}
       <ol className="ssp-row-list">
         {rows.map((r) => (
-          <RowCard key={r.id} orgId={orgId} assessmentId={assessmentId} sessionId={view.session.id} row={r} onView={onView} />
+          <RowCard
+            key={r.id}
+            orgId={orgId}
+            assessmentId={assessmentId}
+            sessionId={view.session.id}
+            row={r}
+            onView={onView}
+            edit={edits[r.id]}
+            onEdit={(text) => onEdit(r.id, text)}
+          />
         ))}
       </ol>
     </>
   );
 }
 
-function RowCard({ orgId, assessmentId, sessionId, row, onView }: {
+function RowCard({ orgId, assessmentId, sessionId, row, onView, edit, onEdit }: {
   orgId: string;
   assessmentId: string;
   sessionId: string;
   row: SspImportRow;
   onView: (v: SspImportView) => void;
+  edit: string | undefined;
+  onEdit: (text: string | null) => void;
 }) {
   const [pick, setPick] = useState<string | null>(null);
-  const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(row.statement ?? "");
+  const editing = edit !== undefined;
+  const text = edit ?? row.statement ?? "";
   const [conflict, setConflict] = useState<SspConflict["statement"] | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -258,7 +306,7 @@ function RowCard({ orgId, assessmentId, sessionId, row, onView }: {
     try {
       const v = await api.decideSspRow(orgId, assessmentId, sessionId, row.id, body);
       setConflict(null);
-      setEditing(false);
+      onEdit(null);
       onView(v);
     } catch (e) {
       if (e instanceof SspConflictError) setConflict(e.conflict.statement);
@@ -298,9 +346,16 @@ function RowCard({ orgId, assessmentId, sessionId, row, onView }: {
           className="ssp-edit"
           value={text}
           rows={Math.min(14, Math.max(5, text.split("\n").length + 1))}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => onEdit(e.target.value)}
           aria-label={`Edit the statement for row ${row.number}`}
+          aria-describedby={`unsaved-${row.id}`}
         />
+      ) : null}
+      {editing ? (
+        <div id={`unsaved-${row.id}`} className="ssp-unsaved">
+          Not saved yet. Everything else here saves as you decide it; this text is kept only until you
+          save it as a draft, and is lost if you reload or leave this screen first.
+        </div>
       ) : (
         <div className="ssp-row-statement">{row.statement ?? <em className="ssp-meta">The source row has no statement text.</em>}</div>
       )}
@@ -376,14 +431,14 @@ function RowCard({ orgId, assessmentId, sessionId, row, onView }: {
                   <button className="btn btn-primary btn-sm" disabled={busy || !objectiveId || !text.trim()} onClick={() => decide(writeBody())}>
                     Save edit as draft{ref ? ` on ${ref}` : ""}
                   </button>
-                  <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => { setEditing(false); setText(row.statement ?? ""); }}>Cancel edit</button>
+                  <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => onEdit(null)}>Cancel edit</button>
                 </>
               ) : (
                 <>
                   <button className="btn btn-primary btn-sm" disabled={busy || !objectiveId} onClick={() => decide(writeBody())}>
                     Accept{ref ? ` onto ${ref}` : pickable ? " (choose an objective)" : ""}
                   </button>
-                  <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setEditing(true)}>Edit first</button>
+                  <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => onEdit(row.statement ?? "")}>Edit first</button>
                 </>
               )}
               <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => decide({ action: "reject" })}>Reject</button>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decidedLine, familyProgress, overallProgress, rowState, startingFamily } from "./sspImport";
+import { decidedLine, familyProgress, overallProgress, rowState, startingFamily, unsavedNotice, unsavedRows } from "./sspImport";
 import type { SspImportRow, SspImportView } from "../types";
 
 function row(over: Partial<SspImportRow> = {}): SspImportRow {
@@ -66,5 +66,21 @@ describe("what a decided row says", () => {
     expect(decidedLine(row({ decision: "rejected", resolution: "kept_existing", decided_ref: "X" })))
       .toBe("Rejected: the statement already on X was kept.");
     expect(decidedLine(row({ decision: "rejected" }))).toBe("Rejected. Nothing was written.");
+  });
+});
+
+describe("unsaved edits", () => {
+  it("counts only text that differs from the source", () => {
+    const rows = [row({ id: "a", number: 3, statement: "orig" }), row({ id: "b", number: 1, statement: "x" }), row({ id: "c", number: 2 })];
+    expect(unsavedRows(rows, {})).toEqual([]);
+    expect(unsavedRows(rows, { a: "orig" })).toEqual([]);
+    expect(unsavedRows(rows, { a: "changed", b: "y" }).map((r) => r.id)).toEqual(["a", "b"]);
+  });
+
+  it("says which rows", () => {
+    expect(unsavedNotice([row({ number: 4 })])).toBe(
+      "Unsaved edit on row 4. Save it as a draft before reloading or leaving this screen, or it is lost.");
+    expect(unsavedNotice([row({ number: 7 }), row({ number: 2 })])).toBe(
+      "Unsaved edit on rows 2, 7. Save it as a draft before reloading or leaving this screen, or it is lost.");
   });
 });
