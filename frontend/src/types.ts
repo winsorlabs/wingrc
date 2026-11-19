@@ -1000,6 +1000,10 @@ export interface RowProblem {
   row_index: number | null;
   field: string | null;
   message: string;
+  // What is wrong, as a code lib/baselineReview.ts writes a sentence for,
+  // and the value it is about (baseline_import.PROBLEM_KINDS).
+  kind?: string | null;
+  value?: string | null;
 }
 
 // Advisory only -- never affects `problems`/whether Apply is enabled, and
@@ -1023,6 +1027,8 @@ export interface BaselineImportPreview {
   affected_org_names: string[];
   row_problems: RowProblem[];
   disclaim_flags: DisclaimFlag[];
+  // Each named control's own objective keys ("3 of 4 objectives").
+  control_objectives?: Record<string, string[]>;
   // Baseline versioning (roadmap item P). has_changes false means Apply
   // is a true no-op: the existing version is reused, nothing is written,
   // is_published is left exactly as it is.

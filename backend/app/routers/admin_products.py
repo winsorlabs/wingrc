@@ -220,6 +220,8 @@ class RowProblemOut(BaseModel):
     row_index: int | None
     field: str | None
     message: str
+    kind: str | None = None
+    value: str | None = None
 
 
 class DisclaimFlagOut(BaseModel):
@@ -244,6 +246,7 @@ class ImportPreviewOut(BaseModel):
     current_version_number: int | None = None
     next_version_number: int = 1
     has_changes: bool = True
+    control_objectives: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class ImportApplyOut(BaseModel):
@@ -726,7 +729,10 @@ def _preview_out(preview) -> ImportPreviewOut:
         affected_org_count=preview.affected_org_count,
         affected_org_names=preview.affected_org_names,
         row_problems=[
-            RowProblemOut(row_index=p.row_index, field=p.field, message=p.message)
+            RowProblemOut(
+                row_index=p.row_index, field=p.field, message=p.message,
+                kind=p.kind, value=p.value,
+            )
             for p in preview.row_problems
         ],
         disclaim_flags=[
@@ -736,6 +742,7 @@ def _preview_out(preview) -> ImportPreviewOut:
         current_version_number=preview.current_version_number,
         next_version_number=preview.next_version_number,
         has_changes=preview.has_changes,
+        control_objectives=preview.control_objectives,
     )
 
 
