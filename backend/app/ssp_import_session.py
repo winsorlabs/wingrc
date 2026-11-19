@@ -96,18 +96,19 @@ IMPORTER = "ssp_docx"
 MAX_BYTES = 20 * 1024 * 1024
 _ZIP_MAGIC = b"PK\x03\x04"
 
-# A near match below this is not offered (2026-11-18). On the real file the
-# near-match row's right objective scored 0.94 and the two wrong ones 0.57
-# and 0.53; a one-word difference in an objective's text scores about 0.9.
-# Provisional: one real row is the evidence. Its only job is not to waste
-# a reviewer's time on candidates not worth reading.
+# A near match below this is not offered. Its only job is not to waste a
+# reviewer's time on candidates not worth reading. 0.80 at first (2026-11-18:
+# the real file's right objective scored 0.94, the wrong ones 0.57 and 0.53);
+# lowered to 0.75 the same day by Jarrod, who read the seven rows whose best
+# candidate scored 0.75-0.79 and judged them worth reading. Provisional: one
+# real file is the evidence.
 #
 # Do not auto-accept above any threshold. Different objectives in one
 # family score up to 0.98 against each other (168 pairs at 0.80 or more on
 # the CMMC catalog), so the score cannot carry correctness: a person reading
 # both texts is what places a row (docs/roadmap.md, "A person may confirm a
 # near match").
-NEAR_MATCH_FLOOR = 0.80
+NEAR_MATCH_FLOOR = 0.75
 
 PLACEMENTS = ("exact_match", "person_chose_exact_text", "person_confirmed_near_match")
 
