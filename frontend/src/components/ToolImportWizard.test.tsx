@@ -466,6 +466,23 @@ describe("ToolImportWizard — T.1: a row a person can read", () => {
     expect(sent.product.assumed_config).toEqual([item, "Second item"]);
   });
 
+  it("does not re-block Apply when a field is left without a change", async () => {
+    await generate(
+      makePreview({ product_is_new: true, control_changes: [] }),
+      makeProduct({ assumed_config: ["One, with a comma"] }),
+      [makeControlRow({ coverage_basis: "customer_system" })],
+    );
+    expect(screen.getByRole("button", { name: /Apply Import/ })).toHaveProperty("disabled", false);
+    const field = screen.getByLabelText(/Assumed configuration/);
+    fireEvent.focus(field);
+    fireEvent.blur(field);
+    fireEvent.blur(screen.getByRole("textbox", { name: "Control(s) for row 0" }));
+    expect(screen.getByRole("button", { name: /Apply Import/ })).toHaveProperty("disabled", false);
+    fireEvent.change(field, { target: { value: "One, with a comma\nTwo" } });
+    fireEvent.blur(field);
+    expect(screen.getByRole("button", { name: /Apply Import/ })).toHaveProperty("disabled", true);
+  });
+
   it("labels the tool's fields in words, with a read-only framework", async () => {
     await generate(makePreview({ product_is_new: true, control_changes: [] }));
     for (const label of ["Tool name", "Vendor", "Short ID", "What it does here", "Provider type", "Asset category"]) {
@@ -548,5 +565,20 @@ describe("ToolImportWizard — yaml mode", () => {
     expect(screen.getByRole("columnheader", { name: "On whose systems?" })).toBeTruthy();
     expect(screen.getByText("Customer system")).toBeTruthy();
     expect(screen.getByText("Provider satisfies")).toBeTruthy();
+  });
+
+  it("says a customer-owned row's systems are not asked", async () => {
+    vi.mocked(api.dryRunBaselineImport).mockResolvedValue(
+      makePreview({
+        control_changes: [
+          { control_id: "AC.L2-3.1.8", change_type: "unchanged", classification: "customer_owns", coverage_basis: "customer_system", field_diffs: {} },
+        ],
+      })
+    );
+    render(<ToolImportWizard onClose={vi.fn()} onApplied={vi.fn()} />);
+    selectFile(document.querySelector("input[type=file]")!);
+    fireEvent.click(screen.getByRole("button", { name: /Preview Import/ }));
+    expect(await screen.findByText("not asked: the customer owns it")).toBeTruthy();
+    expect(screen.queryByText("Customer system")).toBeNull();
   });
 });

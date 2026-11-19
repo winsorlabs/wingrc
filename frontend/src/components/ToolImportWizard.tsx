@@ -72,6 +72,10 @@ function yamlToFile(text: string): File {
   return new File([text], "reviewed-baseline.yaml", { type: "application/x-yaml" });
 }
 
+function sameList(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((x, i) => x === b[i]);
+}
+
 function emptyEvidence(): BaselineEvidenceDraft {
   return { artifact: "", type: EVIDENCE_TYPES[1], kb: null };
 }
@@ -473,6 +477,8 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
   function commitListField(rowIndex: number, field: "control" | "objectives") {
     const text = listText[`${rowIndex}:${field}`] ?? "";
     const parsed = text.split(",").map((s) => s.trim()).filter(Boolean);
+    const current = draft?.controls.find((c) => c.row_index === rowIndex)?.[field];
+    if (current && sameList(parsed, current)) return;
     updateControlField(rowIndex, field, parsed);
   }
 
@@ -480,6 +486,8 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
     const text = listText["product:assumed_config"] ?? "";
     // One item per line: an item is a sentence and may hold a comma.
     const parsed = parseAssumedConfig(text);
+    // A blur that changes nothing must not re-block Apply (seen on the bench).
+    if (draft && sameList(parsed, draft.product.assumed_config)) return;
     setDraft((prev) => (prev ? { ...prev, product: { ...prev.product, assumed_config: parsed } } : prev));
     setDirty(true);
   }
@@ -900,7 +908,7 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
                                   />
                                   {known && <span className="field-hint">This control's objectives: {known.join(", ")}</span>}
                                 </label>
-                                <div>
+                                <div className="row-expansion-evidence">
                                   Evidence
                                   <div className={`evidence-mini-list${wrongField(evProblem) ? " field-needs-decision" : ""}`}>
                                     {row.evidence.map((ev, evIdx) => (

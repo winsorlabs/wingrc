@@ -141,7 +141,11 @@ export function ChangeDiff({
               <td>{c.change_type === "removed" ? "removed (dropped from this import)" : c.change_type}</td>
               <td>{c.classification ? CLASSIFICATION_LABELS[c.classification] ?? c.classification : "to decide"}</td>
               <td className={c.coverage_basis === "platform_only" ? "coverage-basis-platform-only" : undefined}>
-                {c.coverage_basis ? COVERAGE_BASIS_LABELS[c.coverage_basis] ?? c.coverage_basis : "to decide"}
+                {c.classification === "customer_owns"
+                  ? "not asked: the customer owns it"
+                  : c.coverage_basis
+                    ? COVERAGE_BASIS_LABELS[c.coverage_basis] ?? c.coverage_basis
+                    : "to decide"}
               </td>
             </tr>
           ))}

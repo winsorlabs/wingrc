@@ -2681,7 +2681,8 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
    is the muted "to decide" marker on those tints, measured 2026-11-19
    (WCAG 2.x): #5c636a on #fff7ed 5.74:1, on #fdecea 5.32:1, on white
    6.1:1. */
-.tool-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 0.6rem 0.9rem; }
+.tool-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 0.6rem 0.9rem; align-items: start; }
+.tool-fields input, .row-expansion-grid input, .row-expansion-grid select { flex: none; }
 .tool-fields label, .tool-fields > div { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.8rem; }
 .tool-field-label { font-weight: 600; color: var(--text); }
 .tool-field-static { padding: 0.3rem 0; color: var(--text); }
@@ -2701,6 +2702,10 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .row-marker-decide { font-size: 0.68rem; color: var(--muted); margin-top: 0.15rem; }
 .row-expansion > td { background: var(--surface); border-top: none; }
 .row-expansion-problems { margin: 0 0 0.5rem; padding-left: 1.1rem; }
-.row-expansion-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr)); gap: 0.6rem 0.9rem; font-size: 0.78rem; }
+.row-expansion-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr)); gap: 0.6rem 0.9rem; font-size: 0.78rem; align-items: start; }
+.row-expansion-evidence { grid-column: 1 / -1; }
+.row-expansion-evidence .evidence-mini-row input[type="text"]:first-child { flex: 3 1 16rem; min-width: 10rem; width: auto; }
+.row-expansion-evidence .evidence-mini-row input[type="text"] { flex: 1 1 8rem; min-width: 6rem; width: auto; }
+.row-expansion-evidence .evidence-mini-row select { flex: none; width: auto; }
 .row-expansion-grid label, .row-expansion-grid > div { display: flex; flex-direction: column; gap: 0.2rem; }
 .row-expansion-grid textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 0.78rem; padding: 0.3rem 0.4rem; border: 1px solid var(--border); border-radius: 4px; }
