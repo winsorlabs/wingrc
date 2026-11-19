@@ -489,6 +489,8 @@ describe("ToolImportWizard — T.1: a row a person can read", () => {
       expect(screen.getByLabelText(new RegExp(label))).toBeTruthy();
     }
     expect(screen.queryByText("asset_type")).toBeNull();
+    // One or two sentences, per its own hint: a textarea, like the row fields.
+    expect(screen.getByLabelText(/What it does here/).tagName).toBe("TEXTAREA");
     expect(screen.getByText("NIST SP 800-171 Rev 2 / CMMC Level 2")).toBeTruthy();
   });
 

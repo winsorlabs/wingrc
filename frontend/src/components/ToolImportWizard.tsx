@@ -670,22 +670,36 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
               <fieldset className="form-field" style={{ marginBottom: "0.75rem" }}>
                 <legend>About this tool</legend>
                 <div className="tool-fields">
-                  {PRODUCT_FIELDS.map(({ field, label, hint }) => (
-                    <label key={field}>
-                      <span className="tool-field-label">{label}</span>
-                      <input
-                        type="text"
-                        value={draft.product[field]}
-                        // Changing the key while editing would retarget
-                        // Apply at a different (or brand new) product,
-                        // since apply upserts by key -- not a typo a
-                        // reviewer should be able to make by accident.
-                        disabled={field === "key" && !!editProductId}
-                        onChange={(e) => updateProductField(field, e.target.value)}
-                      />
-                      {hint && <span className="field-hint">{hint}</span>}
-                    </label>
-                  ))}
+                  {PRODUCT_FIELDS.map(({ field, label, hint }) =>
+                    // Its own hint asks for one or two sentences, so it gets
+                    // the room the row's text fields have (Jarrod, T.1 walk).
+                    field === "role" ? (
+                      <label key={field} className="tool-field-wide">
+                        <span className="tool-field-label">{label}</span>
+                        <textarea
+                          rows={3}
+                          value={draft.product.role}
+                          onChange={(e) => updateProductField("role", e.target.value)}
+                        />
+                        <span className="field-hint">{hint}</span>
+                      </label>
+                    ) : (
+                      <label key={field}>
+                        <span className="tool-field-label">{label}</span>
+                        <input
+                          type="text"
+                          value={draft.product[field]}
+                          // Changing the key while editing would retarget
+                          // Apply at a different (or brand new) product,
+                          // since apply upserts by key -- not a typo a
+                          // reviewer should be able to make by accident.
+                          disabled={field === "key" && !!editProductId}
+                          onChange={(e) => updateProductField(field, e.target.value)}
+                        />
+                        {hint && <span className="field-hint">{hint}</span>}
+                      </label>
+                    )
+                  )}
                   <div>
                     <span className="tool-field-label">Framework</span>
                     {/* Read-only: apply seeds every tool against the one

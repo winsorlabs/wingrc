@@ -574,6 +574,12 @@ nearly every row is invalid.
       version N", above the banner. Each control links to its row.
     - The screenshot at Jarrod's own screen size waits for him to say
       what it is; the bench shots are 1366×768 and 1920×1080.
+    - **After Jarrod read the screenshots (2026-11-19):** the five
+      complaints in §0 are fixed. "What it does here" became a textarea,
+      since its own hint asks for one or two sentences. For his walk: at
+      1366×768 the open legend fills the first screen (legend, banner,
+      one row). He accepted that as a first read, since it stays closed
+      once closed.
   - The bench screenshot is at Jarrod's screen size as well as
     1366×768, with a real document's generated rows, not a fixture.
 - **T.2. Recommendations, displayed.**
