@@ -15,7 +15,7 @@ difference between a decision and a recommendation.
 It is reliable on direction and unreliable on current state. Where it
 says what the code or a deployment does today, check that against the
 code or the host before acting on it. Where it argues what ought to
-happen, the reasoning is usually the part worth keeping. Nine
+happen, the reasoning is usually the part worth keeping. Ten
 corrections in the fortnight to 2026-11-18 had one shape: a plausible
 generalisation from partial evidence, stated with more confidence than
 the evidence carried. They were:
@@ -28,7 +28,9 @@ the evidence carried. They were:
 - `FORCE ROW LEVEL SECURITY` as the fix, when a superuser is exempt
   either way;
 - the bench's tests as blind, when the fixture switches roles;
-- "prevented twice", once.
+- "prevented twice", once;
+- "126 against a real 69–73", a comparison spanning the lock, the
+  change it was meant to measure (the brief's own reading, 2026-11-18).
 
 Checking caught every one.
 
@@ -12281,6 +12283,34 @@ security fixes reach live?" With the lock in place, the answer is
 
 Not built.
 
+**The Python lock has the same hole (the brief, 2026-11-18). This is
+the apt pin's sibling, with one cause and one answer.** Input (1)
+above, `requirements.lock`, is a pin with no cadence. That is a freeze:
+- **Fixes stop with drift.** Every Python HIGH in the 2026-11-18
+  attribution has a published fix that the lock holds back until someone
+  runs `make lock` (the scan item's "Backend HIGH, attributed end to
+  end").
+- **Known vulnerabilities pile up at the advisory database's rate.**
+  The backend image went from 59 HIGH to 126 between 10-31 and 11-12,
+  all on unchanged packages.
+
+The trade was right: reproducibility is why the rise could be
+attributed at all. But the answer is the one above for the apt line:
+- **A stated cadence for `make lock`.** A re-lock is a commit with a
+  scan before and after, and a bench run.
+- **Something that says how old the lock is, and complains past a
+  limit.** `/health` already reports a snapshot's age, and the lock's
+  age is the same kind of fact. The lock's last change date, or a date
+  that `make lock` writes into it, would serve either `/health` or
+  `deploy.sh`. Which reader to use is the slice's choice.
+
+Choose the cadence on the reachable exposure, not the headline count.
+Five of the nine Python HIGH are pip's vendored copies, which nothing
+that runs reaches. That leaves four: `pypdf` ×3, which is reachable,
+and `dnspython`, which is unchecked. Pin age and lock age are one
+reader in two places, so one slice may build both. Not built, by the
+brief's instruction.
+
 **The frontend's dependency tree is unexamined (Jarrod, 2026-10-30).**
 This is a different kind of gap from the apt one, and not urgent at
 three tenants.
@@ -13458,10 +13488,42 @@ learned about what is already running, not that something new arrived.
   inside the locked pip 26.2.2 (its `_vendor/vendor.txt`). The app
   imports `urllib3` 2.8.0. Trivy reports these with no path, which is
   how they were found. Bumping `urllib3` in the lock would not clear
-  them; bumping pip would. pip is used at build time, not by the
-  running app.
+  them; bumping pip would.
+- **Those five are unreachable, by the reasoning used for `libxml2`**
+  (the brief, 2026-11-18). Present in the image, and nothing that runs
+  loads them. Checked in live's backend and worker containers on
+  2026-11-18:
+  - **No process is pip.** Each container runs one process: `uvicorn`
+    in the backend, `wingrc worker` in the worker. The Dockerfile runs
+    pip only in its `deps` stage. The image's `CMD` and compose's
+    `command:` never call it, and nothing in `backend/app` or `deploy/`
+    does. The app's three `subprocess.run` calls run `pg_dump` and
+    `pg_restore`.
+  - **No copy outside pip.** `msgpack`, `setuptools` and
+    `pkg_resources` do not resolve as top-level imports
+    (`importlib.util.find_spec` returns none). The vendored copies sit
+    under `pip/_vendor/`. The `urllib3` the app gets is the lock's
+    2.8.0.
+  - **Nothing imports pip.** 218 installed `.py` files import `pip` or
+    `pip._vendor`, and all 218 are pip's own. None is in another
+    package or in `/app/app`. The count is non-zero, so the search
+    works.
+  - **What would make them reachable** without touching these rows:
+    something that runs pip in a live container, such as a
+    `pip install` at startup or an operator installing a package by
+    hand, or a dependency that imports `pip._vendor`.
 - **The rest:** `pypdf` 6.21.3 ×3 (fixed in 6.21.4) and `dnspython`
   2.9.0 (2.9.2).
+  - **`pypdf` is reachable.** `importers/document.py` parses uploaded
+    PDFs with it, which means untrusted input.
+  - **`dnspython` is imported, and its reachability is unchecked.** Its
+    only importers are `email_validator`, through pydantic's `EmailStr`
+    in the auth and users routers, and `psycopg`. Whether the
+    advisory's code path runs is not read here.
+  - **So the real exposure is four, not nine:** three that are reachable
+    and one that is unchecked. The re-lock cadence (item R, "The Python
+    lock has the same hole") is chosen on those four, not on the
+    headline count.
 - **117 of today's 126 are Debian packages,** under the base image's
   floating tag and apt line.
 
@@ -13476,7 +13538,8 @@ next re-lock knows what it clears.
 
 Deploys between 10-29 and 11-10 are not tabulated, so the rise to
 110 HIGH is not explained here. The 11-10 row is there as the baseline
-for the 11-12 one.
+for the 11-12 one. (Answered 2026-11-18, above: it was all advisory
+data, on unchanged packages.)
 
 **2026-11-12: a movement with no dependency change, and not from the
 base images either.** The five PRs deployed changed no lock,
