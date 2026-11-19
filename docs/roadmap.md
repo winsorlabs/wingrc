@@ -16618,7 +16618,40 @@ result are the new work.
 
 **Found on the way, not changed here,** in the order to take them:
 - **On live, an evidence file over 1 MB is refused by nginx** (found
-  2026-11-19, during the generate above). Jarrod's evidence upload of
+  2026-11-19, during the generate above). **Fixed the same day, by
+  `upload-body-limit`; not yet deployed when written.** nginx now sets
+  `client_max_body_size 101m` once, for the server, and each route's limit
+  is the backend's (`app/upload_limits.py`), refused before the body is
+  read:
+  - **The twelve routes that take a file**, each at its handler's cap plus
+    a megabyte for the multipart envelope: evidence, task collect and a
+    product's documents 51 MB; the logo and both diagrams 11 MB; the SSP
+    import 21 MB; the scope workbook 21 MB and the baseline YAML dry run
+    and apply 6 MB (their first caps: they had none but nginx's 1 MB);
+    `from-documents` and `from-documents-with-research` 101 MB (two
+    50 MB files).
+  - **Every other route stays at 1 MB**, as live's nginx held it. FastAPI
+    reads and parses a body before any dependency runs, auth included, so
+    one 101 MB bound for the whole API would let an anonymous client make
+    the process hold that much JSON.
+  - **Not per route in nginx**, because that needs regex locations, and
+    the nginx Dockerfile accepts the base image's pcre2 HIGHs on the
+    ground that the config has none.
+  - **A body over its limit is refused by its Content-Length**, or by a
+    running count when no length is sent, so no handler holds more than
+    its route's limit. `tests/test_upload_limits.py` fails on a route that
+    takes a file and has no limit, and on nginx's bound not equal to the
+    largest.
+  - **Bench, through a real nginx at `9d25756`** (a container on the bench
+    network with a throwaway certificate). A 4,222,224-byte evidence PDF:
+    201, stored at that size; the same file through `main`'s nginx.conf:
+    nginx's 413, live's failure reproduced. 50 MiB exactly: 201. 50 MiB
+    and a byte: the handler's "File exceeds 50 MB limit". 52 MiB: the
+    route's 413, with a sentence. 102 MiB: nginx's 413. 2 MiB of JSON, with
+    a session and without: the 1 MB refusal, before auth. 60 MiB to
+    `from-documents`: past both bounds, to the handler.
+
+  What follows is the finding as written that morning. Jarrod's evidence upload of
   4,222,224 bytes got a bare 413 three times (18:09:07, :21, :42), from
   nginx, never reaching the backend.
   - `client_max_body_size 105m` is set on one location only,
@@ -16652,6 +16685,11 @@ result are the new work.
     Forty concurrent uploads at 105 MB hold 4.2 GB, against about
     2 GB free on wl-util-1 (3 GB total). An earlier wording here, at
     50 MB, put it at 2 GB.
+  - **Since `upload-body-limit` the bound is each route's own** (the entry
+    above). Forty concurrent evidence uploads can hold about 2 GB, against
+    about 2 GB free: the ceiling this item exists for is now reachable on
+    live by evidence uploads alone, which is why streaming is next.
+    `from-documents`' 101 MB is msp_admin and consultant_admin only.
   - **Corrected the same evening: 105 MB is one route's limit, not every
     route's.** The wording above, written for #128, read
     `client_max_body_size 105m` as the bound on every upload. It is set
@@ -16686,6 +16724,27 @@ result are the new work.
   bucket exists. A fresh install's first concurrent uploads can. It also
   costs a `head_bucket` round trip on every request that takes the
   client.
+
+### The CI wait read the working tree -- found and fixed 2026-11-19
+
+Waiting on CI for #129, the command set `sha=a34a7b4ebe2` and then never
+used it. Its URL asked for `head_sha=$(git rev-parse HEAD)`, re-read on
+every poll, so when the branch changed mid-wait it watched whatever was
+checked out. a34a7b4 was re-checked by its fixed ID. Jarrod's reading:
+the same shape as the deploy gate matching a nested `"status":"ok"` and
+as `is_populated`, a signal that reports without checking the thing it
+claims to check.
+
+**`scripts/ci_wait.py <commit>`** replaces the one-liner:
+- it resolves the commit once, at start, to a full SHA, and never reads
+  the working tree again;
+- a run counts only when its `head_sha` equals that SHA;
+- it passes only when `backend`, `integration` and `image` each ran and
+  concluded `success`. A skipped job is a failure, and the run's own
+  conclusion is not read in place of its jobs'.
+
+`tests/test_ci_wait.py` feeds it a run for another commit and the
+skipped-image case. Its first use was `upload-body-limit`'s `9d25756`.
 
 ### The Tool Import wizard: each row a decision a person can make -- planned 2026-11-18 (`docs/PLAN-tool-import.md`), T.1 built 2026-11-19
 
