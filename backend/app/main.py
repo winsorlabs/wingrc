@@ -54,9 +54,12 @@ from .routers import (
 )
 from .routers import auth as auth_router
 from .routers import users as users_router
+from .upload_limits import BodyLimitMiddleware
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name, version="0.1.0")
+# Added before CORS so CORS wraps its refusals too (the last added is outermost).
+app.add_middleware(BodyLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
