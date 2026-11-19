@@ -16742,14 +16742,51 @@ result are the new work.
         (about 0.3 GB) and the OS, it stays inside 3.5 GB.
       - The container's cgroup peak (1.27 GB) was not used: it counts page
         cache, and the bench's PDF generation ran in the same container.
-    - **The worker, which has no limit, runs the same image.** Its
+      - **Deployed at `21632a6` (#135).**
+    - **Retention, settled: a plateau, not a leak** (Jarrod: three runs
+      cannot tell allocator arenas from a leak). Ten identical worst-case
+      generates back to back, bench `wingrc_verify_gen10` at `21632a6`:
+
+      | Run | RSS after | Peak during | Python objects |
+      |---|---|---|---|
+      | idle | 130 MiB | | 250,141 |
+      | 1 | 366 | 412 | 365,877 |
+      | 2 | 383 | 565 | 343,673 |
+      | 3 | 569 | 615 | 388,417 |
+      | 4 | 498 | 662 | 365,994 |
+      | 5 | 448 | 635 | 343,700 |
+      | 6 | 542 | 587 | 388,384 |
+      | 7 | 496 | 633 | 366,026 |
+      | 8 | 420 | 633 | 343,700 |
+      | 9 | 514 | 560 | 388,289 |
+      | 10 | 468 | 560 | 366,090 |
+      | then `malloc_trim(0)` | 468 → 370 | | 365,895 |
+
+      - RSS moves between 366 and 569 with no trend, and the peak stays
+        bounded (662 at most, 560 at runs 9 and 10).
+      - Python's object count repeats a three-run cycle instead of
+        growing.
+      - `malloc_trim` returned 98 MiB, which glibc's arenas had kept.
+        What stays above idle (about 116k objects) is fixed: the PDF and
+        document libraries imported on first use, and caches.
+      - So 1.5 GiB is ample, and "the ratchet" above was the allocator,
+        not a leak. On live, idling about 80 MiB higher, the worst peak
+        would be about 740 MiB.
+    - **The worker has a limit too: 1 GiB** (`WINGRC_WORKER_MEMORY`,
+      2026-11-19, Jarrod's decision). It runs the same image. Its
       high-water on live was 138 MiB (scheduled jobs: the Liongard sync,
-      review cycles, digests). When generate becomes a background job
-      (the "Where this is going" item above), the measurement above moves
-      with it: the worker's limit is then idle plus about 450 MiB per job
-      it runs at once, plus the ratchet. One job at a time means 1 GiB;
-      two means 1.5 GiB. That number is the slice's, because the slice
-      chooses the concurrency.
+      review cycles, digests).
+      - **Why now, not with the generate slice.** The first reason given
+        for waiting, the Liongard sync on a large client being
+        unmeasured, was the reason to set one (Jarrod). The guard exists
+        so an unmeasured path cannot take Postgres with it. With a limit,
+        it shows up as a worker restart, the failure he chose; without
+        one, as the database dying. A sync that needs more than 1 GiB is a
+        measurement he wants, not a surprise.
+      - **When generate becomes a background job** (the "Where this is
+        going" item above), that slice sets the number: the worker's idle
+        plus about 450 MiB per job it runs at once. One job at a time
+        fits 1 GiB; two need 1.5 GiB.
   - **Corrected the same evening: 105 MB is one route's limit, not every
     route's.** The wording above, written for #128, read
     `client_max_body_size 105m` as the bound on every upload. It is set
