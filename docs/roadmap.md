@@ -62,7 +62,11 @@ for that reason. The convention has not always held. A September 2026
 deploy (the Liongard inventory-visibility entry under Done, about
 2026-09-14) ran `git pull` and the build through a `docker:27-cli`
 container, because `claude` could not read the live checkout. That is
-the same move, made then without comment.
+the same move, made then without comment. Until 2026-11-19
+`docs/bench-stack-verification.md` instructed it: its teardown said to
+remove a bench's root-owned snapshot directory through a container.
+`claude` declined, and the doc now says to ask ("The bench's teardown
+check verified less than it reported").
 
 **So the next decision is framed honestly.** "Jarrod must do this because
 `claude` can't" is usually "Jarrod should do this because `claude`
@@ -16455,7 +16459,7 @@ middleware that does no blocking work.
 anyio's threadpool has 40 tokens, and a `def` handler holds one while it
 runs. So a generate holds one for the whole model call, minutes on a
 real CRM. "Every request freezes" becomes "one token is held for
-minutes": a large improvement, not a free one (Jarrod, 2026-11-19).
+minutes": a large improvement, not a free one (the brief, 2026-11-19).
 
 **Measured** (bench `wingrc_verify_1119a` on main at `4340269`, then
 `wingrc_verify_1119b` and `_1119c` on the branch at `44bb1a3`; FastAPI
@@ -16565,7 +16569,7 @@ first):
   not.
 
 **Where this is going: a model call holds no request-handling resource
-at all** (Jarrod, 2026-11-19). The two changes above are steps toward it.
+at all** (the brief, 2026-11-19). The two changes above are steps toward it.
 The first took the wait off the event loop, and the second freed the
 connection. A generate still holds a threadpool token for minutes. The
 shape that ends that:
@@ -16582,14 +16586,17 @@ result are the new work.
 
 **Found on the way, not changed here,** in the order to take them:
 - **Every upload handler reads the whole file into memory. That is how a
-  deployment falls over on a busy day, with no attacker needed**
-  (Jarrod, 2026-11-19).
-  - Each handler holds the whole upload in the process at once. Forty
-    concurrent 50 MB evidence uploads hold 2 GB. That is more than
-    wl-util-1 has free (3 GB total, about 2 GB available), which is why
-    the bench stopped at ten.
-  - The 50 MB cap is checked after the read, so what a handler holds is
-    bounded by nginx's `client_max_body_size 105m`, not by 50 MB.
+  deployment falls over on a busy day, with no attacker needed** (the
+  brief, 2026-11-19; the ceiling corrected the same day).
+  - **The app's 50 MB cap does not protect memory at all.** It is checked
+    after the read (`data = file.file.read()`, then `len(data)`), so the
+    handler already holds whatever arrived before it refuses.
+  - **The ceiling is nginx's limit times concurrency.** nginx's
+    `client_max_body_size 105m` is the only thing that bounds one request.
+    Forty concurrent uploads at that limit hold 4.2 GB, against about
+    2 GB free on wl-util-1 (3 GB total). An earlier wording here, at
+    50 MB, put it at 2 GB, half the real ceiling.
+  - The bench stopped at ten concurrent 49 MB uploads for this reason.
   - On a host with less free memory than its busiest moment needs, memory
     runs out. WinGRC does not choose what the kernel kills then, and the
     backend is one process holding every request in flight.
@@ -17902,6 +17909,55 @@ configuration, reproduced:
 Not done in the fix that found it, by instruction. Recorded above the
 fix because it is the larger finding: one command was wrong, and the
 step meant to catch it could not.
+
+### The bench's teardown check verified less than it reported -- recorded 2026-11-19
+
+**What happened.** Since item S (2026-11-02), compose binds
+`${WINGRC_SNAPSHOT_DIR:-/var/lib/wingrc-snapshots/${COMPOSE_PROJECT_NAME}}`
+into the backend, and docker creates a missing bind source as root. So
+every bench `up` made a directory in `/var/lib`. On 2026-11-19 seven
+were there, all empty: `wingrc_verify_1118e`, `_1118f`, and `_1119a` to
+`_1119e`. They came from every bench of the event-loop measurement and
+the connection fix. Each of those runs ended with "host lists
+unchanged". The comparison covered containers, volumes and networks.
+The directories were outside what it compared, and its sentence said
+"host".
+
+**The confident-signal family, in our own verification discipline**
+(the brief, 2026-11-19). It is the family of "A zero nobody checked"
+below: an output that reads as an answer and verified less than it
+implies. The others were in the product or in deploy tooling. This one
+is in the check that stands behind "bench-verified", built to prove
+slices safe. "The bench runs as the owner" (2026-11-10) is a bench
+blind spot too. There the bench could not exercise RLS, and said so
+once found. Here the report claimed more than it compared.
+
+**Fixed, both halves (`docs/bench-stack-verification.md`):**
+- **Prevention:** step 2 makes `.bench/snapshots` in the clone and
+  points `WINGRC_SNAPSHOT_DIR` at it before the first `up`. A bench writes
+  nothing to `/var/lib`, which removes the cause rather than cleaning up
+  after it. Checked on a clone, without an `up`: compose's only host bind
+  source was `/var/lib/wingrc-snapshots/wingrc_verify_1119f` by default,
+  and the clone's `.bench/snapshots` with the line.
+- **Detection:** step 7 lists every host path compose binds, read from
+  `docker compose config` rather than from a list kept by hand. It
+  records each as present or absent before the first `up` and after
+  `down -v`, and diffs the two. Prevention stops this cause; detection
+  catches the next one. It has not yet run beside a bench `up`; the next
+  bench is its first run.
+
+**The doc told the next person to go around a file permission.** Step 7
+said to remove the directory through a container (`docker run --rm -v
+/var/lib/wingrc-snapshots:/s postgres:18 rm -rf …`). That works because
+the `docker` group is root-equivalent. On 2026-11-19 `claude` declined
+it ("What `claude` can do on wl-util-1", at the top of this file). The
+doc now says to ask Jarrod, and why: the capability exists and the
+permission does not, and the difference is the whole point.
+
+**The seven directories are Jarrod's to remove,** as `wladmin` with
+`sudo rmdir`, naming each. `rmdir` refuses a directory that is not
+empty, so it cannot take a snapshot by mistake. Live's directory is
+`wingrc`, which is not one of them.
 
 ### A zero nobody checked: `sprs-rescore` on live -- fixed 2026-11-10
 
