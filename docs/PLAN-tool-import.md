@@ -8,7 +8,10 @@ not restate them. It reports what changed since the entry was written
 (2026-11-02) and designs what the entry leaves open. Code was read at
 `8381328`. Live counts were read on 2026-11-18 and are counts only.
 
-**Still nothing built (2026-11-19).** #122 merged this plan and no code.
+**T.1 built (2026-11-19, branch `tool-import-t1`); T.2 onward not
+started.** Jarrod answered §9 the same day (recorded there).
+
+**Before T.1: still nothing built (2026-11-19).** #122 merged this plan and no code.
 The wizard on live is the one §0 describes. Jarrod expected otherwise, so
 the PR that amends this plan says in its first line that it is a plan.
 
@@ -60,8 +63,14 @@ Found while checking, not in the screenshot:
   (`commitProductListField`). Its items are sentences, and real ones hold
   commas: RocketCyber's "Detection sources: Windows Event Log,
   M365/Entra (SaaS Alerts), FortiGate syslog, …" is one item. Click in
-  and out, and it becomes five on the next Apply. The label tells the
+  and in out, and it becomes five on the next Apply. The label tells the
   person to use commas. §5.0 makes it one item per line.
+  - **Live needs no repair (read 2026-11-19, Jarrod's question).** Live
+    holds 4 products and 20 items. Every product still has at least one
+    item containing a comma, and the split runs on every comma, so none
+    was ever committed through that field. No item starts lowercase or is
+    empty. RocketCyber's list is identical to `baselines/rocketcyber.yaml`.
+    Read as JSON in a read-only transaction, not by eye.
 
 ---
 
@@ -272,7 +281,18 @@ screenshot.
   which ends the comma split in §0. A test feeds an item holding a comma
   and asserts it survives a focus and a blur unchanged.
 - **Framework stops being free text** where only one exists. What
-  `framework` must equal is checked in the code first.
+  `framework` must equal is checked in the code first. **Checked
+  (2026-11-19): nothing reads it.** It is carried through the YAML, but
+  apply seeds every product against `nist-800-171-r2`
+  (`seeds/baselines.py`, `_FRAMEWORK_KEY`), and Edit mode already sent it
+  blank. T.1 shows it read-only.
+- **The category hint above was wrong, and T.1 does not use it.** By
+  32 CFR 170.4 and 170.19 (read 2026-11-19), SPA, security protection
+  assets, is an asset category (Table 3), not a provider type. CSP is a
+  kind of ESP (Table 4: "whether the ESP is a Cloud Service Provider"),
+  not a separate type. So `category` is labelled "Provider type", hinted
+  ESP and saying when it is also a CSP, and `asset_type` is labelled "Asset
+  category", hinted SPA. Live's four products are all ESP and SPA.
 - The category and asset type vocabulary is checked against the
   scoping guidance before the hints are written, not taken from
   `baseline.py`'s comment.
@@ -534,7 +554,32 @@ nearly every row is invalid.
     may need the dry run to return its problems keyed by field rather
     than as sentences. It is useful on its own: today's table, made
     navigable.
-  - Correct the roadmap entry's column list.
+  - Correct the roadmap entry's column list. (Already done 2026-11-18.)
+  - **Built 2026-11-19.** What differs from the proposal above:
+    - **The banner's counts needed the dry run's help, as foreseen.** Each
+      `ValidationProblem` now carries a `kind` from
+      `baseline_import.PROBLEM_KINDS` and the `value` it is about.
+      `tests/test_baseline_problem_kinds.py` parses the module and fails
+      on a problem without a listed kind. The screen's sentences are in
+      `frontend/src/lib/baselineReview.ts`, whose test writes out the
+      backend's sixteen kinds.
+    - **"3 of 4 objectives" needed each control's objective keys,** so
+      the dry run returns `control_objectives`.
+    - **The Source column stays** with today's meaning, the row's origin
+      (document or web research), since it exists now. Its legend line
+      says so. T.2's recommendation source is a different thing.
+    - **The legend's Recommendation line is absent**, as planned before
+      T.2.
+    - **The diff in documents mode is collapsed** under "Changes against
+      version N", above the banner. Each control links to its row.
+    - The screenshot at Jarrod's own screen size waits for him to say
+      what it is; the bench shots are 1366×768 and 1920×1080.
+    - **After Jarrod read the screenshots (2026-11-19):** the five
+      complaints in §0 are fixed. "What it does here" became a textarea,
+      since its own hint asks for one or two sentences. For his walk: at
+      1366×768 the open legend fills the first screen (legend, banner,
+      one row). He accepted that as a first read, since it stays closed
+      once closed.
   - The bench screenshot is at Jarrod's screen size as well as
     1366×768, with a real document's generated rows, not a fixture.
 - **T.2. Recommendations, displayed.**
@@ -575,8 +620,8 @@ walk goes in its PR body.
 
 a. ~~The model recommends coverage basis?~~ **Answered 2026-11-18:
    yes, and never bulk-accepted** (§3.3, §5.4).
-b. **H6 to H8:** accept, reject or amend each. H7 now only annotates,
-   since no coverage basis is bulk-accepted.
+b. ~~**H6 to H8:** accept, reject or amend each.~~ **Answered
+   2026-11-19: all three accepted as written.**
 c. **Should the bundle say when a responsibility came from a
    bulk-accepted row?** That is the remaining exposure (§2), where an
    assessor reads it. The CRM already names the contributing products.
@@ -587,12 +632,26 @@ d. ~~Ask at activation before writing `provider_satisfies` onto an
    activation as a summary, in the existing dialog** (§2, slice A.1).
    With (d) in place, (c) is labelling a path that is already closed.
    It is lower priority, and may not be wanted at all.
-e. **yaml gets no recommendation** (§4). Agreed?
+
+   **Answered 2026-11-19 (Jarrod): no.** With (d), activation asks
+   before writing `provider_satisfies` onto an unset responsibility, so the
+   path is closed. Labelling a closed path in an assessor-facing document
+   adds noise without adding safety. **Do not reopen this** unless a path
+   that writes responsibility unasked comes back.
+e. **yaml gets no recommendation** (§4). **Agreed (Jarrod,
+   2026-11-19):** a hand-authored file carries its author's values, and
+   the recommendation column does not appear in yaml mode at all.
 f. **New, from (d): is `shared` asked too?** The decision names
    `provider_satisfies`. `shared` also asserts an obligation of the MSP,
    though a weaker one, and the existing rule treats it as the
    conservative value when tools disagree. The plan asks only for
    `provider_satisfies` unless told otherwise.
+
+   **Answered 2026-11-19 (Jarrod): yes, ask for `shared` too.** It still
+   asserts the MSP carries part of the obligation, and it prints in the
+   customer responsibility matrix the same way. The existing rule makes it
+   the conservative value when tools disagree, so it is written often. The
+   cost is one more line in a dialog already shown.
 g. **New, from (d): what a path that asks nobody does.** That is
    `start_assessment`'s activations, an API call with no answers, and a
    version move. Today's equivalent for a hand-set responsibility keeps
@@ -602,6 +661,11 @@ g. **New, from (d): what a path that asks nobody does.** That is
    then picked up by the next activation that asks, or set by hand.
    The alternative, writing Provider unasked on those paths, would leave
    §2's path open through them.
+
+   **Answered 2026-11-19 (Jarrod): the recommendation.** On every path
+   that asks nobody, leave the unset value at the seed default and write
+   what the tool would have set into the history line. That is how a
+   hand-set responsibility is already treated there, so it stays one rule.
 
 ## 10. Jarrod's walk (after T.3)
 

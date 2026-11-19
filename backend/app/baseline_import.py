@@ -150,6 +150,22 @@ def _objective_keys_by_control(
     return out
 
 
+# Every kind a ValidationProblem may carry. The wizard writes one sentence
+# per kind (ToolImportWizard.tsx, PROBLEM_TEXT) and counts "to decide"
+# apart from "wrong" by it. tests/test_baseline_problem_kinds.py parses
+# this module and fails on a problem with no kind, or one not listed here.
+PROBLEM_KINDS = frozenset({
+    "file_malformed", "row_malformed",
+    "product_field_required", "product_key_invalid",
+    "control_missing", "control_unknown",
+    "classification_unset", "classification_invalid",
+    "coverage_basis_unset", "coverage_basis_invalid",
+    "objectives_malformed", "objective_unknown",
+    "evidence_malformed", "evidence_on_customer_owns",
+    "evidence_artifact_missing", "evidence_type_invalid",
+})
+
+
 @dataclass
 class ValidationProblem:
     """One problem, tagged with the row/field it belongs to when it has
@@ -163,6 +179,12 @@ class ValidationProblem:
     message: str
     row_index: int | None = None
     field: str | None = None
+    # What is wrong, as a code the screen writes its own sentence for
+    # (PROBLEM_KINDS), and the value it is about (an unknown control id, an
+    # objective key). The message stays for the YAML path and the CLI; the
+    # wizard never shows it (docs/PLAN-tool-import.md, section 5.8).
+    kind: str | None = None
+    value: str | None = None
 
 
 def validate_structured(
@@ -178,23 +200,30 @@ def validate_structured(
 
     pd = data.get("product")
     if not isinstance(pd, dict):
-        return [ValidationProblem("Missing top-level 'product' mapping.")], []
+        return [
+            ValidationProblem("Missing top-level 'product' mapping.", kind="file_malformed")
+        ], []
     for required in ("key", "name", "provider", "category"):
         if not pd.get(required):
             problems.append(
-                ValidationProblem(f"product.{required} is required.", field=f"product.{required}")
+                ValidationProblem(
+                    f"product.{required} is required.", field=f"product.{required}",
+                    kind="product_field_required",
+                )
             )
     if pd.get("key"):
         try:
             normalize_product_key(pd["key"])
         except ValueError as exc:
-            problems.append(ValidationProblem(str(exc), field="product.key"))
+            problems.append(
+                ValidationProblem(str(exc), field="product.key", kind="product_key_invalid")
+            )
 
     controls = data.get("controls")
     if controls is None:
         controls = []
     elif not isinstance(controls, list):
-        problems.append(ValidationProblem("'controls' must be a list."))
+        problems.append(ValidationProblem("'controls' must be a list.", kind="file_malformed"))
         controls = []
 
     # Resolve every referenced control up front so the objective-key check
@@ -205,7 +234,11 @@ def validate_structured(
     parsed_entries: list[tuple[int, list[str], dict]] = []
     for idx, entry in enumerate(controls):
         if not isinstance(entry, dict):
-            problems.append(ValidationProblem(f"controls[{idx}] is not a mapping.", row_index=idx))
+            problems.append(
+                ValidationProblem(
+                    f"controls[{idx}] is not a mapping.", row_index=idx, kind="row_malformed"
+                )
+            )
             continue
         ctrl_ids = entry.get("control")
         if isinstance(ctrl_ids, str):
@@ -214,7 +247,7 @@ def validate_structured(
             problems.append(
                 ValidationProblem(
                     f"controls[{idx}].control must be a control id or a list of them.",
-                    row_index=idx, field="control",
+                    row_index=idx, field="control", kind="control_missing",
                 )
             )
             continue
@@ -225,7 +258,7 @@ def validate_structured(
                 problems.append(
                     ValidationProblem(
                         f"controls[{idx}]: unknown control id {cid!r}.",
-                        row_index=idx, field="control",
+                        row_index=idx, field="control", kind="control_unknown", value=str(cid),
                     )
                 )
             else:
@@ -241,6 +274,11 @@ def validate_structured(
                     f"controls[{idx}].classification {classification!r} must be one of "
                     f"{sorted(_VALID_CLASSIFICATIONS)}.",
                     row_index=idx, field="classification",
+                    kind=(
+                        "classification_unset" if classification in (None, "")
+                        else "classification_invalid"
+                    ),
+                    value=None if classification in (None, "") else str(classification),
                 )
             )
         # coverage_basis is moot for customer_owns (evidence-minimization
@@ -262,6 +300,7 @@ def validate_structured(
                         f"controls[{idx}].coverage_basis {coverage_basis!r} must be one of "
                         f"{sorted(_VALID_COVERAGE_BASES)}.",
                         row_index=idx, field="coverage_basis",
+                        kind="coverage_basis_invalid", value=str(coverage_basis),
                     )
                 )
         else:
@@ -274,6 +313,11 @@ def validate_structured(
                         "-- reviewer must confirm whether this credits the customer's CUI "
                         "systems or only the vendor's own platform.",
                         row_index=idx, field="coverage_basis",
+                        kind=(
+                            "coverage_basis_unset" if coverage_basis in (None, "")
+                            else "coverage_basis_invalid"
+                        ),
+                        value=None if coverage_basis in (None, "") else str(coverage_basis),
                     )
                 )
         objectives = entry.get("objectives") or []
@@ -281,7 +325,7 @@ def validate_structured(
             problems.append(
                 ValidationProblem(
                     f"controls[{idx}].objectives must be a list of strings.",
-                    row_index=idx, field="objectives",
+                    row_index=idx, field="objectives", kind="objectives_malformed",
                 )
             )
             objectives = []
@@ -296,7 +340,8 @@ def validate_structured(
                         ValidationProblem(
                             f"controls[{idx}]: objective key {okey!r} is not a real "
                             f"assessment objective on {cid} (known: {sorted(valid_keys)}).",
-                            row_index=idx, field="objectives",
+                            row_index=idx, field="objectives", kind="objective_unknown",
+                            value=f"{cid}[{okey}]",
                         )
                     )
 
@@ -304,7 +349,8 @@ def validate_structured(
         if not isinstance(evidence, list):
             problems.append(
                 ValidationProblem(
-                    f"controls[{idx}].evidence must be a list.", row_index=idx, field="evidence"
+                    f"controls[{idx}].evidence must be a list.", row_index=idx, field="evidence",
+                    kind="evidence_malformed",
                 )
             )
             evidence = []
@@ -318,7 +364,7 @@ def validate_structured(
                     f"controls[{idx}]: classification=customer_owns must not carry evidence "
                     f"specs ({len(evidence)} found) -- the minimization invariant: a vendor "
                     "that doesn't satisfy a control generates no evidence task for it.",
-                    row_index=idx, field="evidence",
+                    row_index=idx, field="evidence", kind="evidence_on_customer_owns",
                 )
             )
         for ev_idx, ev in enumerate(evidence):
@@ -326,7 +372,7 @@ def validate_structured(
                 problems.append(
                     ValidationProblem(
                         f"controls[{idx}].evidence[{ev_idx}] is not a mapping.",
-                        row_index=idx, field="evidence",
+                        row_index=idx, field="evidence", kind="evidence_malformed",
                     )
                 )
                 continue
@@ -334,7 +380,7 @@ def validate_structured(
                 problems.append(
                     ValidationProblem(
                         f"controls[{idx}].evidence[{ev_idx}].artifact is required.",
-                        row_index=idx, field="evidence",
+                        row_index=idx, field="evidence", kind="evidence_artifact_missing",
                     )
                 )
             ev_type = ev.get("type")
@@ -343,7 +389,8 @@ def validate_structured(
                     ValidationProblem(
                         f"controls[{idx}].evidence[{ev_idx}].type {ev_type!r} must be one of "
                         f"{sorted(_VALID_EVIDENCE_TYPES)}.",
-                        row_index=idx, field="evidence",
+                        row_index=idx, field="evidence", kind="evidence_type_invalid",
+                        value=str(ev_type),
                     )
                 )
 
@@ -452,6 +499,9 @@ class BaselineImportPreview:
     current_version_number: int | None = None
     next_version_number: int = 1
     has_changes: bool = True
+    # Each named control's own objective keys, so the wizard's front row can
+    # say "3 of 4 objectives" without the catalog (PLAN-tool-import 5.1).
+    control_objectives: dict[str, list[str]] = field(default_factory=dict)
 
 
 def _coerce_evidence_drafts(raw: Any) -> list[EvidenceSpecDraft]:
@@ -701,6 +751,18 @@ def build_preview(
         current_version_number or 1
     )
 
+    named: dict[uuid.UUID, str] = {}
+    for entry in data.get("controls") or []:
+        ids = entry.get("control") if isinstance(entry, dict) else None
+        for cid in [ids] if isinstance(ids, str) else (ids if isinstance(ids, list) else []):
+            ctrl = ctrl_lookup.get(cid) if isinstance(cid, str) else None
+            if ctrl is not None:
+                named[ctrl.id] = cid
+    control_objectives = {
+        named[uid]: sorted(keys)
+        for uid, keys in _objective_keys_by_control(session, set(named)).items()
+    }
+
     return BaselineImportPreview(
         problems=problems,
         product_key=product_key,
@@ -715,6 +777,7 @@ def build_preview(
         current_version_number=current_version_number,
         next_version_number=next_version_number,
         has_changes=has_changes,
+        control_objectives=control_objectives,
     )
 
 

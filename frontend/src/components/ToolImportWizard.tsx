@@ -1,6 +1,25 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import { CLASSIFICATIONS, COVERAGE_BASES, EVIDENCE_TYPES } from "../lib/baseline";
+import {
+  CLASSIFICATION_LABELS,
+  CLASSIFICATIONS,
+  COVERAGE_BASES,
+  COVERAGE_BASIS_LABELS,
+  EVIDENCE_TYPES,
+} from "../lib/baseline";
+import {
+  bannerItems,
+  COLUMN_HELP,
+  coverSummary,
+  formatAssumedConfig,
+  FRAMEWORK_TEXT,
+  kindText,
+  nonRowSentence,
+  parseAssumedConfig,
+  PRODUCT_FIELDS,
+  rowIsWrong,
+} from "../lib/baselineReview";
+import { ChangeDiff, ProblemsBanner, ReviewLegend } from "./ToolImportReview";
 import type {
   BaselineControlDraft,
   BaselineEvidenceDraft,
@@ -51,6 +70,10 @@ const _MAX_INGEST_FILES = 2;
 
 function yamlToFile(text: string): File {
   return new File([text], "reviewed-baseline.yaml", { type: "application/x-yaml" });
+}
+
+function sameList(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((x, i) => x === b[i]);
 }
 
 function emptyEvidence(): BaselineEvidenceDraft {
@@ -116,13 +139,18 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
   // the only thing Apply ever submits.
   const [draft, setDraft] = useState<{ product: ProductMetaDraft; controls: BaselineControlDraft[] } | null>(null);
   const [latestYaml, setLatestYaml] = useState<string | null>(null);
-  // Free-text buffers for comma-separated list fields (control ids,
-  // objectives, assumed_config) -- kept separate from the committed draft
+  // Free-text buffers for list fields (control ids and objectives,
+  // comma-separated; assumed_config, one item per line) -- kept separate from the committed draft
   // so retyping a trailing comma mid-edit doesn't get eaten by a
   // join()-derived controlled value on every keystroke. Committed to the
   // real draft onBlur. Keyed "<row_index>:<field>" ("product:<field>" for
   // product-level list fields).
   const [listText, setListText] = useState<Record<string, string>>({});
+  // A row's expansion: open by default when the row has a problem or a
+  // disclaim flag (PLAN-tool-import 5.1, 5.8); a person's toggle wins.
+  const [openRows, setOpenRows] = useState<Record<number, boolean>>({});
+  // The banner's filter: a problem kind, "_disclaim", or null for every row.
+  const [rowFilter, setRowFilter] = useState<string | null>(null);
   // True once any field has been edited since the last successful
   // generate/re-check -- Apply is blocked while true so it can never fire
   // against a `latestYaml` that no longer matches what's on screen.
@@ -164,7 +192,7 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
   const [tableClientWidth, setTableClientWidth] = useState(0);
 
   function seedListText(product: ProductMetaDraft, controls: BaselineControlDraft[]) {
-    const next: Record<string, string> = { "product:assumed_config": product.assumed_config.join(", ") };
+    const next: Record<string, string> = { "product:assumed_config": formatAssumedConfig(product.assumed_config) };
     for (const c of controls) {
       next[`${c.row_index}:control`] = c.control.join(", ");
       next[`${c.row_index}:objectives`] = c.objectives.join(", ");
@@ -449,22 +477,19 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
   function commitListField(rowIndex: number, field: "control" | "objectives") {
     const text = listText[`${rowIndex}:${field}`] ?? "";
     const parsed = text.split(",").map((s) => s.trim()).filter(Boolean);
+    const current = draft?.controls.find((c) => c.row_index === rowIndex)?.[field];
+    if (current && sameList(parsed, current)) return;
     updateControlField(rowIndex, field, parsed);
   }
 
   function commitProductListField() {
     const text = listText["product:assumed_config"] ?? "";
-    const parsed = text.split(",").map((s) => s.trim()).filter(Boolean);
+    // One item per line: an item is a sentence and may hold a comma.
+    const parsed = parseAssumedConfig(text);
+    // A blur that changes nothing must not re-block Apply (seen on the bench).
+    if (draft && sameList(parsed, draft.product.assumed_config)) return;
     setDraft((prev) => (prev ? { ...prev, product: { ...prev.product, assumed_config: parsed } } : prev));
     setDirty(true);
-  }
-
-  function rowProblem(rowIndex: number, field: string) {
-    return preview?.row_problems.find((p) => p.row_index === rowIndex && p.field === field);
-  }
-
-  function rowHasAnyProblem(rowIndex: number) {
-    return !!preview?.row_problems.some((p) => p.row_index === rowIndex);
   }
 
   // Advisory only -- distinct from rowProblem/hasProblems on purpose. A
@@ -473,6 +498,33 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
   // validation error.
   function disclaimFlag(rowIndex: number) {
     return preview?.disclaim_flags.find((f) => f.row_index === rowIndex);
+  }
+
+  const banner = bannerItems(preview?.row_problems ?? []);
+  const disclaimRows = (preview?.disclaim_flags ?? []).map((f) => f.row_index);
+
+  function isRowOpen(rowIndex: number) {
+    const chosen = openRows[rowIndex];
+    if (chosen !== undefined) return chosen;
+    return (
+      !!preview?.row_problems.some((p) => p.row_index === rowIndex) || !!disclaimFlag(rowIndex)
+    );
+  }
+
+  function rowShown(rowIndex: number) {
+    if (!rowFilter) return true;
+    if (rowFilter === "_disclaim") return disclaimRows.includes(rowIndex);
+    return !!banner.find((b) => b.kind === rowFilter)?.rows.includes(rowIndex);
+  }
+
+  function openRowForControl(controlId: string) {
+    const row = draft?.controls.find((c) => c.control.includes(controlId));
+    if (!row) return;
+    setRowFilter(null);
+    setOpenRows((prev) => ({ ...prev, [row.row_index]: true }));
+    requestAnimationFrame(() =>
+      document.querySelector(`[data-row-index="${row.row_index}"]`)?.scrollIntoView({ block: "center" })
+    );
   }
 
   const hasProblems = !!preview && preview.problems.length > 0;
@@ -599,9 +651,9 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
 
               {nonRowProblems.length > 0 && (
                 <div className="form-error" style={{ marginBottom: "0.6rem" }}>
-                  <div style={{ marginBottom: "0.3rem" }}>Problems not tied to a specific control:</div>
+                  <div style={{ marginBottom: "0.3rem" }}>About the tool itself:</div>
                   {nonRowProblems.map((p, i) => (
-                    <div key={i}>⚠ {p.message}</div>
+                    <div key={i}>⚠ {nonRowSentence(p)}</div>
                   ))}
                 </div>
               )}
@@ -616,84 +668,168 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
               </div>
 
               <fieldset className="form-field" style={{ marginBottom: "0.75rem" }}>
-                <legend>Product</legend>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.5rem" }}>
-                  {(["key", "name", "provider", "category", "asset_type", "framework", "role"] as const).map(
-                    (f) => (
-                      <label key={f} style={{ fontSize: "0.72rem" }}>
-                        {f}
+                <legend>About this tool</legend>
+                <div className="tool-fields">
+                  {PRODUCT_FIELDS.map(({ field, label, hint }) =>
+                    // Its own hint asks for one or two sentences, so it gets
+                    // the room the row's text fields have (Jarrod, T.1 walk).
+                    field === "role" ? (
+                      <label key={field} className="tool-field-wide">
+                        <span className="tool-field-label">{label}</span>
+                        <textarea
+                          rows={3}
+                          value={draft.product.role}
+                          onChange={(e) => updateProductField("role", e.target.value)}
+                        />
+                        <span className="field-hint">{hint}</span>
+                      </label>
+                    ) : (
+                      <label key={field}>
+                        <span className="tool-field-label">{label}</span>
                         <input
                           type="text"
-                          value={draft.product[f]}
+                          value={draft.product[field]}
                           // Changing the key while editing would retarget
                           // Apply at a different (or brand new) product,
                           // since apply upserts by key -- not a typo a
                           // reviewer should be able to make by accident.
-                          disabled={f === "key" && !!editProductId}
-                          onChange={(e) => updateProductField(f, e.target.value)}
+                          disabled={field === "key" && !!editProductId}
+                          onChange={(e) => updateProductField(field, e.target.value)}
                         />
+                        {hint && <span className="field-hint">{hint}</span>}
                       </label>
                     )
                   )}
-                  <label style={{ fontSize: "0.72rem" }}>
-                    assumed_config (comma-separated)
-                    <input
-                      type="text"
-                      value={listText["product:assumed_config"] ?? draft.product.assumed_config.join(", ")}
+                  <div>
+                    <span className="tool-field-label">Framework</span>
+                    {/* Read-only: apply seeds every tool against the one
+                        framework whatever this says (seeds/baselines.py,
+                        _FRAMEWORK_KEY), so it was never a choice. */}
+                    <div className="tool-field-static">{FRAMEWORK_TEXT}</div>
+                    <span className="field-hint">The only framework; every tool maps to it.</span>
+                  </div>
+                  <label className="tool-field-wide">
+                    <span className="tool-field-label">Assumed configuration</span>
+                    <textarea
+                      rows={Math.max(3, draft.product.assumed_config.length + 1)}
+                      value={listText["product:assumed_config"] ?? formatAssumedConfig(draft.product.assumed_config)}
                       onChange={(e) =>
                         setListText((prev) => ({ ...prev, "product:assumed_config": e.target.value }))
                       }
                       onBlur={commitProductListField}
                     />
+                    <span className="field-hint">
+                      One item per line: what this mapping assumes is configured. Each line is shown on the
+                      tool's page.
+                    </span>
                   </label>
                 </div>
               </fieldset>
+
+              <ReviewLegend mode="documents" />
+
+              {!preview.product_is_new && preview.control_changes.length > 0 && (
+                <details className="review-diff">
+                  <summary>
+                    Changes against version {preview.current_version_number ?? "?"} of {preview.product_name}
+                  </summary>
+                  <ChangeDiff preview={preview} onOpenControl={openRowForControl} />
+                </details>
+              )}
+
+              <ProblemsBanner
+                items={banner}
+                disclaimRows={disclaimRows}
+                filter={rowFilter}
+                onFilter={setRowFilter}
+              />
 
               <div className="table-scroll" ref={tableScrollRef} onScroll={handleTableScroll}>
                 <table className="contacts-table control-row-table">
                   <thead>
                     <tr>
-                      <th>Control(s)</th>
-                      <th>Source</th>
-                      <th>Classification</th>
-                      <th>Note</th>
-                      <th>Provider contribution</th>
-                      <th>Customer action</th>
-                      <th>Scope note</th>
-                      <th>Coverage basis</th>
-                      <th>Objectives</th>
-                      <th>Evidence</th>
+                      <th aria-label="Open row" />
+                      <th title={COLUMN_HELP.control}>Control</th>
+                      <th title={COLUMN_HELP.responsible}>Who is responsible?</th>
+                      <th title={COLUMN_HELP.systems}>On whose systems?</th>
+                      <th title={COLUMN_HELP.source}>Source</th>
+                      <th title={COLUMN_HELP.covers}>Covers</th>
+                      <th>Needs</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {draft.controls.map((row) => {
+                    {draft.controls.filter((row) => rowShown(row.row_index)).map((row) => {
                       const idx = row.row_index;
-                      const rowFlagged = rowHasAnyProblem(idx);
-                      const covProblem = rowProblem(idx, "coverage_basis");
-                      const clsProblem = rowProblem(idx, "classification");
-                      const controlProblem = rowProblem(idx, "control");
-                      const objProblem = rowProblem(idx, "objectives");
-                      const evProblem = rowProblem(idx, "evidence");
+                      const problems = preview.row_problems.filter((p) => p.row_index === idx);
+                      const wrong = rowIsWrong(preview.row_problems, idx);
                       const disclaim = disclaimFlag(idx);
-                      const rowClass = rowFlagged
-                        ? "needs-decision"
-                        : disclaim
-                          ? "disclaim-flag-row"
-                          : undefined;
-                      return (
-                        <tr key={idx} className={rowClass}>
+                      const open = isRowOpen(idx);
+                      const field = (f: string) => problems.find((p) => p.field === f);
+                      const covProblem = field("coverage_basis");
+                      const clsProblem = field("classification");
+                      const controlProblem = field("control");
+                      const objProblem = field("objectives");
+                      const evProblem = field("evidence");
+                      const wrongField = (p: typeof covProblem) => !!p && kindText(p.kind).severity === "wrong";
+                      const rowClass = wrong ? "needs-decision" : disclaim ? "disclaim-flag-row" : undefined;
+                      const controlIds = listText[`${idx}:control`] ?? row.control.join(", ");
+                      const known = row.control.length === 1 ? preview.control_objectives?.[row.control[0]] : undefined;
+                      return [
+                        <tr key={`${idx}:row`} className={rowClass} data-row-index={idx}>
+                          <td>
+                            <button
+                              type="button"
+                              className="row-toggle"
+                              aria-expanded={open}
+                              aria-label={`${open ? "Close" : "Open"} row ${controlIds || idx}`}
+                              onClick={() => setOpenRows((prev) => ({ ...prev, [idx]: !open }))}
+                            >
+                              {open ? "▾" : "▸"}
+                            </button>
+                          </td>
                           <td>
                             <input
                               type="text"
                               aria-label={`Control(s) for row ${idx}`}
-                              className={controlProblem ? "field-needs-decision" : undefined}
-                              value={listText[`${idx}:control`] ?? row.control.join(", ")}
+                              className={wrongField(controlProblem) ? "field-needs-decision" : undefined}
+                              value={controlIds}
                               onChange={(e) =>
                                 setListText((prev) => ({ ...prev, [`${idx}:control`]: e.target.value }))
                               }
                               onBlur={() => commitListField(idx, "control")}
                             />
-                            {controlProblem && <div className="field-problem-hint">{controlProblem.message}</div>}
+                          </td>
+                          <td>
+                            <select
+                              aria-label={`Who is responsible for row ${idx}`}
+                              className={
+                                wrongField(clsProblem) ? "field-needs-decision" : disclaim ? "field-disclaim-flag" : undefined
+                              }
+                              value={row.classification ?? ""}
+                              onChange={(e) => updateControlField(idx, "classification", e.target.value || null)}
+                            >
+                              <option value="">to decide</option>
+                              {CLASSIFICATIONS.map((c) => (
+                                <option key={c} value={c}>{CLASSIFICATION_LABELS[c]}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td>
+                            {row.classification === "customer_owns" ? (
+                              <span className="field-hint">not asked: the customer owns it</span>
+                            ) : (
+                              <select
+                                aria-label={`On whose systems for row ${idx}`}
+                                className={wrongField(covProblem) ? "field-needs-decision" : undefined}
+                                value={row.coverage_basis ?? ""}
+                                onChange={(e) => updateControlField(idx, "coverage_basis", e.target.value || null)}
+                              >
+                                <option value="">to decide</option>
+                                {COVERAGE_BASES.map((c) => (
+                                  <option key={c} value={c}>{COVERAGE_BASIS_LABELS[c]}</option>
+                                ))}
+                              </select>
+                            )}
                           </td>
                           <td>
                             {row.source ? (
@@ -710,130 +846,135 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
                               <span className="field-hint">Document</span>
                             )}
                           </td>
+                          <td className="field-hint">{coverSummary(row.objectives, known, row.evidence.length)}</td>
                           <td>
-                            <select
-                              aria-label={`Classification for row ${idx}`}
-                              className={clsProblem ? "field-needs-decision" : disclaim ? "field-disclaim-flag" : undefined}
-                              value={row.classification ?? ""}
-                              onChange={(e) => updateControlField(idx, "classification", e.target.value || null)}
-                            >
-                              <option value="">-- select --</option>
-                              {CLASSIFICATIONS.map((c) => (
-                                <option key={c} value={c}>{c}</option>
-                              ))}
-                            </select>
-                            {clsProblem && <div className="field-problem-hint">{clsProblem.message}</div>}
-                            {!clsProblem && disclaim && (
-                              <div className="field-disclaim-hint">⚠ {disclaim.message}</div>
-                            )}
+                            {problems.map((p, i) => (
+                              <div
+                                key={i}
+                                className={kindText(p.kind).severity === "wrong" ? "field-problem-hint" : "row-marker-decide"}
+                              >
+                                {kindText(p.kind).marker}
+                              </div>
+                            ))}
+                            {disclaim && <div className="field-disclaim-hint">CRM disclaims this</div>}
                           </td>
-                          <td>
-                            <input
-                              type="text"
-                              value={row.note ?? ""}
-                              onChange={(e) => updateControlField(idx, "note", e.target.value)}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              value={row.provider_contribution ?? ""}
-                              onChange={(e) => updateControlField(idx, "provider_contribution", e.target.value)}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              value={row.customer_action ?? ""}
-                              onChange={(e) => updateControlField(idx, "customer_action", e.target.value)}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              value={row.scope_note ?? ""}
-                              onChange={(e) => updateControlField(idx, "scope_note", e.target.value)}
-                            />
-                          </td>
-                          <td>
-                            <select
-                              aria-label={`Coverage basis for row ${idx}`}
-                              className={covProblem ? "field-needs-decision" : undefined}
-                              value={row.coverage_basis ?? ""}
-                              disabled={row.classification === "customer_owns"}
-                              onChange={(e) => updateControlField(idx, "coverage_basis", e.target.value || null)}
-                            >
-                              <option value="">-- select --</option>
-                              {COVERAGE_BASES.map((c) => (
-                                <option key={c} value={c}>{c}</option>
-                              ))}
-                            </select>
-                            {row.classification === "customer_owns" ? (
-                              <div className="field-hint">not applicable</div>
-                            ) : (
-                              covProblem && <div className="field-problem-hint">{covProblem.message}</div>
-                            )}
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              className={objProblem ? "field-needs-decision" : undefined}
-                              value={listText[`${idx}:objectives`] ?? row.objectives.join(", ")}
-                              onChange={(e) =>
-                                setListText((prev) => ({ ...prev, [`${idx}:objectives`]: e.target.value }))
-                              }
-                              onBlur={() => commitListField(idx, "objectives")}
-                            />
-                            {objProblem && <div className="field-problem-hint">{objProblem.message}</div>}
-                          </td>
-                          <td>
-                            <div className={`evidence-mini-list${evProblem ? " field-needs-decision" : ""}`}>
-                              {row.evidence.map((ev, evIdx) => (
-                                <div className="evidence-mini-row" key={evIdx}>
+                        </tr>,
+                        open && (
+                          <tr key={`${idx}:open`} className="row-expansion">
+                            <td />
+                            <td colSpan={6}>
+                              {(problems.length > 0 || disclaim) && (
+                                <ul className="row-expansion-problems">
+                                  {problems.map((p, i) => (
+                                    <li
+                                      key={i}
+                                      className={kindText(p.kind).severity === "wrong" ? "field-problem-hint" : "row-marker-decide"}
+                                    >
+                                      {kindText(p.kind).detail(p.value ?? null)}
+                                    </li>
+                                  ))}
+                                  {disclaim && <li className="field-disclaim-hint">⚠ {disclaim.message}</li>}
+                                </ul>
+                              )}
+                              <div className="row-expansion-grid">
+                                <label>
+                                  What the vendor does
+                                  <textarea
+                                    rows={3}
+                                    value={row.provider_contribution ?? ""}
+                                    onChange={(e) => updateControlField(idx, "provider_contribution", e.target.value)}
+                                  />
+                                </label>
+                                <label>
+                                  What the customer must do
+                                  <textarea
+                                    rows={3}
+                                    value={row.customer_action ?? ""}
+                                    onChange={(e) => updateControlField(idx, "customer_action", e.target.value)}
+                                  />
+                                </label>
+                                <label>
+                                  Scope limit
+                                  <textarea
+                                    rows={2}
+                                    value={row.scope_note ?? ""}
+                                    onChange={(e) => updateControlField(idx, "scope_note", e.target.value)}
+                                  />
+                                </label>
+                                <label>
+                                  Note
+                                  <textarea
+                                    rows={2}
+                                    value={row.note ?? ""}
+                                    onChange={(e) => updateControlField(idx, "note", e.target.value)}
+                                  />
+                                </label>
+                                <label>
+                                  Objectives credited (letters, comma-separated)
                                   <input
                                     type="text"
-                                    placeholder="artifact"
-                                    value={ev.artifact}
+                                    className={wrongField(objProblem) ? "field-needs-decision" : undefined}
+                                    value={listText[`${idx}:objectives`] ?? row.objectives.join(", ")}
                                     onChange={(e) =>
-                                      updateEvidenceField(idx, evIdx, { artifact: e.target.value })
+                                      setListText((prev) => ({ ...prev, [`${idx}:objectives`]: e.target.value }))
                                     }
+                                    onBlur={() => commitListField(idx, "objectives")}
                                   />
-                                  <select
-                                    value={ev.type}
-                                    onChange={(e) => updateEvidenceField(idx, evIdx, { type: e.target.value })}
-                                  >
-                                    {EVIDENCE_TYPES.map((t) => (
-                                      <option key={t} value={t}>{t}</option>
+                                  {known && <span className="field-hint">This control's objectives: {known.join(", ")}</span>}
+                                </label>
+                                <div className="row-expansion-evidence">
+                                  Evidence
+                                  <div className={`evidence-mini-list${wrongField(evProblem) ? " field-needs-decision" : ""}`}>
+                                    {row.evidence.map((ev, evIdx) => (
+                                      <div className="evidence-mini-row" key={evIdx}>
+                                        <input
+                                          type="text"
+                                          placeholder="artifact"
+                                          aria-label="Evidence artifact"
+                                          value={ev.artifact}
+                                          onChange={(e) => updateEvidenceField(idx, evIdx, { artifact: e.target.value })}
+                                        />
+                                        <select
+                                          aria-label="Evidence type"
+                                          value={ev.type}
+                                          onChange={(e) => updateEvidenceField(idx, evIdx, { type: e.target.value })}
+                                        >
+                                          {EVIDENCE_TYPES.map((t) => (
+                                            <option key={t} value={t}>{t}</option>
+                                          ))}
+                                        </select>
+                                        <input
+                                          type="text"
+                                          placeholder="kb (optional)"
+                                          aria-label="Evidence knowledge-base reference"
+                                          value={ev.kb ?? ""}
+                                          onChange={(e) => updateEvidenceField(idx, evIdx, { kb: e.target.value })}
+                                        />
+                                        <button
+                                          type="button"
+                                          className="chip-remove"
+                                          aria-label="Remove evidence item"
+                                          onClick={() => removeEvidenceRow(idx, evIdx)}
+                                        >
+                                          ×
+                                        </button>
+                                      </div>
                                     ))}
-                                  </select>
-                                  <input
-                                    type="text"
-                                    placeholder="kb (optional)"
-                                    value={ev.kb ?? ""}
-                                    onChange={(e) => updateEvidenceField(idx, evIdx, { kb: e.target.value })}
-                                  />
-                                  <button
-                                    type="button"
-                                    className="chip-remove"
-                                    aria-label="Remove evidence item"
-                                    onClick={() => removeEvidenceRow(idx, evIdx)}
-                                  >
-                                    ×
-                                  </button>
+                                    <button type="button" className="btn-ghost btn-sm" onClick={() => addEvidenceRow(idx)}>
+                                      + Add evidence
+                                    </button>
+                                  </div>
                                 </div>
-                              ))}
-                              <button type="button" className="btn-ghost btn-sm" onClick={() => addEvidenceRow(idx)}>
-                                + Add evidence
-                              </button>
-                              {evProblem && <div className="field-problem-hint">{evProblem.message}</div>}
-                            </div>
-                          </td>
-                        </tr>
-                      );
+                              </div>
+                            </td>
+                          </tr>
+                        ),
+                      ];
                     })}
                   </tbody>
                 </table>
               </div>
+
               {tableScrollWidth > tableClientWidth && (
                 <div className="sticky-scroll-x" ref={stickyScrollRef} onScroll={handleStickyScroll}>
                   <div style={{ width: tableScrollWidth, height: 1 }} />
@@ -1018,37 +1159,8 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
                     </div>
                   )}
 
-                  {preview.control_changes.length === 0 ? (
-                    <div className="empty">No control changes in this file.</div>
-                  ) : (
-                    <div className="table-scroll">
-                      <table className="contacts-table">
-                        <thead>
-                          <tr>
-                            <th>Control</th>
-                            <th>Change</th>
-                            <th>Classification</th>
-                            <th>Coverage basis</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {preview.control_changes.map((c) => (
-                            <tr
-                              key={c.control_id}
-                              className={c.change_type === "removed" ? "baseline-change-removed" : undefined}
-                            >
-                              <td>{c.control_id}</td>
-                              <td>{c.change_type === "removed" ? "removed (dropped from this import)" : c.change_type}</td>
-                              <td>{c.classification}</td>
-                              <td className={c.coverage_basis === "platform_only" ? "coverage-basis-platform-only" : undefined}>
-                                {c.coverage_basis}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                  <ReviewLegend mode="yaml" />
+                  <ChangeDiff preview={preview} />
                 </>
               )}
             </>
@@ -1083,6 +1195,8 @@ export function ToolImportWizard({ onClose, onApplied, editProductId }: Props) {
                     return;
                   }
                   setPreview(null);
+                  setOpenRows({});
+                  setRowFilter(null);
                   if (mode === "documents") {
                     setDraft(null);
                     setLatestYaml(null);

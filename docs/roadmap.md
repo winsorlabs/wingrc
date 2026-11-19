@@ -16769,13 +16769,23 @@ claims to check.
 `tests/test_ci_wait.py` feeds it a run for another commit and the
 skipped-image case. Its first use was `upload-body-limit`'s `9d25756`.
 
-### The Tool Import wizard: each row a decision a person can make -- planned 2026-11-18 (`docs/PLAN-tool-import.md`), not built
+### The Tool Import wizard: each row a decision a person can make -- planned 2026-11-18 (`docs/PLAN-tool-import.md`), T.1 built 2026-11-19
+
+**T.1 built (2026-11-19, branch `tool-import-t1`), awaiting Jarrod's
+walk.** In the order the plan gives: the legend; the tool's fields in
+words; the four text fields in each row's expansion; one problems
+banner with a marker per row; and the existing-mapping diff in both
+modes. The dry run now sends each problem as a kind and a value
+(`baseline_import.PROBLEM_KINDS`), and the screen writes the sentence.
+An unanswered question is untinted; only something wrong is tinted.
+`assumed_config` is one item per line. No recommendation, no AI change.
+The plan's T.1 section has what changed against its own proposal.
 
 **Still not built (2026-11-19).** Jarrod used today's wizard and
 reacted: raw field names as labels, the four text columns unreadable at
 six characters, no legend for what each column asks, a validation
 sentence repeated on every row, and nearly every row tinted. The plan's
-Â§0 records it and folds it into T.1, **legend first**. His test of the
+§0 records it and folds it into T.1, **legend first**. His test of the
 result: he can look at a row and know what is being asked of him.
 
 **Plan written 2026-11-18, for Jarrod to read before any slice
