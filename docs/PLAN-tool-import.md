@@ -8,6 +8,61 @@ not restate them. It reports what changed since the entry was written
 (2026-11-02) and designs what the entry leaves open. Code was read at
 `8381328`. Live counts were read on 2026-11-18 and are counts only.
 
+**Still nothing built (2026-11-19).** #122 merged this plan and no code.
+The wizard on live is the one §0 describes. Jarrod expected otherwise, so
+the PR that amends this plan says in its first line that it is a plan.
+
+## 0. Jarrod's reaction to today's screen (2026-11-19)
+
+He used the current wizard and reacted. This section is the brief's
+reading of his screenshot and his words, checked against
+`ToolImportWizard.tsx` at `6789aa0`. It is folded into §5 and §7 before
+T.2, not left as polish after it. **His test of the result: he can look
+at a row and know what is being asked of him.** §8 adds it as a check.
+
+What he said, in his words:
+- **"The Product Headers labels are dull and look messy."** The top
+  fieldset's labels are the field names themselves: `key`, `name`,
+  `provider`, `category`, `asset_type`, `framework`, `role`,
+  `assumed_config (comma-separated)`. They are database column names on
+  a screen a person uses (§5.0).
+- **"Note, Provider Contribution, Customer Action and Scope notes are
+  unreadable because they are so small you cannot see hardly any text
+  without slowly scrolling through."** Each is a one-line input in a
+  ten-column table and shows about six characters ("Custo", "Fenix",
+  "Applie"). §5.1 already moves these four into the row's expansion. His
+  reaction is the reason, measured on his own screen.
+- **"I still do not fully understand what the use of each column is.
+  There should be a legend at the top that tells you what you should be
+  considering for each column."** That is the legend of §5.2, which he
+  asked for on 2026-11-02 and again now. It becomes T.1's first
+  deliverable (§7), not one item among five.
+
+Two more, from the screenshot, which he did not name but which take most
+of it (the brief, 2026-11-19):
+- **The validation message is repeated in full on every invalid row.**
+  Under each row's coverage basis the screen prints
+  "controls[N].coverage_basis must be explicitly set to one of
+  ['assists', 'customer_system', 'platform_only']"
+  (`baseline_import.py`), and under a disclaimed row's classification the
+  disclaim warning, several lines long. Together they take more height
+  than the row data. §5.8 replaces them with one banner and a marker per
+  row.
+- **Nearly every row is tinted invalid, so the tint says nothing.** In
+  documents mode that is the expected state, not a defect. The model
+  never fills coverage basis, by design (`baseline.py`, §3), so every row
+  that is not `customer_owns` arrives without one, flagged. A question
+  nobody has answered yet is shown as an error. When everything is
+  flagged, nothing is (§5.8).
+
+Found while checking, not in the screenshot:
+- **`assumed_config` is split on commas when the field loses focus**
+  (`commitProductListField`). Its items are sentences, and real ones hold
+  commas: RocketCyber's "Detection sources: Windows Event Log,
+  M365/Entra (SaaS Alerts), FortiGate syslog, …" is one item. Click in
+  and out, and it becomes five on the next Apply. The label tells the
+  person to use commas. §5.0 makes it one item per line.
+
 ---
 
 ## 1. What `_run_loop` does today
@@ -193,6 +248,35 @@ decided.
 
 ## 5. The design
 
+### 5.0 The product's own fields, in words
+
+The fieldset is titled for what it holds, "About this tool", and each
+field is labelled for what a person decides there, with a one-line hint.
+Labels are the plan's proposal; the wording is settled on the bench
+screenshot.
+
+| Field | Label | Hint |
+|---|---|---|
+| `name` | Tool name | as it appears in the tools library |
+| `provider` | Vendor | |
+| `key` | Short ID | used in file names; cannot change once the tool exists (already disabled when editing) |
+| `role` | What it does here | one or two sentences, shown on the tool's page |
+| `category` | Provider type | ESP, CSP or SPA, as the CMMC scoping guidance uses them |
+| `asset_type` | Asset type | how this tool's assets are categorised in scope, e.g. SPA |
+| `framework` | Framework | read-only, there is one |
+| `assumed_config` | Assumed configuration | one item per line: what this mapping assumes is configured. Each line is shown on the tool's page |
+
+- **Name and vendor lead.** Short ID moves after them, since a person
+  reads a name and the ID follows from it.
+- **`assumed_config` becomes a multi-line field, one item per line,**
+  which ends the comma split in §0. A test feeds an item holding a comma
+  and asserts it survives a focus and a blur unchanged.
+- **Framework stops being free text** where only one exists. What
+  `framework` must equal is checked in the code first.
+- The category and asset type vocabulary is checked against the
+  scoping guidance before the hints are written, not taken from
+  `baseline.py`'s comment.
+
 ### 5.1 Columns: what stays in front
 
 The decision turns on two answers, so they lead, phrased as questions:
@@ -218,12 +302,31 @@ rows a person reads.
 
 ### 5.2 The legend
 
-The legend is built from Heimdal, as the entry says. It answers each
-question with the example: scheduled scans on the customer's endpoints
-are "On whose systems? The customer's"; SSO into the Heimdal console is
-"The vendor's own platform: not coverage". It states plainly that
-`assists` is credited exactly like `customer_system` at activation. It
-is collapsible, and open by default the first time.
+**At the top of the table, before the first row, and the first thing
+T.1 builds** (§0). It has one line per column a person sees, in the
+order they appear, each saying what to consider there, not defining
+the value:
+- **Control:** which requirement this row is about.
+- **Who is responsible?** Does the tool do this for the customer, do
+  they share it, or does the customer still own it whatever the tool
+  does? A vendor CRM listing a control is not an answer: most controls a
+  product touches the customer still owns (CLAUDE.md's hard rule).
+- **On whose systems?** Where the tool's part happens. Heimdal's
+  scheduled scans run on the customer's endpoints: the customer's. SSO
+  into the Heimdal console protects only the vendor's platform: not
+  coverage, and never credited. `assists` is credited exactly like
+  `customer_system` at activation, and the legend says so.
+- **Recommendation and Source:** what the research suggests and where it
+  read it (T.2 onward). Before T.2 these columns are absent, and so are
+  their lines.
+- **In the row's expansion:** what the vendor does, what the customer
+  must do, any scope limit, and a note. These are written for the
+  assessor's reader; the expansion says so.
+
+The Heimdal example is the legend's worked example, as the entry says.
+It is collapsible, open by default until the person closes it, and
+remembered per browser. Each column header carries the same sentence as
+its tooltip, so the question is answered where the eye is.
 
 ### 5.3 What a recommendation is
 
@@ -368,6 +471,28 @@ The state is always words (§5.1), with an icon beside it, so colour is
 never the only cue. Any new tint gets its WCAG ratio measured and stated
 in the slice that adds it (CLAUDE.md).
 
+### 5.8 Problems: one banner, a marker per row
+
+From §0. Today each invalid row prints its full validation message, and
+nearly every row is invalid.
+- **One banner above the table** gives the counts in words, each a
+  filter: "12 rows need *On whose systems?* answered · 2 rows have a
+  control the CRM disclaims · 1 row has an unknown control". The
+  backend's `controls[N].field` messages never reach the screen as text.
+- **Each affected row carries a short marker** in the front row, naming
+  what it needs ("Answer: on whose systems?"), not the rule.
+- **The detail goes in the row's expansion,** which opens for a row with
+  a problem, as §5.1 already does for a held-back row.
+- **An unanswered question is not an error.** A coverage basis the model
+  left blank by design is shown as *to decide*, untinted. The tint is
+  kept for what is wrong: a control that does not exist, an objective not
+  in that control, a disclaimed control. A screen where most rows are
+  to-decide shows that as a count in the banner, not as a red table.
+- **Apply stays refused** while anything is undecided or wrong, as now.
+  The banner says what stands between the person and Apply.
+- A disclaim flag stays advisory, as now (`disclaimFlag`), and is never
+  counted as blocking.
+
 ## 6. What does not change
 
 - **The research rule.** `merge_research` is untouched. Web content may
@@ -400,11 +525,18 @@ in the slice that adds it (CLAUDE.md).
     objective; a status and a hand-set responsibility behave as today.
   - It is independent of the wizard and closes §2's path for mappings
     already on live. So it can land first.
-- **T.1. Columns, questions, legend, expansion and the diff in both
-  modes.**
-  - Frontend only, with no AI change. It is useful on its own: today's
-    table, made navigable.
+- **T.1. Legend first, then the product's fields, columns, questions,
+  expansion, problems and the diff in both modes** (§0).
+  - In order within the slice: the legend (§5.2); the product's fields
+    in words (§5.0); the four text columns into the expansion (§5.1);
+    one problems banner and per-row markers (§5.8); the diff.
+  - Frontend only, with no AI change, except that the banner's counts
+    may need the dry run to return its problems keyed by field rather
+    than as sentences. It is useful on its own: today's table, made
+    navigable.
   - Correct the roadmap entry's column list.
+  - The bench screenshot is at Jarrod's screen size as well as
+    1366×768, with a real document's generated rows, not a fixture.
 - **T.2. Recommendations, displayed.**
   - The `baseline_recommendation` record, and the model's per-row
     recommendation with reasoning and citations.
@@ -432,6 +564,9 @@ walk goes in its PR body.
 | `provider_satisfies` + `customer_system` with no verified citation held back | H5, tested on its own in T.3 |
 | Provenance tells bulk from individual and survives a re-import | §5.6; T.3 |
 | Screenshots at 1366×768: collapsed, one row expanded, the legend, the held-back set | T.1 and T.3, in an artifact |
+| Jarrod's test: he can look at a row and know what is being asked of him (§0) | T.1's walk, his, on a real document's rows |
+| No validation sentence repeated per row; the tint marks only what is wrong (§5.8) | T.1's screenshot and a component test |
+| An `assumed_config` item holding a comma survives focus and blur (§5.0) | T.1, a component test |
 | Contrast measured; colour never the only cue | §5.7, per slice |
 | Full suite, ruff, `tsc -b`, vitest, build | every slice |
 | No status or SPRS change, asserted | §6's test, T.2 and T.3 |
