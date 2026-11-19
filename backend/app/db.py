@@ -47,3 +47,33 @@ def get_session() -> Iterator[Session]:
         yield session
     finally:
         session.close()
+
+
+def end_transaction(session: Session) -> None:
+    """End `session`'s transaction so its connection goes back to the pool
+    before a call that waits on something outside the database: a model
+    call, a web fetch.
+
+    A session holds a pool connection from its first query to its commit
+    or close. A route that reads and then waits minutes on a model holds
+    one of the pool's connections for those minutes, for nothing
+    (docs/roadmap.md, "Generating a baseline froze every request"). After
+    this, the session's next query takes a connection again.
+
+    Only for a stretch that has read and not written. It refuses when the
+    session holds changes not yet flushed: committing them here would write
+    them early, and dropping them would lose them. It cannot see a change
+    already flushed, so a caller must not have flushed one. It commits
+    rather than rolling back so that what the route read stays loaded
+    (`expire_on_commit=False`).
+
+    Held by tests/test_slow_calls_hold_no_connection.py, which checks at the
+    moment of each slow call that the route's connection is back in the pool.
+    """
+    if session.new or session.dirty or session.deleted:
+        raise RuntimeError(
+            "end_transaction() with unwritten changes: it would commit them "
+            "before the slow call or lose them. Write them first, or end the "
+            "transaction before making them."
+        )
+    session.commit()
