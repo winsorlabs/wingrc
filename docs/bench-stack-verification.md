@@ -180,6 +180,21 @@ bench work.
    Mount the **repo root**, not just `frontend/`: the Markdown renderer's
    parity test reads `backend/tests/fixtures/markdown_corpus.json`, which is
    deliberately shared with the backend suite rather than duplicated.
+   **Run it as `claude`, not as root** (2026-11-19):
+
+   ```bash
+   docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+     -v "$PWD:/repo" -w /repo/frontend node:24-alpine \
+     sh -c 'npm install && npm test && npm run build'
+   ```
+
+   The image runs as root by default, so `node_modules` and `dist` came out
+   root-owned. `claude` cannot remove them, so each bench left Jarrod a
+   `sudo` cleanup, twice by 2026-11-19, `/home/claude/bench/t1fe` the
+   second. `HOME=/tmp` gives npm a writable cache, because the image's home
+   is root's. Measured on wl-util-1: install, vitest and the build pass,
+   no file in the tree is left owned by anyone but `claude`, and `claude`
+   removes it unaided.
 6. Any slice-specific load measurement or manual walkthrough the slice's
    own task calls for.
 7. Tear down: `docker compose -p wingrc_verify_<date> down -v` — confirm
