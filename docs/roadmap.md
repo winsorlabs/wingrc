@@ -16622,6 +16622,13 @@ result are the new work.
 
 ### The Tool Import wizard: each row a decision a person can make -- planned 2026-11-18 (`docs/PLAN-tool-import.md`), not built
 
+**Still not built (2026-11-19).** Jarrod used today's wizard and
+reacted: raw field names as labels, the four text columns unreadable at
+six characters, no legend for what each column asks, a validation
+sentence repeated on every row, and nearly every row tinted. The plan's
+Â§0 records it and folds it into T.1, **legend first**. His test of the
+result: he can look at a row and know what is being asked of him.
+
 **Plan written 2026-11-18, for Jarrod to read before any slice
 (`docs/PLAN-tool-import.md`).** Re-read at `8381328`, the brief's
 request. Five things changed since this entry was written:
