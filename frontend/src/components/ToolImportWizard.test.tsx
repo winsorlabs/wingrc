@@ -178,7 +178,11 @@ describe("ToolImportWizard — valid re-import with active tenants", () => {
 });
 
 describe("ToolImportWizard — generate from vendor documents (per-control table)", () => {
-  it("flags a missing coverage_basis on its row, and clears after picking a value and re-checking", async () => {
+  // Before T.1 (2026-11-19) an unset coverage basis tinted its row red and
+  // printed the backend's sentence under it. It is now a question to answer:
+  // untinted, a marker in words, counted once in the banner (PLAN-tool-import
+  // 5.8). The scenario is the same; what it shows changed.
+  it("asks an unset coverage basis as a question, and clears after picking a value and re-checking", async () => {
     vi.mocked(api.ingestBaselineFromDocuments).mockResolvedValue({
       yaml: "product:\n  key: newtool\ncontrols:\n  - control: AC.L2-3.1.1\n",
       preview: makePreview({
@@ -192,6 +196,8 @@ describe("ToolImportWizard — generate from vendor documents (per-control table
             row_index: 0,
             field: "coverage_basis",
             message: "controls[0].coverage_basis must be explicitly set to one of ...",
+            kind: "coverage_basis_unset",
+            value: null,
           },
         ],
       }),
@@ -212,8 +218,12 @@ describe("ToolImportWizard — generate from vendor documents (per-control table
     await waitFor(() => expect(api.ingestBaselineFromDocuments).toHaveBeenCalledWith([doc], "newtool"));
     expect(screen.getByRole("button", { name: /Apply Import/ })).toHaveProperty("disabled", true);
 
-    const coverageSelect = screen.getByRole("combobox", { name: "Coverage basis for row 0" });
-    expect(coverageSelect.className).toContain("field-needs-decision");
+    const coverageSelect = screen.getByRole("combobox", { name: "On whose systems for row 0" });
+    expect(coverageSelect.className).not.toContain("field-needs-decision");
+    expect(screen.getAllByText("Answer: on whose systems?").length).toBe(1);
+    expect(screen.getByRole("button", { name: /1 row needs “On whose systems\?” answered/ })).toBeTruthy();
+    expect(screen.queryByText(/must be explicitly set/)).toBeNull();
+    expect(document.querySelector("tr.needs-decision")).toBeNull();
 
     // Reviewer picks a value via the dropdown, then re-checks -- no YAML
     // text editing, no page reload of the row.
@@ -234,11 +244,7 @@ describe("ToolImportWizard — generate from vendor documents (per-control table
         })
       )
     );
-    await waitFor(() =>
-      expect(screen.getByRole("combobox", { name: "Coverage basis for row 0" }).className).not.toContain(
-        "field-needs-decision"
-      )
-    );
+    await waitFor(() => expect(screen.queryByText("Answer: on whose systems?")).toBeNull());
     expect(screen.getByRole("button", { name: /Apply Import/ })).toHaveProperty("disabled", false);
   });
 
@@ -263,7 +269,7 @@ describe("ToolImportWizard — generate from vendor documents (per-control table
     // Editing a field after the last successful check must re-block Apply
     // -- otherwise Apply could submit a `yaml` that no longer matches
     // what's on screen.
-    fireEvent.change(screen.getByRole("combobox", { name: "Classification for row 0" }), {
+    fireEvent.change(screen.getByRole("combobox", { name: "Who is responsible for row 0" }), {
       target: { value: "shared" },
     });
     expect(screen.getByRole("button", { name: /Apply Import/ })).toHaveProperty("disabled", true);
@@ -321,7 +327,7 @@ describe("ToolImportWizard — editing an existing product's mapping", () => {
 
     // Landed straight in the table -- no chooser screen, no separate
     // "Preview"/"Generate" click needed.
-    expect(await screen.findByRole("combobox", { name: "Classification for row 0" })).toBeTruthy();
+    expect(await screen.findByRole("combobox", { name: "Who is responsible for row 0" })).toBeTruthy();
     const keyInput = screen.getByDisplayValue("rocketcyber") as HTMLInputElement;
     expect(keyInput.disabled).toBe(true);
     expect(screen.getByRole("button", { name: /Save Changes/ })).toHaveProperty("disabled", false);
@@ -354,6 +360,8 @@ describe("ToolImportWizard — editing an existing product's mapping", () => {
             row_index: 1,
             field: "control",
             message: "controls[1].control must be a control id or a list of them.",
+            kind: "control_missing",
+            value: null,
           },
         ],
       }),
@@ -370,9 +378,13 @@ describe("ToolImportWizard — editing an existing product's mapping", () => {
     expect(secondCallArg.controls).toHaveLength(2);
 
     // The blank row is still rendered (row 1), flagged, not dropped.
-    expect(screen.getByRole("combobox", { name: "Classification for row 0" })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "Who is responsible for row 0" })).toBeTruthy();
     const row1Control = screen.getByRole("textbox", { name: "Control(s) for row 1" });
     expect(row1Control.className).toContain("field-needs-decision");
+    // Wrong, not a question: the row is tinted, and says so in words.
+    expect(row1Control.closest("tr")?.className).toContain("needs-decision");
+    expect(screen.getByText("Name a control")).toBeTruthy();
+    expect(screen.queryByText(/must be a control id/)).toBeNull();
   });
 
   it("shows a disclaim flag as advisory (amber), distinct from a red needs-decision flag, and never blocks Apply", async () => {
@@ -409,12 +421,132 @@ describe("ToolImportWizard — editing an existing product's mapping", () => {
 
     await waitFor(() => expect(api.ingestBaselineFromDocuments).toHaveBeenCalled());
 
-    const clsSelect = screen.getByRole("combobox", { name: "Classification for row 0" });
+    const clsSelect = screen.getByRole("combobox", { name: "Who is responsible for row 0" });
     expect(clsSelect.className).toContain("field-disclaim-flag");
     expect(clsSelect.className).not.toContain("field-needs-decision");
     expect(screen.getByText(/reads as a disclaim/)).toBeTruthy();
     // No coverage_basis problem here (it's set), no row_problems at all --
     // an advisory-only flag must never block Apply.
     expect(screen.getByRole("button", { name: /Apply Import/ })).toHaveProperty("disabled", false);
+  });
+});
+
+async function generate(preview: BaselineImportPreview, product = makeProduct(), controls = [makeControlRow()]) {
+  vi.mocked(api.ingestBaselineFromDocuments).mockResolvedValue({ yaml: "product: {}\n", preview, product, controls });
+  render(<ToolImportWizard onClose={vi.fn()} onApplied={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: /Generate from vendor documents/ }));
+  fireEvent.change(screen.getByLabelText(/Product key/), { target: { value: product.key } });
+  const doc = new File(["fake pdf"], "crm.pdf", { type: "application/pdf" });
+  fireEvent.change(document.querySelector("input[type=file]")!, { target: { files: [doc] } });
+  fireEvent.click(screen.getByRole("button", { name: /Generate Baseline/ }));
+  await waitFor(() => expect(api.ingestBaselineFromDocuments).toHaveBeenCalled());
+}
+
+describe("ToolImportWizard — T.1: a row a person can read", () => {
+  it("keeps an assumed-configuration item holding a comma whole through focus and blur", async () => {
+    const item = "Detection sources: Windows Event Log, M365/Entra (SaaS Alerts), FortiGate syslog";
+    await generate(
+      makePreview({ product_is_new: true, control_changes: [] }),
+      makeProduct({ assumed_config: [item, "Second item"] }),
+      [makeControlRow({ coverage_basis: "customer_system" })],
+    );
+    const field = screen.getByLabelText(/Assumed configuration/) as HTMLTextAreaElement;
+    expect(field.value).toBe(`${item}\nSecond item`);
+    fireEvent.focus(field);
+    fireEvent.blur(field);
+    vi.mocked(api.previewStructuredBaselineImport).mockResolvedValue({
+      yaml: "",
+      preview: makePreview({ product_is_new: true, control_changes: [] }),
+      product: makeProduct(),
+      controls: [makeControlRow({ coverage_basis: "customer_system" })],
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Re-check/ }));
+    await waitFor(() => expect(api.previewStructuredBaselineImport).toHaveBeenCalled());
+    const sent = vi.mocked(api.previewStructuredBaselineImport).mock.calls[0][0];
+    expect(sent.product.assumed_config).toEqual([item, "Second item"]);
+  });
+
+  it("labels the tool's fields in words, with a read-only framework", async () => {
+    await generate(makePreview({ product_is_new: true, control_changes: [] }));
+    for (const label of ["Tool name", "Vendor", "Short ID", "What it does here", "Provider type", "Asset category"]) {
+      expect(screen.getByLabelText(new RegExp(label))).toBeTruthy();
+    }
+    expect(screen.queryByText("asset_type")).toBeNull();
+    expect(screen.getByText("NIST SP 800-171 Rev 2 / CMMC Level 2")).toBeTruthy();
+  });
+
+  it("shows the legend first, open, and remembers closing it", async () => {
+    window.localStorage.removeItem("wingrc.toolImport.legendOpen");
+    await generate(makePreview({ product_is_new: true, control_changes: [] }));
+    const legend = screen.getByRole("region", { name: "What each column asks" });
+    expect(legend.textContent).toContain("Who is responsible?");
+    expect(legend.textContent).toContain("Heimdal");
+    fireEvent.click(screen.getByRole("button", { name: /What each column asks/ }));
+    expect(window.localStorage.getItem("wingrc.toolImport.legendOpen")).toBe("closed");
+    expect(legend.textContent).not.toContain("Heimdal");
+  });
+
+  it("counts problems once in a banner, tints only what is wrong, and filters by a count", async () => {
+    await generate(
+      makePreview({
+        product_is_new: true,
+        control_changes: [],
+        problems: ["x", "y", "z"],
+        row_problems: [
+          { row_index: 0, field: "coverage_basis", message: "controls[0].coverage_basis must be ...", kind: "coverage_basis_unset", value: null },
+          { row_index: 1, field: "coverage_basis", message: "controls[1].coverage_basis must be ...", kind: "coverage_basis_unset", value: null },
+          { row_index: 2, field: "control", message: "controls[2]: unknown control id 'AC.L2-9.9.9'.", kind: "control_unknown", value: "AC.L2-9.9.9" },
+        ],
+      }),
+      makeProduct(),
+      [
+        makeControlRow({ row_index: 0 }),
+        makeControlRow({ row_index: 1, control: ["AC.L2-3.1.2"] }),
+        makeControlRow({ row_index: 2, control: ["AC.L2-9.9.9"] }),
+      ],
+    );
+    expect(screen.queryByText(/controls\[/)).toBeNull();
+    expect(document.querySelectorAll("tr.needs-decision")).toHaveLength(1);
+    expect(screen.getByText("AC.L2-9.9.9 is not a control in the catalog.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "2 rows need “On whose systems?” answered" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "1 row has an unknown control" }));
+    expect(screen.queryByRole("textbox", { name: "Control(s) for row 0" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Control(s) for row 2" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Show every row" }));
+    expect(screen.getByRole("textbox", { name: "Control(s) for row 0" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Apply Import/ })).toHaveProperty("disabled", true);
+  });
+
+  it("puts the four text fields in the row's expansion, and says how much of the control a row covers", async () => {
+    await generate(
+      makePreview({ product_is_new: true, control_changes: [], control_objectives: { "AC.L2-3.1.1": ["a", "b", "c", "d"] } }),
+      makeProduct(),
+      [makeControlRow({ coverage_basis: "customer_system", objectives: ["a", "b", "c"], customer_action: "Enforce MFA in the IdP." })],
+    );
+    expect(screen.getByText("3 of 4 objectives · 0 evidence items")).toBeTruthy();
+    expect(screen.queryByLabelText(/What the customer must do/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Open row AC.L2-3.1.1/ }));
+    expect((screen.getByLabelText(/What the customer must do/) as HTMLTextAreaElement).value).toBe("Enforce MFA in the IdP.");
+  });
+
+  it("shows the existing-mapping diff in documents mode, with the questions as its headers", async () => {
+    await generate(makePreview({ product_is_new: false }), makeProduct({ key: "rocketcyber" }), [
+      makeControlRow({ control: ["3.14.6"], coverage_basis: "customer_system" }),
+    ]);
+    expect(screen.getByText(/Changes against version 1 of RocketCyber/)).toBeTruthy();
+    expect(screen.getAllByRole("columnheader", { name: "Who is responsible?" }).length).toBe(2);
+  });
+});
+
+describe("ToolImportWizard — yaml mode", () => {
+  it("shows the legend and the diff under the two questions, in words", async () => {
+    vi.mocked(api.dryRunBaselineImport).mockResolvedValue(makePreview());
+    render(<ToolImportWizard onClose={vi.fn()} onApplied={vi.fn()} />);
+    selectFile(document.querySelector("input[type=file]")!);
+    fireEvent.click(screen.getByRole("button", { name: /Preview Import/ }));
+    await screen.findByRole("region", { name: "What each column asks" });
+    expect(screen.getByRole("columnheader", { name: "On whose systems?" })).toBeTruthy();
+    expect(screen.getByText("Customer system")).toBeTruthy();
+    expect(screen.getByText("Provider satisfies")).toBeTruthy();
   });
 });

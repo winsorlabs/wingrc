@@ -2674,3 +2674,33 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .ssp-pick-option { display: flex; gap: 0.5rem; align-items: flex-start; padding: 0.25rem 0; }
 .ssp-pick-option input { margin-top: 0.3rem; }
 .ssp-pick-text { display: block; max-width: 75ch; }
+
+/* â”€â”€ Tool Import review (docs/PLAN-tool-import.md, T.1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+   No new background: the banner is .form-info-banner's, wrong rows keep
+   .needs-decision and disclaimed rows .disclaim-flag-row. The one new pair
+   is the muted "to decide" marker on those tints, measured 2026-11-19
+   (WCAG 2.x): #5c636a on #fff7ed 5.74:1, on #fdecea 5.32:1, on white
+   6.1:1. */
+.tool-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 0.6rem 0.9rem; }
+.tool-fields label, .tool-fields > div { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.8rem; }
+.tool-field-label { font-weight: 600; color: var(--text); }
+.tool-field-static { padding: 0.3rem 0; color: var(--text); }
+.tool-field-wide { grid-column: 1 / -1; }
+.tool-fields textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 0.8rem; }
+.review-legend { margin: 0 0 0.6rem; border: 1px solid var(--border); border-radius: 5px; padding: 0.35rem 0.6rem; background: var(--surface); }
+.review-legend dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 0.8rem; margin: 0.4rem 0 0.2rem; font-size: 0.8rem; }
+.review-legend dt { font-weight: 600; color: var(--text); }
+.review-legend dd { margin: 0; color: var(--text); }
+.review-banner { margin-bottom: 0.6rem; }
+.review-banner ul { margin: 0.3rem 0 0; padding-left: 1.1rem; }
+.review-banner-filter { background: none; border: none; padding: 0; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; text-align: left; }
+.review-banner-filter[aria-pressed="true"] { font-weight: 700; }
+.review-diff { margin-bottom: 0.6rem; font-size: 0.82rem; }
+.review-diff summary { cursor: pointer; margin-bottom: 0.3rem; }
+.row-toggle { background: none; border: none; cursor: pointer; color: var(--primary); font-size: 0.9rem; padding: 0 0.2rem; }
+.row-marker-decide { font-size: 0.68rem; color: var(--muted); margin-top: 0.15rem; }
+.row-expansion > td { background: var(--surface); border-top: none; }
+.row-expansion-problems { margin: 0 0 0.5rem; padding-left: 1.1rem; }
+.row-expansion-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr)); gap: 0.6rem 0.9rem; font-size: 0.78rem; }
+.row-expansion-grid label, .row-expansion-grid > div { display: flex; flex-direction: column; gap: 0.2rem; }
+.row-expansion-grid textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 0.78rem; padding: 0.3rem 0.4rem; border: 1px solid var(--border); border-radius: 4px; }
