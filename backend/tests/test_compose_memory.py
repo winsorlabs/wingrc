@@ -25,7 +25,7 @@ def backend() -> dict:
 
 
 def test_backend_has_a_memory_limit(backend):
-    assert backend.get("mem_limit") == "${WINGRC_BACKEND_MEMORY:-1g}"
+    assert backend.get("mem_limit") == "${WINGRC_BACKEND_MEMORY:-1536m}"
 
 
 def test_backend_cannot_swap_past_it(backend):
