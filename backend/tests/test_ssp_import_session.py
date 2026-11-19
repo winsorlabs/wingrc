@@ -106,8 +106,8 @@ def test_what_a_row_may_be_accepted_onto_written_out():
     # Near matches: offered at or above the floor, and only those.
     near, mid, low = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
     fuzzy = [{"objective_id": near, "ref": "N[c]", "score": 0.94},
-             {"objective_id": mid, "ref": "M[b]", "score": 0.80},
-             {"objective_id": low, "ref": "L[a]", "score": 0.79}]
+             {"objective_id": mid, "ref": "M[b]", "score": 0.75},
+             {"objective_id": low, "ref": "L[a]", "score": 0.74}]
     ftexts = {near: "Devices (and other systems) are identified.",
               mid: "Something else.", low: "Another thing."}
     r = _row(match_kind="unmatched", matched_objective_id=None, candidates=fuzzy,
@@ -119,7 +119,7 @@ def test_what_a_row_may_be_accepted_onto_written_out():
     below = _row(match_kind="unmatched", matched_objective_id=None, candidates=fuzzy[2:],
                  control_text="x")
     assert imp.acceptable_onto(below, ftexts) == ()
-    assert "0.80 similarity floor" in imp.why_not_acceptable(below, ftexts)
+    assert "0.75 similarity floor" in imp.why_not_acceptable(below, ftexts)
 
     # A long near match can round to 1.0; exactness is read from the text.
     rounded = [{"objective_id": near, "ref": "N[c]", "score": 1.0}]

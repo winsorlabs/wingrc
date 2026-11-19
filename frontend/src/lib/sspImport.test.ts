@@ -7,7 +7,7 @@ function row(over: Partial<SspImportRow> = {}): SspImportRow {
     id: "r1", number: 1, family: "AC", heading: "8.1 Access Control", control_text: "t",
     statement: "s", source_status: "Met", notes_present: false, raci_present: true,
     match_kind: "exact", objective_id: "o1", objective_ref: "AC.L2-3.1.1[a]", objective_text: "t",
-    candidates: [], near_match_floor: 0.8, acceptable_onto: ["o1"], not_acceptable: null, decision: "pending",
+    candidates: [], near_match_floor: 0.75, acceptable_onto: ["o1"], not_acceptable: null, decision: "pending",
     resolution: null, decided_objective_id: null, decided_ref: null, statement_id: null,
     decided_by: null, decided_at: null, existing: null, shares_objective_with: [],
     ...over,
