@@ -18560,14 +18560,14 @@ where the next person will read it.
   An assessor can tell a verbatim match from a judgement call. The
   screen says "Accepted onto … as a near match (0.94), confirmed by …".
 
-**The floor is 0.80, and it is not a safety margin.** No floor can be
+**The floor is 0.75 (0.80 at first), and it is not a safety margin.** No floor can be
 one (above). Correctness is the person's; the floor's only job is not
 to waste the reviewer's time on candidates not worth reading, such as
-three guesses at 0.2. Why 0.80: on the real file the right objective
-scored 0.94 and the two wrong ones 0.57 and 0.53, and a one-word
-difference in an objective's text scores about 0.9.
+three guesses at 0.2. Why 0.80 at first: on the real file the right
+objective scored 0.94 and the two wrong ones 0.57 and 0.53, and a
+one-word difference in an objective's text scores about 0.9.
 
-**The floor's effect on the real file's 61 near-match rows:**
+**The floor's effect on the real file's 61 near-match rows, at 0.80:**
 - **40 are offered at least one candidate.** Of those, 14 get two or
   three, so the person has to read them; 297 and 298 are 0.99 against
   0.93.
@@ -18579,6 +18579,21 @@ difference in an objective's text scores about 0.9.
   here; it is the customer's file), and lowering the floor costs nothing
   but attention.
 - **The floor is provisional:** one file is the evidence.
+
+**Lowered to 0.75 (Jarrod, 2026-11-18, from his live walk).** He read
+the seven rows above and judged their candidates worth reading. That
+settles the question as it was posed: attention, not safety. Read from
+live's open session, counts only:
+- **Offered at least one candidate:** 47 of the 61, up from 40. All seven
+  newcomers were still undecided, so no decided row changes meaning.
+- **Offered none:** 14, down from 21.
+- **Two or more candidates to read:** 20, up from 14.
+
+The floor is applied when a row is viewed or decided, against the top
+three candidates the import stored. So the open session picks up the
+change on deploy, with no re-import. A row already rejected stays
+rejected until someone reopens it. The rule against auto-accepting is
+unchanged. It never depended on the floor.
 
 **Verified:**
 - **Tests** (`test_ssp_import_session.py`):
