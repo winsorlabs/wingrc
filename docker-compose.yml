@@ -200,6 +200,17 @@ services:
       args:
         WINGRC_BUILD_SHA: ${WINGRC_BUILD_SHA:-unknown}
     restart: unless-stopped
+    # Same image, same reason as the backend's limit: a path nobody has
+    # measured (the Liongard sync on a large client) must not be able to
+    # take Postgres with it. With a limit it shows up as a worker restart,
+    # the failure Jarrod chose; without one, as the database dying
+    # (2026-11-19). 1g is about seven times its high-water on live
+    # (138 MiB). When generate becomes a background job here, that slice
+    # sets the number: about 450 MiB per job it runs at once, above idle.
+    # A sync that needs more than 1g is a measurement to want, not to
+    # pre-empt. No swap beyond it, as for the backend.
+    mem_limit: ${WINGRC_WORKER_MEMORY:-1g}
+    memswap_limit: ${WINGRC_WORKER_MEMORY:-1g}
     depends_on:
       backend:
         condition: service_healthy
