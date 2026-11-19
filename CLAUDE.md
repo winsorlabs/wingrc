@@ -145,6 +145,12 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   fails on an async endpoint, or on an async dependency it does not
   list with a reason. Read an upload with `file.file.read()`
   (`docs/roadmap.md`, "Generating a baseline froze every request").
+  A route that then waits on something outside the database (a model
+  call, a web fetch) calls `db.end_transaction` before the wait, so it
+  holds the token but no connection
+  (`tests/test_slow_calls_hold_no_connection.py`). That does not move
+  the 40-token cliff. A model call belongs in the worker, which no
+  request can hand a job to yet (same entry, "Where this is going").
 - All DB-touching tests use `@pytest.mark.integration` and require
   `WINGRC_TEST_DATABASE_URL`. Unit tests run without a DB. **Mark the
   test, not the module**, unless every test in the file needs a database.

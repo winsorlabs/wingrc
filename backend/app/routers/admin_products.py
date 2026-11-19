@@ -64,7 +64,7 @@ from ..baseline import to_yaml_dict
 from ..baseline_import import apply_import as _apply_baseline_import
 from ..baseline_import import build_preview, parse_yaml, validate
 from ..crypto import CredentialCipherError
-from ..db import get_session
+from ..db import end_transaction, get_session
 from ..importers.document import DocumentIngestError, ingest_document
 from ..importers.research import (
     MAX_PAGE_CHARS,
@@ -927,6 +927,10 @@ def import_from_documents(
             # (also below) -- str(exc) already names the specific problem.
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+        # Everything this route reads before the model call is read; give
+        # the connection back for the minutes the call takes.
+        end_transaction(session)
+
         try:
             entry = ingest_document(
                 *tmp_paths,
@@ -1000,6 +1004,8 @@ def suggest_research_urls(
     except RuntimeError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    end_transaction(session)
+
     try:
         suggestions = suggest_documentation_urls(
             product_name=product.name, provider=product.provider, ai_provider=ai_provider
@@ -1034,6 +1040,10 @@ def fetch_research_urls(
     /import/from-documents-with-research call spends API budget.
     """
     _get_product(session, product_id)
+    # The fetches below wait on other sites, up to MAX_PAGES_PER_RUN of
+    # them. The rows they make are added, not flushed, so no connection is
+    # taken again until the commit at the end.
+    end_transaction(session)
     urls = [u.strip() for u in body.urls if u.strip()]
     if not urls:
         raise HTTPException(status_code=422, detail="At least one URL is required.")
@@ -1250,6 +1260,10 @@ def import_from_documents_with_research(
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        # The research documents and the product are read; the model calls
+        # below (one for the documents, one per web page) hold no connection.
+        end_transaction(session)
 
         try:
             primary = ingest_document(
