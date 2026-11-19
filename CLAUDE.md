@@ -586,6 +586,7 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
 | `docs/deployment.md` | Generic deployment walkthrough: clone, configure, `docker compose up`, HTTPS |
 | `docs/roadmap.md` | Full roadmap detail behind the "Roadmap — priority order" section below |
 | `docs/PLAN-auth-rbac-completion.md` | Auth/RBAC completion plan (slices I.1–I.9) — read before touching auth |
+| `docs/PLAN-tool-import.md` | Tool Import wizard plan (slices T.1–T.4, 2026-11-18): rows as decisions, recommendations held back by an enumerated list, server-held row provenance. Not built; read before touching `ToolImportWizard.tsx` or the baseline importers |
 | `docs/wl-util-1-worked-example-deployment.md` | Worked-example hardening + HTTPS (Certbot/DNSimple DNS-01) walkthrough on a real box |
 | `docs/bench-stack-verification.md` | How to verify a slice on an isolated wl-util-1 Docker Compose project before merging to `main` — the `claude` account/key, isolation rules, run steps. Read before claiming a slice is verified |
 | `docs/azure-container-apps-deployment-plan.md` | Draft Azure Container Apps deployment plan — architecture only, not yet executed |
