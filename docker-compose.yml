@@ -141,6 +141,20 @@ services:
       args:
         WINGRC_BUILD_SHA: ${WINGRC_BUILD_SHA:-unknown}
     restart: unless-stopped
+    # The guard against an upload storm until uploads stream (2026-11-19,
+    # docs/roadmap.md, "Every upload handler reads the whole file into
+    # memory"). Each handler holds a whole body, up to its route's limit
+    # (app/upload_limits.py: 51 MB for evidence), so forty at once is
+    # about 2 GB, about what wl-util-1 has free. With no limit the host's
+    # OOM killer chooses the victim, and Postgres scored 669 against the
+    # backend's 694: close enough to be its choice. With one, the kill is
+    # this container's own and can only take the backend, which restarts.
+    # 1g is about five times its idle 212 MiB and fifteen 51 MB uploads at
+    # once. Swap equal to it, so the container is killed rather than
+    # pushing a gigabyte into the host's swap first and slowing the
+    # database with it. A larger host raises it with WINGRC_BACKEND_MEMORY.
+    mem_limit: ${WINGRC_BACKEND_MEMORY:-1g}
+    memswap_limit: ${WINGRC_BACKEND_MEMORY:-1g}
     depends_on:
       db:
         condition: service_healthy
