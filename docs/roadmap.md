@@ -16252,6 +16252,17 @@ Proposed, for Jarrod: H6 the row's own text reads as a disclaim, H7
 A citation counts only if the code finds its quote in the named source.
 No confidence score.
 
+**Jarrod's answers, 2026-11-18:**
+- **The model recommends coverage basis, and a recommended coverage basis
+  is never bulk-accepted.** Every one goes to individual review, so bulk
+  accept works per field: it settles classifications, completes
+  `customer_owns` rows, and never sets a coverage basis.
+- **Activation asks once before recording Provider on an unset
+  responsibility:** one summary per activation ("This will record
+  Provider for 38 objectives"), list expandable, one confirm, in the
+  existing dialog. That is slice A.1, which closes the remaining
+  exposure rather than labelling it.
+
 **The original entry follows, unchanged except the column list.** One thing gates
 it: **what the magic loop does with `classification` and
 `coverage_basis` when a product goes active.** That was settled on

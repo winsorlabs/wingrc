@@ -97,6 +97,31 @@ orgs. On live: 4 products, 103 rows in current versions, 5 active
 activations. 5 of those rows are `provider_satisfies` with
 `customer_system`, the highest-consequence combination.
 
+**Decided (Jarrod, 2026-11-18): close the path; don't label it.**
+Activation asks before writing `provider_satisfies` onto an
+unset responsibility. **It asks once per activation, not once per row.**
+Asking about hundreds of objectives one at a time would be a wall, not
+consent. The ask:
+- **One summary:** "This will record Provider for 38 objectives",
+  with the list expandable and one confirm.
+- **It reuses the activation dialog,** the one that already asks about
+  judged statuses and hand-set responsibilities, with the same "changed
+  since you were shown it" refusal. It does not invent a second pattern.
+- **It applies to every activation,** whatever route its mapping row came
+  from. The question is what the tenant's matrix will say, not how the
+  row was made.
+
+**With that in place, bulk accept's remaining danger is small:**
+- A wrong `provider_satisfies` row reaches the matrix only after a
+  person confirms the summary that lists it.
+- A wrong coverage basis is never bulk-accepted (§5.4).
+- What is left is a person confirming without reading. That is a
+  diligence risk, not a silent one.
+
+This is slice A.1 (§7). It changes activation for every tenant, so it is
+its own slice, not part of the wizard's. Two parts are still open (§9):
+whether `shared` is asked too, and what a path that asks nobody does.
+
 ## 3. Where the entry is stale or incomplete
 
 1. **Ten columns, not eleven.** `candidate_state` was removed with
@@ -121,10 +146,21 @@ activations. 5 of those rows are `provider_satisfies` with
    it unset because "there's nothing in a vendor doc that reliably
    distinguishes the two without a human who knows the deployment", and
    apply refuses until a person sets it. A per-row recommendation
-   reverses that rule. This plan keeps the half that matters: a
-   recommendation is never a default and never written unless accepted.
-   Reversing it is Jarrod's call (§9, question a), not an implementation
-   detail.
+   reverses that rule. **Decided (Jarrod, 2026-11-18): the model
+   recommends coverage basis, and a recommended coverage basis is never
+   bulk-accepted.** It is the field the Heimdal example is about ("on
+   whose systems"), and vendor documentation answers exactly that.
+   Withholding the recommendation there would withhold it where it is
+   most useful. The safety comes from the asymmetry, not from silence:
+   - **Every model-recommended coverage basis goes to individual review,**
+     whatever its citation.
+   - **Why:** recommending `platform_only` when the truth is
+     `customer_system` loses coverage, which is visible. The other
+     direction claims coverage the vendor never provides, in a document
+     an assessor reads.
+
+   The half of the old rule that mattered stands: a recommendation is
+   never a default, and never written unless a person takes it.
 4. **The provenance precedent can be forged.** `Product.ai_generated_at`
    and `ai_generated_model` reach the database from keys in the YAML the
    client submits at apply (`routers/admin_products.py:756`). The
@@ -210,9 +246,28 @@ platform*. H3 below uses it.
 
 ### 5.4 The held-back list: enumerated, not thresholded
 
-A row is held back for any of these reasons, and the screen names
-which. There is no confidence score and none will be added. A number
-invites tuning and tells a reviewer nothing about why.
+**Bulk accept works per field, not per row** (a consequence of decision
+(a), §3.3):
+- **Coverage basis:** a recommended coverage basis is never
+  bulk-accepted. Each one is confirmed on its own row, with nothing
+  preselected.
+- **Classification:** bulk-accepted unless held back below.
+- **So a `customer_owns` row can be completed in bulk.** Its coverage
+  basis is moot. A row that credits coverage cannot: bulk accept settles
+  its classification, and its coverage basis waits for a person.
+- **On live's current mappings,** 25 of 103 rows are `customer_owns`, so
+  bulk accept would finish about a quarter of rows outright. On the rest
+  it removes one of the two decisions.
+
+That is the cost of decision (a), and it is stated here so nobody
+expects more. The reasons below still matter for coverage basis. They
+are shown on the row as the reason to read it carefully (H3, H5 and H7
+are about coverage). They no longer decide whether a coverage basis can
+be bulk-accepted, because none can.
+
+A classification is held back for any of these reasons, and the screen
+names which. There is no confidence score and none will be added. A
+number invites tuning and tells a reviewer nothing about why.
 
 From the entry:
 - **H1. Research and the CRM disagree.** Both values are shown; the
@@ -251,9 +306,11 @@ rule's cases writes them out itself").
 
 ### 5.5 Bulk accept
 
-- **"Accept all recommendations"** accepts every row that is not held
-  back, and says how many it accepted and how many remain.
-- **Held-back rows are decided one at a time:** accept that row's
+- **"Accept all recommendations"** accepts every classification that is
+  not held back, which completes the `customer_owns` rows. It never
+  touches a coverage basis. It says how many rows it completed, and how
+  many still need a classification or a coverage basis.
+- **The rest are decided one at a time:** accept that row's
   recommendation, or choose different values.
 - **Apply refuses while any row is undecided.**
 - **The server decides what was held back, not the client.** At apply it
@@ -329,6 +386,18 @@ in the slice that adds it (CLAUDE.md).
 
 ## 7. Slices
 
+- **First: the event-loop measurement** ("Observed on the way", at the
+  end). If generation freezes every request, its fix comes before
+  anything here, because it degrades the deployment for everyone at once.
+- **A.1. Activation asks once before recording Provider on unset
+  responsibilities** (§2's decision).
+  - The summary goes in the existing activation dialog, with the same
+    refusal when what was shown has changed.
+  - Tests: the count and the list match what is written; nothing is
+    written on a refusal or with no answer; a confirm writes each
+    objective; a status and a hand-set responsibility behave as today.
+  - It is independent of the wizard and closes §2's path for mappings
+    already on live. So it can land first.
 - **T.1. Columns, questions, legend, expansion and the diff in both
   modes.**
   - Frontend only, with no AI change. It is useful on its own: today's
@@ -367,22 +436,35 @@ walk goes in its PR body.
 
 ## 9. Questions for Jarrod before T.2
 
-a. **The model recommends coverage basis.** Today the pipeline never
-   fills it in, deliberately (§3.3). The plan keeps it never-a-default
-   and held back in the cases above. Is a recommendation acceptable?
-b. **H6 to H8:** accept, reject or amend each.
+a. ~~The model recommends coverage basis?~~ **Answered 2026-11-18:
+   yes, and never bulk-accepted** (§3.3, §5.4).
+b. **H6 to H8:** accept, reject or amend each. H7 now only annotates,
+   since no coverage basis is bulk-accepted.
 c. **Should the bundle say when a responsibility came from a
    bulk-accepted row?** That is the remaining exposure (§2), where an
    assessor reads it. The CRM already names the contributing products.
    Adding "from a bulk-accepted mapping row, not confirmed for this
    organization" would make the exposure visible rather than smaller.
-d. **Or narrow the exposure itself** by asking at activation before
-   writing `provider_satisfies` from a bulk-accepted row onto an unset
-   responsibility, the way #119 asks for a hand-set one. That would
-   reach every tenant and change activation, so it is outside this
-   wizard. It is the one change that closes §2's path rather than
-   labelling it.
+d. ~~Ask at activation before writing `provider_satisfies` onto an
+   unset responsibility?~~ **Answered 2026-11-18: yes, once per
+   activation as a summary, in the existing dialog** (§2, slice A.1).
+   With (d) in place, (c) is labelling a path that is already closed.
+   It is lower priority, and may not be wanted at all.
 e. **yaml gets no recommendation** (§4). Agreed?
+f. **New, from (d): is `shared` asked too?** The decision names
+   `provider_satisfies`. `shared` also asserts an obligation of the MSP,
+   though a weaker one, and the existing rule treats it as the
+   conservative value when tools disagree. The plan asks only for
+   `provider_satisfies` unless told otherwise.
+g. **New, from (d): what a path that asks nobody does.** That is
+   `start_assessment`'s activations, an API call with no answers, and a
+   version move. Today's equivalent for a hand-set responsibility keeps
+   the value and records what the tool would have set. **Recommended:**
+   the same here. Leave the unset value as it is (the seed default) and
+   write the tool's Provider into the history line. The objective is
+   then picked up by the next activation that asks, or set by hand.
+   The alternative, writing Provider unasked on those paths, would leave
+   §2's path open through them.
 
 ## 10. Jarrod's walk (after T.3)
 
