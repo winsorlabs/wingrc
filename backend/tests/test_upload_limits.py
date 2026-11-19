@@ -125,7 +125,7 @@ def test_over_the_limit_by_length_is_refused_with_a_sentence_unread(small_app):
     client, reads = small_app
     r = client.post("/up", files={"file": ("a.bin", b"x" * 5000)})
     assert r.status_code == 413
-    assert r.json()["detail"].startswith("The upload is larger than this route accepts")
+    assert r.json()["detail"].startswith("The request is larger than this route accepts")
     assert reads == []
 
 

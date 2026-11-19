@@ -9,7 +9,7 @@ included, got nginx's 1 MB default and a bare 413 on live
 
 The limit is per route, not one number for the API, for two reasons:
 - FastAPI reads and parses a body before any dependency runs, auth
-  included. A JSON route left at 105 MB would let an anonymous client make
+  included. A JSON route left at 101 MB would let an anonymous client make
   the process hold and parse that much. Every route not listed here keeps
   the 1 MB that live's nginx gave it until now.
 - The limit is placed per route without regex locations in nginx, whose
@@ -85,7 +85,7 @@ def _megabytes(n: int) -> str:
 def too_large(limit: int) -> HTTPException:
     return HTTPException(
         status_code=413,
-        detail=f"The upload is larger than this route accepts ({_megabytes(limit)}).",
+        detail=f"The request is larger than this route accepts ({_megabytes(limit)}).",
     )
 
 
