@@ -25,6 +25,10 @@ resolved — see below.)
 - No published host ports — reachable only from inside the compose network
   or via `docker compose exec`.
 - A separate clone of the repo, not the live deployment's working tree.
+- Nothing written outside the bench's own folder (2026-11-19). The one
+  host path compose binds, the snapshot directory, is pointed into the
+  clone in step 2. Without that, every `up` creates
+  `/var/lib/wingrc-snapshots/<project>` as root.
 - The live `dev.wingrc.us` stack (project `wingrc`) is left running and
   untouched throughout. Confirm this explicitly when reporting a
   verification run — check `docker ps` before and after, in addition to
@@ -91,6 +95,22 @@ bench work.
    sed -i 's/^WINGRC_ENVIRONMENT=$/WINGRC_ENVIRONMENT=development/' .env
    deploy/generate-env.sh
    ```
+
+   Then point the snapshot directory into the clone, before the first
+   `up`:
+
+   ```bash
+   mkdir -p .bench/snapshots
+   echo "WINGRC_SNAPSHOT_DIR=$PWD/.bench/snapshots" >> .env
+   ```
+
+   Compose binds `${WINGRC_SNAPSHOT_DIR:-/var/lib/wingrc-snapshots/<project>}`
+   into the backend. Docker creates a missing bind source as root, so
+   without this line each bench's `up` left an empty root-owned
+   directory in `/var/lib`, seven of them by 2026-11-19. Making the
+   directory first, as `claude`, keeps it `claude`'s. A bench that takes
+   a snapshot there still gets files owned by the image's user, which
+   `snapshot.sh` sets; see step 7.
 
    Fresh random values, printed by name only. Never copy live's `.env`:
    its values are live's credentials. A bench restored from a live
@@ -164,12 +184,42 @@ bench work.
    own task calls for.
 7. Tear down: `docker compose -p wingrc_verify_<date> down -v` — confirm
    the live `wingrc` project's containers are still running unaffected
-   before and after. Since item S, a bench stack's backend also gets its
-   own snapshot directory, `/var/lib/wingrc-snapshots/wingrc_verify_<date>`,
-   which `down -v` does not remove because it is a host directory. It is
-   root's, so remove it through a container, for example
-   `docker run --rm -v /var/lib/wingrc-snapshots:/s postgres:18 rm -rf /s/wingrc_verify_<date>`,
-   and check that it is gone. A snapshot taken there holds the bench's data.
+   before and after. **Compare the host paths compose binds, too**, read
+   from the compose config rather than from a list kept by hand:
+
+   ```bash
+   binds() { docker compose -p wingrc_verify_<date> config --format json \
+     | python3 -c 'import json,sys
+   for s in json.load(sys.stdin)["services"].values():
+       for v in s.get("volumes", []):
+           if v.get("type") == "bind": print(v["source"])' | sort -u; }
+   binds | while read -r p; do [ -e "$p" ] && echo "present $p" || echo "absent $p"; done
+   ```
+
+   Run it before the first `up` and after `down -v`, and diff the two. A
+   path that was absent before and is present after is something the
+   bench left on the host. The config is printed only through the filter,
+   because the whole config holds the `.env`'s secrets.
+
+   **Why this check exists:** until 2026-11-19 the comparison covered
+   containers, volumes and networks. It reported "host lists unchanged"
+   while seven root-owned directories sat in `/var/lib/wingrc-snapshots/`,
+   one for each bench since 2026-11-18 (`docs/roadmap.md`, "The bench's
+   teardown check verified less than it reported").
+
+   **The snapshot directory, with step 2's line,** is the clone's
+   `.bench/snapshots`. Empty, `rm -rf` of the clone takes it. If the
+   bench took a snapshot, `snapshot.sh` made the directory the image
+   user's, mode 0700, and `claude` cannot remove what is inside it.
+   **Ask Jarrod; do not remove it through a container.** This step used
+   to say to do exactly that, with
+   `docker run --rm -v /var/lib/wingrc-snapshots:/s postgres:18 rm -rf …`.
+   That works because the `docker` group is root-equivalent on this host.
+   The capability exists and the permission does not, and the difference
+   is the whole point: a file permission that gives way whenever docker
+   is to hand is not one. `docs/roadmap.md`'s "What claude can do on
+   wl-util-1" has the rule. A snapshot holds the bench's data, so leaving
+   one for Jarrod costs nothing but the ask.
    **A helper container from an image that declares a `VOLUME`
    (`postgres:18` does) leaves an anonymous volume unless it is run with
    `--rm`.** `docker run -d` followed by `docker rm -f` without `-v` leaves
