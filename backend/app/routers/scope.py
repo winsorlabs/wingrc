@@ -753,7 +753,7 @@ def get_scope_entity_approvals(
 
 
 @router.post("/{org_id}/imports/workbook/dry-run", response_model=DryRunOut)
-async def import_dry_run(
+def import_dry_run(
     org_id: uuid.UUID,
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
@@ -769,7 +769,7 @@ async def import_dry_run(
     only -- apply never deletes on import, matching cli.py's own behavior.
     """
     with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
-        tmp.write(await file.read())
+        tmp.write(file.file.read())
         tmp_path = tmp.name
     try:
         # Parsing reads from the temp file, but provenance must record the

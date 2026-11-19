@@ -567,7 +567,9 @@ async def get_current_user(
     depend on it. See audit.py's module docstring for the full rationale.
 
     async, not sync `def`, and that is load-bearing, not stylistic: every
-    other dependency and every endpoint in this codebase is a sync `def`,
+    other dependency and every endpoint in this codebase is a sync `def`
+    (held by tests/test_route_concurrency.py since 2026-11-19; until then
+    thirteen endpoints were not, and blocked the event loop),
     which FastAPI dispatches via anyio's threadpool — each such dispatch
     runs in its OWN copy of the current context, and a ContextVar.set()
     made inside one dispatch never propagates back out to sibling

@@ -441,7 +441,7 @@ def patch_profile(
     response_model=LogoUploadOut,
     dependencies=[Depends(require_org_access())],
 )
-async def upload_logo(
+def upload_logo(
     org_id: uuid.UUID,
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
@@ -456,7 +456,7 @@ async def upload_logo(
             detail=f"Unsupported image type {mime!r}. Allowed: {sorted(_IMAGE_MIME_TO_EXT)}",
         )
 
-    data = await file.read()
+    data = file.file.read()
     if len(data) > _IMAGE_MAX_BYTES:
         raise HTTPException(
             status_code=422,
@@ -606,7 +606,7 @@ _DIAGRAM_SLOTS: dict[str, dict[str, str]] = {
 }
 
 
-async def _upload_diagram(
+def _upload_diagram(
     org_id: uuid.UUID,
     slot_key: str,
     file: UploadFile,
@@ -632,7 +632,7 @@ async def _upload_diagram(
             detail=f"Unsupported image type {mime!r}. Allowed: {sorted(_DIAGRAM_ALLOWED_MIME)}",
         )
 
-    data = await file.read()
+    data = file.file.read()
     if len(data) > _DIAGRAM_MAX_BYTES:
         raise HTTPException(
             status_code=422,
@@ -701,13 +701,13 @@ async def _upload_diagram(
     response_model=DiagramUploadOut,
     dependencies=[Depends(require_org_access())],
 )
-async def upload_network_diagram(
+def upload_network_diagram(
     org_id: uuid.UUID,
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
     storage: StorageClient = Depends(get_storage_client),
 ) -> DiagramUploadOut:
-    return await _upload_diagram(org_id, "network-diagram", file, session, storage)
+    return _upload_diagram(org_id, "network-diagram", file, session, storage)
 
 
 @router.post(
@@ -715,13 +715,13 @@ async def upload_network_diagram(
     response_model=DiagramUploadOut,
     dependencies=[Depends(require_org_access())],
 )
-async def upload_data_flow_diagram(
+def upload_data_flow_diagram(
     org_id: uuid.UUID,
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
     storage: StorageClient = Depends(get_storage_client),
 ) -> DiagramUploadOut:
-    return await _upload_diagram(org_id, "data-flow-diagram", file, session, storage)
+    return _upload_diagram(org_id, "data-flow-diagram", file, session, storage)
 
 
 # ---------------------------------------------------------------------------

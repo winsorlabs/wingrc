@@ -349,7 +349,7 @@ class EvidenceManifest(BaseModel):
     response_model=EvidenceOut,
     status_code=201,
 )
-async def upload_evidence(
+def upload_evidence(
     org_id: uuid.UUID,
     assessment_id: uuid.UUID,
     cs_id: uuid.UUID,
@@ -368,7 +368,7 @@ async def upload_evidence(
             detail="artifact_type must be one of: document, export, link, policy, screenshot",
         )
 
-    data = await file.read()
+    data = file.file.read()
     if len(data) > _MAX_FILE_BYTES:
         raise HTTPException(status_code=413, detail="File exceeds 50 MB limit")
 
@@ -954,7 +954,7 @@ def _fan_out_evidence(
     response_model=EvidenceOut,
     status_code=201,
 )
-async def collect_task_evidence_file(
+def collect_task_evidence_file(
     org_id: uuid.UUID,
     assessment_id: uuid.UUID,
     task_id: uuid.UUID,
@@ -980,7 +980,7 @@ async def collect_task_evidence_file(
             detail="artifact_type must be one of: document, export, link, policy, screenshot",
         )
 
-    data = await file.read()
+    data = file.file.read()
     if len(data) > _MAX_FILE_BYTES:
         raise HTTPException(status_code=413, detail="File exceeds 50 MB limit")
 

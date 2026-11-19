@@ -136,6 +136,15 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
 
 - Keep the domain core DB-agnostic and unit-testable (`backend/app/domain.py`,
   `backend/app/assessment.py`).
+- **No route handler is `async def`** (2026-11-19). The app runs as one
+  uvicorn process, and an `async def` handler's blocking work stops
+  every request. A generate held `/health` for 20 s. A `def` handler
+  runs in anyio's threadpool instead and holds one of its 40 tokens
+  while it works, so a long one is a held token rather than a free
+  one. `tests/test_route_concurrency.py` walks the registered routes and
+  fails on an async endpoint, or on an async dependency it does not
+  list with a reason. Read an upload with `file.file.read()`
+  (`docs/roadmap.md`, "Generating a baseline froze every request").
 - All DB-touching tests use `@pytest.mark.integration` and require
   `WINGRC_TEST_DATABASE_URL`. Unit tests run without a DB. **Mark the
   test, not the module**, unless every test in the file needs a database.

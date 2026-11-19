@@ -12199,6 +12199,36 @@ why it never saw this.
   session, a bounded request queue, or more workers.
 - **Measure at 100 and 200** the way Q.0 measured.
 
+**Changed since this was measured (2026-11-19).**
+- **Thirteen routes stopped blocking the event loop and started holding
+  threadpool tokens.** These are the Tool Import routes and six upload
+  routes ("Generating a baseline froze every request").
+- **The two generate routes hold a token and a pool connection for the
+  whole model call,** minutes on a real CRM. The bench there showed it
+  directly: at 39 concurrent generates, 40 of 40 tokens and 40 of 40
+  connections were out. At 40, `/health` waited for a generate to end.
+
+A measurement taken after this runs against a threadpool where a few
+generates can hold tokens for minutes. Generates should be either kept
+out of it or measured on purpose.
+
+**One step of the hypothesis is contradicted by FastAPI's code, read
+2026-11-19 and not measured.** The step is that closing `get_session`
+needs a default-pool token.
+- In the locked FastAPI 0.162.0, `contextmanager_in_threadpool` runs a
+  sync `yield` dependency's `__exit__` under a fresh
+  `CapacityLimiter(1)`, not the default 40-token limiter.
+- Its comment names this exact deadlock, with a database pool, as the
+  reason.
+- Entering the dependency does take a default token.
+
+So the cycle as written (connections held by requests waiting for a
+token to close) should not form. If the collapse is a deadlock, it is a
+different one, or it is not a deadlock: for example, 40 handlers each
+holding a token while they wait up to 30 s for a connection. The bench
+route that read tokens and connections from the loop is the instrument
+to settle it. "Generating a baseline froze every request" describes it.
+
 Live is three tenants and a handful of users today, so this is not
 urgent. It is the ceiling that Q.0's engineer screen, with two calls per
 load, reaches at half the users.
@@ -16356,7 +16386,7 @@ document approval and review states, and the onboarding approval queue.
 This item is the rule going forward, so the next slice inherits it rather
 than rediscovering it.
 
-### Generating a baseline freezes every request -- measured 2026-11-18, not fixed
+### Generating a baseline froze every request -- measured 2026-11-18, fixed 2026-11-19
 
 **The first defect found that degrades the product for everyone at once**
 rather than reporting something wrong (the brief, 2026-11-18). It will
@@ -16402,18 +16432,99 @@ middleware that does no blocking work.
   That is up to 50 MB of evidence, so seconds, not minutes. It is the
   same class of defect.
 
-**The fix's shape:**
-- **Make them `def`,** as every other route is. FastAPI then runs each in
-  its threadpool, off the loop. An upload reads `file.file.read()`
-  instead of `await file.read()`.
-- **A structural test:** no route that depends on the session is a
-  coroutine. That is checkable by walking `app.routes`. Its mutation is
-  one route put back to `async def`, which must go red.
-- **The bench measurement repeated as the behavioural proof:** `/health`
-  answers in milliseconds during a blocking generate.
+**Fixed 2026-11-19 (branch `async-routes-sync`).**
+- **The thirteen are `def`,** as every other route is, and read an
+  upload with `file.file.read()`. Nothing else in them changed.
+- **`tests/test_route_concurrency.py`** reads the routes the app
+  registered, not the source, so a route added next year is checked the
+  day it is added. It fails on any `async def` endpoint, and on any async
+  dependency but `get_current_user`, whose reason is written beside it.
+  A precondition compares the routes it walked with the route decorators
+  in `app/`, read by parsing, so a FastAPI change in how included routers
+  nest cannot empty the check. Both mutations went red: `upload_logo`
+  put back to `async def`, and `get_session` made async.
+- **`get_current_user`'s docstring** said every other dependency and
+  endpoint was a sync `def`. That was false for these thirteen. It is
+  true now, and it names the test.
 
-Not started. Recorded with its measurement, ahead of the wizard's
-slices (`docs/PLAN-tool-import.md`, Â§7).
+**What the fix costs: the work moves to the threadpool, not away.**
+anyio's threadpool has 40 tokens, and a `def` handler holds one while it
+runs. So a generate holds one for the whole model call, minutes on a
+real CRM. "Every request freezes" becomes "one token is held for
+minutes": a large improvement, not a free one (Jarrod, 2026-11-19).
+
+**Measured** (bench `wingrc_verify_1119a` on main at `4340269`, then
+`wingrc_verify_1119b` and `_1119c` on the branch at `44bb1a3`; FastAPI
+0.162.0, Starlette 1.10.0, one uvicorn process; model call held 20 s).
+`/health` was polled back to back throughout. A bench-only async route
+read anyio's borrowed tokens and the pool's checked-out connections from
+the loop.
+
+| Load | `/health` worst, main | `/health` worst, branch | Peak tokens / connections (branch) |
+|---|---|---|---|
+| 1 generate | **20.1 s** | 0.05 s | 2/40, 1/40 |
+| 5 generates | -- | 0.02 s | 5/40, 5/40 |
+| 20 generates | -- | 0.05 s | 21/40, 21/40 |
+| 39 generates | -- | 0.07 s | 40/40, 40/40 |
+| **40 generates** | -- | **20.1 s** | 40/40, 40/40 |
+| 45 generates | -- | 20.2 s | 40/40, 40/40 |
+| 5 uploads of 49 MB | 0.77 s | 0.05 s | 5/40, 5/40 |
+| 10 uploads of 49 MB | 2.35 s | 0.06 s | 10/40, 10/40 |
+
+- **Where it stops being fine: exactly 40.** At 39 generates, `/health`
+  takes the fortieth token and answers in milliseconds. At 40, it waits
+  for a generate to finish (20 s here, minutes in production), and so
+  does every other request. Generates past 40 queue too: at 45, five
+  took 40 s.
+- **Each generate also holds a pool connection for the whole model
+  call.** Connections tracked tokens one for one, 40/40 at 39 generates.
+  So a long generate holds one of the 40 tokens *and* one of the 40
+  connections. Recorded below; not changed here.
+- **Uploads hold a token for the handler, not for the transfer.** Ten
+  clients sent 20 MB each at 1 MB every 0.4 s. While they were sending
+  (8 s), tokens read 0 in every sample but one: 8 at t+2.0 s, Starlette
+  writing spooled chunks to disk through the threadpool, a moment each.
+  All ten tokens and ten connections were held only at the end, for
+  about 0.5 s, while the handlers read the spooled file, wrote to MinIO
+  and committed. A slow client therefore costs no token. A 50 MB upload
+  holds one for its MinIO write, about 1 to 2 s on this host with ten at
+  once.
+- **Uploads already blocked on main,** less than generates: 10
+  concurrent 49 MB uploads held `/health` for up to 2.35 s. The branch:
+  0.06 s.
+- **Not a factor:** each generate returned 500 after its model call,
+  from the stand-in's minimal reply, as on 2026-11-18. It is after the
+  wait, so it does not bear on the timing.
+
+**For the Q.0 investigation** ("The backend collapses between 50 and
+100 concurrent requests"): since 2026-11-19, thirteen routes hold a
+token while they work, and two of them hold a token and a connection for
+the length of a model call. Whoever picks it up is measuring a
+threadpool in which a few generates can hold tokens for minutes.
+
+**Found on the way, not changed here:**
+- **A generate holds its database connection through the model call.**
+  `import_from_documents` reads the provider with `get_ai_provider(session)`
+  and calls `ingest_document` inside the same open transaction. On
+  Postgres that is a connection idle in transaction for minutes. Ending
+  the transaction before the call would leave a generate holding a token
+  and no connection. It needs its own test: a stand-in provider asserting
+  the session is not in a transaction when `complete()` runs.
+- **Two first uploads into a fresh bucket race.** `MinIOClient` runs
+  `_ensure_bucket()` on every request, as a head then a create. Two
+  requests that both find the bucket missing both create it, and the
+  loser raises `BucketAlreadyOwnedByYou`: one 500 in five, on the first
+  upload case of both branch runs (traceback kept from `_1119c`). It
+  predates this change, because `get_storage_client` was always a sync
+  dependency run in the threadpool. Live cannot reach it, because its
+  bucket exists. A fresh install's first concurrent uploads can. It also
+  costs a `head_bucket` round trip on every request that takes the
+  client.
+- **Every upload handler reads the whole file into memory.** Forty
+  concurrent 50 MB evidence uploads would hold 2 GB in one process. That
+  is more than wl-util-1 has free (3 GB total, about 2 GB available),
+  which is why the bench stopped at ten. `await file.read()` did the
+  same before, so this is unchanged, not new.
 
 ### The Tool Import wizard: each row a decision a person can make -- planned 2026-11-18 (`docs/PLAN-tool-import.md`), not built
 
@@ -16431,7 +16542,7 @@ request. Five things changed since this entry was written:
   - a last contributor's deactivation leaves the tool's responsibility in
     place.
 
-  The plan's Â§1 has it in full.
+  The plan's §1 has it in full.
 - **The risk, re-assessed.** A wrong bulk-accepted row no longer reaches
   a judgement a person recorded. **The remaining exposure, and the one
   the plan leads with:** responsibility written onto every unset

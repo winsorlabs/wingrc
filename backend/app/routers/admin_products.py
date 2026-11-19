@@ -618,10 +618,10 @@ def _empty_preview(problem: str) -> ImportPreviewOut:
 
 
 @router.post("/import/dry-run", response_model=ImportPreviewOut)
-async def import_dry_run(
+def import_dry_run(
     file: UploadFile = File(...), session: Session = Depends(get_session)
 ) -> ImportPreviewOut:
-    raw = await file.read()
+    raw = file.file.read()
     data, err = parse_yaml(raw)
     if err:
         return _empty_preview(err)
@@ -637,7 +637,7 @@ async def import_dry_run(
 
 
 @router.post("/import/apply", response_model=ImportApplyOut, status_code=201)
-async def import_apply(
+def import_apply(
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
     current_user: CurrentUser = Depends(require_role("msp_admin", "consultant_admin")),
@@ -647,7 +647,7 @@ async def import_apply(
     independent stateless calls; nothing ties apply to a prior dry-run
     having actually happened).
     """
-    raw = await file.read()
+    raw = file.file.read()
     data, err = parse_yaml(raw)
     if err:
         raise HTTPException(status_code=422, detail=err)
@@ -780,7 +780,7 @@ def _control_rows_out(rows: list) -> list[ControlEntryOut]:
 
 
 @router.post("/import/dry-run-structured", response_model=DocumentIngestOut)
-async def import_dry_run_structured(
+def import_dry_run_structured(
     body: dict[str, Any], session: Session = Depends(get_session)
 ) -> DocumentIngestOut:
     """Structured counterpart to /import/dry-run and the tail of
@@ -817,7 +817,7 @@ async def import_dry_run_structured(
 
 
 @router.post("/import/from-documents", response_model=DocumentIngestOut)
-async def import_from_documents(
+def import_from_documents(
     files: list[UploadFile] = File(...),
     product_key: str = Form(...),
     category: str = Form("ESP"),
@@ -882,7 +882,7 @@ async def import_from_documents(
                         f"Allowed: {sorted(_INGEST_ALLOWED_EXTENSIONS)}"
                     ),
                 )
-            data = await f.read()
+            data = f.file.read()
             if len(data) > _MAX_FILE_BYTES:
                 raise HTTPException(status_code=413, detail="File exceeds 50 MB limit")
             mime = (
@@ -987,7 +987,7 @@ async def import_from_documents(
 
 
 @router.post("/{product_id}/research/suggest-urls", response_model=SuggestUrlsOut)
-async def suggest_research_urls(
+def suggest_research_urls(
     product_id: uuid.UUID, session: Session = Depends(get_session)
 ) -> SuggestUrlsOut:
     """Ask the AI for candidate documentation URLs for this product --
@@ -1141,7 +1141,7 @@ def fetch_research_urls(
 @router.post(
     "/{product_id}/import/from-documents-with-research", response_model=DocumentIngestOut
 )
-async def import_from_documents_with_research(
+def import_from_documents_with_research(
     product_id: uuid.UUID,
     files: list[UploadFile] = File(...),
     research_document_ids: str = Form(""),
@@ -1224,7 +1224,7 @@ async def import_from_documents_with_research(
                     detail=f"File extension {ext!r} not permitted. "
                     f"Allowed: {sorted(_INGEST_ALLOWED_EXTENSIONS)}",
                 )
-            data = await f.read()
+            data = f.file.read()
             if len(data) > _MAX_FILE_BYTES:
                 raise HTTPException(status_code=413, detail="File exceeds 50 MB limit")
             mime = f.content_type or mimetypes.guess_type(raw_name)[0] or "application/octet-stream"
@@ -1424,7 +1424,7 @@ def list_documents(
 
 
 @router.post("/{product_id}/documents", response_model=ProductDocumentOut, status_code=201)
-async def upload_document(
+def upload_document(
     product_id: uuid.UUID,
     file: UploadFile = File(...),
     title: str | None = Form(None),
@@ -1441,7 +1441,7 @@ async def upload_document(
             detail=f"kind must be one of: {sorted(_VALID_DOCUMENT_KINDS)}",
         )
 
-    data = await file.read()
+    data = file.file.read()
     if len(data) > _MAX_FILE_BYTES:
         raise HTTPException(status_code=413, detail="File exceeds 50 MB limit")
 
