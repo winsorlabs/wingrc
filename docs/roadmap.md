@@ -16202,6 +16202,64 @@ document approval and review states, and the onboarding approval queue.
 This item is the rule going forward, so the next slice inherits it rather
 than rediscovering it.
 
+### Generating a baseline freezes every request -- measured 2026-11-18, not fixed
+
+**The first defect found that degrades the product for everyone at once**
+rather than reporting something wrong (the brief, 2026-11-18). It will
+matter the day there are two users.
+
+**What happens.** The Tool Import wizard's generate routes,
+`POST /admin/products/import/from-documents` and the research route, are
+`async def`. Inside the handler they call `ingest_document`, and with it
+the AI provider's synchronous `complete()`. That runs on the event loop
+itself. The image runs one uvicorn process with no `--workers`. So for
+the whole model call, which is minutes on a real CRM, no other request
+on the deployment is served: no page loads, no saves, no `/health`.
+
+**Measured, not inferred** (bench `wingrc_verify_1118e`, `cb1388f`). The
+production app served as the image serves it, with the provider
+replaced by a stand-in whose `complete()` blocks for 20 s:
+
+| `/health` | Answer |
+|---|---|
+| before, three calls | 334 ms (the first after startup), 4 ms, 3 ms |
+| sent 2 s into the generate | **18.1 s**, answered as the generate ended (+0.0 s) |
+| after | 3 ms |
+
+The reading from the code was right. TestClient cannot show this, which
+is the earlier `get_current_user` lesson. It takes a second request
+during a real blocking call.
+
+**How far it reaches: thirteen routes are `async def` over a synchronous
+`Session`.** The fourteenth `async def`, an audit middleware, does no
+blocking work.
+- **The seven in `routers/admin_products.py`.** The two that call the
+  model block for the model call. The rest block for their database and
+  storage work.
+- **The six upload routes:**
+  - `evidence.upload_evidence` and `collect_task_evidence_file`;
+  - `orgs.upload_logo`, `upload_network_diagram` and
+    `upload_data_flow_diagram`, with their shared `_upload_diagram`
+    helper;
+  - `scope.import_dry_run`.
+
+  Each blocks for its database work and its synchronous MinIO upload.
+  That is up to 50 MB of evidence, so seconds, not minutes. It is the
+  same class of defect.
+
+**The fix's shape:**
+- **Make them `def`,** as every other route is. FastAPI then runs each in
+  its threadpool, off the loop. An upload reads `file.file.read()`
+  instead of `await file.read()`.
+- **A structural test:** no route that depends on the session is a
+  coroutine. That is checkable by walking `app.routes`. Its mutation is
+  one route put back to `async def`, which must go red.
+- **The bench measurement repeated as the behavioural proof:** `/health`
+  answers in milliseconds during a blocking generate.
+
+Not started. Recorded with its measurement, ahead of the wizard's
+slices (`docs/PLAN-tool-import.md`, Â§7).
+
 ### The Tool Import wizard: each row a decision a person can make -- planned 2026-11-18 (`docs/PLAN-tool-import.md`), not built
 
 **Plan written 2026-11-18, for Jarrod to read before any slice

@@ -475,15 +475,19 @@ the held-back list is the right list.
 
 ## Observed on the way, not in scope
 
-**The wizard's routes block the event loop, by reading the code; not
-measured.** Seven routes in `routers/admin_products.py` are `async def`
-over a synchronous `Session`. The two that generate a mapping, documents
-and research, also call `ingest_document`, and with it the provider's
-synchronous `complete()`, directly inside the handler. The image runs
-one uvicorn process with no `--workers`. So while a baseline generates,
-every other request to the app should wait for the length of the model
-call. This is the shape of the earlier `get_current_user` lesson:
-TestClient cannot show it, and a concurrent request during a real
-generation would. It is its own fix: make the routes `def`, as the rest
-of the routers are. It is not part of this plan. Recorded so T.2, which
-adds more AI work to the same routes, does not deepen it unknowingly.
+**Generating a baseline freezes the whole app: measured 2026-11-18.**
+Moved to its own roadmap entry, "Generating a baseline freezes every
+request", and to the front of Â§7. The measurement, on bench
+`wingrc_verify_1118e` at `cb1388f`:
+- **Setup:** the production app as one uvicorn process, like the
+  image's CMD, with the AI provider replaced by a stand-in whose
+  `complete()` blocks for 20 s, as the synchronous model call does.
+- **Baseline:** `/health` answered in 3 to 4 ms (334 ms on the first
+  request after startup).
+- **During a generate:** `/health`, sent 2 s in, took **18.1 s**, and
+  answered the moment the generate ended (+0.0 s). Every request waits
+  out the model call, not just the generating user's.
+- **Afterwards:** 3 ms again.
+- **Not a factor:** the generate itself returned 500 after its 20.1 s,
+  from the stand-in's minimal reply. That happened after the block, so
+  it does not bear on the timing. It was not investigated.
