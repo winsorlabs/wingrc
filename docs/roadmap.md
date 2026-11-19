@@ -13398,6 +13398,81 @@ because every C and H figure in it was wrong and the prose quoted it.
 | 2026-10-29 UTC, **no deploy**: live's `07bc630` images rescanned, from JSON | 311 / 164 / 2 / 70 | 232 / 139 / 1 / 47 | 2: `libxml2` CVE-2026-6653, unreachable; `libbrotli1` CVE-2026-111497 (nginx: Alpine's `brotli-libs`, the same CVE) |
 | 2026-11-10 `0d7cd1d` (#95) | 374 / 165 / 0 / 110 | 237 / 144 / 1 / 54 | 0 |
 | **2026-11-12 `eade513` (#96 to #100), no dependency change** | **393 / 172 / 0 / 126** | **241 / 148 / 1 / 57** | 0 |
+| 2026-11-17 `6cc2377`, `8f67ee6` | 402 / 177 / 0 / 126 | 241 / 148 / 1 / 57 | 0 |
+| 2026-11-18 `6bb99da`, `f431fe5`, `08c0f17` | 411 / 180 / 0 / 126 | 241 / 148 / 1 / 57 | 0 |
+
+**Backend HIGH, attributed end to end (2026-11-18, the brief's
+question).** The brief asked whether the lock (2026-10-28) stabilised
+anything, or only moved where the drift comes from, and named three
+candidates: the advisory database, new dependencies from the SSP work,
+and the floating base image. Read from every record's Trivy JSON (the
+first is 2026-10-31, `660e113`, the first deploy after the lock), each
+pair of consecutive records split into HIGH findings on packages that
+changed and on packages that did not (`scan_attr.py`, run on the host,
+not committed):
+
+| Step | HIGH | Packages | Cause |
+|---|---|---|---|
+| 10-27 `07bc630`, the last unlocked deploy | 70 (Debian 66, Python 4) | not listed; text-only record | |
+| 10-31 `660e113`, the first locked deploy | 59 (Debian 51, Python 8) | 238 | rebuild: see below |
+| 11-03 `d0e040a` | 62 | the same 238 | +3, all advisory data |
+| 11-06 `5db1201` | 70 | the same | +8, all advisory data |
+| 11-10 `0d7cd1d` | 110 | the same | +40, all advisory data |
+| 11-12 `eade513` | 126 | the same | +16, all advisory data (above) |
+| 11-17 `6cc2377` | 126 | one swapped: `libpq5` to 17.12 | one HIGH out, one in, advisory |
+| 11-18, three deploys | 126 | the same | none |
+
+**Answers:**
+- **The advisory database is the whole rise since the lock.** From 59 to
+  126, every added HIGH landed on a package whose name and version had
+  not changed. The image held still and the data about it moved. This
+  includes 70 → 110, the part the table above left unexplained.
+- **The SSP work brought no dependency.** The package list is identical
+  across 11-10 to 11-18. `python-docx` was in the first lock (10-28), and
+  #116's only `pyproject.toml` change was a ruff ignore.
+- **The base image did not drift in this window.** Debian 13.7 and Trivy
+  0.69.3 throughout. One apt package moved (`libpq5`, 11-17), and it
+  swapped one HIGH for another.
+- **The lock deploy itself (70 → 59) cannot be fully attributed,**
+  because the 10-27 record is a text table without a package list.
+  - **Debian 66 → 51:** the same Debian 13.7 point release. The same day's
+    `d41b860` removed `gdk-pixbuf` and `shared-mime-info` (and with them
+    `libxml2`), and the rebuild took whatever the floating apt line gave.
+    It is not split between the two.
+  - **Python 4 → 8:** `pypdf` 6.21.3's three HIGH appear, and `msgpack`
+    gains a second. Whether that was versions or advisories, the old
+    record cannot say.
+
+**So the lock stabilised the packages and moved where the change comes
+from.** Since 10-31 the image's 238 packages have not moved except one
+apt package, so a count that moves now is the advisory database almost
+entirely. That makes the scan legible: a rise means something was
+learned about what is already running, not that something new arrived.
+
+**What the lock now holds back, found in the attribution:**
+- **Every Python HIGH has a fixed version published.** None arrives
+  until someone runs `make lock`. That is the lock's cost side: drift
+  stopped, and fixes stopped with it.
+- **Five of the nine Python HIGH are pip's own vendored libraries,** not
+  the app's: `msgpack` 1.1.2 ×2, `setuptools` 70.3.0, `urllib3` 2.7.0 ×2,
+  inside the locked pip 26.2.2 (its `_vendor/vendor.txt`). The app
+  imports `urllib3` 2.8.0. Trivy reports these with no path, which is
+  how they were found. Bumping `urllib3` in the lock would not clear
+  them; bumping pip would. pip is used at build time, not by the
+  running app.
+- **The rest:** `pypdf` 6.21.3 ×3 (fixed in 6.21.4) and `dnspython`
+  2.9.0 (2.9.2).
+- **117 of today's 126 are Debian packages,** under the base image's
+  floating tag and apt line.
+
+**Why "126 against a real 69–73" compared two eras.** 69–73 was the
+pre-lock range of October. 126 had already been attributed (110 → 126,
+advisory data, on 11-12) and has not moved since. What was missing was
+59 → 110, now attributed above.
+
+**Not done:** re-locking pypdf, dnspython or pip, which needs `make
+lock` and a bench run. That is a slice, not a note. Recorded here so the
+next re-lock knows what it clears.
 
 Deploys between 10-29 and 11-10 are not tabulated, so the rise to
 110 HIGH is not explained here. The 11-10 row is there as the baseline
@@ -16739,6 +16814,33 @@ So it defaulted to Customer and moved only when a tool did.
 - **Recorded, not built: a customer's say.** If customers should take
   part, the honest shape is a suggestion they raise and the MSP accepts,
   the same pattern as the RACI prompt, not a direct write.
+
+**Observation, recorded 2026-11-18 after the deploy (the brief's): the
+matrix reads as decided and was not.** On live, none of the 960 control
+states has a hand-set responsibility. Every value in the customer
+responsibility matrix is the seed default (`customer_owns`) or a tool's
+resolution.
+- **What an assessor reads:** "the customer owns this" on several hundred
+  objectives, because nobody chose, not because anybody decided.
+- **The same family as:**
+  - the readiness bars' RACI finding, where live's usage "shows the
+    default, not a decision" (2026-11-17);
+  - "The rule that nothing is met without evidence has no code behind
+    it": Met with nothing behind it.
+
+  In each, a value reads as a judgement and is a default.
+- **What `responsibility_set_by` does and does not do:** it tells a
+  chosen value from an unset one from 2026-11-18 forward. The column
+  says nothing about the 960 that predate it. History does: there was no
+  path to set responsibility before migration 0075, so each of the 960
+  is unchosen by construction, whatever anyone intended outside the
+  product. A null `set_by` on live today is therefore an accurate
+  "nobody chose" for every row. The screen does not yet say so anywhere
+  an assessor or reviewer would look; the drawer's "Not set by a
+  person" line is per objective.
+- **Not a defect and not a slice.** Before the first bundle goes to a
+  real assessor, those values should be deliberate. Whether that needs
+  more than a review pass before an assessment is Jarrod's call.
 - **The drawer** shows the value, who set it (or that nobody has: "the
   default, or the tools covering this objective"), and a select to change
   it.
