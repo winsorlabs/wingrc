@@ -16713,6 +16713,43 @@ result are the new work.
       when it is killed, other people's included. That is a backend
       restart instead of a database failure, not no failure. Streaming
       remains the fix.
+    - **Raised to 1.5 GiB the same evening, sized by the heaviest real
+      request** (Jarrod: 1 GiB was sized against idle and an upload storm,
+      neither of which is the heaviest thing the backend does). Bench
+      `wingrc_verify_gen` at `b7b6894`: the production app in its own
+      process with a stand-in provider returning a maximum-size reply
+      (66 KB). The request was a generate with research: two 48 MB PDFs
+      (393k characters extracted, under the 600k cap so the model call is
+      reached) and four research pages.
+
+      | Run | Status | Process peak | Resident after |
+      |---|---|---|---|
+      | idle | | | 144 MiB |
+      | with research | 200, 18.0 s | 418 MiB | 373 MiB |
+      | the same again | 200, 17.8 s | 581 MiB | 398 MiB |
+      | documents only | 200, 9.6 s | 536 MiB | 490 MiB |
+
+      - About 440 MiB above idle per worst-case generate. Resident memory
+        ratchets: what `pypdf` parsing takes is not handed back.
+      - The model payloads are small by construction (a 600k-character
+        prompt, a 16,384-token reply), so the stand-in leaves out little.
+        Live's own high-water since 16:12 that day, through Jarrod's real
+        generate on an ordinary CRM, was 234 MiB.
+      - On live (idle about 210 MiB) one worst case peaks near 650 to
+        800 MiB, under 1 GiB but not far from it. A second at once, a
+        dozen evidence uploads beside it, or the ratchet would cross it.
+        1.5 GiB holds those. With the rest of the host's containers
+        (about 0.3 GB) and the OS, it stays inside 3.5 GB.
+      - The container's cgroup peak (1.27 GB) was not used: it counts page
+        cache, and the bench's PDF generation ran in the same container.
+    - **The worker, which has no limit, runs the same image.** Its
+      high-water on live was 138 MiB (scheduled jobs: the Liongard sync,
+      review cycles, digests). When generate becomes a background job
+      (the "Where this is going" item above), the measurement above moves
+      with it: the worker's limit is then idle plus about 450 MiB per job
+      it runs at once, plus the ratchet. One job at a time means 1 GiB;
+      two means 1.5 GiB. That number is the slice's, because the slice
+      chooses the concurrency.
   - **Corrected the same evening: 105 MB is one route's limit, not every
     route's.** The wording above, written for #128, read
     `client_max_body_size 105m` as the bound on every upload. It is set

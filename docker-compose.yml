@@ -149,12 +149,19 @@ services:
     # OOM killer chooses the victim, and Postgres scored 669 against the
     # backend's 694: close enough to be its choice. With one, the kill is
     # this container's own and can only take the backend, which restarts.
-    # 1g is about five times its idle 212 MiB and fifteen 51 MB uploads at
-    # once. Swap equal to it, so the container is killed rather than
-    # pushing a gigabyte into the host's swap first and slowing the
-    # database with it. A larger host raises it with WINGRC_BACKEND_MEMORY.
-    mem_limit: ${WINGRC_BACKEND_MEMORY:-1g}
-    memswap_limit: ${WINGRC_BACKEND_MEMORY:-1g}
+    # Sized by the heaviest real request, not by idle: a two-file
+    # generate with research (two 48 MB PDFs, four research pages, a
+    # maximum-size reply) peaked at 418 MiB in a process idling at 144,
+    # and at 581 on the second run, because what pypdf parsing takes is
+    # not handed back (bench, 2026-11-19). That is about 440 MiB above
+    # idle, so one on live (idle about 210 MiB) peaks near 650 to 800.
+    # 1.5g holds one of those with two more in flight, or one with a dozen
+    # 51 MB evidence uploads; 1g held only the one. Swap equal to it, so
+    # the container is killed rather than pushing that much into the host's
+    # swap first and slowing the database with it. A larger host raises it
+    # with WINGRC_BACKEND_MEMORY.
+    mem_limit: ${WINGRC_BACKEND_MEMORY:-1536m}
+    memswap_limit: ${WINGRC_BACKEND_MEMORY:-1536m}
     depends_on:
       db:
         condition: service_healthy
