@@ -19398,11 +19398,14 @@ setting, never the outcome, so it could not show the difference.
 **Rotation at keep, on live: both halves of the fixed retention have
 run in production (recorded 2026-11-17).** Below keep the fixed code
 takes the clamped path and rotates nothing, as the 2026-11-09 and
-2026-11-10 runs showed (9 kept, then 11). At keep it rotates exactly one
+2026-11-10 runs showed: 9 kept, then 10 at the 11-10 nightly run (its log
+line, read 2026-11-19), and 11 after that day's pre-deploy run. At keep
+it rotates exactly one
 per new snapshot. That half had first run on live by 2026-11-14, earlier
 than the brief that asked for this record supposed:
 
-- **Inferred from the ids, three nightly runs (2026-11-14, 11-15, 11-16):**
+- **Inferred from the ids, three nightly runs (2026-11-14, 11-15, 11-16),
+  confirmed by the log on 2026-11-19 (below):**
   - 11-09's by-hand run left 9 sets;
   - the nightly runs and a pre-deploy run on 11-10 through 11-13 brought
     that to 14;
@@ -19420,16 +19423,45 @@ than the brief that asked for this record supposed:
   check after #102 merged: "11-17 should delete `20261105T031703Z`." It
   came from the pre-deploy run rather than the nightly one, because the
   pre-deploy run came first.
-- **Inferred, the 2026-11-17 nightly run (03:17 UTC):** `20261117T031704Z`
+- **Inferred, the 2026-11-17 nightly run (03:17 UTC), confirmed by the
+  log on 2026-11-19:** `20261117T031704Z`
   was added and `20261105T213011Z` is gone. At 13:38 UTC the directory
   held 14 sets, `20261106T031704Z` to `20261117T031704Z`, and `/health`
   read 14.
 
 **So the question raised on 2026-11-17 is closed:** the count reached 14
-and stays there, losing one set, the oldest, per new snapshot. The 11-17
-record is the only rotation whose output was read. The other four rest
-on the ids alone, and the cron log is what would make them directly
-readable (the carried "cron log path" walk).
+and stays there, losing one set, the oldest, per new snapshot.
+
+**The cron log, read 2026-11-19: all four inferences confirmed, none
+contradicted.** The nightly runs were in root's crontab, logging to
+`/root/wingrc-snapshots.log` (#123). Jarrod copied it, readable, to
+`/tmp/wingrc-snapshots.root.log`. In each run the `rotated out` and
+`kept` lines print before that run's `snapshot` line.
+
+| Nightly run | Log: rotated out | Log: kept | The entry inferred |
+|---|---|---|---|
+| 11-13 | nothing | 14 | reached 14 |
+| 11-14 | `20261103T030437Z` | 14 | the same set |
+| 11-15 | `20261103T031703Z` | 14 | the same set |
+| 11-16 | `20261104T031704Z` | 14 | the same set |
+| 11-17 | `20261105T213011Z` | 14 | the same set |
+| 11-18 | `20261106T140057Z` | 14 | (after this entry) |
+| 11-19 | `20261110T172728Z` | 14 | (after this entry) |
+
+- **Before keep:** the 11-10 nightly printed 10 kept, 11-11 printed 12 and
+  11-12 printed 13. These are the counts the entry's "brought that to 14"
+  passes through.
+- **The one count the log sharpened:** this entry said "(9 kept, then
+  11)" for 11-09 and 11-10, without naming which 11-10 run. The nightly
+  printed 10, and the 11 followed that day's pre-deploy run. That run is
+  not in root's log, so its 11 is not read from it.
+- **The by-hand runs are not in this log,** which holds the cron's runs
+  only. 11-17's pre-deploy rotation stays recorded from its own output
+  (above).
+- **Root's line still ran on 2026-11-19 at 03:17.** The move to
+  wladmin's crontab is checked by the first 03:17 run that writes
+  `/home/wladmin/wingrc-snapshots.log` with no new run in root's log.
+  At 15:40 UTC on 11-19, that file did not yet exist.
 
 **The fix:** clamp the start at zero. `test_plan_rotates_only_beyond_keep_at_every_count`
 writes out the counts 0, 1, 7, 8, 12, 13, 14 and 15, with the expected
