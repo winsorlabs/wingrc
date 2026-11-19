@@ -2675,7 +2675,7 @@ input[type="text"]:focus { border-color: var(--primary); box-shadow: 0 0 0 2px r
 .ssp-pick-option input { margin-top: 0.3rem; }
 .ssp-pick-text { display: block; max-width: 75ch; }
 
-/* â”€â”€ Tool Import review (docs/PLAN-tool-import.md, T.1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+/* -- Tool Import review (docs/PLAN-tool-import.md, T.1) -------------------
    No new background: the banner is .form-info-banner's, wrong rows keep
    .needs-decision and disclaimed rows .disclaim-flag-row. The one new pair
    is the muted "to decide" marker on those tints, measured 2026-11-19
