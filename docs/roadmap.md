@@ -16231,8 +16231,9 @@ is the earlier `get_current_user` lesson. It takes a second request
 during a real blocking call.
 
 **How far it reaches: thirteen routes are `async def` over a synchronous
-`Session`.** The fourteenth `async def`, an audit middleware, does no
-blocking work.
+`Session`.** Of the fifteen `async def`s in the routers and `main.py`,
+the other two are the diagram routes' shared helper and an audit
+middleware that does no blocking work.
 - **The seven in `routers/admin_products.py`.** The two that call the
   model block for the model call. The rest block for their database and
   storage work.
