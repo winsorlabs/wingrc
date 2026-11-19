@@ -16568,6 +16568,38 @@ first):
   "fixed the connection hold" would expect the cliff to move, and it did
   not.
 
+**On live, a real generate (2026-11-19, #125 and #126 deployed).** Jarrod
+ran a CRM generation from a vendor document through
+`/admin/products/import/from-documents`, and opened an assessment's board
+while it ran. Read from nginx's and the backend's logs with completion
+timestamps, a 1-second `/health` poll through nginx, and a 5-second
+`pg_stat_activity` sample:
+
+| | Bench stand-in (`_1119d`/`_1119e`) | Live, real model call |
+|---|---|---|
+| Generate's length | 20 s, a fixed sleep | **154 s** (18:06:38 to 18:09:12), 200 |
+| `/health` during it | worst 0.05 s | 154 polls, all 200; mean 0.010 s, worst 0.185 s |
+| Other requests during it | not run | 34 board requests, all 200 |
+| Connection idle in a transaction | 0 | 0 in 34 samples |
+
+- **154 s is what the deployment would have been frozen for before
+  #125:** every request, `/health` included, held until 18:09:12. It is
+  half of the route's 300 s `proxy_read_timeout`, on one document.
+- **The board was served during it.** Between 18:08:51 and 18:08:57 the
+  dashboard, `control-states` and one control's objectives (statements,
+  RACI, contacts, evidence, archived evidence, lists, documents) completed,
+  all 200, while the generate had 15 s left to run. That they were served
+  is read from their completion times. How long each took is not
+  recorded: nginx's log format has no `$request_time`.
+- **The worst `/health`, 0.185 s, was at 18:06:39,** the second the upload
+  arrived and the document was parsed (the parser's warnings are stamped
+  18:06:38). The other 153 were at or under 0.03 s. One sample, not
+  investigated further.
+- **The connection result holds on live.** None of the 34 samples in the
+  window had a connection idle in a transaction. Three single samples
+  earlier in the day did (16:15, 16:53, 18:03), outside any generate; what
+  held them was not identified.
+
 **Where this is going: a model call holds no request-handling resource
 at all** (the brief, 2026-11-19). The two changes above are steps toward it.
 The first took the wait off the event loop, and the second freed the
@@ -16585,6 +16617,30 @@ request hand it a job, so the queue, the job's record and delivering the
 result are the new work.
 
 **Found on the way, not changed here,** in the order to take them:
+- **On live, an evidence file over 1 MB is refused by nginx** (found
+  2026-11-19, during the generate above). Jarrod's evidence upload of
+  4,222,224 bytes got a bare 413 three times (18:09:07, :21, :42), from
+  nginx, never reaching the backend.
+  - `client_max_body_size 105m` is set on one location only,
+    `= /api/admin/products/import/from-documents`
+    (`deploy/nginx/nginx.conf`, 2fbdde3, 2026-09-15). Every other route
+    goes through `location /api/`, which sets none, so nginx's default of
+    1 MB applies.
+  - That reaches every upload route but that one: evidence, task collect,
+    the org logo, the network and data-flow diagrams, the scope workbook,
+    the SSP import, the baseline YAML import, a product's vendor
+    documents, and `from-documents-with-research`. The app's 50 MB cap
+    (`_MAX_FILE_BYTES`) never runs above 1 MB on a deployment behind this
+    nginx. The comment beside the setting names that exact outcome, "a
+    confusing bare 413", as the reason for it; it was fixed on the one
+    route that prompted it.
+  - `from-documents-with-research` and the two research routes also keep
+    `/api/`'s 60 s `proxy_read_timeout`, against 154 s for the generate
+    above. By the config they would get a 504 while the backend carries
+    on. Not measured.
+  - **It is a broken feature on live, not a capacity risk,** which is why
+    it is first. It is tied to the next finding: raising the limit for
+    every route before uploads stream turns that one on for every route.
 - **Every upload handler reads the whole file into memory. That is how a
   deployment falls over on a busy day, with no attacker needed** (the
   brief, 2026-11-19; the ceiling corrected the same day).
@@ -16592,10 +16648,21 @@ result are the new work.
     after the read (`data = file.file.read()`, then `len(data)`), so the
     handler already holds whatever arrived before it refuses.
   - **The ceiling is nginx's limit times concurrency.** nginx's
-    `client_max_body_size 105m` is the only thing that bounds one request.
-    Forty concurrent uploads at that limit hold 4.2 GB, against about
+    `client_max_body_size` is the only thing that bounds one request.
+    Forty concurrent uploads at 105 MB hold 4.2 GB, against about
     2 GB free on wl-util-1 (3 GB total). An earlier wording here, at
-    50 MB, put it at 2 GB, half the real ceiling.
+    50 MB, put it at 2 GB.
+  - **Corrected the same evening: 105 MB is one route's limit, not every
+    route's.** The wording above, written for #128, read
+    `client_max_body_size 105m` as the bound on every upload. It is set
+    only on `from-documents`, an msp_admin and consultant_admin route.
+    Every other route is held to nginx's 1 MB default (the finding
+    above), so on today's nginx the 4.2 GB needs forty concurrent
+    generates from that route, and forty evidence uploads hold about
+    40 MB. The bench reached its 49 MB uploads straight at the backend,
+    not through nginx, so it could not show this. The 4.2 GB is the
+    ceiling once the 1 MB limit is lifted, which is why the two are
+    taken together.
   - The bench stopped at ten concurrent 49 MB uploads for this reason.
   - On a host with less free memory than its busiest moment needs, memory
     runs out. WinGRC does not choose what the kernel kills then, and the
