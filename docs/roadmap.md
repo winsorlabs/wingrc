@@ -16265,10 +16265,127 @@ document approval and review states, and the onboarding approval queue.
 This item is the rule going forward, so the next slice inherits it rather
 than rediscovering it.
 
-### The Tool Import wizard: each row a decision a person can make -- not built, queued behind S
+### Generating a baseline freezes every request -- measured 2026-11-18, not fixed
 
-**Not built, and no scaffolding.** This is a planned entry only. When it
-is picked up it gets its own plan doc and its own prompt. One thing gates
+**The first defect found that degrades the product for everyone at once**
+rather than reporting something wrong (the brief, 2026-11-18). It will
+matter the day there are two users.
+
+**What happens.** The Tool Import wizard's generate routes,
+`POST /admin/products/import/from-documents` and the research route, are
+`async def`. Inside the handler they call `ingest_document`, and with it
+the AI provider's synchronous `complete()`. That runs on the event loop
+itself. The image runs one uvicorn process with no `--workers`. So for
+the whole model call, which is minutes on a real CRM, no other request
+on the deployment is served: no page loads, no saves, no `/health`.
+
+**Measured, not inferred** (bench `wingrc_verify_1118e`, `cb1388f`). The
+production app served as the image serves it, with the provider
+replaced by a stand-in whose `complete()` blocks for 20 s:
+
+| `/health` | Answer |
+|---|---|
+| before, three calls | 334 ms (the first after startup), 4 ms, 3 ms |
+| sent 2 s into the generate | **18.1 s**, answered as the generate ended (+0.0 s) |
+| after | 3 ms |
+
+The reading from the code was right. TestClient cannot show this, which
+is the earlier `get_current_user` lesson. It takes a second request
+during a real blocking call.
+
+**How far it reaches: thirteen routes are `async def` over a synchronous
+`Session`.** Of the fifteen `async def`s in the routers and `main.py`,
+the other two are the diagram routes' shared helper and an audit
+middleware that does no blocking work.
+- **The seven in `routers/admin_products.py`.** The two that call the
+  model block for the model call. The rest block for their database and
+  storage work.
+- **The six upload routes:**
+  - `evidence.upload_evidence` and `collect_task_evidence_file`;
+  - `orgs.upload_logo`, `upload_network_diagram` and
+    `upload_data_flow_diagram`, with their shared `_upload_diagram`
+    helper;
+  - `scope.import_dry_run`.
+
+  Each blocks for its database work and its synchronous MinIO upload.
+  That is up to 50 MB of evidence, so seconds, not minutes. It is the
+  same class of defect.
+
+**The fix's shape:**
+- **Make them `def`,** as every other route is. FastAPI then runs each in
+  its threadpool, off the loop. An upload reads `file.file.read()`
+  instead of `await file.read()`.
+- **A structural test:** no route that depends on the session is a
+  coroutine. That is checkable by walking `app.routes`. Its mutation is
+  one route put back to `async def`, which must go red.
+- **The bench measurement repeated as the behavioural proof:** `/health`
+  answers in milliseconds during a blocking generate.
+
+Not started. Recorded with its measurement, ahead of the wizard's
+slices (`docs/PLAN-tool-import.md`, Â§7).
+
+### The Tool Import wizard: each row a decision a person can make -- planned 2026-11-18 (`docs/PLAN-tool-import.md`), not built
+
+**Plan written 2026-11-18, for Jarrod to read before any slice
+(`docs/PLAN-tool-import.md`).** Re-read at `8381328`, the brief's
+request. Five things changed since this entry was written:
+
+- **Ten columns, not eleven.** `candidate_state` went with migration
+  0072 (corrected in the list below).
+- **`_run_loop` today:**
+  - a status a person judged is asked about (#81);
+  - a responsibility a person set is asked about (#119);
+  - a responsibility nobody set is still written at once, with nobody
+    asked;
+  - a last contributor's deactivation leaves the tool's responsibility in
+    place.
+
+  The plan's Â§1 has it in full.
+- **The risk, re-assessed.** A wrong bulk-accepted row no longer reaches
+  a judgement a person recorded. **The remaining exposure, and the one
+  the plan leads with:** responsibility written onto every unset
+  objective at activation (956 of live's 960 on 2026-11-18). It prints in
+  the CRM and the SSP PDF at any status, and deactivation does not undo
+  it.
+- **Two modes and three ways in,** each reviewed differently:
+  - **yaml:** the author's values, reviewed as the four-column diff, with
+    no recommendation and no bulk accept;
+  - **documents:** the model's proposal, in the editable table;
+  - **Edit Baseline Mapping:** current values, the only route to
+    research.
+- **The model never fills coverage basis today, by design**
+  (`baseline.py`), and a recommendation reverses that. And the product's
+  AI provenance arrives in client-supplied YAML, so row provenance must
+  be written by the server from a run it holds.
+
+**The held-back list, as planned** (built in slice T.3; this list is
+replaced by the list as built then):
+- H1 research and the CRM disagree;
+- H2 no verified source;
+- H3 `customer_system` where every citation describes the vendor's own
+  platform;
+- H4 the recommendation changes an existing value;
+- H5 `provider_satisfies` with `customer_system` without a verified
+  vendor citation.
+
+Proposed, for Jarrod: H6 the row's own text reads as a disclaim, H7
+`assists` without a verified citation, H8 a validation problem.
+
+A citation counts only if the code finds its quote in the named source.
+No confidence score.
+
+**Jarrod's answers, 2026-11-18:**
+- **The model recommends coverage basis, and a recommended coverage basis
+  is never bulk-accepted.** Every one goes to individual review, so bulk
+  accept works per field: it settles classifications, completes
+  `customer_owns` rows, and never sets a coverage basis.
+- **Activation asks once before recording Provider on an unset
+  responsibility:** one summary per activation ("This will record
+  Provider for 38 objectives"), list expandable, one confirm, in the
+  existing dialog. That is slice A.1, which closes the remaining
+  exposure rather than labelling it.
+
+**The original entry follows, unchanged except the column list.** One thing gates
 it: **what the magic loop does with `classification` and
 `coverage_basis` when a product goes active.** That was settled on
 2026-11-02 by reading the code at `ca4b78d`, below. Read
@@ -16276,7 +16393,9 @@ it: **what the magic loop does with `classification` and
 here is only as true as that answer, and the loop has changed before.
 
 **The request (Jarrod, 2026-11-02).** The wizard's review step
-(`ToolImportWizard.tsx`) is a table of eleven columns:
+(`ToolImportWizard.tsx`) was a table of eleven columns (ten since
+migration 0072 removed Candidate state, 2026-11-03; corrected
+2026-11-18):
 
 - Control(s)
 - Source
@@ -16286,7 +16405,6 @@ here is only as true as that answer, and the loop has changed before.
 - Customer action
 - Scope note
 - Coverage basis
-- Candidate state
 - Objectives
 - Evidence
 
