@@ -16690,6 +16690,29 @@ result are the new work.
     about 2 GB free: the ceiling this item exists for is now reachable on
     live by evidence uploads alone, which is why streaming is next.
     `from-documents`' 101 MB is msp_admin and consultant_admin only.
+  - **The guard until streaming: the backend has a memory limit**
+    (`backend-memory-limit`, 2026-11-19, Jarrod's request). What happens
+    at the ceiling mattered more than the number:
+    - **Before:** no container on live had a limit, so the host's OOM
+      killer would choose. Postgres's main process scored 669 against the
+      backend's 694, close enough to be chosen. Measured on live: 3.5 GB
+      total, 2.3 GB available, a 2 GB swap file, the backend at 212 MiB.
+    - **Now:** `mem_limit` 1g with `memswap_limit` equal, so the OOM is
+      the backend's own cgroup's. It kills the backend, which restarts,
+      and never reaches Postgres. Equal swap means no swap for the
+      container, so it is killed rather than thrashing the host's swap
+      under the database. `WINGRC_BACKEND_MEMORY` raises it on a larger
+      host. `tests/test_compose_memory.py` holds both settings.
+    - **Bench `wingrc_verify_mem` at `01d148a`, straight to the backend.**
+      One 50 MiB evidence upload: 201. Then thirty concurrent 50 MiB
+      uploads: 12 returned 201 and 18 lost their connection. Docker logged
+      `oom`, `die`, `start` for the backend: one restart, healthy after.
+      Postgres kept the same start time and 0 restarts, and answered
+      (13 evidence rows).
+    - **What it costs:** every request in flight on the backend fails
+      when it is killed, other people's included. That is a backend
+      restart instead of a database failure, not no failure. Streaming
+      remains the fix.
   - **Corrected the same evening: 105 MB is one route's limit, not every
     route's.** The wording above, written for #128, read
     `client_max_body_size 105m` as the bound on every upload. It is set
