@@ -389,6 +389,8 @@ in the slice that adds it (CLAUDE.md).
 - **First: the event-loop measurement** ("Observed on the way", at the
   end). If generation freezes every request, its fix comes before
   anything here, because it degrades the deployment for everyone at once.
+  It did, and the fix was built first (2026-11-19, the roadmap entry
+  "Generating a baseline froze every request").
 - **A.1. Activation asks once before recording Provider on unset
   responsibilities** (§2's decision).
   - The summary goes in the existing activation dialog, with the same
@@ -476,8 +478,8 @@ the held-back list is the right list.
 ## Observed on the way, not in scope
 
 **Generating a baseline freezes the whole app: measured 2026-11-18.**
-Moved to its own roadmap entry, "Generating a baseline freezes every
-request", and to the front of Â§7. The measurement, on bench
+Moved to its own roadmap entry, "Generating a baseline froze every
+request" (fixed 2026-11-19), and to the front of §7. The measurement, on bench
 `wingrc_verify_1118e` at `cb1388f`:
 - **Setup:** the production app as one uvicorn process, like the
   image's CMD, with the AI provider replaced by a stand-in whose
