@@ -34,6 +34,41 @@ the evidence carried. They were:
 
 Checking caught every one.
 
+**What `claude` can do on wl-util-1, from 2026-11-18 (the brief's
+correction).** These are two different sentences:
+- **`claude` cannot `sudo`.** It has no password, and no passwordless
+  rule.
+- **`claude` is root-equivalent through docker.** It is in the `docker`
+  group. A container that mounts the host filesystem acts as root, with
+  no `sudo` involved (`docs/bench-stack-verification.md` has said so
+  since the account was made).
+
+This file has used the first sentence to imply the second is false.
+"Needs sudo, which `claude` lacks, so Jarrod" describes a boundary that
+does not exist. The instances:
+- item W's `.env` row and its open `chown`;
+- item S's "the `claude` account cannot read that crontab";
+- the snapshot cron's log on 2026-11-18, in a message rather than this
+  file. That one was framed better, as declined rather than impossible.
+
+The brief also named the `amcheck` decision. Its record does not use the
+`sudo` framing: it was declined as a write to live outside an audited
+command. It is left as it is.
+
+**What the arrangement relies on is a convention, not a mechanism:**
+`claude` does not go around a file permission because it technically
+can. On 2026-11-18 it did not read root's snapshot log through docker,
+for that reason. The convention has not always held. A September 2026
+deploy (the Liongard inventory-visibility entry under Done, about
+2026-09-14) ran `git pull` and the build through a `docker:27-cli`
+container, because `claude` could not read the live checkout. That is
+the same move, made then without comment.
+
+**So the next decision is framed honestly.** "Jarrod must do this because
+`claude` can't" is usually "Jarrod should do this because `claude`
+shouldn't". The second is the true sentence: the line is one of
+permission, not of capability. No decision already taken changes.
+
 ---
 
 ## Done
@@ -12416,10 +12451,55 @@ Not scoped. Recorded so a CI-green slice is not read as a tested image.
 Jarrod watching (below).** Deployed at `d0e040a` on Jarrod's go-ahead. The first two
 snapshots were taken by hand that night, one by Jarrod and one by Claude
 (`20261103T025845Z`, `20261103T030437Z`), and `/health` read `ok`. The
-schedule is a line in `wladmin`'s crontab (`17 3 * * *`, host time UTC),
-his choice of account, installed by him. The `claude` account cannot
-read that crontab; its first run is seen instead as
-`20261103T031703Z`, the third snapshot.
+schedule is a line in a crontab (`17 3 * * *`, host time UTC), installed
+by Jarrod. Its first run is seen as `20261103T031703Z`, the third
+snapshot.
+
+**The crontab was root's, not `wladmin`'s (found 2026-11-18, on Jarrod's
+walk).** This entry and `docs/deployment.md` said `wladmin`'s from
+2026-11-03 to 2026-11-18.
+- **How:** Jarrod added the line while `su`'d to root, so `crontab -e`
+  edited root's crontab.
+- **Where the log went:** `$HOME` in the line expanded to `/root`, so the
+  log is `/root/wingrc-snapshots.log`, owned by root, and the log path
+  the docs gave never existed (the carried "cron log path" walk).
+- **Nothing broke.** The job ran correctly all along.
+
+**The shape: two checks, each right about what it measured, and a third
+observation to reconcile them.**
+- **The configuration check** looked for the right thing in the wrong
+  place: `crontab -l` as `wladmin` said "no crontab for wladmin".
+- **The effect check** proved the job ran: a set every night at 03:17,
+  `/health` fresh, the rotations on 2026-11-17.
+
+Read alone, either check misleads. The configuration check says the job
+is not scheduled. The effect check says the job is scheduled as
+documented. A third observation, where the log lives, is what
+reconciled them. An effect check proves *that* something runs, not
+*where* or *as whom*.
+
+**Moved to `wladmin`'s crontab (Jarrod's decision, 2026-11-18, on
+Claude's recommendation).**
+- **What does not change.** Snapshot files are written by the
+  container's uid 10001 into a 0700 directory, whoever starts the job.
+  `wladmin` is in the `docker` group, which is root-equivalent, so the
+  job's reach through docker is the same either way.
+- **What changes:**
+  - **Root no longer runs a file others can write.** In the live
+    checkout `deploy/snapshot.sh` is owned by `claude`, group `wladmin`,
+    mode 775. Every account that can write it today is already in
+    `docker`, so nobody gained privilege through it. But a future
+    `wladmin`-group member without `docker` would have had root at the
+    next 03:17.
+  - **A bug runs with less.** The script's host-side steps (`cd`,
+    `docker compose config`, `python3`, the log write) ran as root.
+  - **The log can be read and the docs become true.** The log lands at
+    `/home/wladmin/wingrc-snapshots.log`, which `claude` can read
+    through the `wladmin` group.
+- **Order:** root's line is removed before `wladmin`'s is added, both
+  before 03:17 UTC, so no night runs twice. Root's log is copied to
+  `wladmin`'s path, so the history continues, and the original is kept
+  in place as evidence.
 
 **The staleness alarm caught a real event (2026-11-09): the first alarm
 in this product to do so.** wl-util-1 went down uncleanly at about
@@ -12655,7 +12735,8 @@ that happened. What would stop it:
 
 A dirty tree matters only when it touches those two files. The only
 signal is the banner, up to 50 hours later: a failed run writes only to
-`wladmin`'s `~/wingrc-snapshots.log`. Not a fix, only so that a broken
+`wladmin`'s `~/wingrc-snapshots.log` (root's `/root/wingrc-snapshots.log`
+until 2026-11-18; item S's status above). Not a fix, only so that a broken
 deploy's reach is known in advance.
 
 **Jarrod's decisions (2026-11-01), both deliberate:**
@@ -14305,7 +14386,10 @@ proves nothing, because that was already true before the fix.
   banner would have almost nothing left to warn about.
 
 **Open:**
-- `chown wladmin .env` on live, which needs sudo -- Jarrod, as `wladmin`.
+- `chown wladmin .env` on live -- Jarrod, as `wladmin`. That is a line of
+  permission, not of capability: `claude` could do it through docker
+  and should not ("What `claude` can do on wl-util-1", at the top of this
+  file).
 
 **Editing live config: check the file afterwards.** Removing the stale
 `.env` line on 2026-10-23 used `sed -i` as `claude`. `sed -i` writes a
@@ -15041,13 +15125,20 @@ fail, `is_populated`'s exact match) and the first a person found by
 hitting it. The deliverable is a list and one loud check per row, not a
 monitoring build-out.
 
+**Who can act on a row (corrected 2026-11-18).** Where a row says a step
+is Jarrod's, the reason is permission, not capability. `claude` cannot
+`sudo`, but it is root-equivalent through the `docker` group. So
+"`claude` lacks sudo" never made a step impossible for it. It made the
+step one `claude` should not take ("What `claude` can do on wl-util-1",
+at the top of this file).
+
 | Thing | Expires / rotates | What says so | State |
 |---|---|---|---|
 | TLS certificate, `dev.wingrc.us` + `storage.dev.wingrc.us` | 90 days (Let's Encrypt), renewed by hand | `tls_expiry_check` banner for msp_admin inside 30 days; `deploy/tls/check-expiry.sh` on the host | ✅ 2026-10-17 -- alarm deployed (`c524b2d`) and shown red against the real expired certificate first; renewed the same day (expires 2027-01-15, fingerprint `09:50:5D:26…` on both names), after which the check read 89 days and the banner cleared. Both directions exercised on live, not a fixture. Next due: banner from 2026-12-16 |
 | `wingrc.us` domain registration (DNSimple) | yearly | nothing in WinGRC; DNSimple's own renewal mail | unchecked -- confirm auto-renew is on |
 | Integrations credentials: `ai`, `liongard`, `smtp` | whatever the issuer sets (an API key's expiry is set at the provider, not here) | a failing test-connection, or a failed job -- after the fact | unchecked; record each issuer's expiry date beside the connection |
 | Fernet key (`WINGRC_CREDENTIAL_ENCRYPTION_KEYS`, label `prod-wl-util-1-2026-09-11`) | never expires; rotation is a deliberate act (key versions exist) | n/a | no expiry; rotation procedure undocumented |
-| `wingrc_app` database password | never expires | n/a | **Finding 2026-10-23: its copy in live's `.env` was world-readable.** The password was generated into a mode-600 file, applied through stdin and never printed (the cutover's Done entry; a 2026-10-23 audit printed only its length). But `.env`, which carries it in `WINGRC_DATABASE_URL`, sat at mode 664 in the same directory. For how long is not recorded; `sed -i` keeps the mode, so the 664 predates the 2026-10-23 edit. What actually kept other accounts out was `/home/wladmin` at 750, a parent directory's mode nobody set for this. The host has no accounts besides `wladmin` and `claude`, and both are in group `wladmin`, so no other login account could have read it (root aside). Mode set to 640 on 2026-10-23. The owner is still `claude` (the `sed -i` lesson under the item "The compose file ships default credentials"), and returning it to `wladmin` needs sudo, which `claude` lacks. **Not rotating:** no reader outside the two accounts that already hold it was possible, and its other copies are where they belong (`.wingrc_app_pw` at 600, `pg_authid`, the backend and worker environments; a search of `/home/claude` and `/home/wladmin` found no others). Rotating would be housekeeping with a short connection-error window, not a fix. Open: `chown wladmin .env` on live, Jarrod as `wladmin`. The guide specifying `.env` as 600 or 640 is part of the fix in the item "The compose file ships default credentials" |
+| `wingrc_app` database password | never expires | n/a | **Finding 2026-10-23: its copy in live's `.env` was world-readable.** The password was generated into a mode-600 file, applied through stdin and never printed (the cutover's Done entry; a 2026-10-23 audit printed only its length). But `.env`, which carries it in `WINGRC_DATABASE_URL`, sat at mode 664 in the same directory. For how long is not recorded; `sed -i` keeps the mode, so the 664 predates the 2026-10-23 edit. What actually kept other accounts out was `/home/wladmin` at 750, a parent directory's mode nobody set for this. The host has no accounts besides `wladmin` and `claude`, and both are in group `wladmin`, so no other login account could have read it (root aside). Mode set to 640 on 2026-10-23. The owner is still `claude` (the `sed -i` lesson under the item "The compose file ships default credentials"). Returning it to `wladmin` is Jarrod's as `wladmin`, because `claude` should not, not because it cannot: `claude` cannot `sudo`, but it is root-equivalent through docker (corrected 2026-11-18; this row said "needs sudo, which `claude` lacks", and "What `claude` can do on wl-util-1" at the top of this file has the correction). **Not rotating:** no reader outside the two accounts that already hold it was possible, and its other copies are where they belong (`.wingrc_app_pw` at 600, `pg_authid`, the backend and worker environments; a search of `/home/claude` and `/home/wladmin` found no others). Rotating would be housekeeping with a short connection-error window, not a fix. Open: `chown wladmin .env` on live, Jarrod as `wladmin`. The guide specifying `.env` as 600 or 640 is part of the fix in the item "The compose file ships default credentials" |
 | Owner (`wingrc`) database password | never expires | n/a | **Decided 2026-10-23: change it, as part of the item "The compose file ships default credentials", not separately.** Its value is the compose default, which is public in the repo, so it is known to anyone who reads it. Exposure is limited (the db port is unpublished and `pg_hba` wants `scram-sha-256` off-host), but the role bypasses RLS. Changing `POSTGRES_PASSWORD` does nothing to an initialised volume, so the change is an `ALTER ROLE wingrc` plus `WINGRC_MIGRATION_DATABASE_URL` and a recreate of backend and worker. That procedure is the item's to write once |
 | API token in `.scratch/hit_live_endpoint.py` (wl-dt26) | n/a | n/a | **Closed 2026-10-23.** Dead: no `api_token` row on live matches its hash. The row was deleted on 2026-09-07 with its user, unaudited (the audit Done entry's concrete case). The file was deleted 2026-10-23 |
 | Entra SSO client secret | up to 24 months, set in Entra | nothing | not configured on live; becomes a row the day it is |

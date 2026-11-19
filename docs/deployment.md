@@ -640,6 +640,15 @@ for an account in the `docker` group, for example
 On a deployment where snapshots are being turned on, add it in the same
 session as the deploy (see the banner, below).
 
+**Add it as that account, not root.** `crontab -e` edits the crontab of
+whoever runs it. Under `su` or `sudo -s` that is root's, and `$HOME`
+then sends the log to `/root`. Root needs no more than the docker group
+gives, and it would run a script that others may be able to write.
+Afterwards, `crontab -l` as the account should print the line. On
+dev.wingrc.us the line sat in root's crontab from 2026-11-03 to
+2026-11-18, and nobody noticed, because the job ran
+(`docs/roadmap.md`, item S).
+
 **The stale limit and the retention count assume that schedule is daily,
 and nothing connects them to it.** The limit is a constant, 50 hours, not
 derived from the schedule. The schedule is a line in the host's crontab,
