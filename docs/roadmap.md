@@ -16202,10 +16202,57 @@ document approval and review states, and the onboarding approval queue.
 This item is the rule going forward, so the next slice inherits it rather
 than rediscovering it.
 
-### The Tool Import wizard: each row a decision a person can make -- not built, queued behind S
+### The Tool Import wizard: each row a decision a person can make -- planned 2026-11-18 (`docs/PLAN-tool-import.md`), not built
 
-**Not built, and no scaffolding.** This is a planned entry only. When it
-is picked up it gets its own plan doc and its own prompt. One thing gates
+**Plan written 2026-11-18, for Jarrod to read before any slice
+(`docs/PLAN-tool-import.md`).** Re-read at `8381328`, the brief's
+request. Five things changed since this entry was written:
+
+- **Ten columns, not eleven.** `candidate_state` went with migration
+  0072 (corrected in the list below).
+- **`_run_loop` today:**
+  - a status a person judged is asked about (#81);
+  - a responsibility a person set is asked about (#119);
+  - a responsibility nobody set is still written at once, with nobody
+    asked;
+  - a last contributor's deactivation leaves the tool's responsibility in
+    place.
+
+  The plan's Â§1 has it in full.
+- **The risk, re-assessed.** A wrong bulk-accepted row no longer reaches
+  a judgement a person recorded. **The remaining exposure, and the one
+  the plan leads with:** responsibility written onto every unset
+  objective at activation (956 of live's 960 on 2026-11-18). It prints in
+  the CRM and the SSP PDF at any status, and deactivation does not undo
+  it.
+- **Two modes and three ways in,** each reviewed differently:
+  - **yaml:** the author's values, reviewed as the four-column diff, with
+    no recommendation and no bulk accept;
+  - **documents:** the model's proposal, in the editable table;
+  - **Edit Baseline Mapping:** current values, the only route to
+    research.
+- **The model never fills coverage basis today, by design**
+  (`baseline.py`), and a recommendation reverses that. And the product's
+  AI provenance arrives in client-supplied YAML, so row provenance must
+  be written by the server from a run it holds.
+
+**The held-back list, as planned** (built in slice T.3; this list is
+replaced by the list as built then):
+- H1 research and the CRM disagree;
+- H2 no verified source;
+- H3 `customer_system` where every citation describes the vendor's own
+  platform;
+- H4 the recommendation changes an existing value;
+- H5 `provider_satisfies` with `customer_system` without a verified
+  vendor citation.
+
+Proposed, for Jarrod: H6 the row's own text reads as a disclaim, H7
+`assists` without a verified citation, H8 a validation problem.
+
+A citation counts only if the code finds its quote in the named source.
+No confidence score.
+
+**The original entry follows, unchanged except the column list.** One thing gates
 it: **what the magic loop does with `classification` and
 `coverage_basis` when a product goes active.** That was settled on
 2026-11-02 by reading the code at `ca4b78d`, below. Read
@@ -16213,7 +16260,9 @@ it: **what the magic loop does with `classification` and
 here is only as true as that answer, and the loop has changed before.
 
 **The request (Jarrod, 2026-11-02).** The wizard's review step
-(`ToolImportWizard.tsx`) is a table of eleven columns:
+(`ToolImportWizard.tsx`) was a table of eleven columns (ten since
+migration 0072 removed Candidate state, 2026-11-03; corrected
+2026-11-18):
 
 - Control(s)
 - Source
@@ -16223,7 +16272,6 @@ here is only as true as that answer, and the loop has changed before.
 - Customer action
 - Scope note
 - Coverage basis
-- Candidate state
 - Objectives
 - Evidence
 
