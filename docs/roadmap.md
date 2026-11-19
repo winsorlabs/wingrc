@@ -12207,6 +12207,10 @@ why it never saw this.
   whole model call,** minutes on a real CRM. The bench there showed it
   directly: at 39 concurrent generates, 40 of 40 tokens and 40 of 40
   connections were out. At 40, `/health` waited for a generate to end.
+- **Later that day the connection was freed** (`db.end_transaction`). A
+  generate now holds a token for the call and no connection: at 39
+  generates, 0 of 40 connections were out. The cliff at 40 tokens did
+  not move.
 
 A measurement taken after this runs against a threadpool where a few
 generates can hold tokens for minutes. Generates should be either kept
@@ -16479,7 +16483,8 @@ the loop.
 - **Each generate also holds a pool connection for the whole model
   call.** Connections tracked tokens one for one, 40/40 at 39 generates.
   So a long generate holds one of the 40 tokens *and* one of the 40
-  connections. Recorded below; not changed here.
+  connections. A second change the same day freed the connection
+  (below).
 - **Uploads hold a token for the handler, not for the transfer.** Ten
   clients sent 20 MB each at 1 MB every 0.4 s. While they were sending
   (8 s), tokens read 0 in every sample but one: 8 at t+2.0 s, Starlette
@@ -16492,26 +16497,113 @@ the loop.
 - **Uploads already blocked on main,** less than generates: 10
   concurrent 49 MB uploads held `/health` for up to 2.35 s. The branch:
   0.06 s.
-- **Not a factor:** each generate returned 500 after its model call,
-  from the stand-in's minimal reply, as on 2026-11-18. It is after the
-  wait, so it does not bear on the timing.
+- **Not a factor:** each generate returned 500 after its model call. It
+  is after the wait, so it does not bear on the timing. The cause was
+  the stand-in, which had no `identity` attribute for the route to
+  record. This line first said "the stand-in's minimal reply"; the
+  second change's bench read the traceback (below).
 
 **For the Q.0 investigation** ("The backend collapses between 50 and
 100 concurrent requests"): since 2026-11-19, thirteen routes hold a
-token while they work, and two of them hold a token and a connection for
-the length of a model call. Whoever picks it up is measuring a
-threadpool in which a few generates can hold tokens for minutes.
+token while they work, and the routes that call the model hold one for
+the length of the call. They held a connection too, until the second
+change below. Whoever picks it up is measuring a threadpool in which a
+few generates can hold tokens for minutes.
 
-**Found on the way, not changed here:**
-- **A generate holds its database connection through the model call.**
-  `import_from_documents` reads the provider with `get_ai_provider(session)`
-  and calls `ingest_document` inside the same open transaction. On
-  Postgres that is a connection idle in transaction for minutes. Ending
-  the transaction before the call would leave a generate holding a token
-  and no connection. It needs its own test: a stand-in provider asserting
-  the session is not in a transaction when `complete()` runs.
-- **Two first uploads into a fresh bucket race.** `MinIOClient` runs
-  `_ensure_bucket()` on every request, as a head then a create. Two
+**The connection, freed 2026-11-19 (branch `generate-txn`).** A
+route that read and then waited held its connection through the wait.
+The read opens a transaction, and a session keeps its connection until
+the transaction ends. Four routes waited on something outside the
+database:
+- the three that call the model: `import_from_documents`,
+  `import_from_documents_with_research` and `suggest_research_urls`;
+- `fetch_research_urls`, on up to ten outbound page fetches.
+
+Each now calls `db.end_transaction(session)` once its reads are done,
+before the wait. It commits, so the connection goes back to the pool and
+what the route read stays loaded (`expire_on_commit=False`). It refuses
+when the session holds unwritten changes, which it would otherwise write
+early or lose.
+
+`tests/test_slow_calls_hold_no_connection.py` gives each route a session
+made with `SessionLocal`'s settings, on an engine of its own, and a
+stand-in that reads the pool at the moment of the call. The suite's
+usual `admin_client` could not show this: its commit wrapper runs a
+statement straight after every commit, so a route under it always looks
+mid-transaction. Removing each of the four calls in turn failed that
+route's test and no other.
+
+**Measured** (bench `wingrc_verify_1119d` at `35c717c`; the stand-in and
+the polling as above, the stand-in now making the real provider read
+first):
+
+| Load | `/health` worst | Peak tokens | Peak connections, before | Peak connections, after |
+|---|---|---|---|---|
+| 1 generate | 0.05 s | 2/40 | 1/40 | 0/40 |
+| 5 generates | 0.01 s | 5/40 | 5/40 | 0/40 |
+| 20 generates | 0.05 s | 21/40 | 21/40 | 1/40 |
+| 39 generates | 0.03 s | 39/40 | 40/40 | 0/40 |
+| **40 generates** | **20.1 s** | 40/40 | 40/40 | 15/40 |
+
+"Before" is the first change's bench (`_1119b`/`_1119c`).
+- **Connections no longer follow generates.** At 39 generates none of the
+  40 was out, where the first change's bench had all 40. A generate now
+  holds a connection only for its reads before and after the call. The 15
+  at 40 generates is a peak sample taken while forty started together;
+  this run recorded peaks, not a timeline.
+- **The route finishes on the session the commit ended.** On `_1119d`
+  all 105 generates returned 500 after the call. All 105 tracebacks were
+  the stand-in's missing `identity`, so the reads after the call never
+  ran. With `identity` added (`wingrc_verify_1119e`, 1 and then 5
+  generates, call held 5 s), all six returned 200, with 0 connections
+  out.
+- **It does not move the 40 cliff.** The cliff is threadpool tokens, and
+  a generate still holds one for the whole call: 39 of 40 at 39
+  generates, and at 40 `/health` waited 20.1 s, as before. Freeing the
+  connection frees the second resource, not the first. Someone reading
+  "fixed the connection hold" would expect the cliff to move, and it did
+  not.
+
+**Where this is going: a model call holds no request-handling resource
+at all** (Jarrod, 2026-11-19). The two changes above are steps toward it.
+The first took the wait off the event loop, and the second freed the
+connection. A generate still holds a threadpool token for minutes. The
+shape that ends that:
+- the generate route enqueues a job and returns at once with its id;
+- the worker makes the model call;
+- the UI polls for the result, or is notified.
+
+Then a generate holds no token and no connection, and the 40-token cliff
+stops being about generates at all. **That is a slice of its own, not
+started.** The worker service exists (`wingrc worker`), but today it
+runs only scheduled jobs (`scheduler.run_due_jobs`). Nothing lets a
+request hand it a job, so the queue, the job's record and delivering the
+result are the new work.
+
+**Found on the way, not changed here,** in the order to take them:
+- **Every upload handler reads the whole file into memory. That is how a
+  deployment falls over on a busy day, with no attacker needed**
+  (Jarrod, 2026-11-19).
+  - Each handler holds the whole upload in the process at once. Forty
+    concurrent 50 MB evidence uploads hold 2 GB. That is more than
+    wl-util-1 has free (3 GB total, about 2 GB available), which is why
+    the bench stopped at ten.
+  - The 50 MB cap is checked after the read, so what a handler holds is
+    bounded by nginx's `client_max_body_size 105m`, not by 50 MB.
+  - On a host with less free memory than its busiest moment needs, memory
+    runs out. WinGRC does not choose what the kernel kills then, and the
+    backend is one process holding every request in flight.
+  - A busy day is enough: a customer's evidence-collection session,
+    several people uploading at once.
+  - The fix is to stream the upload to storage from Starlette's spooled
+    file, and to count bytes as they go so the cap refuses before the
+    whole file is read.
+  - `await file.read()` did the same before the first change, so this is
+    not new.
+- **Two first uploads into a fresh bucket race.** Below the memory read:
+  it reaches only a fresh install's first concurrent uploads, and a
+  retry recovers it. `MinIOClient` runs `_ensure_bucket()` on every
+  request, as a head then a create. Two
   requests that both find the bucket missing both create it, and the
   loser raises `BucketAlreadyOwnedByYou`: one 500 in five, on the first
   upload case of both branch runs (traceback kept from `_1119c`). It
@@ -16520,11 +16612,6 @@ threadpool in which a few generates can hold tokens for minutes.
   bucket exists. A fresh install's first concurrent uploads can. It also
   costs a `head_bucket` round trip on every request that takes the
   client.
-- **Every upload handler reads the whole file into memory.** Forty
-  concurrent 50 MB evidence uploads would hold 2 GB in one process. That
-  is more than wl-util-1 has free (3 GB total, about 2 GB available),
-  which is why the bench stopped at ten. `await file.read()` did the
-  same before, so this is unchanged, not new.
 
 ### The Tool Import wizard: each row a decision a person can make -- planned 2026-11-18 (`docs/PLAN-tool-import.md`), not built
 
