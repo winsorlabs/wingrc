@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
 import { ALL_ROLES, ROLE_LABELS } from "../lib/roles";
 import type { InvitedUser, UserRow } from "../types";
+import { accountStatus } from "../lib/userStatus";
 
 // invite_user rejects login_method="api" — that value is reserved for
 // service-account users created via POST /users/api, a separate flow not
@@ -53,6 +54,7 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
 
   const [confirmDeactivateId, setConfirmDeactivateId] = useState<string | null>(null);
   const [deactivating, setDeactivating] = useState(false);
+  const [reactivatingId, setReactivatingId] = useState<string | null>(null);
 
   const [confirmResetMfaId, setConfirmResetMfaId] = useState<string | null>(null);
   const [resettingMfa, setResettingMfa] = useState(false);
@@ -177,14 +179,26 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
     setError(null);
     try {
       await api.deactivateUser(orgId, userId);
-      setUsers((prev) =>
-        prev.map((u) => (u.id === userId ? { ...u, is_active: false } : u))
-      );
+      // A re-fetch, not a local patch: deactivated_at is the server's time.
+      load();
       setConfirmDeactivateId(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not deactivate user");
     } finally {
       setDeactivating(false);
+    }
+  }
+
+  async function handleReactivate(userId: string) {
+    setReactivatingId(userId);
+    setError(null);
+    try {
+      const updated = await api.patchUser(orgId, userId, { is_active: true });
+      setUsers((prev) => prev.map((u) => (u.id === userId ? updated : u)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not reactivate user");
+    } finally {
+      setReactivatingId(null);
     }
   }
 
@@ -378,7 +392,7 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
                   <td>{LOGIN_METHODS.find((m) => m.value === u.login_method)?.label ?? u.login_method}</td>
                   <td>
                     <span className={`status-badge ${u.is_active ? "status-active" : "status-inactive"}`}>
-                      {u.is_active ? "Active" : "Inactive"}
+                      {accountStatus(u)}
                     </span>
                   </td>
                   <td>
@@ -473,7 +487,7 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
                           {u.mfa_enrolled && (
                             confirmResetMfaId === u.id ? (
                               <span className="delete-confirm">
-                                <span>Reset MFA? They'll be deactivated until re-enrolled.</span>
+                                <span>Reset MFA? They'll be signed out and can't sign in until they re-enrol.</span>
                                 <button
                                   className="btn-danger btn-xs"
                                   onClick={() => handleResetMfa(u.id)}
@@ -497,7 +511,16 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
                               </button>
                             )
                           )}
-                          {u.is_active && !isSelf && (
+                          {u.deactivated_at && !isSelf && (
+                            <button
+                              className="btn-ghost btn-xs"
+                              onClick={() => handleReactivate(u.id)}
+                              disabled={reactivatingId === u.id}
+                            >
+                              {reactivatingId === u.id ? "Reactivating…" : "Reactivate"}
+                            </button>
+                          )}
+                          {!u.deactivated_at && !isSelf && (
                             confirmDeactivateId === u.id ? (
                               <span className="delete-confirm">
                                 <span>Deactivate?</span>

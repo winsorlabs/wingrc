@@ -76,6 +76,25 @@ from ..rls import set_current_org
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# The same words session resolution uses for an inactive account.
+DEACTIVATED = "Account deactivated"
+
+
+def _log_deactivated_attempt(db: Session, user: User, method: str) -> None:
+    """Record a sign-in an offboarded account attempted, so an administrator
+    reading the user's history sees that someone still holds a credential."""
+    log_event(
+        db,
+        org_id=user.home_org_id,
+        action="auth.login.failed",
+        entity_type="user",
+        entity_id=user.id,
+        context={"reason": "deactivated", "method": method},
+        actor=str(user.id),
+        actor_type="user",
+    )
+    db.commit()
+
 
 # ---------------------------------------------------------------------------
 # MSAL helpers
@@ -173,6 +192,13 @@ def sso_callback(
 
     if user.requires_admin_reset:
         raise HTTPException(status_code=403, detail="Account requires administrator reset")
+
+    # Before the activation below, which until 2026-11-20 reactivated an
+    # offboarded account on any Entra sign-in. Entra's own disable is not
+    # assumed: the MSP may deactivate here without touching the tenant.
+    if user.deactivated_at is not None:
+        _log_deactivated_attempt(db, user, "sso")
+        raise HTTPException(status_code=403, detail=DEACTIVATED)
 
     if not user.is_active:
         # First SSO login — activate the user
@@ -277,6 +303,13 @@ def local_login(
         )
         db.commit()
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    # After the password, so account state is told only to someone who
+    # authenticated. Without it, an offboarded account with no MFA got an
+    # enrol cookie here and was active again after /mfa/enroll/confirm.
+    if user.deactivated_at is not None:
+        _log_deactivated_attempt(db, user, "local")
+        raise HTTPException(status_code=403, detail=DEACTIVATED)
 
     clear_failed_login(user)
 
@@ -420,18 +453,23 @@ def enrollment_refusal(user: User) -> str | None:
     longer forgeable; these refusals are so that a defect in how the cookie
     is issued cannot reach that far again. Refused: an account already
     enrolled (a replacement goes through the authenticated re-enrolment,
-    which asks for a step-up), removed, flagged for an administrator reset,
-    or locked out (tests/test_mfa_enroll_refusals.py).
+    which asks for a step-up), removed, deactivated by an administrator,
+    flagged for an administrator reset, or locked out
+    (tests/test_mfa_enroll_refusals.py).
 
-    Not refused: an inactive account. Invitees and accounts whose MFA an
-    administrator reset are inactive until they enrol here, and nothing on
-    the user row tells a deactivated account apart from them. That gap is
-    recorded with what closing it takes.
+    Not refused: an account that is inactive without being deactivated.
+    Invitees and accounts whose MFA an administrator reset are inactive
+    until they enrol here. Until 2026-11-20 nothing on the row told a
+    deactivated account apart from them, so a deactivated person with a
+    working password enrolled and was active again; `deactivated_at`
+    (migration 0076) is what tells them apart now.
     """
     if user.mfa_enrolled:
         return "MFA is already enrolled for this account"
     if user.deleted_at is not None:
         return "This account has been removed"
+    if user.deactivated_at is not None:
+        return DEACTIVATED
     if user.requires_admin_reset:
         return "Account requires administrator reset"
     if user.locked_until and user.locked_until.replace(tzinfo=UTC) > datetime.now(UTC):

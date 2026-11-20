@@ -22,9 +22,11 @@ POST /orgs/{org_id}/users            — invite a user (returns raw invite token
                                         also attempts an email -- see
                                         email_sent/email_error below)
 GET  /orgs/{org_id}/users            — list users (no role gate — see above)
-PATCH /orgs/{org_id}/users/{user_id} — update role / is_active
-POST /orgs/{org_id}/users/{user_id}/reset-mfa — admin MFA reset
-DELETE /orgs/{org_id}/users/{user_id} — deactivate
+PATCH /orgs/{org_id}/users/{user_id} — update role / is_active (false
+                                        offboards, true reinstates)
+POST /orgs/{org_id}/users/{user_id}/reset-mfa — admin MFA reset (inactive
+                                        until re-enrolment; not offboarding)
+DELETE /orgs/{org_id}/users/{user_id} — deactivate (offboarding)
 POST /orgs/{org_id}/users/{user_id}/unlock — clear lockout state (I.5)
 POST /orgs/{org_id}/users/{user_id}/reset-password — issue a one-time reset token (I.5);
                                         also attempts an email, same as invite
@@ -462,21 +464,41 @@ def patch_user(
                 status_code=409,
                 detail="This user has been permanently anonymized and cannot be reactivated",
             )
-        if body.is_active != user.is_active:
+        # An administrator setting is_active=false is offboarding, even on an
+        # account that was already inactive (an invitee), so deactivated_at
+        # is set whenever it is not. Setting it true is reinstating someone,
+        # and the only path that clears deactivated_at; that is its own
+        # audit action, so a reactivation reads apart from an activation.
+        before = {
+            "is_active": user.is_active,
+            "deactivated_at": _iso(user.deactivated_at),
+        }
+        action: str | None = None
+        if body.is_active is False and (user.is_active or user.deactivated_at is None):
+            action = "user.activation_change"
+            user.deactivated_at = user.deactivated_at or datetime.now(UTC)
+            revoke_user_sessions(db, user.id)
+        elif body.is_active is True and user.deactivated_at is not None:
+            action = "user.reactivate"
+            user.deactivated_at = None
+        elif body.is_active != user.is_active:
+            action = "user.activation_change"
+        if action is not None:
             log_event(
                 db,
                 org_id=org_id,
-                action="user.activation_change",
+                action=action,
                 entity_type="user",
                 entity_id=user.id,
-                before_value={"is_active": user.is_active},
-                after_value={"is_active": body.is_active},
+                before_value=before,
+                after_value={
+                    "is_active": body.is_active,
+                    "deactivated_at": _iso(user.deactivated_at),
+                },
                 context={"admin": str(current_user.id)},
                 actor=str(current_user.id),
                 actor_type=actor_type_for(current_user),
             )
-            if body.is_active is False:
-                revoke_user_sessions(db, user.id)
         user.is_active = body.is_active
     if body.display_name is not None:
         # detached_by / deactivated_by and similar columns keep a display name
@@ -507,13 +529,25 @@ def reset_user_mfa(
     db: Session = Depends(get_session),
     current_user: CurrentUser = Depends(require_org_access("msp_admin")),
 ):
-    """Clear MFA enrollment and backup codes; deactivate until re-enroll."""
+    """Clear MFA enrollment and backup codes; deactivate until re-enroll.
+
+    Not offboarding: deactivated_at is left as it is, so the person can
+    enrol again (and an account already offboarded stays offboarded).
+
+    Sessions are revoked, as on the other two paths that set is_active
+    false. Until 2026-11-20 they were not. An inactive account's session is
+    refused while it is inactive, but the row stayed live, and a request
+    on it still advanced its idle heartbeat. So after the person
+    re-enrolled, any session from before the reset was accepted again,
+    including one on the device whose loss prompted the reset.
+    """
     user = _get_user(db, org_id, user_id)
 
     user.totp_secret = None
     user.mfa_enrolled = False
     user.is_active = False
     user.requires_admin_reset = False
+    revoke_user_sessions(db, user.id)
 
     db.execute(
         text("DELETE FROM mfa_backup_code WHERE user_id = :uid"),
@@ -545,8 +579,9 @@ def deactivate_user(
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="Cannot deactivate your own account")
     user = _get_user(db, org_id, user_id)
-    was_active = user.is_active
+    before = {"is_active": user.is_active, "deactivated_at": _iso(user.deactivated_at)}
     user.is_active = False
+    user.deactivated_at = user.deactivated_at or datetime.now(UTC)
     revoke_user_sessions(db, user_id)
     log_event(
         db,
@@ -554,8 +589,8 @@ def deactivate_user(
         action="user.deactivate",
         entity_type="user",
         entity_id=user.id,
-        before_value={"is_active": was_active},
-        after_value={"is_active": False},
+        before_value=before,
+        after_value={"is_active": False, "deactivated_at": _iso(user.deactivated_at)},
         context={"admin": str(current_user.id)},
         actor=str(current_user.id),
         actor_type=actor_type_for(current_user),
@@ -1054,4 +1089,11 @@ def _user_out(u: User) -> dict:
         # is_active=False — the UI must never offer to reactivate a row
         # where this is set.
         "deleted_at": u.deleted_at.isoformat() if u.deleted_at else None,
+        # Offboarded by an administrator, as opposed to inactive because
+        # enrolment is pending (an invitee, or an MFA reset).
+        "deactivated_at": _iso(u.deactivated_at),
     }
+
+
+def _iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
