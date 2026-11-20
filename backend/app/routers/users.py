@@ -473,6 +473,19 @@ def patch_user(
             "is_active": user.is_active,
             "deactivated_at": _iso(user.deactivated_at),
         }
+        # True never makes an account active that has not finished signing
+        # up: reactivating one returns it to awaiting enrolment, and setting
+        # true on one that is only awaiting enrolment is refused. Until
+        # 2026-11-20 both read "Active" with no authenticator behind it.
+        target = body.is_active
+        if target and not user.is_active and not has_completed_sign_up(user):
+            if user.deactivated_at is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This account has not finished enrolling; it becomes "
+                           "active when its user completes sign-in",
+                )
+            target = False
         action: str | None = None
         if body.is_active is False and (user.is_active or user.deactivated_at is None):
             action = "user.activation_change"
@@ -481,7 +494,7 @@ def patch_user(
         elif body.is_active is True and user.deactivated_at is not None:
             action = "user.reactivate"
             user.deactivated_at = None
-        elif body.is_active != user.is_active:
+        elif target != user.is_active:
             action = "user.activation_change"
         if action is not None:
             log_event(
@@ -492,14 +505,14 @@ def patch_user(
                 entity_id=user.id,
                 before_value=before,
                 after_value={
-                    "is_active": body.is_active,
+                    "is_active": target,
                     "deactivated_at": _iso(user.deactivated_at),
                 },
                 context={"admin": str(current_user.id)},
                 actor=str(current_user.id),
                 actor_type=actor_type_for(current_user),
             )
-        user.is_active = body.is_active
+        user.is_active = target
     if body.display_name is not None:
         # detached_by / deactivated_by and similar columns keep a display name
         # as text, so a rename is what ties those back to a person.
@@ -1097,3 +1110,16 @@ def _user_out(u: User) -> dict:
 
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
+
+
+def has_completed_sign_up(user: User) -> bool:
+    """Whether the account has an authenticator behind it, so that
+    is_active may be true: a local account once it has enrolled MFA, an
+    SSO account once an Entra sign-in has bound its oid, and an API
+    account always (its token is its credential). The cases are held by
+    tests/test_offboarding.py's SIGNED_UP_CASES."""
+    if user.login_method == "api":
+        return True
+    if user.login_method == "sso":
+        return user.entra_oid is not None
+    return user.mfa_enrolled

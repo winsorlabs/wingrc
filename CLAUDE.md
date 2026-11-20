@@ -907,7 +907,10 @@ functions on a pinned search_path. `wingrc_app` role, NOBYPASSRLS.
 2026-11-20).** `is_active = false` also means an invitee or an MFA reset,
 and both must still enrol. Deactivation (`DELETE /users/{id}`, `PATCH
 is_active=false`) sets `deactivated_at`; only `PATCH is_active=true`
-clears it, audited as `user.reactivate`. Login, the Entra callback and
+clears it, audited as `user.reactivate`, and it makes `is_active` true
+only on an account that has finished signing up
+(`users.has_completed_sign_up`). Otherwise the account goes back to
+awaiting enrolment. Login, the Entra callback and
 enrolment refuse while it is set. Every path that sets a user inactive
 revokes their sessions, because an inactive account can become active
 again (`tests/test_offboarding.py`; `docs/roadmap.md`, "A deactivated user

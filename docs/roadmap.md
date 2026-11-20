@@ -14826,8 +14826,17 @@ refuse an inactive account, and its docstring said so.
   - SSO is not configured on live (the callback answers 501);
   - the callback read the user row before setting the org, so under
     `wingrc_app` RLS refused its own read and write. **SSO sign-in could
-    not complete for anyone on a cut-over deployment.** Fixed here; it
-    had never been tested (see below).
+    not complete for anyone on a cut-over deployment.**
+
+  **The SSO callback is fixed but has never been exercised.** It could
+  never have completed on a deployment running as `wingrc_app`. It had no
+  test until now, and there is still no run against a real Entra tenant.
+  The tests drive it with a stubbed MSAL, so they cover WinGRC's side of
+  the callback and nothing of Entra's. Whoever first configures SSO on a
+  live deployment is the first to run it, and should treat it as
+  untested. That person will also meet the defect queued below, "An
+  invited SSO account can never sign in for the first time", which no
+  test here reaches, because the tests seed `entra_oid` by hand.
 - **Password, MFA never enrolled: reactivated through enrolment.**
   `/auth/login` checked `requires_admin_reset`, the lockout and the
   password, never `is_active`, and answered `{"next": "enroll"}`.
@@ -14872,6 +14881,35 @@ one.
   **Reactivate** on a deactivated row; there was no way to reactivate
   from the screen before, only the API. Deactivate is now offered on any
   row not already deactivated, so a pending invite can be cancelled.
+
+**Follow-up the same day: Reactivate restores the state the account had
+reached, never more (branch `reactivate-restores-state`).** Jarrod asked
+at merge: deactivate a pending invite, then Reactivate it. Does the row go
+back to "Awaiting enrolment"? It did not. `PATCH is_active=true` set
+`is_active` as asked, so the row read "Active" for a person with no
+authenticator. That is the confusion this slice removes, one step along.
+Sign-in was not opened by it: an active local account with no MFA is
+still sent to enrolment. The screen was wrong, and so was the audit row's
+`after`.
+
+- **`users.has_completed_sign_up`** says whether an account has an
+  authenticator behind it:
+  - a local account, once MFA is enrolled;
+  - an SSO account, once an Entra sign-in has bound its `entra_oid`;
+  - an API account, always.
+
+  Its cases are written out in `test_offboarding.py`'s
+  `SIGNED_UP_CASES`.
+- **Reactivating an account that has not finished signing up** clears
+  `deactivated_at` and leaves `is_active` false. The row reads "Awaiting
+  enrolment" again, and the `user.reactivate` row's `after` says
+  `is_active: false`. The invite still works if it has not expired; a
+  test runs deactivate, reactivate, set password, enrol and confirm.
+- **`PATCH is_active=true` on an account only awaiting enrolment** is
+  refused with 409. Before, it made an invitee "Active" with no
+  deactivation involved. The screen never offered it; the API did.
+- **An SSO account awaiting its first sign-in** reads "Awaiting first
+  sign-in", since it never enrols here.
 
 **Backfill: read from the audit log, not left null.** The row cannot
 tell the three meanings apart, but the audit log can.
@@ -14961,6 +14999,35 @@ test database, ruff, `tsc -b`, vitest (601), the build. Through real HTTP:
    code.
 5. Audit log, filtered to `user.reactivate`: one row, with
    `deactivated_at` set before and null after.
+6. Invite a second test account and do not accept it. Deactivate it, then
+   Reactivate it. **Expect** "Awaiting enrolment", not "Active". Its
+   invite link still sets a password and enrols it, and it then reads
+   "Active".
+
+### An invited SSO account can never sign in for the first time -- queued 2026-11-20, found while testing the deactivated-account slice; not reached on live, where SSO is not configured
+
+**The defect.** The Entra callback finds the account with
+`auth.find_user_for_login(oid, email)` (migration 0015). When an oid is
+given, that function matches on `entra_oid` alone and ignores the email:
+`WHERE (p_oid IS NOT NULL AND entra_oid = p_oid) OR (p_oid IS NULL AND
+email = p_email)`. The only code that sets `entra_oid` is the callback,
+after it has found the account. An SSO invite is created with
+`entra_oid` null, so its first sign-in never matches and is refused with
+"No account provisioned for this identity". Read from the code
+2026-11-20, not run against Entra.
+
+**Why the tests did not show it.** `test_offboarding.py`'s SSO tests seed
+`entra_oid` on the user by hand, so the lookup always matches. That is
+the state after a first sign-in, which no account can reach.
+
+**What fixing it has to decide.** Matching a first sign-in by email binds
+an Entra identity to an account by address alone. That is safe only if
+the address is one Entra vouches for in this tenant, so the fix needs a
+tenant check and a choice of claim (`preferred_username` is not
+guaranteed verified), not only a changed `WHERE`. It needs a test that
+starts from an invite, not a seeded oid, and a first run against a real
+tenant (the callback has never had one; see "A deactivated user could
+sign back in").
 
 ### A fresh install runs the app as a superuser, so row-level security is off -- queued 2026-11-18 (the brief's finding), after the deactivated-account slice, before "The app reaches MinIO as root"
 
