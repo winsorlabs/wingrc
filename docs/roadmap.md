@@ -15004,6 +15004,151 @@ test database, ruff, `tsc -b`, vitest (601), the build. Through real HTTP:
    invite link still sets a password and enrols it, and it then reads
    "Active".
 
+### No invite could be redeemed on live ✅ DONE (2026-11-20, bench-verified; migration 0077; branch `set-password-org-first`)
+
+**For seven weeks, no invite could be redeemed on live.** From the
+2026-09-29 cutover to `wingrc_app` until 2026-11-20, every
+`POST /auth/set-password` failed, both for a new invite and for an admin's
+password reset. Nobody tried one until Jarrod's offboarding walk on
+2026-11-20, and nothing in the product reported it. The last enrolment on
+live was 2026-09-04, before the cutover.
+
+**The exception, from live's backend log:**
+```
+File "/app/app/routers/auth.py", line 380, in set_password
+    user = db.get(User, user_row.id)
+sqlalchemy.exc.DataError: (psycopg.errors.InvalidTextRepresentation)
+  invalid input syntax for type uuid: ""
+```
+`set_password` read the user row before `set_current_org`. The read was
+refused by row-level security, and the 500 reached the browser as a
+bare "Internal Server Error". The Entra callback had the same ordering,
+fixed in #137.
+
+**Why an unset org gave a 500 here and nothing elsewhere.** Live's
+policies read the org three ways:
+- **38 tables** used `NULLIF(current_setting(…), '')::uuid`, so an unset
+  org matched zero rows, silently.
+- **The 5 auth tables** cast directly. That matched zero rows on a
+  pooled connection that had never set the org (NULL), and raised the
+  cast error on one that had (the empty string a transaction-local
+  setting reverts to). So the same defect read "User not found" or a
+  500, depending on which connection the request landed on.
+- **7 tables** are transitive, gated by a parent's policy.
+
+**Why the existing tests passed: the harness carried state between
+requests that production never does.** Seven `set_password` tests went
+through real HTTP and passed. One session served the test body and every
+request in the test, so:
+- **The identity map answered the read.** A user the test had made was
+  already loaded, so `db.get` returned it without a query, and RLS was
+  never asked.
+- **The org carried over.** An admin request earlier in the same test
+  set the org, and the outer transaction never ends, so a later
+  unauthenticated request ran with that org still set.
+
+`_app_session` now starts every request with no org and nothing loaded
+(flush, `expire_all`, `clear_current_org`), and `_authed` depends on the
+session, so it sets the org after that reset.
+
+**What the stricter harness found.** With only the harness changed,
+against unfixed code, 14 tests failed:
+- **The 10 `set_password` tests**, with live's exact exception
+  (`test_password_lifecycle.py` 6, `test_offboarding.py` 2,
+  `test_session_fixation.py` 1, and the invite test #138 added).
+- **3 `grant_membership` tests: a second real defect.** The route looked
+  the target user up with `db.get` while scoped to the org being granted
+  into. The target is normally homed elsewhere, so RLS hid it, and
+  every cross-org grant answered 404 "User not found" on a cut-over
+  deployment. The tests passed only because the user was in the identity
+  map. It now uses `auth.resolve_user_identity`, the definer function
+  made for exactly this cross-org lookup. An unset org does not cause
+  this one, an org set to the wrong tenant does, so 0077's function
+  would not have caught it; only the harness change did.
+- **2 SSO tests, a harness artifact.** The test's fake MSAL read
+  `user.entra_oid` lazily inside the request, after the harness had
+  expired it. The test now reads it first.
+
+**The class now announces itself (migration 0077).** Every policy that
+reads the org reads it through `public.rls_current_org()`. With the org
+unset, NULL or empty, that function raises SQLSTATE `WR001`: "app.current_org
+is not set: a row-level-security table was read before
+rls.set_current_org". It is called as `(SELECT …)`, so it runs once per
+query, and only when a row reaches the qual. A read of an empty table
+does not raise, and nor does an `audit_log` row with a null org.
+- This reaches routes neither the harness nor a reader thinks to
+  check. A read made before the org is set fails loudly with the cause
+  named, instead of reading "not found" or failing a uuid cast on an
+  unrelated line.
+- What it changes in behaviour: 38 tables went from silently empty to
+  raising. A path that read one of them with no org was getting nothing
+  back. That is always a defect, but one that looked like an empty
+  result. The full suite, as `wingrc_app`, passes with it.
+- The owner role is exempt from RLS, so the bench and a fresh install
+  running as the owner never evaluate it ("A fresh install runs the app
+  as a superuser").
+- `test_rls_unset_org.py` holds it two ways:
+  - every policy on an RLS table depends on the function (read from
+    `pg_depend`), except the seven transitive ones written out there;
+  - a read with no org raises `WR001`, from both the empty string and a
+    never-set connection.
+
+**No bare 500.** An error nothing handled now answers with "Something
+went wrong on the server and the request may not have completed. Try
+again; if it happens again, give your administrator this reference:
+…". The log line carries the same reference with the traceback, and the
+response carries nothing of the exception.
+- The handler is registered for `Exception`, which Starlette reaches only
+  from its outermost error middleware. A raised `HTTPException` keeps
+  its own status and words.
+- `test_unhandled_errors.py` asserts the three that matter exactly,
+  through a client that does not re-raise, as production does not:
+  "Invalid credentials" (401), "Account deactivated" (403, #137's), and
+  "Invalid or expired invite token" (400).
+- It says "may not have completed" rather than "nothing was changed",
+  because a route that commits more than once can fail after its first
+  commit.
+
+**Jarrod's walk, after the deploy.** Redeem the same invite token that
+failed (it was not burned: the 500 came before `invite_token_hash` was
+cleared). Then run the offboarding walk from step 1.
+
+### The bundled breached-password list does not exist -- queued 2026-11-20; the decision is what to bundle, the silent failure is fixed
+
+**What was found.** `auth._load_common_passwords` reads
+`app/data/common_passwords.txt`. That file has never been committed: no
+`app/data/` exists in the repo or in the running image. A missing file
+was caught as `FileNotFoundError` and read as an empty set, with nothing
+logged. So the local check passed every password, and the only
+breached-password check was the HIBP k-anonymity call. That call fails
+open: on a timeout or network error it passes the password.
+
+**On an air-gapped or GCC High deployment, the breached-password check
+has never done anything.** HIBP is unreachable there, and the local list
+does not exist. On live, HIBP is reachable, so the check has worked
+through HIBP alone.
+
+**Fixed 2026-11-20, in `set-password-org-first`: it is no longer
+silent.** With `pwned_passwords_check` on and the list absent:
+- the backend logs an error at startup;
+- the first load logs it again;
+- `/health` reports `breached_password_list: "missing: …"`, which
+  `deploy.sh` prints on every deploy.
+
+It is reported, not a readiness condition. Refusing to start would take
+every deployment down, live's included, until a list ships, and a
+restart does not ship one (`test_breached_password_list.py`).
+
+**The decision still open: what to bundle.**
+- the source: a published list of the most common breached passwords,
+  for example the top N of the HIBP corpus or SecLists;
+- the size: the image and memory cost against coverage;
+- the licence: whatever is bundled ships in an AGPL image to every
+  deployment.
+
+Until it is decided, an air-gapped deployment's password policy is
+length and composition only, and the startup error and `/health` say so.
+
 ### An invited SSO account can never sign in for the first time -- queued 2026-11-20, found while testing the deactivated-account slice; not reached on live, where SSO is not configured
 
 **The defect.** The Entra callback finds the account with

@@ -210,14 +210,23 @@ def test_assessment_with_nothing_missing_is_not_reported(db_session, ref):
 def test_backfill_as_the_app_role_refuses(db_session, ref):
     """As `wingrc_app` with no org set, RLS hides every assessment, and the
     command used to answer "No assessments need backfilling". It refuses
-    rather than report a zero it never checked (engine.every_tenant_assessments)."""
+    rather than report a zero it never checked (engine.every_tenant_assessments).
+
+    Since migration 0077 the plain read with no org raises WR001 instead of
+    returning nothing, so the precondition asserts that."""
+    from sqlalchemy.exc import DBAPIError
+
     from app.models import Assessment
 
     db_session.execute(select(1))
     db_session.connection().exec_driver_sql("SET ROLE wingrc_app")
     try:
-        assert db_session.scalars(select(Assessment)).first() is None, (
-            "fixture must hide every assessment from the app role, or this test proves nothing"
+        nested = db_session.begin_nested()
+        with pytest.raises(DBAPIError) as unset:
+            db_session.scalars(select(Assessment)).first()
+        nested.rollback()
+        assert unset.value.orig.sqlstate == "WR001", (
+            "fixture must read as the app role with no org set, or this test proves nothing"
         )
         with pytest.raises(TenantRowsHidden):
             backfill_missing_control_states(db_session, reason="test", dry_run=True)

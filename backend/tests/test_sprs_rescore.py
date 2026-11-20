@@ -13,6 +13,7 @@ from datetime import date
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.exc import DBAPIError
 
 from app.engine import TenantRowsHidden, rescore_assessments, start_assessment
 from app.models import (
@@ -175,12 +176,19 @@ def _reset_role(db_session):
 def test_rescore_as_the_app_role_refuses(db_session, with_na, without_na):
     """Live, 2026-11-10: run as `wingrc_app` with no org set, the command
     printed "0 assessment(s), 0 moved, 0 unexplained" over 2. Now it refuses
-    rather than report a zero it never checked."""
+    rather than report a zero it never checked.
+
+    Since migration 0077 the plain read with no org raises WR001 instead of
+    returning live's zero, so the precondition asserts that; the command
+    still refuses through its own unfiltered count."""
     _as_app_role(db_session)
     try:
-        assert db_session.scalar(select(func.count()).select_from(type(with_na))) == 0, (
-            "fixture must reproduce live's zero (RLS hides every assessment "
-            "from the app role with no org set), or this test proves nothing"
+        nested = db_session.begin_nested()
+        with pytest.raises(DBAPIError) as unset:
+            db_session.scalar(select(func.count()).select_from(type(with_na)))
+        nested.rollback()
+        assert unset.value.orig.sqlstate == "WR001", (
+            "fixture must read as the app role with no org set, or this test proves nothing"
         )
         with pytest.raises(TenantRowsHidden, match="row-level security"):
             rescore_assessments(db_session, reason="test", dry_run=True)

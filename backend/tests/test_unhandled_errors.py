@@ -49,6 +49,9 @@ def test_an_unhandled_error_answers_with_a_reference_and_logs_the_exception(
         raise RuntimeError("internal detail that must not reach the browser")
 
     monkeypatch.setattr(auth_router, "check_login_rate_limit", _boom)
+    # The suite's in-process alembic run (fileConfig) disables loggers that
+    # already exist; production runs alembic in its own process.
+    monkeypatch.setattr(logging.getLogger("wingrc.errors"), "disabled", False)
     with caplog.at_level(logging.ERROR, logger="wingrc.errors"):
         resp = prod_client.post("/auth/login", json={"email": "a@example.com", "password": "x"})
 

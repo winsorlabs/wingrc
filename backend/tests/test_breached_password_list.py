@@ -30,6 +30,9 @@ def test_a_present_list_is_not_a_problem(monkeypatch, tmp_path):
 
 def test_loading_a_missing_list_logs_an_error(monkeypatch, tmp_path, caplog):
     monkeypatch.setattr(auth_module, "COMMON_PASSWORDS_PATH", str(tmp_path / "absent.txt"))
+    # The suite's in-process alembic run (fileConfig) disables loggers that
+    # already exist; production runs alembic in its own process.
+    monkeypatch.setattr(logging.getLogger("app.auth"), "disabled", False)
     with caplog.at_level(logging.ERROR, logger="app.auth"):
         assert auth_module._load_common_passwords() == frozenset()
     assert any("breached-password list missing" in r.getMessage() for r in caplog.records)
