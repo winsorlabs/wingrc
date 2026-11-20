@@ -134,8 +134,14 @@ bench work.
    ```bash
    docker compose -p wingrc_verify_<date> exec -T backend sh -c \
      'base="${WINGRC_MIGRATION_DATABASE_URL:-$WINGRC_DATABASE_URL}"
-      WINGRC_TEST_DATABASE_URL="${base%/wingrc}/wingrc_test" WINGRC_MIN_TESTS_RUN=1500 pytest -q'
+      WINGRC_TEST_DATABASE_URL="${base%/wingrc}/wingrc_test" WINGRC_MIN_TESTS_RUN=1500 \
+      WINGRC_AUDIT_COVERAGE=1 pytest -q'
    ```
+
+   `WINGRC_AUDIT_COVERAGE=1` is what CI's `integration` job sets. Without it
+   the audit check's companion is off, and a route a new test drives,
+   still listed in `NOT_REACHING_A_WRITE`, passes here and fails in CI
+   (#137's first run, 2026-11-20).
 
    Compose no longer puts `WINGRC_TEST_DATABASE_URL` in the container
    (2026-11-18): it is the owner's, a superuser, and it sat in every
