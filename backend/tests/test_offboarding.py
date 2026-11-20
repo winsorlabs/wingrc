@@ -178,7 +178,10 @@ class _FakeMsal:
 
 
 def _sso_callback(client, monkeypatch, user):
-    monkeypatch.setattr(auth_router, "_get_msal_app", lambda: _FakeMsal(user.entra_oid, user.email))
+    # Read now: inside the request the harness has expired the test's rows,
+    # and a lazy load there would run as wingrc_app with no org.
+    fake = _FakeMsal(user.entra_oid, user.email)
+    monkeypatch.setattr(auth_router, "_get_msal_app", lambda: fake)
     flow = sign_state_cookie(make_state_payload({"flow": {"state": "s"}}))
     return client.get("/auth/callback?code=c&state=s", cookies={"wingrc_auth_flow": flow})
 

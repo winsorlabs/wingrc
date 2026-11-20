@@ -301,7 +301,15 @@ def grant_membership(
     """
     if body.role not in _VALID_ROLES:
         raise HTTPException(status_code=422, detail=f"Invalid role: {body.role}")
-    target = db.get(User, body.user_id)
+    # Not db.get: the target is usually homed in another org, which this
+    # request's RLS scope (org_id) hides, so every cross-org grant answered
+    # 404 on a cut-over deployment. The suite passed only because the test's
+    # user was already in the session's identity map (docs/roadmap.md, "No
+    # invite could be redeemed on live").
+    target = db.execute(
+        text("SELECT id FROM auth.resolve_user_identity(:u)"),
+        {"u": body.user_id},
+    ).first()
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
 

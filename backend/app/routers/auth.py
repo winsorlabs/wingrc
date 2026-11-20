@@ -377,11 +377,14 @@ def set_password(
             ),
         )
 
+    # Before the read: as wingrc_app the user table is RLS-gated, and until
+    # 2026-11-20 this read came first and failed, so no invite or reset
+    # token could be redeemed on live from the 2026-09-29 cutover on
+    # (docs/roadmap.md, "No invite could be redeemed on live").
+    set_current_org(db, user_row.home_org_id)
     user = db.get(User, user_row.id)
     if user is None:
         raise HTTPException(status_code=400, detail="User not found")
-
-    set_current_org(db, user.home_org_id)
 
     settings = get_settings()
     if user.password_hash and check_password_reuse(

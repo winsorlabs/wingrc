@@ -353,7 +353,7 @@ def _authed(session: Session, user: CurrentUser):
     # reset by _app_session) before the org is set, as the real
     # get_current_user does; otherwise a route declaring its user before
     # its session would have the org cleared after it was set.
-    async def _override(_db: Session = Depends(get_session)) -> CurrentUser:
+    async def _override(_db: Session = Depends(get_session)) -> CurrentUser:  # noqa: B008
         # async, matching the real get_current_user (see its docstring):
         # FastAPI thread-dispatches sync dependencies, each into its own
         # context copy, so a sync override's ContextVar.set() here would

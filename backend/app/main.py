@@ -9,20 +9,23 @@ scoped to any one org).
 
 from __future__ import annotations
 
+import logging
 import os
+import secrets
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from . import health as component_health
 from . import snapshots
 from .audit import set_current_ip
-from .auth import CurrentUser, get_client_ip, get_current_user
+from .auth import CurrentUser, common_password_list_problem, get_client_ip, get_current_user
 from .catalog import ALL_VIEWS
 from .config import get_settings
 from .db import get_session
@@ -78,6 +81,38 @@ async def _stamp_audit_ip(request: Request, call_next):
     """
     set_current_ip(get_client_ip(request))
     return await call_next(request)
+
+
+logger = logging.getLogger("wingrc.errors")
+
+if (_problem := common_password_list_problem()) is not None:
+    logging.getLogger("wingrc.startup").error("breached-password list %s", _problem)
+
+UNHANDLED_DETAIL = (
+    "Something went wrong on the server and the request may not have completed. "
+    "Try again; if it happens again, give your administrator this reference: {ref}."
+)
+
+
+@app.exception_handler(Exception)
+async def _unhandled_error(request: Request, exc: Exception) -> JSONResponse:
+    """An error nothing handled answers with a reference a person can quote,
+    not a bare "Internal Server Error", and keeps the exception in the log.
+
+    Registered for `Exception`, which Starlette routes only from its
+    ServerErrorMiddleware, so a raised HTTPException ("Account
+    deactivated", "Invalid credentials", "Invalid or expired invite
+    token") never reaches it and keeps its own status and detail
+    (tests/test_unhandled_errors.py). Starlette re-raises after this
+    response, so the server logs the traceback as before; this line ties
+    the reference to it. Added 2026-11-20, after /auth/set-password's 500
+    (docs/roadmap.md, "No invite could be redeemed on live").
+    """
+    ref = secrets.token_hex(4)
+    logger.error(
+        "unhandled error ref=%s %s %s", ref, request.method, request.url.path, exc_info=exc
+    )
+    return JSONResponse(status_code=500, content={"detail": UNHANDLED_DETAIL.format(ref=ref)})
 
 
 app.include_router(auth_router.router)
@@ -246,6 +281,9 @@ def health(request: Request, response: Response, db: Session = Depends(get_sessi
             }
 
     detail["database"] = "ok"
+    # Reported, never a readiness condition: a restart does not ship the
+    # list, and deploy.sh prints this body, so every deploy shows it.
+    detail["breached_password_list"] = common_password_list_problem() or "ok"
     status, why = component_health.deployment_verdict(observed, why_unknown)
     detail["status"] = status
     if why is not None:
