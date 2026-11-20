@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
 import { ALL_ROLES, ROLE_LABELS } from "../lib/roles";
-import type { InvitedUser, UserRow } from "../types";
+import type { InvitedUser, UserAccess, UserRow } from "../types";
 import { accountStatus } from "../lib/userStatus";
+import { deactivateConfirmation, reactivateConfirmation } from "../lib/userAccess";
 
 // invite_user rejects login_method="api" — that value is reserved for
 // service-account users created via POST /users/api, a separate flow not
@@ -54,7 +55,13 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
 
   const [confirmDeactivateId, setConfirmDeactivateId] = useState<string | null>(null);
   const [deactivating, setDeactivating] = useState(false);
+  const [confirmReactivateId, setConfirmReactivateId] = useState<string | null>(null);
   const [reactivatingId, setReactivatingId] = useState<string | null>(null);
+  // What the open Deactivate/Reactivate confirmation reaches: undefined
+  // while it loads, null if the lookup failed (lib/userAccess.ts).
+  const [access, setAccess] = useState<{ userId: string; value: UserAccess | null } | undefined>(
+    undefined,
+  );
 
   const [confirmResetMfaId, setConfirmResetMfaId] = useState<string | null>(null);
   const [resettingMfa, setResettingMfa] = useState(false);
@@ -189,12 +196,33 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
     }
   }
 
+  function loadAccess(userId: string) {
+    setAccess(undefined);
+    api
+      .getUserAccess(orgId, userId)
+      .then((value) => setAccess({ userId, value }))
+      .catch(() => setAccess({ userId, value: null }));
+  }
+
+  function openDeactivate(userId: string) {
+    setConfirmReactivateId(null);
+    setConfirmDeactivateId(userId);
+    loadAccess(userId);
+  }
+
+  function openReactivate(userId: string) {
+    setConfirmDeactivateId(null);
+    setConfirmReactivateId(userId);
+    loadAccess(userId);
+  }
+
   async function handleReactivate(userId: string) {
     setReactivatingId(userId);
     setError(null);
     try {
       const updated = await api.patchUser(orgId, userId, { is_active: true });
       setUsers((prev) => prev.map((u) => (u.id === userId ? updated : u)));
+      setConfirmReactivateId(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not reactivate user");
     } finally {
@@ -512,22 +540,50 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
                             )
                           )}
                           {u.deactivated_at && !isSelf && (
-                            <button
-                              className="btn-ghost btn-xs"
-                              onClick={() => handleReactivate(u.id)}
-                              disabled={reactivatingId === u.id}
-                            >
-                              {reactivatingId === u.id ? "Reactivating…" : "Reactivate"}
-                            </button>
+                            confirmReactivateId === u.id ? (
+                              <span className="delete-confirm">
+                                {access?.userId === u.id ? (
+                                  <span>
+                                    {reactivateConfirmation(u.display_name, access.value, u.login_method)}
+                                  </span>
+                                ) : (
+                                  <span>Checking which organizations this restores…</span>
+                                )}
+                                <button
+                                  className="btn-primary btn-xs"
+                                  onClick={() => handleReactivate(u.id)}
+                                  disabled={reactivatingId === u.id || access?.userId !== u.id}
+                                >
+                                  {reactivatingId === u.id ? "Reactivating…" : "Yes, reactivate"}
+                                </button>
+                                <button
+                                  className="btn-ghost btn-xs"
+                                  onClick={() => setConfirmReactivateId(null)}
+                                >
+                                  Cancel
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                className="btn-ghost btn-xs"
+                                onClick={() => openReactivate(u.id)}
+                              >
+                                Reactivate
+                              </button>
+                            )
                           )}
                           {!u.deactivated_at && !isSelf && (
                             confirmDeactivateId === u.id ? (
                               <span className="delete-confirm">
-                                <span>Deactivate?</span>
+                                {access?.userId === u.id ? (
+                                  <span>{deactivateConfirmation(u.display_name, access.value)}</span>
+                                ) : (
+                                  <span>Checking which organizations this reaches…</span>
+                                )}
                                 <button
                                   className="btn-danger btn-xs"
                                   onClick={() => handleDeactivate(u.id)}
-                                  disabled={deactivating}
+                                  disabled={deactivating || access?.userId !== u.id}
                                 >
                                   {deactivating ? "Deactivating…" : "Yes, deactivate"}
                                 </button>
@@ -541,7 +597,7 @@ export function UsersPanel({ orgId, currentUserId }: Props) {
                             ) : (
                               <button
                                 className="btn-ghost btn-xs btn-destructive"
-                                onClick={() => setConfirmDeactivateId(u.id)}
+                                onClick={() => openDeactivate(u.id)}
                               >
                                 Deactivate
                               </button>

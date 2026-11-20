@@ -1220,7 +1220,21 @@ export interface UserDirectoryEntry {
   home_org_id: string;
   home_org_name: string;
   deleted_at: string | null;
+  // What lib/userStatus.ts reads, so the directory says whether the access
+  // it lists can be used.
+  is_active: boolean;
+  deactivated_at: string | null;
+  login_method: string;
   memberships: MembershipEntry[];
+}
+
+// GET /orgs/{org_id}/users/{user_id}/access: what deactivating or
+// reactivating the account reaches. Deactivation is on the user, so it
+// ends access to every org listed, not only the one whose tab it is
+// taken from. reactivates_to is computed by the rule PATCH applies.
+export interface UserAccess {
+  memberships: MembershipEntry[];
+  reactivates_to: "active" | "awaiting_enrolment";
 }
 
 // null when no org has been designated yet (a fresh deployment that

@@ -258,14 +258,33 @@ def test_a_deactivated_local_user_with_mfa_is_still_refused_at_verify(client, db
 
 
 @pytest.mark.integration
-def test_a_refused_sign_in_is_in_the_users_history(client, db_session, org):
+def test_a_refused_sign_in_is_in_the_users_history_under_its_own_action(
+    client, db_session, org
+):
+    """Not auth.login.failed: in the audit list an offboarded account's
+    attempt must read apart from a mistyped password (2026-11-20)."""
     user = _user(db_session, org, is_active=False, deactivated_at=datetime.now(UTC))
     _login(client, user)
-    row = db_session.execute(
-        select(AuditLog).where(AuditLog.entity_id == user.id,
-                               AuditLog.action == "auth.login.failed")
-    ).scalar_one()
-    assert row.context == {"reason": "deactivated", "method": "local"}
+    actions = db_session.execute(
+        select(AuditLog.action, AuditLog.context).where(AuditLog.entity_id == user.id)
+    ).all()
+    assert actions == [("auth.login.refused_deactivated",
+                        {"reason": "deactivated", "method": "local"})]
+
+
+@pytest.mark.integration
+def test_a_wrong_password_on_an_offboarded_account_is_an_ordinary_failure(
+    client, db_session, org
+):
+    """The refusal is told only to someone who authenticated, so a wrong
+    password stays auth.login.failed and does not reveal the account state."""
+    user = _user(db_session, org, is_active=False, deactivated_at=datetime.now(UTC))
+    resp = client.post("/auth/login", json={"email": user.email, "password": "not-it-at-all"})
+    assert resp.status_code == 401, resp.text
+    actions = db_session.execute(
+        select(AuditLog.action, AuditLog.context).where(AuditLog.entity_id == user.id)
+    ).all()
+    assert actions == [("auth.login.failed", {"reason": "bad_password"})]
 
 
 # ---------------------------------------------------------------------------
@@ -568,3 +587,58 @@ def test_backfill_reads_inactive_and_enrolled_as_offboarded(
     db_session.execute(text(_migration().ENROLLED_SQL))
     db_session.refresh(user)
     assert (user.deactivated_at is not None) == offboarded
+
+
+# ---------------------------------------------------------------------------
+# What deactivating and reactivating reach (2026-11-20)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+def test_access_names_every_org_the_account_reaches_not_only_this_one(
+    client, db_session, org, admin
+):
+    """Deactivation is on the user, so from one org's Users tab it ends
+    access to all of them; the confirmation has to be able to name them."""
+    from app.models import OrgMembership
+
+    other = Organization(name=f"Offboard-other-{uuid.uuid4().hex[:8]}")
+    db_session.add(other)
+    db_session.flush()
+    user = _user(db_session, org, mfa_enrolled=True)
+    db_session.add_all([OrgMembership(user_id=user.id, org_id=org.id, role="msp_engineer"),
+                        OrgMembership(user_id=user.id, org_id=other.id, role="customer_poc")])
+    db_session.flush()
+    _as_admin(db_session, admin)
+    resp = client.get(f"/orgs/{org.id}/users/{user.id}/access")
+    assert resp.status_code == 200, resp.text
+    got = {(m["org_name"], m["role"]) for m in resp.json()["memberships"]}
+    assert got == {(org.name, "msp_engineer"), (other.name, "customer_poc")}
+    assert resp.json()["reactivates_to"] == "active"
+
+
+@pytest.mark.integration
+def test_access_says_an_unfinished_account_reactivates_to_awaiting_enrolment(
+    client, db_session, org, admin
+):
+    """Computed by the rule PATCH applies, and checked against what PATCH
+    then does, so the confirmation cannot promise a different result."""
+    user = _user(db_session, org, is_active=False, mfa_enrolled=False,
+                 deactivated_at=datetime.now(UTC))
+    _as_admin(db_session, admin)
+    said = client.get(f"/orgs/{org.id}/users/{user.id}/access").json()["reactivates_to"]
+    assert said == "awaiting_enrolment"
+    done = client.patch(f"/orgs/{org.id}/users/{user.id}", json={"is_active": True})
+    assert done.status_code == 200, done.text
+    assert done.json()["is_active"] is False
+
+
+@pytest.mark.integration
+def test_an_anonymized_account_cannot_be_granted_access(client, db_session, org, admin):
+    """The directory hides Grant access on an anonymized row; the server
+    refuses it too, so hiding the button is not the only thing holding it."""
+    user = _user(db_session, org, is_active=False, deleted_at=datetime.now(UTC))
+    _as_admin(db_session, admin)
+    resp = client.post(f"/orgs/{org.id}/memberships",
+                       json={"user_id": str(user.id), "role": "customer_poc"})
+    assert resp.status_code == 409, resp.text
+    assert "anonymized" in resp.json()["detail"]
