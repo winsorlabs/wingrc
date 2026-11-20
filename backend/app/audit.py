@@ -30,7 +30,7 @@ Scoped to meaningful compliance mutations (signal, not firehose):
                                  administrator deactivated; clears
                                  deactivated_at (a first activation is
                                  auth.mfa.enrolled, or activation_change)
-  auth.login.refused_deactivated â€” a sign-in, SSO callback or enrolment
+  auth.login.refused_deactivated — a sign-in, SSO callback or enrolment
                                  by an account an administrator deactivated,
                                  after its credential checked out (routers/
                                  auth.py). Before 2026-11-20 these were
