@@ -903,6 +903,16 @@ Shipped (migrations 0015–0017): local login + Entra SSO; session cookies
 HIBP k-anonymity check. RLS via `app.current_org` with SECURITY DEFINER
 functions on a pinned search_path. `wingrc_app` role, NOBYPASSRLS.
 
+**Offboarding is `user.deactivated_at`, not `is_active` (migration 0076,
+2026-11-20).** `is_active = false` also means an invitee or an MFA reset,
+and both must still enrol. Deactivation (`DELETE /users/{id}`, `PATCH
+is_active=false`) sets `deactivated_at`; only `PATCH is_active=true`
+clears it, audited as `user.reactivate`. Login, the Entra callback and
+enrolment refuse while it is set. Every path that sets a user inactive
+revokes their sessions, because an inactive account can become active
+again (`tests/test_offboarding.py`; `docs/roadmap.md`, "A deactivated user
+could sign back in").
+
 **Always set the org through `rls.set_current_org(session, org_id)` — never
 write `app.current_org` directly.** That GUC is transaction-scoped, so a
 commit discards it and any read afterwards matches zero rows under RLS;
