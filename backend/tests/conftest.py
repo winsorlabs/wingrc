@@ -20,7 +20,7 @@ from urllib.parse import urlparse, urlunparse
 import pytest
 from alembic import command as alembic_cmd
 from alembic.config import Config as AlembicConfig
-from fastapi import Request
+from fastapi import Depends, Request
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session
@@ -30,7 +30,7 @@ from app.auth import CurrentUser, actor_type_for
 from app.config import get_settings
 from app.db import get_session
 from app.models import OrgMembership, User
-from app.rls import reapply_current_org, set_current_org
+from app.rls import clear_current_org, reapply_current_org, set_current_org
 from tests import audit_check
 
 # Non-superuser, non-owner role Phase 3 introduces so RLS is an enforced
@@ -349,7 +349,11 @@ def _authed(session: Session, user: CurrentUser):
     than "no membership at all").
     """
 
-    async def _override() -> CurrentUser:
+    # Depends on get_session so the request's session exists (and has been
+    # reset by _app_session) before the org is set, as the real
+    # get_current_user does; otherwise a route declaring its user before
+    # its session would have the org cleared after it was set.
+    async def _override(_db: Session = Depends(get_session)) -> CurrentUser:  # noqa: B008
         # async, matching the real get_current_user (see its docstring):
         # FastAPI thread-dispatches sync dependencies, each into its own
         # context copy, so a sync override's ContextVar.set() here would
@@ -392,6 +396,19 @@ def _app_session(session: Session):
     """
 
     def _override(request: Request) -> Iterator[Session]:
+        # A request starts as production's does: no org, and nothing already
+        # loaded. Until 2026-11-20 the session carried both over from the
+        # test body and from earlier requests in the same test: the org an
+        # admin request set stayed set (the outer transaction never ends),
+        # and db.get() of a row the test had made answered from the
+        # identity map without a query. So a route that read before setting
+        # its org passed here and failed on live (set-password, which had
+        # been broken on live since the 2026-09-29 cutover; docs/roadmap.md,
+        # "No invite could be redeemed on live"). Flushed first so the
+        # test's own unflushed rows are visible to the request.
+        session.flush()
+        session.expire_all()
+        clear_current_org(session)
         conn = session.connection()
         conn.execute(text(f"SET ROLE {_APP_ROLE}"))
         real_commit = session.commit

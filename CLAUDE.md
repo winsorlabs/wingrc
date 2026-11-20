@@ -167,6 +167,19 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   over-marked tests. Seven files have been corrected in both directions
   (three under-marked 2026-09-29, four over-marked 2026-09-30); see
   `docs/roadmap.md`'s CI-red and N.3 entries.
+- **A request in the suite starts as production's does: no org set and
+  nothing loaded** (`conftest._app_session`, 2026-11-20). Until then one
+  session carried the test body's loaded rows and an earlier request's
+  org into every request, so `db.get` answered from the identity map and
+  a read made before `set_current_org` passed. `/auth/set-password` was
+  broken on live for seven weeks behind that, and cross-org
+  `grant_membership` answered 404. A test that reads its own fixture
+  lazily inside a request (a fake's lambda) reads it first. And on the
+  database side, **a read of an RLS table with no org raises `WR001`**,
+  naming the cause (`public.rls_current_org()`, migration 0077). It does
+  not match nothing. A new org-scoped table's policy reads the org
+  through that function, or `tests/test_rls_unset_org.py` fails
+  (`docs/roadmap.md`, "No invite could be redeemed on live").
 - **A test's precondition carries a message saying it is one**, placed
   where the fixture sets it up: `assert a != b, "fixture must … or this
   test proves nothing"`. A bare assert on the setup fails as if the
@@ -595,7 +608,7 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
 | `backend/app/snapshots.py` | Local snapshots (item S): the database and the object store as one set, with a manifest. **Not a backup**: same host as the data. A database restored without its objects renders every attachment present with no bytes, and row counts and SPRS pass on it, so `snapshot-verify` fetches every object a row names. A restore goes only into an empty database and bucket. The Fernet key is not in a snapshot, so nothing restores credentials without it. The age reader counts only sets with a manifest, and msp_admin's banner (`SnapshotBanner.tsx`, the TLS banner's path) fires past 50 hours or on none. `deploy/restore-test.sh` is the test and its mutation check; `docs/deployment.md`, "Local snapshots", is the operator's page |
 | `backend/app/audit.py` | `log_event()` — writes `AuditLog` rows; also the actor-resolution helpers both audit views share |
 | `backend/app/rls.py` | The only place `app.current_org` is written, plus the `after_begin` hook that makes it survive a commit — read before touching anything org-scoped |
-| `backend/app/migrations/` | Alembic migrations (currently 0001–0075) |
+| `backend/app/migrations/` | Alembic migrations (currently 0001–0077) |
 | `backend/baselines/` | YAML product baselines (`rocketcyber.yaml`, …) — not repo-root `baselines/`; `seeds/baselines.py:_BASELINES_DIR` resolves here, and a stale repo-root duplicate that drifted out of sync with a real coverage_basis reclassification was removed 2026-09-19 (see `docs/roadmap.md`'s tenant lifecycle consolidation pass entry) |
 | `docs/fips.md` | FIPS 140-2/140-3 crypto boundary documentation |
 | `docs/architecture.md` | Authoritative architecture description (the five layers) — companion to this file's terse session version |

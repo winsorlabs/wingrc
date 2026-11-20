@@ -147,12 +147,37 @@ def validate_password_policy(password: str) -> list[str]:
     return errors
 
 
+COMMON_PASSWORDS_PATH = os.path.join(os.path.dirname(__file__), "data", "common_passwords.txt")
+
+
+def common_password_list_problem() -> str | None:
+    """Why the bundled breached-password list checks nothing, or None.
+
+    The list has never existed: no `app/data/` was ever committed, and a
+    missing file read as an empty set with nothing logged, so the local
+    check passed every password. Only the HIBP call checked, and it fails
+    open, so a deployment that cannot reach HIBP (air-gapped, GCC High) has
+    never had a breached-password check (docs/roadmap.md, "The bundled
+    breached-password list does not exist"). Logged at startup and
+    reported by /health until a list ships.
+    """
+    if not get_settings().pwned_passwords_check:
+        return None
+    if not os.path.isfile(COMMON_PASSWORDS_PATH):
+        return (
+            f"missing: {COMMON_PASSWORDS_PATH} does not exist, so only the HIBP "
+            "lookup checks for breached passwords, and it passes every password "
+            "when HIBP cannot be reached"
+        )
+    return None
+
+
 def _load_common_passwords() -> frozenset[str]:
-    path = os.path.join(os.path.dirname(__file__), "data", "common_passwords.txt")
     try:
-        with open(path) as f:
+        with open(COMMON_PASSWORDS_PATH) as f:
             return frozenset(line.strip().lower() for line in f if line.strip())
     except FileNotFoundError:
+        logger.error("breached-password list %s", common_password_list_problem())
         return frozenset()
 
 
