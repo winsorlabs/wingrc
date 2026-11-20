@@ -13304,6 +13304,13 @@ and an MFA enrolment depend on is its own finding. Both are listed in
 companion fails the run once a test reaches their writes, until each
 entry is removed.
 
+**Reset-MFA: closed 2026-11-20** by `tests/test_offboarding.py`, which
+asserts the cleared enrolment and backup codes, the `user.mfa_reset` row,
+revoked sessions and a full re-enrolment. Its `NOT_REACHING_A_WRITE`
+entry is removed: CI's companion failed the run on it, as designed (the
+bench does not set `WINGRC_AUDIT_COVERAGE`, so only CI saw it). Logout
+is still untested.
+
 **In the same item, smaller:** resolving a review-cycle flag is tested
 only as a `customer_poc` refusal (403). A resolve that writes is not, so
 it too is listed until a test reaches it.

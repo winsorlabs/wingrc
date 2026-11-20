@@ -36,7 +36,7 @@ from app.auth import (
 )
 from app.db import get_session
 from app.main import app
-from app.models import AuditLog, Organization, User, UserSession
+from app.models import AuditLog, MfaBackupCode, Organization, User, UserSession
 from tests.conftest import _app_session, _authed, _grant, _make_fake_user, _set_cookie_value
 
 PASSWORD = "Correct-Horse-Battery-Staple-41"
@@ -299,6 +299,7 @@ def test_an_invitee_still_enrols_and_signs_in(client, db_session, org, admin):
 def test_an_mfa_reset_still_re_enrols_and_signs_in(client, db_session, org, admin):
     user, _ = _enrolled(db_session, org)
     old_session, old_raw = create_session(db_session, user)
+    db_session.add(MfaBackupCode(user_id=user.id, code_hash="0" * 64))
     db_session.flush()
 
     _as_admin(db_session, admin)
@@ -306,6 +307,11 @@ def test_an_mfa_reset_still_re_enrols_and_signs_in(client, db_session, org, admi
     _as_nobody()
     db_session.refresh(user)
     assert not user.is_active and user.deactivated_at is None
+    assert not user.mfa_enrolled and user.totp_secret is None
+    assert db_session.execute(
+        select(MfaBackupCode).where(MfaBackupCode.user_id == user.id)
+    ).first() is None
+    assert "user.mfa_reset" in _actions(db_session, user)
 
     login = _login(client, user)
     assert login.status_code == 200, login.text
