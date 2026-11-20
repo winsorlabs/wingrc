@@ -406,14 +406,14 @@ def test_patch_inactive_on_an_invitee_offboards_it_with_an_audit_row(
 # Migration 0076's backfill
 # ---------------------------------------------------------------------------
 
-def _backfill_sql() -> str:
+def _migration():
     import importlib.util
     path = (Path(__file__).resolve().parents[1] / "app" / "migrations" / "versions"
             / "0076_user_deactivated_at.py")
     spec = importlib.util.spec_from_file_location("m0076", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.BACKFILL_SQL
+    return module
 
 
 def _event(db_session, user, action, after=None, at="2026-11-01T00:00:00Z"):
@@ -449,6 +449,27 @@ def test_backfill_reads_offboarding_from_the_audit_log(
     for i, (action, after) in enumerate(history):
         _event(db_session, user, action, after, at=f"2026-11-0{i + 1}T00:00:00Z")
     db_session.flush()
-    db_session.execute(text(_backfill_sql()))
+    db_session.execute(text(_migration().BACKFILL_SQL))
+    db_session.refresh(user)
+    assert (user.deactivated_at is not None) == offboarded
+
+
+# Written out: (mfa_enrolled, is_active) with no audit history, and whether
+# the second rule reads the account as offboarded.
+ENROLLED_CASES = [
+    ("inactive and enrolled", True, False, True),
+    ("inactive, not enrolled", False, False, False),
+    ("active and enrolled", True, True, False),
+]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(("case", "enrolled", "is_active", "offboarded"), ENROLLED_CASES,
+                         ids=[c[0] for c in ENROLLED_CASES])
+def test_backfill_reads_inactive_and_enrolled_as_offboarded(
+    db_session, org, case, enrolled, is_active, offboarded,
+):
+    user = _user(db_session, org, is_active=is_active, mfa_enrolled=enrolled)
+    db_session.execute(text(_migration().ENROLLED_SQL))
     db_session.refresh(user)
     assert (user.deactivated_at is not None) == offboarded

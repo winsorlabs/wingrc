@@ -205,6 +205,12 @@ Also in `patch_user`: when `is_active` goes false, revoke live sessions the same
 way `deactivate_user` does. `_resolve_session` already 403s on inactive users, so
 this is consistency rather than a hole — but the two paths should not differ.
 
+*Corrected 2026-11-20:* it was a hole. An inactive account becomes active
+again (an administrator's reactivation, or re-enrolment after an MFA reset),
+and every session row not revoked then resolves again. `reset_user_mfa` did
+not revoke, so a session from before the reset came back after re-enrolment
+(`docs/roadmap.md`, "A deactivated user could sign back in").
+
 ### Tests — extend `backend/tests/test_api_tokens.py`
 - Token minted at `msp_admin`, user demoted to `customer_poc`, token now resolves
   as `customer_poc` and is refused an admin-only endpoint.

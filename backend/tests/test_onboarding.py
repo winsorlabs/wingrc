@@ -142,6 +142,7 @@ _FAKE_WEBP = b"RIFF" + b"\x00" * 4 + b"WEBP" + b"\x00" * 50
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_org_profile_get_returns_defaults(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     r = client.get(f"/orgs/{org.id}/profile")
@@ -153,6 +154,7 @@ def test_org_profile_get_returns_defaults(client, db_session, fake_msp_admin):
     assert data["country"] == "US"  # server_default 'US' fires on DB INSERT
 
 
+@pytest.mark.integration
 def test_org_profile_patch_updates_fields(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     r = client.patch(
@@ -174,6 +176,7 @@ def test_org_profile_patch_updates_fields(client, db_session, fake_msp_admin):
     assert data["phone_primary"] == "703-555-0100"
 
 
+@pytest.mark.integration
 def test_org_profile_patch_is_partial(client, db_session, fake_msp_admin):
     """PATCH with one field must not overwrite other fields."""
     org = _own_org(db_session, fake_msp_admin)
@@ -189,6 +192,7 @@ def test_org_profile_patch_is_partial(client, db_session, fake_msp_admin):
     assert data["phone_primary"] == "703-555-0200"
 
 
+@pytest.mark.integration
 def test_org_profile_patch_null_clears_field(client, db_session, fake_msp_admin):
     """Explicitly sending null in PATCH body clears that field."""
     org = _own_org(db_session, fake_msp_admin)
@@ -198,6 +202,7 @@ def test_org_profile_patch_null_clears_field(client, db_session, fake_msp_admin)
     assert r.json()["industry"] is None
 
 
+@pytest.mark.integration
 def test_org_profile_patch_unknown_org_returns_403(client, fake_msp_admin):
     """A client can still send any org_id, including one with no
     Organization row at all — that part of the scenario is unchanged.
@@ -215,6 +220,7 @@ def test_org_profile_patch_unknown_org_returns_403(client, fake_msp_admin):
     assert r.status_code == 403
 
 
+@pytest.mark.integration
 def test_org_profile_patch_audit_log(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     client.patch(f"/orgs/{org.id}/profile", json={"industry": "Defense"})
@@ -233,6 +239,7 @@ def test_org_profile_patch_audit_log(client, db_session, fake_msp_admin):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_logo_upload_sets_storage_key(client, db_session, storage, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin, name="Acme MSP")
     r = client.post(
@@ -256,6 +263,7 @@ def test_logo_upload_sets_storage_key(client, db_session, storage, fake_msp_admi
     assert data["logo_storage_key"] in storage.files
 
 
+@pytest.mark.integration
 def test_logo_upload_replaces_old_logo(client, db_session, storage, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     r1 = client.post(
@@ -274,6 +282,7 @@ def test_logo_upload_replaces_old_logo(client, db_session, storage, fake_msp_adm
     assert old_key in storage.deleted
 
 
+@pytest.mark.integration
 def test_logo_upload_invalid_mime(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     r = client.post(
@@ -283,6 +292,7 @@ def test_logo_upload_invalid_mime(client, db_session, fake_msp_admin):
     assert r.status_code == 422
 
 
+@pytest.mark.integration
 def test_logo_upload_magic_byte_mismatch(client, db_session, fake_msp_admin):
     """File claims image/png but bytes are garbage."""
     org = _own_org(db_session, fake_msp_admin)
@@ -293,17 +303,31 @@ def test_logo_upload_magic_byte_mismatch(client, db_session, fake_msp_admin):
     assert r.status_code == 422
 
 
+@pytest.mark.integration
 def test_logo_upload_too_large(client, db_session, fake_msp_admin):
+    """Two refusals. Over the handler's 10 MB but inside the route's body
+    limit (10 MB plus a multipart allowance), the handler says 422. Over
+    the route limit, the body-limit middleware says 413 before the handler
+    runs (app/upload_limits.py). Until 2026-11-20 this test sent 11 MB and
+    expected 422; it went red when the route limit landed, unseen, because
+    CI's integration job selects by marker and this file had none."""
     org = _own_org(db_session, fake_msp_admin)
-    # Create a fake PNG header followed by 11 MB of zeros
-    oversized = _FAKE_PNG + b"\x00" * (11 * 1024 * 1024)
+    over_handler = _FAKE_PNG + b"\x00" * (10 * 1024 * 1024 + 1024)
     r = client.post(
         f"/orgs/{org.id}/logo",
-        files={"file": ("big.png", oversized, "image/png")},
+        files={"file": ("big.png", over_handler, "image/png")},
     )
-    assert r.status_code == 422
+    assert r.status_code == 422, r.text
+
+    over_route = _FAKE_PNG + b"\x00" * (12 * 1024 * 1024)
+    r = client.post(
+        f"/orgs/{org.id}/logo",
+        files={"file": ("big.png", over_route, "image/png")},
+    )
+    assert r.status_code == 413, r.text
 
 
+@pytest.mark.integration
 def test_logo_appears_in_profile_get(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin, name="Acme MSP")
     client.post(
@@ -331,12 +355,14 @@ _SD_BASE = {
 }
 
 
+@pytest.mark.integration
 def test_system_description_404_before_create(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     r = client.get(f"/orgs/{org.id}/system-description")
     assert r.status_code == 404
 
 
+@pytest.mark.integration
 def test_system_description_put_creates(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     r = client.put(f"/orgs/{org.id}/system-description", json=_SD_BASE)
@@ -348,6 +374,7 @@ def test_system_description_put_creates(client, db_session, fake_msp_admin):
     assert data["org_id"] == str(org.id)
 
 
+@pytest.mark.integration
 def test_system_description_get_after_put(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     client.put(f"/orgs/{org.id}/system-description", json=_SD_BASE)
@@ -356,6 +383,7 @@ def test_system_description_get_after_put(client, db_session, fake_msp_admin):
     assert r.json()["system_name"] == "ACME CUI System"
 
 
+@pytest.mark.integration
 def test_system_description_put_replaces(client, db_session, fake_msp_admin):
     """Second PUT fully replaces the first (upsert)."""
     org = _own_org(db_session, fake_msp_admin)
@@ -374,6 +402,7 @@ def test_system_description_put_replaces(client, db_session, fake_msp_admin):
     assert len(rows) == 1
 
 
+@pytest.mark.integration
 def test_system_description_jsonb_roundtrip(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     body = {
@@ -396,6 +425,7 @@ def test_system_description_jsonb_roundtrip(client, db_session, fake_msp_admin):
     assert "SharePoint" in data["cui_flow_description"]
 
 
+@pytest.mark.integration
 def test_system_description_invalid_system_type(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     r = client.put(
@@ -405,6 +435,7 @@ def test_system_description_invalid_system_type(client, db_session, fake_msp_adm
     assert r.status_code == 422
 
 
+@pytest.mark.integration
 def test_system_description_invalid_operational_status(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     r = client.put(
@@ -419,6 +450,7 @@ def test_system_description_invalid_operational_status(client, db_session, fake_
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_contact_create_and_list(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     r = client.post(
@@ -445,6 +477,7 @@ def test_contact_create_and_list(client, db_session, fake_msp_admin):
     assert contacts[0]["id"] == data["id"]
 
 
+@pytest.mark.integration
 def test_contact_get_single(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     c = _contact(db_session, org)
@@ -453,6 +486,7 @@ def test_contact_get_single(client, db_session, fake_msp_admin):
     assert r.json()["id"] == str(c.id)
 
 
+@pytest.mark.integration
 def test_contact_patch_updates_fields(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     c = _contact(db_session, org)
@@ -467,6 +501,7 @@ def test_contact_patch_updates_fields(client, db_session, fake_msp_admin):
     assert data["affiliation"] == "msp"  # unchanged
 
 
+@pytest.mark.integration
 def test_contact_patch_is_partial(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     c = _contact(db_session, org, phone="703-555-0100")
@@ -477,6 +512,7 @@ def test_contact_patch_is_partial(client, db_session, fake_msp_admin):
     assert data["phone"] == "703-555-0100"  # unchanged
 
 
+@pytest.mark.integration
 def test_contact_patch_invalid_affiliation(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     c = _contact(db_session, org)
@@ -484,6 +520,7 @@ def test_contact_patch_invalid_affiliation(client, db_session, fake_msp_admin):
     assert r.status_code == 422
 
 
+@pytest.mark.integration
 def test_contact_delete(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     c = _contact(db_session, org)
@@ -494,6 +531,7 @@ def test_contact_delete(client, db_session, fake_msp_admin):
     assert r2.status_code == 404
 
 
+@pytest.mark.integration
 def test_contact_duplicate_email_rejected(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     email = "dup@example.com"
@@ -508,6 +546,7 @@ def test_contact_duplicate_email_rejected(client, db_session, fake_msp_admin):
     assert r.status_code == 409
 
 
+@pytest.mark.integration
 def test_contact_invalid_affiliation_rejected(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     r = client.post(
@@ -517,6 +556,7 @@ def test_contact_invalid_affiliation_rejected(client, db_session, fake_msp_admin
     assert r.status_code == 422
 
 
+@pytest.mark.integration
 def test_contact_create_audit_log(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     r = client.post(
@@ -539,6 +579,7 @@ def test_contact_create_audit_log(client, db_session, fake_msp_admin):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_add_role_to_contact(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     c = _contact(db_session, org)
@@ -552,6 +593,7 @@ def test_add_role_to_contact(client, db_session, fake_msp_admin):
     assert data["contact_id"] == str(c.id)
 
 
+@pytest.mark.integration
 def test_contact_with_roles_appears_in_list(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     c = _contact(db_session, org)
@@ -565,6 +607,7 @@ def test_contact_with_roles_appears_in_list(client, db_session, fake_msp_admin):
     assert roles[0]["role"] == "it_admin"
 
 
+@pytest.mark.integration
 def test_contact_multiple_roles(client, db_session, fake_msp_admin):
     """One person can hold multiple documentation roles."""
     org = _own_org(db_session, fake_msp_admin)
@@ -584,6 +627,7 @@ def test_contact_multiple_roles(client, db_session, fake_msp_admin):
     assert roles == {"president", "authorizing_official", "system_owner"}
 
 
+@pytest.mark.integration
 def test_duplicate_role_rejected(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     c = _contact(db_session, org)
@@ -596,6 +640,7 @@ def test_duplicate_role_rejected(client, db_session, fake_msp_admin):
     assert r.status_code == 409
 
 
+@pytest.mark.integration
 def test_invalid_role_rejected(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     c = _contact(db_session, org)
@@ -606,6 +651,7 @@ def test_invalid_role_rejected(client, db_session, fake_msp_admin):
     assert r.status_code == 422
 
 
+@pytest.mark.integration
 def test_remove_role(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     c = _contact(db_session, org)
@@ -621,6 +667,7 @@ def test_remove_role(client, db_session, fake_msp_admin):
     assert r2.json()["documentation_roles"] == []
 
 
+@pytest.mark.integration
 def test_remove_nonexistent_role_returns_404(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     c = _contact(db_session, org)
@@ -628,6 +675,7 @@ def test_remove_nonexistent_role_returns_404(client, db_session, fake_msp_admin)
     assert r.status_code == 404
 
 
+@pytest.mark.integration
 def test_remove_invalid_role_returns_422(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     c = _contact(db_session, org)
@@ -635,6 +683,7 @@ def test_remove_invalid_role_returns_422(client, db_session, fake_msp_admin):
     assert r.status_code == 422
 
 
+@pytest.mark.integration
 def test_contact_delete_cascades_roles(client, db_session, fake_msp_admin):
     """Deleting a contact must cascade to its documentation roles."""
     org = _own_org(db_session, fake_msp_admin)
@@ -652,6 +701,7 @@ def test_contact_delete_cascades_roles(client, db_session, fake_msp_admin):
     assert orphan is None
 
 
+@pytest.mark.integration
 def test_role_notes_roundtrip(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     c = _contact(db_session, org)
@@ -670,6 +720,7 @@ def test_role_notes_roundtrip(client, db_session, fake_msp_admin):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_contacts_scoped_to_org(client, db_session, fake_msp_admin):
     """Contacts from org A must not appear in org B's list.
 
@@ -705,6 +756,7 @@ def test_contacts_scoped_to_org(client, db_session, fake_msp_admin):
     assert emails_b == {"bob@b.com"}
 
 
+@pytest.mark.integration
 def test_contact_get_from_wrong_org_returns_404(client, db_session, fake_msp_admin):
     """org_b is the caller's own org (passes the ownership check); the contact
     belongs to unrelated org_a, so the handler's own lookup 404s."""
@@ -720,6 +772,7 @@ def test_contact_get_from_wrong_org_returns_404(client, db_session, fake_msp_adm
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_onboarding_status_empty_org(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     r = client.get(f"/orgs/{org.id}/onboarding-status")
@@ -733,6 +786,7 @@ def test_onboarding_status_empty_org(client, db_session, fake_msp_admin):
     assert data["personnel"]["roles_covered"] == []
 
 
+@pytest.mark.integration
 def test_onboarding_status_profile_complete(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     client.patch(
@@ -751,6 +805,7 @@ def test_onboarding_status_profile_complete(client, db_session, fake_msp_admin):
     assert r.json()["profile"]["missing_fields"] == []
 
 
+@pytest.mark.integration
 def test_onboarding_status_partial_profile(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     client.patch(f"/orgs/{org.id}/profile", json={"industry": "Defense"})
@@ -760,6 +815,7 @@ def test_onboarding_status_partial_profile(client, db_session, fake_msp_admin):
     assert "address_line1" in data["profile"]["missing_fields"]
 
 
+@pytest.mark.integration
 def test_onboarding_status_system_description_complete(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     client.put(f"/orgs/{org.id}/system-description", json=_SD_BASE)
@@ -767,6 +823,7 @@ def test_onboarding_status_system_description_complete(client, db_session, fake_
     assert r.json()["system_description"]["complete"] is True
 
 
+@pytest.mark.integration
 def test_onboarding_status_personnel_complete(client, db_session, fake_msp_admin):
     org = _own_org(db_session, fake_msp_admin)
     c = _contact(db_session, org)
@@ -778,6 +835,7 @@ def test_onboarding_status_personnel_complete(client, db_session, fake_msp_admin
     assert "security_officer" in data["personnel"]["roles_covered"]
 
 
+@pytest.mark.integration
 def test_onboarding_status_contacts_without_roles_not_complete(client, db_session, fake_msp_admin):
     """Contacts that have no documentation roles don't satisfy personnel completion."""
     org = _own_org(db_session, fake_msp_admin)
@@ -788,6 +846,7 @@ def test_onboarding_status_contacts_without_roles_not_complete(client, db_sessio
     assert data["personnel"]["contact_count"] == 1
 
 
+@pytest.mark.integration
 def test_onboarding_status_non_blocking(client, db_session, fake_msp_admin):
     """Status endpoint is purely informational — no access gates in the response."""
     org = _own_org(db_session, fake_msp_admin)

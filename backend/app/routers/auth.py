@@ -186,6 +186,12 @@ def sso_callback(
             detail="No account provisioned for this identity. Contact your MSP administrator.",
         )
 
+    # Before the first read of "user", as in local_login: under wingrc_app
+    # the row is RLS-gated. Until 2026-11-20 this was set only after the
+    # activation, so on a cut-over deployment the callback's own read and
+    # write were refused, and SSO sign-in could not complete for anyone
+    # (found by tests/test_offboarding.py, the first test of this callback).
+    set_current_org(db, user_row.home_org_id)
     user = db.get(User, user_row.id)
     if user is None:
         raise HTTPException(status_code=403, detail="User not found")
@@ -207,7 +213,6 @@ def sso_callback(
         user.is_active = True
 
     user.last_login_at = datetime.now(UTC)
-    set_current_org(db, user.home_org_id)
 
     _, raw_token = create_session(db, user)
     db.commit()
