@@ -409,6 +409,92 @@ def test_patch_inactive_on_an_invitee_offboards_it_with_an_audit_row(
 
 
 # ---------------------------------------------------------------------------
+# Reactivation restores the state the account had reached, never more
+# ---------------------------------------------------------------------------
+
+# Written out: (login_method, mfa_enrolled, entra_oid set) -> may be active.
+SIGNED_UP_CASES = [
+    ("local", True, False, True),
+    ("local", False, False, False),
+    ("sso", False, True, True),
+    ("sso", False, False, False),
+    ("api", False, False, True),
+]
+
+
+@pytest.mark.parametrize(("method", "enrolled", "has_oid", "expected"), SIGNED_UP_CASES)
+def test_has_completed_sign_up(method, enrolled, has_oid, expected):
+    from app.routers.users import has_completed_sign_up
+    user = User(login_method=method, mfa_enrolled=enrolled,
+                entra_oid="oid-x" if has_oid else None)
+    assert has_completed_sign_up(user) is expected
+
+
+@pytest.mark.integration
+def test_a_reactivated_invite_awaits_enrolment_and_can_still_sign_up(
+    client, db_session, org, admin,
+):
+    """Until this, Reactivate set is_active on an invite never accepted, and
+    the Users screen read "Active" for an account with no authenticator."""
+    _as_admin(db_session, admin)
+    invite = client.post(f"/orgs/{org.id}/users", json={
+        "email": f"invitee-{uuid.uuid4().hex[:6]}@example.com",
+        "display_name": "Cancelled Invitee", "role": "msp_engineer", "login_method": "local",
+    })
+    assert invite.status_code == 201, invite.text
+    user_id = invite.json()["id"]
+    assert client.delete(f"/orgs/{org.id}/users/{user_id}").status_code == 200
+
+    resp = client.patch(f"/orgs/{org.id}/users/{user_id}", json={"is_active": True})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["is_active"] is False
+    assert resp.json()["deactivated_at"] is None
+    _as_nobody()
+
+    user = db_session.get(User, uuid.UUID(user_id))
+    reactivation = db_session.execute(
+        select(AuditLog).where(AuditLog.entity_id == user.id,
+                               AuditLog.action == "user.reactivate")
+    ).scalar_one()
+    assert reactivation.after_value == {"is_active": False, "deactivated_at": None}
+
+    set_pw = client.post("/auth/set-password",
+                         json={"token": invite.json()["invite_token"], "password": PASSWORD})
+    assert set_pw.status_code == 200, set_pw.text
+    confirm = _enrol(client, _set_cookie_value(set_pw, "wingrc_mfa_pending"))
+    assert confirm.status_code == 200, confirm.text
+    db_session.refresh(user)
+    assert user.is_active
+
+
+@pytest.mark.integration
+def test_setting_an_unenrolled_account_active_is_refused(client, db_session, org, admin):
+    user = _user(db_session, org, is_active=False, password_hash=None)
+    _as_admin(db_session, admin)
+    resp = client.patch(f"/orgs/{org.id}/users/{user.id}", json={"is_active": True})
+    assert resp.status_code == 409, resp.text
+    db_session.refresh(user)
+    assert not user.is_active
+    assert _actions(db_session, user) == []
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(("has_oid", "active_after"), [(True, True), (False, False)])
+def test_a_reactivated_sso_account_is_active_only_once_it_has_signed_in(
+    client, db_session, org, admin, has_oid, active_after,
+):
+    user = _user(db_session, org, login_method="sso", password_hash=None, is_active=False,
+                 entra_oid=f"oid-{uuid.uuid4().hex}" if has_oid else None,
+                 deactivated_at=datetime.now(UTC))
+    _as_admin(db_session, admin)
+    resp = client.patch(f"/orgs/{org.id}/users/{user.id}", json={"is_active": True})
+    assert resp.status_code == 200, resp.text
+    db_session.refresh(user)
+    assert user.is_active is active_after
+    assert user.deactivated_at is None
+
+
+# ---------------------------------------------------------------------------
 # Migration 0076's backfill
 # ---------------------------------------------------------------------------
 
