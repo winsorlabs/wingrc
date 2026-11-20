@@ -392,8 +392,6 @@ NOT_REACHING_A_WRITE: dict[tuple[str, str], str] = {
         "writes nothing by design: holds a pending secret in the state cookie until confirm",
     ("POST", "/auth/logout"):
         "no test calls it (2026-10-20): its own roadmap item, security-relevant",
-    ("POST", "/orgs/{org_id}/users/{user_id}/reset-mfa"):
-        "no test calls it (2026-10-20): its own roadmap item, security-relevant",
     ("POST", "/orgs/{org_id}/review-cycles/{cycle_id}/flags/{flag_id}/resolve"):
         "only the customer_poc refusal is tested (2026-10-20); a resolve that writes is not",
 }

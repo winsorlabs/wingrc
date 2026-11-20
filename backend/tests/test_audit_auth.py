@@ -117,8 +117,10 @@ def test_activation_change_writes_one_row(client, db_session, fake_msp_admin):
 
     rows = _rows(db_session, fake_msp_admin.org_id, "user.activation_change", target.id)
     assert len(rows) == 1
-    assert rows[0].before_value == {"is_active": True}
-    assert rows[0].after_value == {"is_active": False}
+    assert rows[0].before_value == {"is_active": True, "deactivated_at": None}
+    # Since 2026-11-20 deactivation also records when (test_offboarding.py).
+    assert rows[0].after_value["is_active"] is False
+    assert rows[0].after_value["deactivated_at"] is not None
 
 
 @pytest.mark.integration
@@ -132,8 +134,10 @@ def test_deactivate_writes_one_row(client, db_session, fake_msp_admin):
 
     rows = _rows(db_session, fake_msp_admin.org_id, "user.deactivate", target.id)
     assert len(rows) == 1
-    assert rows[0].before_value == {"is_active": True}
-    assert rows[0].after_value == {"is_active": False}
+    assert rows[0].before_value == {"is_active": True, "deactivated_at": None}
+    # Since 2026-11-20 deactivation also records when (test_offboarding.py).
+    assert rows[0].after_value["is_active"] is False
+    assert rows[0].after_value["deactivated_at"] is not None
 
 
 # ---------------------------------------------------------------------------

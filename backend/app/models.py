@@ -1723,6 +1723,14 @@ class User(Base):
     # unset once written; the UI must tell the two states apart (never offer
     # "reactivate" once this is set).
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Migration 0076: set when an administrator offboards the account
+    # (DELETE /users/{id}, PATCH is_active=false), cleared only by PATCH
+    # is_active=true. is_active=false alone also means an invitee or an
+    # account whose MFA was reset, both of which may still enrol; this is
+    # what tells offboarding apart, and every sign-in path refuses on it.
+    deactivated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

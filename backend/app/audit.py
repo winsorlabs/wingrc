@@ -26,6 +26,10 @@ Scoped to meaningful compliance mutations (signal, not firehose):
   user.role_change            — role changed via PATCH /users/{id}
   user.activation_change      — is_active changed via PATCH /users/{id}
   user.deactivate             — DELETE /users/{id}
+  user.reactivate             — PATCH is_active=true on an account an
+                                 administrator deactivated; clears
+                                 deactivated_at (a first activation is
+                                 auth.mfa.enrolled, or activation_change)
   user.mfa_reset              — admin-forced MFA reset
   user.delete                 — permanent hard-delete of a zero-history user
                                  (ADR 0006). before/after never carry PII.

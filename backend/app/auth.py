@@ -468,9 +468,11 @@ def _enforce_session_cap(db: Session, user_id: uuid.UUID, cap: int, now: datetim
 def revoke_user_sessions(db: Session, user_id: uuid.UUID) -> None:
     """Revoke every live session for a user (does not commit).
 
-    Shared by every write path that disables a user account
-    (routers/users.py: deactivate_user, patch_user's is_active=False case)
-    so they revoke identically instead of each re-implementing the query.
+    Shared by every write path that sets a user inactive (routers/users.py:
+    deactivate_user, patch_user's is_active=False case, reset_user_mfa) so
+    they revoke identically instead of each re-implementing the query.
+    tests/test_offboarding.py fails on a function there that sets
+    is_active False without calling this.
     """
     db.execute(
         text(

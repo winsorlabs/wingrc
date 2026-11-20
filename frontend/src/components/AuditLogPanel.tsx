@@ -22,6 +22,7 @@ const KNOWN_ACTIONS = [
   "user.role_change",
   "user.activation_change",
   "user.deactivate",
+  "user.reactivate",
   "user.mfa_reset",
   "user.unlock",
   "user.password_reset_issued",

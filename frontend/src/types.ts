@@ -721,6 +721,9 @@ export interface UserRow {
   // ADR 0006: permanent, irreversible anonymization marker — distinct from
   // is_active. Once set, the row can never be reactivated.
   deleted_at: string | null;
+  // Offboarded by an administrator; sign-in is refused until a PATCH
+  // is_active=true clears it. Null on an invitee or an MFA reset.
+  deactivated_at: string | null;
 }
 
 export interface InvitedUser {

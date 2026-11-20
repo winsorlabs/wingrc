@@ -13304,6 +13304,13 @@ and an MFA enrolment depend on is its own finding. Both are listed in
 companion fails the run once a test reaches their writes, until each
 entry is removed.
 
+**Reset-MFA: closed 2026-11-20** by `tests/test_offboarding.py`, which
+asserts the cleared enrolment and backup codes, the `user.mfa_reset` row,
+revoked sessions and a full re-enrolment. Its `NOT_REACHING_A_WRITE`
+entry is removed: CI's companion failed the run on it, as designed (the
+bench does not set `WINGRC_AUDIT_COVERAGE`, so only CI saw it). Logout
+is still untested.
+
 **In the same item, smaller:** resolving a review-cycle flag is tested
 only as a `customer_poc` refusal (403). A resolve that writes is not, so
 it too is listed until a test reaches it.
@@ -14132,7 +14139,8 @@ Closing it takes a marker set by deactivation and cleared by
 reactivation (a `deactivated_at` column), checked at `/auth/login` and at
 enrolment. That is a migration, so it was not built in #108. The
 2026-11-17 brief made it its own slice, next and before production ("A deactivated
-account that never enrolled can sign in and reactivate itself").
+account that never enrolled can sign in and reactivate itself"). Closed 2026-11-20:
+see "A deactivated user could sign back in".
 
 ### The compose file ships default credentials: one let anyone take over an account, one makes credential encryption decorative -- a product defect, first; fixed 2026-11-17 (#108), live 2026-11-18
 
@@ -14794,71 +14802,165 @@ about 90 days later. So the earliest is spring 2027.
 
 Jumping straight to two years is the mistake this records against.
 
-### A deactivated account that never enrolled can sign in and reactivate itself -- next, before production (decided 2026-11-17)
+### A deactivated user could sign back in ✅ DONE (2026-11-20, bench-verified; migration 0076; branch `offboarding-holds`)
 
-**An access-control defect with a clear exploit path and a one-column
-fix.** It was found while building #108's enrolment refusals, and first
-recorded there for "whoever touches MFA next". The 2026-11-17 brief
-made it its own slice, queued next.
+Queued 2026-11-17 as "A deactivated account that never enrolled can sign
+in and reactivate itself", found while building #108's enrolment
+refusals. Built 2026-11-20 from Jarrod's brief.
 
-**The path, read from the code:**
-1. An administrator deactivates an account (`users.deactivate_user`, or
-   `patch_user` with `is_active=False`). That sets `is_active = False`
-   and revokes its sessions.
-2. If the account had set its password but not yet enrolled, its owner
-   signs in again. `/auth/login` checks the password, the lockout and
-   `requires_admin_reset`, but not `is_active`. It answers
-   `{"next": "enroll"}`.
-3. `/auth/mfa/enroll/confirm` sets `mfa_enrolled` and
-   **`is_active = True`**. The deactivation is undone by the person it
-   was meant to stop, with no administrator involved. The audit log
-   shows `auth.mfa.enrolled`, not a reactivation.
+**The cause: `user.is_active = false` carried three meanings, and nothing
+on the row told them apart:**
+1. an invitee who has not enrolled;
+2. an account whose MFA an administrator reset, pending re-enrolment
+   (`reset_user_mfa` sets it on purpose);
+3. an account an administrator deactivated: offboarding.
 
-An enrolled account cannot do this: `/auth/mfa/verify` refuses an
-inactive user, and so does session resolution.
+The first two must be able to enrol, so `enrollment_refusal` could not
+refuse an inactive account, and its docstring said so.
 
-**A second path, found while writing this entry: the SSO callback.**
-`routers/auth.py`'s Entra callback treats any inactive user as a first
-SSO sign-in ("First SSO login -- activate the user") and sets
-`is_active = True`, enrolled or not. It checks `requires_admin_reset`,
-not deactivation. So, on a deployment with SSO, a deactivated user whose
-Entra account still works is reactivated by signing in. SSO is not
-configured on live (its callback answers 501), so live cannot reach this
-path.
+**What a deactivated person could do, by path:**
+- **SSO: reactivated on sign-in.** The Entra callback treated any
+  inactive account as a first SSO sign-in and set `is_active = True`,
+  with no MFA state consulted. The widest of the three on paper. It
+  was not reachable, for two reasons found while testing it:
+  - SSO is not configured on live (the callback answers 501);
+  - the callback read the user row before setting the org, so under
+    `wingrc_app` RLS refused its own read and write. **SSO sign-in could
+    not complete for anyone on a cut-over deployment.** Fixed here; it
+    had never been tested (see below).
+- **Password, MFA never enrolled: reactivated through enrolment.**
+  `/auth/login` checked `requires_admin_reset`, the lockout and the
+  password, never `is_active`, and answered `{"next": "enroll"}`.
+  `/auth/mfa/enroll/confirm` then set `is_active = True` and issued a
+  session. The audit log read `auth.mfa.enrolled`, not a reactivation.
+- **Password, MFA enrolled: refused, and already sound.** `/auth/mfa/verify`
+  refuses an inactive user. This is the case most people would test by
+  hand, which is why the defect was easy to miss.
 
-**Live today: no account is in that state.** A read on 2026-11-17
-(counts only) found 5 users, none both inactive and not removed. The
-three deactivations in the audit log are all of accounts since
-anonymized. So the defect is real and unreachable on live today. It
-becomes reachable the first time an administrator deactivates an
-account that has a password and no enrolment.
+**Already working, and not touched:** deactivation revokes live
+sessions, session resolution refuses an inactive user, and API tokens
+refuse one. The hole was in minting a new session, not in holding an old
+one.
 
 **The fix:**
-- **Migration 0074:** `user.deactivated_at` (and who did it). It is set
-  by both deactivation paths and cleared only by an administrator's
-  reactivation.
+- **`user.deactivated_at` (migration 0076).**
+  - It is set by `DELETE /users/{id}` and by `PATCH` with
+    `is_active=false`. The PATCH sets it even on an account already
+    inactive, because cancelling an invite is offboarding too; it wrote
+    no audit row before, since `is_active` did not change.
+  - `PATCH is_active=true` clears it, and that is the only thing that
+    does. That is a reinstatement, audited as `user.reactivate`, so it
+    reads apart from a first activation (`auth.mfa.enrolled`, or
+    `user.activation_change` on an invitee).
+  - `reset_user_mfa` does not set it, and leaves one already set: an
+    offboarded account whose MFA is reset stays offboarded.
+  - Who deactivated is the audit row's actor; the column holds when.
 - **Refused while it is set:**
-  - `/auth/login`;
-  - `/auth/mfa/enroll` and `/auth/mfa/enroll/confirm`
-    (`enrollment_refusal`);
-  - the SSO callback.
+  - `/auth/login`, after the password, so account state is told only to
+    someone who authenticated. A wrong password still reads "Invalid
+    credentials";
+  - the Entra callback, before its activation block;
+  - `enrollment_refusal`, as its fifth refusal. Its docstring now says
+    the gap is closed and how.
 
-  Invitees and accounts whose MFA an administrator reset leave it NULL,
-  so they still enrol. That is why #108 could not use `is_active`
-  ("Still not refused: an inactive account" in the auth entry).
-- **Backfill:** an inactive account that is enrolled can only be
-  deactivated, because a reset clears enrolment. An inactive account
-  that is not enrolled is ambiguous: an invitee, a reset, or a
-  deactivation. The migration decides it from the audit log's latest
-  `user.deactivate`, or `is_active` change, against a later reactivation.
-  It says how many rows each rule set. On live today the set is empty.
-- **Tests write each path out:**
-  - login, enrol and confirm, refused;
-  - the SSO callback, refused;
-  - an invitee and an MFA reset, still enrolling;
-  - reactivation clears the marker.
+  Each refusal says "Account deactivated", the words session resolution
+  already used, and writes `auth.login.failed` with
+  `reason: deactivated`, so the user's history shows that someone still
+  holds a working credential.
+- **The users panel** says Active, Deactivated, or Awaiting enrolment
+  (`lib/userStatus.ts`), where it said Active or Inactive. It gains
+  **Reactivate** on a deactivated row; there was no way to reactivate
+  from the screen before, only the API. Deactivate is now offered on any
+  row not already deactivated, so a pending invite can be cancelled.
 
-  Mutations: each check dropped in turn, seen red.
+**Backfill: read from the audit log, not left null.** The row cannot
+tell the three meanings apart, but the audit log can.
+
+- **The rule:** an account is backfilled when it is inactive now and its
+  latest activation event is a deactivation, either `user.deactivate` or
+  `user.activation_change` to false. `deactivated_at` takes that
+  event's time.
+  - An invitee has no such event, and an MFA reset writes
+    `user.mfa_reset`, which is not one, so neither is locked out. That
+    was the risk behind the brief's reading of "leave them null".
+  - A later reactivation is the latest event, and leaves the account
+    alone.
+- **A second rule** covers an account with no history: inactive and
+  MFA-enrolled can only be a deactivation, because a reset clears
+  enrolment. It could not sign in before either.
+- The migration prints how many rows each rule set. Both rules are
+  tested case by case, written out (`test_offboarding.py`).
+
+**Live's counts, read 2026-11-20 as the owner (a superuser, so RLS hides
+nothing):**
+- 5 users;
+- 3 inactive, all 3 anonymized, each with a `user.deactivate` in the
+  audit log;
+- 0 inactive with `mfa_enrolled` true.
+
+So the backfill sets 3 and 0 on live, and changes who can sign in for
+nobody: an anonymized account was refused already. The counts are why
+the audit-log rule was safe to take. Every inactive account on live has
+its deactivation recorded, and no invitee or reset is waiting to be
+caught by it.
+
+**`reset_user_mfa` and sessions: it now revokes them.** The brief asked
+whether leaving them was intended. It was not safe. An inactive
+account's session is refused while the account is inactive. But the row
+stayed live, and session resolution advances the idle heartbeat before it
+checks `is_active`, so a tab still polling kept it inside the 15-minute
+idle window. After the person re-enrolled, `is_active` was true again and
+that session was accepted, including one on the device whose loss
+prompted the reset. `PLAN-auth-rbac-completion.md` had called the same
+revocation in `patch_user` "consistency rather than a hole". That is
+corrected there, because every inactive account can become active again.
+`revoke_user_sessions`'s docstring lists the three callers, and
+`test_offboarding.py` walks `routers/users.py` and fails on a function
+that sets `is_active` to anything but True without calling it.
+
+**Found while testing: two tests CI never ran.**
+- **The SSO callback had no test at all.** The first one found the
+  missing `set_current_org` above.
+- **`test_onboarding.py` had no `integration` marker.** CI's
+  `integration` job runs `-m integration`, and its `backend` job has no
+  database, so its 47 database tests ran in neither. They ran only in a
+  full bench run.
+  - `test_logo_upload_too_large` had been red since the upload limits
+    landed (2026-11-19): it sent 11 MB and expected the handler's 422,
+    and the logo route's body limit now answers 413 first. Both answers
+    are right, so the test now sends one body of each size.
+  - The 47 are marked one by one. The file's architectural test needs no
+    database and stays unmarked, by CLAUDE.md's "mark the test, not the
+    module".
+
+**Verification (bench `wingrc_verify_offb`):** full backend suite with the
+test database, ruff, `tsc -b`, vitest (601), the build. Through real HTTP:
+- a deactivated SSO user is refused, and `is_active` stays false. A
+  control test shows the same callback activating an inactive account
+  that was never deactivated, so the refusal is the check's doing;
+- a deactivated local user with no MFA gets no enrol cookie, a forged one
+  is refused at enrol and confirm, and no session row exists;
+- a deactivated user with MFA is still refused at `/mfa/verify`;
+- an invitee runs the whole flow (invite, set password, enrol, confirm)
+  and gets a session, audited as enrolment, never reactivation;
+- an MFA reset re-enrols and signs in, and its pre-reset session stays
+  refused;
+- deactivate, refused, reactivate (which clears `deactivated_at`), then
+  sign in with password and code; the audit log has `user.deactivate`
+  then `user.reactivate`.
+
+**Jarrod's walk, on live after the deploy:**
+1. Administration › Users: invite a test account (local), complete its
+   enrolment from a private window, and sign out.
+2. Deactivate it. **Expect** the badge to read "Deactivated" and a
+   Reactivate button.
+3. Sign in as it with the right password. **Expect** "Account
+   deactivated", and no enrolment or code screen. A wrong password still
+   says "Invalid credentials".
+4. Reactivate it. **Expect** "Active", then a normal sign-in with its
+   code.
+5. Audit log, filtered to `user.reactivate`: one row, with
+   `deactivated_at` set before and null after.
 
 ### A fresh install runs the app as a superuser, so row-level security is off -- queued 2026-11-18 (the brief's finding), after the deactivated-account slice, before "The app reaches MinIO as root"
 
@@ -15014,7 +15116,8 @@ URL at all.
 
 **Order:** first of the two startup-privilege entries, by the brief's
 recommendation. It decides tenant isolation, and MinIO's decides blast
-radius. Both after the deactivated-account slice, which is next. The
+radius. Both after the deactivated-account slice (done 2026-11-20),
+so this one is next. The
 move for an existing deployment is a migration-day step like #108's, and
 live needs only the environment part: it already serves as `wingrc_app`.
 
