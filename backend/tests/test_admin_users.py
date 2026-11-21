@@ -106,6 +106,41 @@ class TestDirectory:
         }
         assert row["home_org_name"] == home_org.name
 
+    def test_each_row_carries_what_its_status_is_read_from(
+        self, admin_client, db_session, fake_msp_admin
+    ):
+        """A deactivated user's memberships read the same as an active
+        user's, so the directory must say which can be used (2026-11-20)."""
+        from datetime import UTC, datetime
+
+        home_org = Organization(id=fake_msp_admin.org_id, name=f"CallerOrg-{uuid.uuid4().hex[:8]}")
+        db_session.add(home_org)
+        db_session.flush()
+        _grant(db_session, fake_msp_admin)
+        now = datetime.now(UTC)
+        active = _seed_user(db_session, org_id=home_org.id)
+        offboarded = _seed_user(db_session, org_id=home_org.id, is_active=False,
+                                deactivated_at=now)
+        invitee = _seed_user(db_session, org_id=home_org.id, is_active=False,
+                             login_method="sso")
+        anonymized = _seed_user(db_session, org_id=home_org.id, is_active=False,
+                                deleted_at=now)
+
+        r = admin_client.get("/admin/users")
+        assert r.status_code == 200
+        rows = {row["id"]: row for row in r.json()}
+        seen = {
+            u.id: (rows[str(u.id)]["is_active"], rows[str(u.id)]["deactivated_at"] is not None,
+                   rows[str(u.id)]["deleted_at"] is not None, rows[str(u.id)]["login_method"])
+            for u in (active, offboarded, invitee, anonymized)
+        }
+        assert seen == {
+            active.id: (True, False, False, "local"),
+            offboarded.id: (False, True, False, "local"),
+            invitee.id: (False, False, False, "sso"),
+            anonymized.id: (False, False, True, "local"),
+        }
+
     def test_consultant_admin_gets_403(self, db_session):
         # require_role gates on current_user.role alone -- no org_id in
         # this router's paths, so no org/membership seeding is needed to

@@ -57,6 +57,11 @@ class UserDirectoryEntryOut(BaseModel):
     home_org_id: uuid.UUID
     home_org_name: str
     deleted_at: str | None
+    # What the per-org Users tab's status reads (lib/userStatus.ts), so the
+    # directory says whether the access it lists can be used.
+    is_active: bool
+    deactivated_at: str | None
+    login_method: str
     memberships: list[MembershipOut]
 
 
@@ -82,7 +87,8 @@ def list_user_directory(session: Session = Depends(get_session)) -> list[UserDir
     """
     rows = session.execute(
         text(
-            "SELECT id, email, display_name, home_org_id, deleted_at, memberships "
+            "SELECT id, email, display_name, home_org_id, deleted_at, is_active, "
+            "deactivated_at, login_method, memberships "
             "FROM auth.all_users_directory()"
         )
     ).all()
@@ -102,6 +108,9 @@ def list_user_directory(session: Session = Depends(get_session)) -> list[UserDir
             home_org_id=r.home_org_id,
             home_org_name=org_names.get(r.home_org_id, ""),
             deleted_at=r.deleted_at.isoformat() if r.deleted_at else None,
+            is_active=r.is_active,
+            deactivated_at=r.deactivated_at.isoformat() if r.deactivated_at else None,
+            login_method=r.login_method,
             memberships=[MembershipOut(**m) for m in r.memberships],
         )
         for r in rows

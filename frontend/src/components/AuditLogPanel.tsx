@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { api } from "../api";
+import { OFFBOARDED_ATTEMPT, actionNote } from "../lib/auditActions";
 import type { AuditLogRow, ResolvedIdentity } from "../types";
 
 const PAGE_SIZE = 50;
@@ -18,6 +19,8 @@ const KNOWN_ACTIONS = [
   "evidence_task.update",
   "evidence_task.archive",
   "implementation_statement.upsert",
+  "auth.login.failed",
+  "auth.login.refused_deactivated",
   "user.invite",
   "user.role_change",
   "user.activation_change",
@@ -243,7 +246,20 @@ export function AuditLogPanel({ orgId }: Props) {
                         }
                       />
                     </td>
-                    <td>{r.action}</td>
+                    <td>
+                      <div>{r.action}</div>
+                      {actionNote(r) && (
+                        <div
+                          className={
+                            actionNote(r) === OFFBOARDED_ATTEMPT
+                              ? "status-badge status-warning"
+                              : "contact-sub"
+                          }
+                        >
+                          {actionNote(r)}
+                        </div>
+                      )}
+                    </td>
                     <td>
                       {r.entity_type === "user" ? (
                         <IdentityCell

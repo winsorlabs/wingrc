@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { ALL_ROLES, ROLE_LABELS } from "../lib/roles";
+import { accountStatus } from "../lib/userStatus";
 import type { InvitedUser, MspOrg, Org, UserDirectoryEntry } from "../types";
 
 // Deployment-wide user directory + org-access grant/revoke (ADR 0009
@@ -16,6 +17,24 @@ import type { InvitedUser, MspOrg, Org, UserDirectoryEntry } from "../types";
 // out (per-engagement, granted explicitly per org), and a bulk-grant
 // affordance on this screen is exactly where that intent would get
 // accidentally undone.
+// Memberships are kept while an account cannot sign in, so a row's access
+// is real only when the account is active. This screen is where someone
+// answers "who has access to this organization", and until 2026-11-20 it
+// showed a deactivated user's four MSP Admin memberships exactly as an
+// active user's.
+function accessNote(u: UserDirectoryEntry): string | null {
+  if (u.deleted_at) return "Cannot sign in: permanently anonymized.";
+  if (u.is_active) return null;
+  if (u.deactivated_at) return "Cannot sign in while deactivated. Reactivating restores this access.";
+  return "Not usable until they finish signing up.";
+}
+
+function statusClass(status: string): string {
+  if (status === "Active") return "status-active";
+  if (status === "Anonymized") return "status-warning";
+  return "status-inactive";
+}
+
 export function UserDirectoryPanel() {
   const [users, setUsers] = useState<UserDirectoryEntry[]>([]);
   const [orgs, setOrgs] = useState<Org[]>([]);
@@ -167,6 +186,7 @@ export function UserDirectoryPanel() {
             <thead>
               <tr>
                 <th>Name</th>
+                <th>Status</th>
                 <th>Email</th>
                 <th>Home Org</th>
                 <th>Org Access</th>
@@ -174,11 +194,16 @@ export function UserDirectoryPanel() {
               </tr>
             </thead>
             <tbody>
-              {users.map((u) => (
+              {users.map((u) => {
+                const status = accountStatus(u);
+                const note = accessNote(u);
+                return (
                 <tr key={u.id}>
                   <td>
                     <div className="contact-name">{u.display_name}</div>
-                    {u.deleted_at && <div className="contact-sub">Anonymized</div>}
+                  </td>
+                  <td>
+                    <span className={`status-badge ${statusClass(status)}`}>{status}</span>
                   </td>
                   <td>{u.email}</td>
                   <td>{u.home_org_name}</td>
@@ -199,14 +224,19 @@ export function UserDirectoryPanel() {
                       ))}
                       {u.memberships.length === 0 && <span className="no-roles">No org access</span>}
                     </div>
+                    {note && u.memberships.length > 0 && <div className="contact-sub">{note}</div>}
                   </td>
                   <td>
-                    <button className="btn-ghost btn-xs" onClick={() => openGrant(u)}>
-                      Grant access…
-                    </button>
+                    {/* The server refuses it too (grant_membership's 409). */}
+                    {!u.deleted_at && (
+                      <button className="btn-ghost btn-xs" onClick={() => openGrant(u)}>
+                        Grant access…
+                      </button>
+                    )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

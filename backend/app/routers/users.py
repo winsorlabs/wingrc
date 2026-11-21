@@ -307,11 +307,16 @@ def grant_membership(
     # user was already in the session's identity map (docs/roadmap.md, "No
     # invite could be redeemed on live").
     target = db.execute(
-        text("SELECT id FROM auth.resolve_user_identity(:u)"),
+        text("SELECT id, deleted_at FROM auth.resolve_user_identity(:u)"),
         {"u": body.user_id},
     ).first()
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
+    if target.deleted_at is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This user has been permanently anonymized and cannot be granted access",
+        )
 
     granted = _grant(db, user_id=body.user_id, org_id=org_id, role=body.role)
     log_event(
@@ -415,6 +420,38 @@ class PatchUserIn(BaseModel):
     role: str | None = None
     is_active: bool | None = None
     display_name: str | None = None
+
+
+@router.get("/users/{user_id}/access")
+def user_access(
+    org_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: Session = Depends(get_session),
+    current_user: CurrentUser = Depends(require_org_access("msp_admin")),
+):
+    """What deactivating or reactivating this account reaches, for the
+    confirmation to say before it is clicked.
+
+    is_active and deactivated_at are on the user, not the membership, so
+    deactivating from one org's Users tab ends the account's access to
+    every org it is a member of, and reactivating restores all of them.
+    The memberships come from auth.all_users_directory(), the directory's
+    read, because the other orgs' rows are outside this request's RLS
+    scope; it discloses nothing an msp_admin cannot already read there.
+
+    reactivates_to is what PATCH is_active=true would leave the account
+    as, computed by the same rule (has_completed_sign_up), so the screen
+    never states a result it did not compute.
+    """
+    user = _get_user(db, org_id, user_id)
+    row = db.execute(
+        text("SELECT memberships FROM auth.all_users_directory() WHERE id = :u"),
+        {"u": user_id},
+    ).first()
+    return {
+        "memberships": row.memberships if row else [],
+        "reactivates_to": "active" if has_completed_sign_up(user) else "awaiting_enrolment",
+    }
 
 
 @router.patch("/users/{user_id}")
