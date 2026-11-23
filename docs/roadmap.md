@@ -15901,7 +15901,8 @@ the bench should not have left:
 
 All three need `sudo rm -rf`; none was removed through docker.
 
-LIVE_MIGRATION
+**Live:** the deploy and the move are separate steps, each with its own
+snapshot. Neither has run yet; both are recorded here when they have.
 
 ### Live cannot say who signed in from where -- recorded 2026-11-17; urgent the day there are two users
 
