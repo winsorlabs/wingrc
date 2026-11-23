@@ -252,16 +252,18 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   Before a zero is trusted, it is checked against something known to be
   present that the same filter could not hide. A zero never checked
   against a known count is not an answer. The CLI runs as `wingrc_app`
-  on a cut-over deployment, so RLS hides every tenant's rows from a
+  (compose's default since 2026-11-23, live's since 2026-09-29), so RLS
+  hides every tenant's rows from a
   command that sets no org. A command that reads across tenants
   enumerates through `engine.every_tenant_assessments` or the same
   shape: an unfiltered count with `row_security = off`, which raises
   rather than filtering, then the list checked against it. Counting
   `organization` proves nothing, because it has no RLS policy. Run such
   commands with the owner override (`docs/deployment.md`, "The CLI runs
-  as the app role on a cut-over deployment"). The bench runs as the
-  owner, so it cannot show this class (`docs/roadmap.md`, "The bench
-  runs as the owner" and "A zero nobody checked").
+  as the app role"). A bench built by the guide serves and runs the CLI
+  as the app role since 2026-11-23, but its test suite still connects as
+  the owner, so the suite cannot show this class (`docs/roadmap.md`,
+  "The bench runs as the owner" and "A zero nobody checked").
 - **A docstring or comment that makes a universal claim about what the
   code does carries a test that fails when the claim stops being true.**
   Universal means "none", "never", "always", "only", "every", or a
@@ -608,7 +610,7 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
 | `backend/app/snapshots.py` | Local snapshots (item S): the database and the object store as one set, with a manifest. **Not a backup**: same host as the data. A database restored without its objects renders every attachment present with no bytes, and row counts and SPRS pass on it, so `snapshot-verify` fetches every object a row names. A restore goes only into an empty database and bucket. The Fernet key is not in a snapshot, so nothing restores credentials without it. The age reader counts only sets with a manifest, and msp_admin's banner (`SnapshotBanner.tsx`, the TLS banner's path) fires past 50 hours or on none. `deploy/restore-test.sh` is the test and its mutation check; `docs/deployment.md`, "Local snapshots", is the operator's page |
 | `backend/app/audit.py` | `log_event()` — writes `AuditLog` rows; also the actor-resolution helpers both audit views share |
 | `backend/app/rls.py` | The only place `app.current_org` is written, plus the `after_begin` hook that makes it survive a commit — read before touching anything org-scoped |
-| `backend/app/migrations/` | Alembic migrations (currently 0001–0078) |
+| `backend/app/migrations/` | Alembic migrations (currently 0001–0079) |
 | `backend/baselines/` | YAML product baselines (`rocketcyber.yaml`, …) — not repo-root `baselines/`; `seeds/baselines.py:_BASELINES_DIR` resolves here, and a stale repo-root duplicate that drifted out of sync with a real coverage_basis reclassification was removed 2026-09-19 (see `docs/roadmap.md`'s tenant lifecycle consolidation pass entry) |
 | `docs/fips.md` | FIPS 140-2/140-3 crypto boundary documentation |
 | `docs/architecture.md` | Authoritative architecture description (the five layers) — companion to this file's terse session version |
@@ -934,7 +936,12 @@ screen that shows access shows the account's status beside it (the User
 Directory reads it from `auth.all_users_directory()`), and the
 Deactivate and Reactivate confirmations name the orgs from
 `GET …/users/{id}/access` (`docs/roadmap.md`, "The access screens did
-not say whether the access was real").
+not say whether the access was real"). **A deactivated account gets no
+new access** (2026-11-23): `grant_membership` answers 409, and a new org
+no longer auto-grants a deactivated or anonymized MSP account (migration
+0079, `auth.msp_role_users()`). Pre-staging is reactivate, grant,
+deactivate again (`docs/roadmap.md`, "A deactivated account could still
+be granted access").
 
 **Always set the org through `rls.set_current_org(session, org_id)` — never
 write `app.current_org` directly.** That GUC is transaction-scoped, so a
@@ -944,11 +951,16 @@ which is what makes a post-commit `refresh()`/`select()` work at all. A
 direct write leaves the recorded value stale and the hook would then
 re-apply the *wrong* org — `tests/test_rls_context.py` fails the build on
 one. **The app connects as `wingrc_app` — a non-owner role that cannot bypass
-RLS (cutover 2026-09-29).** **On live, and on no fresh install:**
-compose's default is still the owner, a superuser, so RLS is off on a
-deployment that follows the guide (`docs/roadmap.md`, "A fresh install
-runs the app as a superuser", queued 2026-11-18). What follows describes
-a cut-over deployment. Tenant isolation is enforced by the database,
+RLS (live since 2026-09-29; compose's default since 2026-11-23).**
+Until 2026-11-23 compose's default was the owner, a superuser, so on a
+fresh install no policy applied and WR001 never fired, while live was
+fine. A required `WINGRC_APP_DB_PASSWORD` now builds the app's URL, and
+the backend's start (`backend/start.sh`) sets the role's password after
+migrations and before serving (`app/app_role.py` says why there and not
+a migration or a manual step). **`/health`'s `database_role` reports the
+connected role and whether it bypasses RLS**, read at runtime, so every
+deploy shows it (`docs/roadmap.md`, "A fresh install runs the app as a
+superuser"). Tenant isolation is enforced by the database,
 not by router filtering: a query that forgets its org scope returns nothing
 rather than another tenant's rows. Every org-scoped table, directly or
 transitively, is policy-gated (migrations 0060/0061).

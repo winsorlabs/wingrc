@@ -51,6 +51,7 @@ password manager off this host before you rely on the deployment.**
 |---|---|---|
 | `WINGRC_ENVIRONMENT` | `production` or `development`; nothing else is accepted. `production` puts `Secure` on every cookie. Use it for any deployment served over HTTPS. | **No: set it yourself.** It is a decision, not a secret. |
 | `POSTGRES_PASSWORD` | The database owner's password. The owner owns every table and bypasses row-level security. Postgres reads it only when its volume is first initialised. **URL-safe characters only** (letters, digits, `-`, `_`): compose places it in a connection URL. | Yes |
+| `WINGRC_APP_DB_PASSWORD` | The password of `wingrc_app`, the role requests are served as. Row-level security applies to it, which is what keeps one tenant's rows from another's in the database itself. The backend sets the role's password to this value whenever it starts and finds the role cannot connect, so changing it here and redeploying changes it. URL-safe characters only. | Yes |
 | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | MinIO's root credentials. Also read at first start. | Yes |
 | `WINGRC_STORAGE_ACCESS_KEY`, `WINGRC_STORAGE_SECRET_KEY` | The backend's storage credentials. Today they must equal MinIO's root pair. | Yes, copied from the root pair |
 | `WINGRC_AUTH_FLOW_SECRET` | Signs the sign-in state cookies. At least 32 characters; the backend refuses sign-in without a usable one. Changing it only fails sign-ins in progress, never a session. | Yes |
@@ -138,6 +139,30 @@ real hostname.
 ```bash
 docker compose up --build -d
 ```
+
+The backend's start (`backend/start.sh`) runs migrations as the owner,
+sets `wingrc_app`'s password from `WINGRC_APP_DB_PASSWORD`, then serves
+as `wingrc_app`. Check that it did: `/health` reports the role it
+answers on, and **`database_role.row_level_security` must read
+`enforced`**:
+
+```bash
+docker compose exec -T backend python -c "import json,urllib.request; print(json.load(urllib.request.urlopen('http://localhost:8000/health'))['database_role'])"
+```
+
+Anything else reads `bypassed:` and names why. Then load the control
+catalog and create the first administrator. Both run as the owner,
+because there is no organization yet for row-level security to scope
+to (see "The CLI runs as the app role", below):
+
+```bash
+docker compose exec -T backend sh -c 'WINGRC_DATABASE_URL="$WINGRC_MIGRATION_DATABASE_URL" wingrc seed-catalog'
+docker compose exec backend sh -c 'WINGRC_DATABASE_URL="$WINGRC_MIGRATION_DATABASE_URL" wingrc-admin --org "Your MSP" --email you@example.com --display-name "Your Name"'
+```
+
+The second prompts for a password. MFA enrolment happens at the first
+sign-in. `wingrc-admin` has one command, so it takes no command name;
+`wingrc-admin bootstrap-admin` is refused as an extra argument.
 
 The `wingrc_certs` volume must already exist (step 2) — nginx's compose
 service declares it `external: true` and won't create it for you.
@@ -755,8 +780,11 @@ bucket. It refuses anything else, so it cannot overwrite data. To recover:
 
 1. Bring up fresh volumes.
 2. Run `snapshot-restore`, then `snapshot-verify`.
-3. Set `wingrc_app`'s password again. It is a cluster role, not in the
-   dump; the restore creates the role without one, as migration 0016 does.
+3. The backend's start sets `wingrc_app`'s password again. It is a
+   cluster role, not in the dump; the restore creates the role without
+   one, as migration 0016 does, and the start sets it from
+   `WINGRC_DATABASE_URL` because the role cannot connect. Until
+   2026-11-23 this was a step to do by hand.
 4. Point the stack at the restored volumes.
 
 The restore test has run on live once, on 2026-11-03, and passed
@@ -820,12 +848,31 @@ deliberately has **no DDL rights and cannot bypass row-level security**, so
 that a bug in a query cannot return another tenant's rows. One role cannot
 be both, which is why `WINGRC_MIGRATION_DATABASE_URL` exists.
 
-**Leave it unset unless `WINGRC_DATABASE_URL` points at `wingrc_app`.**
-Unset means migrations reuse `WINGRC_DATABASE_URL`, which is correct while
-that is still the owning role — including on a fresh install, where nothing
-extra needs configuring.
+**Compose sets both by default (since 2026-11-23):** `WINGRC_DATABASE_URL`
+is `wingrc_app` with `WINGRC_APP_DB_PASSWORD`, and
+`WINGRC_MIGRATION_DATABASE_URL` is the owner with `POSTGRES_PASSWORD`. A
+deployment that keeps compose's database service sets neither. Until that
+date the default served requests as the owner, a superuser, so on a
+fresh install no row-level security policy applied and nothing said so
+(`docs/roadmap.md`, "A fresh install runs the app as a superuser").
 
-If you do set it, it must name the **same host, port and database** as
+**Where `wingrc_app`'s password is set, and why there.** Migration 0016
+creates the role with no password, because a per-environment secret does
+not belong in a migration. The backend's start sets it, after
+migrations and before serving, through the owner's URL, and only when
+the role cannot already connect (`app/app_role.py` gives the reasons a
+migration and a manual step were rejected). So a fresh install, a
+restored snapshot and a changed `WINGRC_APP_DB_PASSWORD` all end the same
+way, with no step to remember.
+
+**`/health` says which role a deployment serves as** (`database_role`):
+the role, whether it is a superuser, has `BYPASSRLS`, or owns tables with
+row-level security, and `row_level_security`: `enforced`, or `bypassed:`
+with the reason. `deploy.sh` prints the body, so every deploy shows it. It
+is reported, not a readiness condition: a deployment may serve as another
+role on purpose, and a restart would not change it.
+
+If you set the migration URL yourself, it must name the **same host, port and database** as
 `WINGRC_DATABASE_URL` and differ only in the user. Migrating one database
 while the application serves another is refused rather than attempted.
 
@@ -839,12 +886,50 @@ security cutover gets undone without anyone noticing:
   `WINGRC_MIGRATION_DATABASE_URL`, rather than failing partway through some
   migration with a message about a table.
 
-### The CLI runs as the app role on a cut-over deployment
+### A deployment still serving as the owner
 
-`wingrc` and `wingrc-admin` commands connect via `WINGRC_DATABASE_URL`.
-Until the cutover that was the owner. **On a cut-over deployment it is
-`wingrc_app`**, so every command runs as the app role unless told
-otherwise. On live, since 2026-09-29, both the backend and the worker
+This is any deployment whose `.env` sets neither `WINGRC_DATABASE_URL` nor
+`WINGRC_APP_DB_PASSWORD`: every compose install made before 2026-11-23
+that was never moved by hand. **With this version's compose file it does
+not start.** Compose refuses, naming the variable:
+
+```
+required variable WINGRC_APP_DB_PASSWORD is missing a value: WINGRC_APP_DB_PASSWORD is required -- set it in .env, see docs/deployment.md
+```
+
+That refusal is deliberate. The alternative was to keep serving as the
+owner without a word, which is what the old default did. To move:
+
+1. **Take a snapshot** (`deploy/snapshot.sh`).
+2. **`deploy/generate-env.sh`.** On an existing `.env` it fills only what
+   is missing, which here is `WINGRC_APP_DB_PASSWORD`, and prints that
+   name.
+3. **`deploy/deploy.sh`.** The backend's start sets `wingrc_app`'s
+   password, then serves as it. The deploy's `/health` body must show
+   `"row_level_security": "enforced"`.
+4. **From then on the CLI runs as the app role**, so the commands listed
+   below need the owner override.
+
+Live has served as the app role since 2026-09-29, so the code has run
+this way for weeks. What changes for the deployment is that a query
+which forgets its org scope raises or returns nothing, instead of
+another tenant's rows.
+
+**To keep serving as the owner, on purpose,** set `WINGRC_DATABASE_URL` in
+`.env` to the owner's URL. Compose then uses it and never reads
+`WINGRC_APP_DB_PASSWORD`, and `/health` reports
+`bypassed: wingrc is a superuser`, so the choice shows in every deploy.
+
+A deployment that already sets `WINGRC_DATABASE_URL` to `wingrc_app` (live
+does) needs no change: compose reads the URL and never evaluates the
+default it replaces (measured 2026-11-23). `generate-env.sh` would add an
+unused `WINGRC_APP_DB_PASSWORD` there; it does no harm.
+
+### The CLI runs as the app role
+
+`wingrc` and `wingrc-admin` commands connect via `WINGRC_DATABASE_URL`,
+which is `wingrc_app` by compose's default, so every command runs as the
+app role unless told otherwise. On live, since 2026-09-29, both the backend and the worker
 carry `WINGRC_DATABASE_URL` as `wingrc_app` and
 `WINGRC_MIGRATION_DATABASE_URL` as the owner. This section said "the CLI
 runs as the owner" until 2026-11-10, and a deploy step written from it
