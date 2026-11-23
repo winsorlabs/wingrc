@@ -365,7 +365,9 @@ def test_anonymize_preserves_audit_rows_byte_for_byte(client, db_session, fake_m
         select(AuditLog).where(AuditLog.action == "user.anonymize", AuditLog.entity_id == user.id)
     ).all()
     assert len(new_rows) == 1
-    assert new_rows[0].after_value == {"anonymized": True}
+    # memberships_revoked since 2026-11-23 (org_membership.revoke_every_membership);
+    # this user was seeded with none. A count, so still no PII.
+    assert new_rows[0].after_value == {"anonymized": True, "memberships_revoked": 0}
     assert "realname" not in str(new_rows[0].after_value), "no PII in the anonymize event itself"
 
 

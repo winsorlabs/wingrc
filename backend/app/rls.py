@@ -103,9 +103,11 @@ def current_org(session: Session) -> uuid.UUID | None:
 def clear_current_org(session: Session) -> None:
     """Drop the org context and stop re-applying it.
 
-    Used by tests that need to prove a query really is RLS-gated, and by
+    Used by tests that need to prove a query really is RLS-gated; by
     org creation, which scopes itself to the new org only to write that
-    org's first audit row and then drops it again. Otherwise a request's
+    org's first audit row and then drops it again; and by
+    `org_membership.revoke_every_membership`, which visits each org an
+    account is a member of and puts back an unset org after. Otherwise a request's
     session is closed at the end of the request rather than being handed
     on to a different org. (`test_rls_context.py` fails on another caller.)
     """

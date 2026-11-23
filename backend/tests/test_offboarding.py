@@ -701,3 +701,132 @@ def test_a_new_org_grants_no_access_to_deactivated_or_anonymized_msp_accounts(
     assert invitee.id in members
     assert deactivated.id not in members
     assert anonymized.id not in members
+
+
+# --- An anonymized account's access is revoked; a deactivated one keeps it ---
+# Jarrod, 2026-11-23: an anonymized account never signs in again, so its
+# memberships answer "who has access" with noise; a deactivated account's
+# rows are what Reactivate restores (and its confirmation names).
+
+
+@pytest.fixture
+def other_org(db_session):
+    o = Organization(name=f"Offboard-other-{uuid.uuid4().hex[:8]}")
+    db_session.add(o)
+    db_session.flush()
+    return o
+
+
+def _member_of(db_session, user, *orgs) -> None:
+    for o in orgs:
+        db_session.execute(
+            text("INSERT INTO org_membership (id, user_id, org_id, role) "
+                 "VALUES (:i, :u, :o, 'customer_poc')"),
+            {"i": uuid.uuid4(), "u": user.id, "o": o.id},
+        )
+    db_session.flush()
+
+
+def _memberships(db_session, user) -> set[uuid.UUID]:
+    return set(db_session.execute(
+        text("SELECT org_id FROM org_membership WHERE user_id = :u"), {"u": user.id}
+    ).scalars())
+
+
+def _revokes(db_session, user) -> dict[uuid.UUID, dict]:
+    rows = db_session.execute(
+        select(AuditLog).where(
+            AuditLog.action == "org_membership.revoke", AuditLog.entity_id == user.id
+        )
+    ).scalars()
+    return {r.org_id: r for r in rows}
+
+
+@pytest.mark.integration
+def test_anonymizing_revokes_access_in_every_org_each_in_its_own_log(
+    client, db_session, org, other_org, admin
+):
+    """The request runs as wingrc_app (conftest._app_session), so the revoke
+    in the org the request is not scoped to is written under RLS, not past it."""
+    user = _user(db_session, org, is_active=False, deactivated_at=datetime.now(UTC))
+    _member_of(db_session, user, org, other_org)
+    assert _memberships(db_session, user) == {org.id, other_org.id}, (
+        "fixture must hold access in two orgs, or this test proves nothing"
+    )
+    _as_admin(db_session, admin)
+    resp = client.post(f"/orgs/{org.id}/users/{user.id}/anonymize")
+    assert resp.status_code == 200, resp.text
+    assert _memberships(db_session, user) == set()
+    revokes = _revokes(db_session, user)
+    assert set(revokes) == {org.id, other_org.id}
+    for r in revokes.values():
+        assert r.before_value == {"role": "customer_poc"}
+        assert r.context["via"] == "user.anonymize"
+    anonymize = db_session.execute(
+        select(AuditLog).where(AuditLog.action == "user.anonymize", AuditLog.entity_id == user.id)
+    ).scalar_one()
+    assert anonymize.after_value["memberships_revoked"] == 2
+
+
+@pytest.mark.integration
+def test_deactivating_keeps_the_access_reactivate_restores(
+    client, db_session, org, other_org, admin
+):
+    user, _ = _enrolled(db_session, org)
+    _member_of(db_session, user, org, other_org)
+    _as_admin(db_session, admin)
+    resp = client.delete(f"/orgs/{org.id}/users/{user.id}")
+    assert resp.status_code == 200, resp.text
+    db_session.refresh(user)
+    assert user.deactivated_at is not None, (
+        "fixture must end deactivated, or this test proves nothing"
+    )
+    assert _memberships(db_session, user) == {org.id, other_org.id}
+    assert _revokes(db_session, user) == {}
+
+
+@pytest.mark.integration
+def test_the_cli_revokes_what_anonymized_accounts_already_hold_and_nothing_else(
+    db_session, org, other_org, monkeypatch
+):
+    """Rows from before anonymizing revoked them (live: three, from
+    migration 0023's backfill). Run as wingrc_app, as the live CLI is."""
+    from typer.testing import CliRunner
+
+    from app.cli import app as cli_app
+
+    anonymized = _user(db_session, org, is_active=False, deleted_at=datetime.now(UTC))
+    deactivated = _user(db_session, org, is_active=False, deactivated_at=datetime.now(UTC))
+    _member_of(db_session, anonymized, org, other_org)
+    _member_of(db_session, deactivated, org, other_org)
+    db_session.commit()
+    monkeypatch.setattr("app.cli.SessionLocal", lambda: db_session)
+    monkeypatch.setattr(db_session, "close", lambda: None)
+    db_session.connection().exec_driver_sql("SET ROLE wingrc_app")
+    try:
+        assert db_session.execute(text("SELECT current_user")).scalar() == "wingrc_app", (
+            "fixture must run the command as the app role, or this test proves nothing"
+        )
+        dry = CliRunner().invoke(cli_app, ["memberships-revoke-anonymized", "--reason", "t"])
+        assert dry.exit_code == 0, dry.output
+        assert str(anonymized.id) in dry.output
+        assert str(deactivated.id) not in dry.output
+        assert "DRY RUN" in dry.output
+        db_session.connection().exec_driver_sql("RESET ROLE")
+        assert _memberships(db_session, anonymized) == {org.id, other_org.id}
+        db_session.connection().exec_driver_sql("SET ROLE wingrc_app")
+
+        done = CliRunner().invoke(
+            cli_app, ["memberships-revoke-anonymized", "--reason", "backfill noise", "--apply"]
+        )
+        assert done.exit_code == 0, done.output
+    finally:
+        db_session.connection().exec_driver_sql("RESET ROLE")
+    assert _memberships(db_session, anonymized) == set()
+    assert _memberships(db_session, deactivated) == {org.id, other_org.id}
+    revokes = _revokes(db_session, anonymized)
+    assert set(revokes) == {org.id, other_org.id}
+    assert all(r.context == {"via": "cli:memberships-revoke-anonymized",
+                             "reason": "backfill noise"} for r in revokes.values())
+    again = CliRunner().invoke(cli_app, ["memberships-revoke-anonymized", "--reason", "t"])
+    assert "Nothing to do" in again.output, again.output
