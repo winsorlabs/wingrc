@@ -71,7 +71,7 @@ describe("UserDirectoryPanel — directory", () => {
     expect(screen.getByText(/Widgets Inc: MSP Engineer/)).toBeTruthy();
   });
 
-  it("says which accounts can use the access they hold, and offers no grant to an anonymized one", async () => {
+  it("says which accounts can use the access they hold, and offers a grant only to one that can use it", async () => {
     const access = [
       { org_id: "org1", org_name: "Acme Corp", role: "msp_admin" },
       { org_id: "org2", org_name: "Widgets Inc", role: "msp_admin" },
@@ -112,7 +112,10 @@ describe("UserDirectoryPanel — directory", () => {
     expect(await text("Anon")).toContain("Anonymized");
     expect(await text("Anon")).not.toContain("Deactivated");
     expect(await text("Anon")).not.toContain("Grant access");
-    expect(await text("Rob Offboarded")).toContain("Grant access");
+    expect(await text("Rob Offboarded")).not.toContain("Grant access");
+    expect(await text("Rob Offboarded")).toContain("Reactivate before granting access.");
+    expect(await text("Ivy Invited")).toContain("Grant access");
+    expect(await text("Alice Active")).toContain("Grant access");
   });
 
   it("a fresh deployment with no MSP org designated shows a clear prompt, not an error", async () => {

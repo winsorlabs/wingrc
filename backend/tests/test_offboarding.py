@@ -642,3 +642,62 @@ def test_an_anonymized_account_cannot_be_granted_access(client, db_session, org,
                        json={"user_id": str(user.id), "role": "customer_poc"})
     assert resp.status_code == 409, resp.text
     assert "anonymized" in resp.json()["detail"]
+
+
+@pytest.mark.integration
+def test_a_deactivated_account_cannot_be_granted_access(client, db_session, org, admin):
+    """Jarrod, 2026-11-23: access granted to a deactivated account reads as
+    real on the directory and is not. Reactivate first."""
+    user = _user(db_session, org, is_active=False, deactivated_at=datetime.now(UTC))
+    _as_admin(db_session, admin)
+    resp = client.post(f"/orgs/{org.id}/memberships",
+                       json={"user_id": str(user.id), "role": "customer_poc"})
+    assert resp.status_code == 409, resp.text
+    assert "Reactivate it before granting" in resp.json()["detail"]
+    held = db_session.execute(
+        text("SELECT count(*) FROM org_membership WHERE user_id = :u"), {"u": user.id}
+    ).scalar()
+    assert held == 0
+
+
+@pytest.mark.integration
+def test_an_account_awaiting_enrolment_can_still_be_granted_access(
+    client, db_session, org, admin
+):
+    """Inactive is not deactivated: an invitee is being set up."""
+    user = _user(db_session, org, is_active=False)
+    assert user.deactivated_at is None, "fixture must be an invitee, or this test proves nothing"
+    _as_admin(db_session, admin)
+    resp = client.post(f"/orgs/{org.id}/memberships",
+                       json={"user_id": str(user.id), "role": "customer_poc"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["granted"] is True
+
+
+@pytest.mark.integration
+def test_a_new_org_grants_no_access_to_deactivated_or_anonymized_msp_accounts(
+    db_session, org
+):
+    """Creating an org grants every MSP admin and engineer a membership
+    (org_membership.provision_new_org_memberships). Until migration 0079 that
+    included deactivated and anonymized accounts."""
+    from app.org_membership import provision_new_org_memberships
+
+    active = _user(db_session, org)
+    invitee = _user(db_session, org, is_active=False)
+    deactivated = _user(db_session, org, is_active=False, deactivated_at=datetime.now(UTC))
+    anonymized = _user(db_session, org, is_active=False, deleted_at=datetime.now(UTC))
+    assert {u.role for u in (active, invitee, deactivated, anonymized)} == {"msp_engineer"}, (
+        "fixture must be MSP roles, which a new org provisions, or this test proves nothing"
+    )
+    new_org = Organization(name=f"Offboard-new-{uuid.uuid4().hex[:8]}")
+    db_session.add(new_org)
+    db_session.flush()
+    provision_new_org_memberships(db_session, new_org.id)
+    members = set(db_session.execute(
+        text("SELECT user_id FROM org_membership WHERE org_id = :o"), {"o": new_org.id}
+    ).scalars())
+    assert active.id in members
+    assert invitee.id in members
+    assert deactivated.id not in members
+    assert anonymized.id not in members

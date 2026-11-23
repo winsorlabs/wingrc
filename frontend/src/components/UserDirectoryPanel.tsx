@@ -227,8 +227,12 @@ export function UserDirectoryPanel() {
                     {note && u.memberships.length > 0 && <div className="contact-sub">{note}</div>}
                   </td>
                   <td>
-                    {/* The server refuses it too (grant_membership's 409). */}
-                    {!u.deleted_at && (
+                    {/* The server refuses both too (grant_membership's 409s).
+                        A deactivated account is reactivated first, then
+                        granted (Jarrod, 2026-11-23), so the row says how. */}
+                    {u.deleted_at ? null : u.deactivated_at ? (
+                      <span className="contact-sub">Reactivate before granting access.</span>
+                    ) : (
                       <button className="btn-ghost btn-xs" onClick={() => openGrant(u)}>
                         Grant access…
                       </button>

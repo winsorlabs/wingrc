@@ -56,8 +56,36 @@ def test_each_is_required_with_no_default(compose, where, key):
 def test_the_database_url_carries_no_password_literal(compose):
     doc, _ = compose
     url = doc["x-backend-env"]["WINGRC_DATABASE_URL"]
-    assert "${POSTGRES_PASSWORD:?" in url, url
+    assert "${WINGRC_APP_DB_PASSWORD:?WINGRC_APP_DB_PASSWORD is required" in url, url
     assert "wingrc:wingrc@" not in url, url
+
+
+def test_requests_are_served_as_the_app_role_by_default(compose):
+    """Until 2026-11-23 the default was the owner, a superuser, for whom
+    Postgres skips every policy (docs/roadmap.md, "A fresh install runs the
+    app as a superuser"). The default must name wingrc_app, and only it."""
+    doc, _ = compose
+    url = doc["x-backend-env"]["WINGRC_DATABASE_URL"]
+    default = re.fullmatch(r"\$\{WINGRC_DATABASE_URL:-(.*)\}", url, re.S)
+    assert default, url
+    assert re.match(r"postgresql\+psycopg://wingrc_app:\$\{", default.group(1)), default.group(1)
+
+
+def test_migrations_default_to_the_owner(compose):
+    doc, _ = compose
+    url = doc["x-backend-env"]["WINGRC_MIGRATION_DATABASE_URL"]
+    default = re.fullmatch(r"\$\{WINGRC_MIGRATION_DATABASE_URL:-(.*)\}", url, re.S)
+    assert default, url
+    assert default.group(1).startswith(
+        "postgresql+psycopg://wingrc:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required"
+    ), default.group(1)
+
+
+def test_generate_env_fills_the_app_role_password():
+    script = COMPOSE.parent / "deploy" / "generate-env.sh"
+    if not script.exists():
+        pytest.skip("deploy/ is outside this tree (the backend image); CI runs this")
+    assert '"WINGRC_APP_DB_PASSWORD": token' in script.read_text(encoding="utf-8")
 
 
 def test_no_test_database_url_in_any_service(compose):

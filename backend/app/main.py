@@ -22,8 +22,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from . import app_role, snapshots
 from . import health as component_health
-from . import snapshots
 from .audit import set_current_ip
 from .auth import CurrentUser, common_password_list_problem, get_client_ip, get_current_user
 from .catalog import ALL_VIEWS
@@ -188,9 +188,9 @@ def health(request: Request, response: Response, db: Session = Depends(get_sessi
     On (2) being a readiness condition rather than a warning: a deploy IS
     unhealthy while the schema does not match the code, and saying so is
     the point. There is no window where that costs anything in this
-    deployment shape -- the backend's own command is
-    `alembic upgrade head && exec uvicorn`, so uvicorn never starts until
-    migrations finish, and the worker has healthchecks disabled. (That
+    deployment shape -- the backend's own command is `start.sh`, which
+    runs `alembic upgrade head` before uvicorn, so uvicorn never starts
+    until migrations finish, and the worker has healthchecks disabled. (That
     stopped being true while live bind-mounted a git checkout under
     `--reload`: a `git pull` swapped the code with no restart and no
     migration. Removed 2026-10-08; see docker-compose.yml.) A
@@ -213,6 +213,16 @@ def health(request: Request, response: Response, db: Session = Depends(get_sessi
     container's healthcheck calls `backend:8000` directly, so it always
     sees `incomplete` (no nginx). A deploy is judged through nginx
     (deploy/deploy.sh).
+
+    **`database_role` says whether the database keeps tenants apart**
+    (`app_role.row_level_security`), read from this connection: its role,
+    whether it is a superuser, has BYPASSRLS, or owns tables whose
+    policies therefore skip it. Reported, never a readiness condition, like
+    the breached-password list: a restart changes none of it, and
+    deploy.sh prints this body. Until 2026-11-23 nothing said which role a
+    deployment served as; live's cutover was visible only when a policy
+    raised (docs/roadmap.md, "A fresh install runs the app as a
+    superuser").
     """
     observed = {
         "backend": [os.environ.get("WINGRC_BUILD_SHA", component_health.UNKNOWN)],
@@ -284,6 +294,10 @@ def health(request: Request, response: Response, db: Session = Depends(get_sessi
     # Reported, never a readiness condition: a restart does not ship the
     # list, and deploy.sh prints this body, so every deploy shows it.
     detail["breached_password_list"] = common_password_list_problem() or "ok"
+    role = db.execute(app_role.ROLE_SQL).one()
+    detail["database_role"] = app_role.row_level_security(
+        role.role, role.superuser, role.bypassrls, role.owner_skips
+    )
     status, why = component_health.deployment_verdict(observed, why_unknown)
     detail["status"] = status
     if why is not None:
