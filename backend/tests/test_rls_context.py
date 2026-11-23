@@ -254,7 +254,7 @@ def test_no_module_writes_app_current_org_outside_rls():
     )
 
 
-def test_only_org_creation_clears_the_org_context_outside_tests():
+def test_only_org_creation_and_revocation_clear_the_org_context_outside_tests():
     """`clear_current_org`'s docstring names its callers; this fails when
     another one appears, so the claim cannot go stale unseen."""
     call = re.compile(r"\bclear_current_org\(")
@@ -263,7 +263,7 @@ def test_only_org_creation_clears_the_org_context_outside_tests():
         for p in _source_files()
         if call.search(p.read_text(encoding="utf-8"))
     )
-    assert callers == ["app/routers/orgs.py"], callers
+    assert callers == ["app/org_membership.py", "app/routers/orgs.py"], callers
 
 
 def test_rls_module_registers_the_hook_on_the_session_class():

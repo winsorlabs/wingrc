@@ -78,7 +78,11 @@ from ..auth import (
 from ..config import get_settings
 from ..db import get_session
 from ..models import ApiToken, AuditLog, OrgMembership, User
-from ..org_membership import _grant, provision_new_user_memberships
+from ..org_membership import (
+    _grant,
+    provision_new_user_memberships,
+    revoke_every_membership,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -787,13 +791,22 @@ def anonymize_user(
     db.execute(text("DELETE FROM api_token WHERE user_id = :uid"), {"uid": user_id})
     db.execute(text("DELETE FROM password_history WHERE user_id = :uid"), {"uid": user_id})
 
+    # Its access goes too, in every org, each revoke in that org's log. A
+    # deactivated account keeps its memberships for Reactivate to restore;
+    # an anonymized one never signs in again (org_membership.py).
+    revoked = revoke_every_membership(
+        db, user_id=user_id, actor=str(current_user.id),
+        actor_type=actor_type_for(current_user),
+        context={"via": "user.anonymize", "admin": str(current_user.id)},
+    )
+
     log_event(
         db,
         org_id=org_id,
         action="user.anonymize",
         entity_type="user",
         entity_id=user.id,
-        after_value={"anonymized": True},
+        after_value={"anonymized": True, "memberships_revoked": len(revoked)},
         context={"admin": str(current_user.id)},
         actor=str(current_user.id),
         actor_type=actor_type_for(current_user),

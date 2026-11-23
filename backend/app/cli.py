@@ -963,6 +963,75 @@ def lists_seed_odp_cmd(
         session.close()
 
 
+_ANONYMIZED_HOLDING = text(
+    "SELECT id, memberships FROM auth.all_users_directory() "
+    "WHERE deleted_at IS NOT NULL AND memberships <> '[]'::jsonb ORDER BY id"
+)
+
+
+@app.command(name="memberships-revoke-anonymized")
+def memberships_revoke_anonymized_cmd(
+    reason: str = typer.Option(
+        ..., help="Why -- recorded verbatim in every audit row this writes."
+    ),
+    apply: bool = typer.Option(False, help="Revoke them (default: dry-run only)"),
+) -> None:
+    """Revoke the memberships anonymized accounts still hold. Dry-run by
+    default.
+
+    Anonymizing revokes an account's access since 2026-11-23
+    (org_membership.revoke_every_membership). Rows from before then stay
+    until this runs: on live, migration 0023's backfill gave three
+    already-anonymized accounts Acme MSP memberships. Each is listed, then
+    revoked with an `org_membership.revoke` row in its org's log. A
+    deactivated account is never touched: Reactivate restores its rows.
+
+    It runs as the app role. The accounts are read through
+    auth.all_users_directory(), which no org filters, and each org's rows
+    are written under that org; the run ends by reading the directory
+    again and fails if any anonymized account still holds one.
+    """
+    from .org_membership import revoke_every_membership
+
+    session = SessionLocal()
+    try:
+        holding = session.execute(_ANONYMIZED_HOLDING).all()
+        if not holding:
+            typer.echo("Nothing to do: no anonymized account holds a membership.")
+            return
+        for row in holding:
+            for m in row.memberships:
+                typer.echo(f"  anonymized {row.id}: {m['role']} on {m['org_name']} ({m['org_id']})")
+        total = sum(len(r.memberships) for r in holding)
+        if not apply:
+            typer.echo(
+                f"
+{total} membership(s) on {len(holding)} anonymized account(s). "
+                "DRY RUN -- nothing written. Re-run with --apply."
+            )
+            return
+        context = {"via": "cli:memberships-revoke-anonymized", "reason": reason}
+        revoked = sum(
+            len(revoke_every_membership(
+                session, user_id=row.id, actor="cli:memberships-revoke-anonymized",
+                actor_type="system", context=context,
+            ))
+            for row in holding
+        )
+        session.commit()
+        left = session.execute(_ANONYMIZED_HOLDING).all()
+        if left:
+            typer.echo(f"Revoked {revoked}, but {len(left)} account(s) still hold one.", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"
+Revoked {revoked} membership(s) on {len(holding)} anonymized account(s).")
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 @app.command(name="review-cycles-detach-unattested")
 def review_cycles_detach_unattested_cmd(
     org_id: str = typer.Option(

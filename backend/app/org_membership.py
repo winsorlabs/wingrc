@@ -123,3 +123,67 @@ def provision_new_user_memberships(
         for other_org_id in other_org_ids
     )
     return granted
+
+
+def revoke_every_membership(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    actor: str,
+    actor_type: str,
+    context: dict,
+) -> list[dict]:
+    """Revoke every membership the account holds, in every org, each with
+    an `org_membership.revoke` audit row in that org's own log, so each
+    org's history says who stopped having access to it. Returns what was
+    revoked ({org_id, org_name, role}).
+
+    For an anonymized account only (Jarrod, 2026-11-23): it can never sign
+    in again, so its rows answer "who has access" with noise. A
+    deactivated account keeps its rows, because reactivating restores
+    them and the Reactivate confirmation names them.
+
+    The memberships are read through auth.all_users_directory(), which is
+    unscoped, so the list is every org's and not only the request's. Each
+    delete and its audit row are written under that org's context and
+    flushed there, the way create_org writes the new org's first audit
+    row, and the caller's org is put back after. As the owner, where RLS
+    does not apply, the same path runs unchanged.
+    """
+    from sqlalchemy import delete
+
+    from .audit import log_event
+    from .models import OrgMembership
+    from .rls import clear_current_org, current_org, set_current_org
+
+    row = db.execute(
+        text("SELECT memberships FROM auth.all_users_directory() WHERE id = :u"),
+        {"u": user_id},
+    ).first()
+    revoked: list[dict] = []
+    previous = current_org(db)
+    try:
+        for m in row.memberships if row else []:
+            org_id = uuid.UUID(m["org_id"])
+            set_current_org(db, org_id)
+            gone = db.execute(
+                delete(OrgMembership).where(
+                    OrgMembership.user_id == user_id, OrgMembership.org_id == org_id
+                )
+            ).rowcount
+            if not gone:
+                continue
+            log_event(
+                db, org_id=org_id, action="org_membership.revoke",
+                entity_type="org_membership", entity_id=user_id,
+                before_value={"role": m["role"]}, context=context,
+                actor=actor, actor_type=actor_type,
+            )
+            db.flush()
+            revoked.append(m)
+    finally:
+        if previous is None:
+            clear_current_org(db)
+        else:
+            set_current_org(db, previous)
+    return revoked
