@@ -15225,6 +15225,38 @@ then green once undone:
 - the directory offering Grant on a deactivated row -> the directory
   test.
 
+**Access already held: revoked for anonymized, kept for deactivated
+(Jarrod, 2026-11-23, at #142's merge; branch `anonymize-revokes-access`).**
+0079 only stopped new grants. The directory still showed three
+anonymized accounts holding C3PAO Assessor and Customer POC on Acme MSP,
+and anonymizing left every membership in place.
+- **Anonymized: revoked.** It can never sign in again, so its rows are
+  noise on a screen whose job is answering "who has access".
+  `users.anonymize_user` now calls
+  `org_membership.revoke_every_membership`, which reads the account's
+  memberships through `auth.all_users_directory()` (every org's, not
+  only the request's), and deletes each under that org's own context
+  with an `org_membership.revoke` audit row in that org's log
+  (`context.via = "user.anonymize"`). Each org's history then says who
+  stopped having access to it. `user.anonymize` records
+  `memberships_revoked`. It is the same hard delete with an audit row
+  as `revoke_membership`.
+- **Deactivated: kept.** #141's Reactivate confirmation promises to
+  restore what the account had and names those orgs, so the rows are
+  what it restores.
+- **The rows already there** are cleared by `wingrc
+  memberships-revoke-anonymized --reason ...`. It is dry-run by default,
+  lists each row, and with `--apply` revokes through the same function,
+  then reads the directory again and fails if any anonymized account
+  still holds one. It runs as the app role: the directory is unscoped,
+  so no tenant's rows are hidden from the list, and each org's rows are
+  written under that org.
+- **Why no definer function:** writes for each org are made under that
+  org's context, the way `create_org` writes the new org's first audit
+  row, so RLS applies to them rather than being stepped past. The
+  request runs as `wingrc_app` in the suite (`conftest._app_session`),
+  so the test of a second org's revoke is a test of that.
+
 ### The bundled breached-password list does not exist -- queued 2026-11-20; the decision is what to bundle, the silent failure is fixed
 
 **What was found.** `auth._load_common_passwords` reads
@@ -15486,6 +15518,23 @@ above all a reading on `/health`.
     CLI's owner override all read the owner's URL from the backend's
     environment. Queued with MinIO's entry; `app_role.main` moves into it
     unchanged.
+
+**What this did not change: the owner's URL lives in the serving
+processes (Jarrod's question at the merge, 2026-11-23).** The start step
+runs `ALTER ROLE` as the owner, through `WINGRC_MIGRATION_DATABASE_URL`.
+That variable is in `x-backend-env`, so the backend and the worker hold
+a superuser's connection string for the life of the process. It is not
+transient. It was already there before #142: the backend has run
+`alembic upgrade head` at start since long before, and live's backend
+and worker both carried the variable (names read 2026-11-23, values
+not). #142 added a use of it, not the exposure. RLS still stops a query
+that forgets its org, but anything that can read the process
+environment finds the owner's URL beside the app's. That is the reason
+for the one-shot provisioning container, not tidiness. Its blockers are
+the readers that take the URL from the backend's environment today:
+`snapshots.py` (run by `snapshot.sh` as `docker compose run ...
+backend`), the CLI owner override, and migrations at start. Each needs
+a home that is not a serving container.
 - **`/health`'s `database_role`**, read from the connection answering the
   request (`app_role.ROLE_SQL`): `role`, `superuser`, `bypassrls`,
   `owner_of_rls_tables` (RLS tables without FORCE whose owner's

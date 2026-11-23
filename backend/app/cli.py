@@ -1005,8 +1005,7 @@ def memberships_revoke_anonymized_cmd(
         total = sum(len(r.memberships) for r in holding)
         if not apply:
             typer.echo(
-                f"
-{total} membership(s) on {len(holding)} anonymized account(s). "
+                f"\n{total} membership(s) on {len(holding)} anonymized account(s). "
                 "DRY RUN -- nothing written. Re-run with --apply."
             )
             return
@@ -1023,8 +1022,7 @@ def memberships_revoke_anonymized_cmd(
         if left:
             typer.echo(f"Revoked {revoked}, but {len(left)} account(s) still hold one.", err=True)
             raise typer.Exit(1)
-        typer.echo(f"
-Revoked {revoked} membership(s) on {len(holding)} anonymized account(s).")
+        typer.echo(f"\nRevoked {revoked} membership(s) on {len(holding)} anonymized account(s).")
     except Exception:
         session.rollback()
         raise

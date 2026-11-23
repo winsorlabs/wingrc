@@ -941,7 +941,11 @@ new access** (2026-11-23): `grant_membership` answers 409, and a new org
 no longer auto-grants a deactivated or anonymized MSP account (migration
 0079, `auth.msp_role_users()`). Pre-staging is reactivate, grant,
 deactivate again (`docs/roadmap.md`, "A deactivated account could still
-be granted access").
+be granted access"). **Anonymizing revokes the account's memberships in
+every org** (`org_membership.revoke_every_membership`, an
+`org_membership.revoke` row in each org's log); a deactivated account
+keeps its rows, because Reactivate restores them. Rows from before are
+cleared by `wingrc memberships-revoke-anonymized`.
 
 **Always set the org through `rls.set_current_org(session, org_id)` — never
 write `app.current_org` directly.** That GUC is transaction-scoped, so a
