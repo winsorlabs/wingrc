@@ -109,7 +109,7 @@ def main() -> None:
         print(
             "provision: the app's storage keys are MinIO's root, so no account was "
             "made and /health will read storage_account unscoped. Moving off root: "
-            'docs/deployment.md, "Object storage account".'
+            'docs/deployment.md, "Moving a deployment off MinIO\'s root".'
         )
         return
 

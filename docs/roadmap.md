@@ -15619,7 +15619,7 @@ step 1 as written):
 - **Teardown:** compose bind paths unchanged, live's containers
   unchanged, both clones removed, nothing root-owned left.
 
-### The app reaches MinIO as root -- queued 2026-11-18 (the brief's finding), after the deactivated-account slice
+### The app reaches MinIO as root ✅ DONE (2026-11-23, bench-verified; branch `storage-scoped-account`) -- queued 2026-11-18 (the brief's finding)
 
 **The defect.** `WINGRC_STORAGE_ACCESS_KEY`/`SECRET_KEY` hold the same
 values as `MINIO_ROOT_USER`/`PASSWORD`, on live and in every install the
@@ -15683,6 +15683,225 @@ To settle in the slice, by reading the code, not from this list:
 
 Not this slice's scope (#108 or #109); its own small entry, by the
 brief's instruction.
+
+**What was built (2026-11-23).**
+
+**The cause was one line.** `MinIOClient.__init__` ended with
+`self._ensure_bucket()`: a head of the bucket, then a create on *any*
+error. Every construction of the client asserted the right to create a
+bucket. No scoped account can be granted that, so the only credential
+the code could start with was root. The bare `except Exception` also
+meant that a scoped account, if given today's code, would have reported
+`CreateBucket AccessDenied` for a call the operator never made.
+- **Now:** the constructor makes no call at all.
+- **`check_bucket`** answers three ways: a missing bucket by name, an
+  unreadable one as `GetObject: AccessDenied`, and an unreachable store
+  by error class. It never creates the bucket.
+- **The start runs it** (`backend/start.sh` step 3) and refuses to serve
+  without the bucket, naming the provisioning step.
+
+**The policy, derived from `storage.py` method by method** (it lives in
+`app/storage_access.py`'s docstring; `tests/test_storage_access.py`
+fails when a method is added to `MinIOClient` without a line there).
+Every action is on `arn:aws:s3:::<bucket>/*` and nothing else:
+- `upload_file`: `s3:PutObject`.
+- `presigned_url`: `s3:GetObject`. The signing is local, but the
+  browser's GET carries the signer's rights. That covers the logo and
+  vendor documents.
+- `delete_file`: `s3:DeleteObject`.
+- `get_bytes`, `stream_bytes`, `open_object`: `s3:GetObject`.
+- `check_bucket`: `s3:GetObject`, of a key nothing writes. Measured on
+  MinIO 2025-09-07: without `s3:ListBucket`, a missing key answers
+  `NoSuchKey` and a missing bucket answers `NoSuchBucket`. So the check
+  needs only what reads need, while `head_bucket` would have needed
+  `ListBucket`.
+- `list_objects`, `bucket`: `snapshots.py` only. Create, the restore's
+  empty-bucket check and verify all list the bucket. So `s3:ListBucket`
+  is **not** the serving account's: snapshots run in `provision`, as
+  root. The worker's review-cycle records use `upload_file`, which is
+  covered.
+
+**The provisioning step's shape: one compose service, `provision`.** It
+uses the backend's image, `restart: "no"`, and runs
+`python -m app.provision`. It is the only service with
+`x-provision-env`, which is the app's environment with MinIO's root in
+place of the app's storage keys. It runs, creates the bucket if missing,
+writes the `wingrc-app` policy, creates or updates the app's account from
+`.env`, attaches the policy, reads the account back and fails unless it
+is scoped. Then it exits.
+- **On a fresh `docker compose up`:** the backend has
+  `depends_on: provision: condition: service_completed_successfully`, so
+  it runs first.
+- **On a deploy:** `deploy.sh` runs it explicitly, because
+  `up --no-deps` skips dependencies. A provisioning failure stops the
+  deploy before any container is recreated.
+- **Snapshots:** `snapshot.sh` runs in it, and so do `restore-test.sh`'s
+  restore and verify, after provisioning the throwaway stack.
+
+Rejected:
+- **An entrypoint phase of the backend:** the serving container would
+  hold root for its whole life, which is the defect.
+- **A documented command:** owed after every restore and every fresh
+  install, so it gets skipped.
+- **A separate MinIO-only container** (`minio/mc`): the database could
+  not join it, and Jarrod's point was not to do this twice.
+
+**What the database owner's URL needs to join it.** This slice did not
+move it; #142 found the three readers that block the move:
+- **Snapshots** through `docker compose run backend`: done here. They
+  now run in `provision`, which already carries the backend's
+  environment, owner URL included.
+- **The CLI owner override:** becomes
+  `docker compose run --rm --no-deps provision wingrc ...`, the same
+  container.
+- **Migrations and `app_role` at start:** become steps of
+  `app.provision`, before the bucket step, with `depends_on: db`
+  added.
+
+Then `WINGRC_MIGRATION_DATABASE_URL` moves from `x-backend-env` to
+`x-provision-env`. No serving container holds it after that, and
+`backend/start.sh` checks the schema head instead of migrating.
+`app/provision.py`'s docstring says the same.
+
+**`/health`'s `storage_account`.** It is read with MinIO's `accountinfo`,
+which any account may call about itself, through a plain SigV4-signed
+GET (`storage_access.read_account_info`). So the serving process never
+imports the `minio` SDK, whose admin calls need argon2 and pycryptodome.
+- **Fields:** `actions`, `administers`, `beyond_the_app`, `missing`, and
+  `access`.
+- **`access`** is one of: `scoped`; `unscoped: the app's storage account
+  administers the object store (MinIO's root, or an admin policy) ...`;
+  `unscoped: ... granted more than it uses: <action on resource>`;
+  `incomplete: ... lacks <action>`.
+- **What it never shows:** the account name. The access key is half a
+  credential, and `/health` is unauthenticated.
+- **How it is read:** at most every five minutes per process, and every
+  30 seconds while it reads `unknown`. It is reported, never a readiness
+  condition, like `database_role`.
+- **What root reads as:** on root, MinIO reports `admin:*`, `kms:*` and
+  `s3:*` (measured), and the reading says `administers`. That is the
+  case that has to raise the alarm, and it was tested on a real MinIO
+  (below).
+
+**The bucket race is closed, not fixed** (the item "Two first uploads
+into a fresh bucket race", which is now closed). There is no create left
+in the request path: provisioning creates the bucket once, before the
+app starts.
+- **A correction to that item:** it said `_ensure_bucket` ran "on every
+  request". `_build_client` is `lru_cache`d, so it ran once per process.
+- **Why the race was still real:** `lru_cache` does not lock, so the
+  first concurrent requests of a process could each build a client.
+  That is where the race lived.
+
+**An existing deployment keeps working:** its `.env` names root in the
+app's lines.
+- `provision` creates the bucket if needed, says "the app's storage
+  keys are MinIO's root, so no account was made", and exits 0.
+- `/health` then reads `unscoped: ... administers the object store`.
+- The move is `docs/deployment.md`, "Moving a deployment off MinIO's
+  root".
+- `generate-env.sh` now fills `WINGRC_STORAGE_ACCESS_KEY=wingrc-app`
+  and a random secret, instead of copying root's pair.
+
+**FIPS note.** The `minio` SDK encrypts admin payloads with argon2id and
+AES-GCM or ChaCha20, and it is used only in `provision`. A FIPS profile
+has to check what MinIO's FIPS build accepts there (`docs/fips.md`'s
+checklist).
+
+**Bench (2026-11-23, wl-util-1).** Two stacks were built from fresh
+clones by guide step 1:
+- **A**, a fresh install of the branch;
+- **B**, live's shape: `main` (`fe50dca`) on root, then this branch, then
+  the move.
+
+**MinIO's behaviour was measured first** on a throwaway container
+(2025-09-07 release), before any code depended on it. With a scoped
+account:
+- `CreateBucket`, `ListBucket`, `HeadBucket`, `ListBuckets`,
+  `DeleteBucket` and the other bucket were refused;
+- objects written under root were readable, and presigned GETs worked;
+- a missing key answered `NoSuchKey` and a missing bucket `NoSuchBucket`;
+- `accountinfo` worked for any account;
+- `user_add` on an existing account replaced its secret.
+
+**Stack A, the fresh install:**
+- **Each required variable emptied in turn:** compose named all nine.
+  Six are now named through `x-provision-env`, the first anchor that
+  reads them.
+- **`docker compose up` from empty volumes:** `provision` exited 0 with
+  "bucket 'evidence' created", "app account set; policy 'wingrc-app'
+  attached" and "the app's account reads scoped". The backend's start
+  read "bucket 'evidence' is there and readable", and `/health` read
+  `storage_account.access: scoped`, actions
+  `[s3:DeleteObject, s3:GetObject, s3:PutObject]`.
+- **Root's values** are not in the backend's environment (compared by
+  value, never printed).
+- **As the app's account:**
+  - `create_bucket`, `list_objects`, `ListBuckets`, `DeleteBucket`, and
+    reads and writes on a second bucket root made: all `AccessDenied`;
+  - upload, `get_bytes`, `stream_bytes`, `open_object`, presigned GET
+    and delete: all OK.
+- **The snapshot ran in `provision`:** 3 objects. The restore test then
+  provisioned the throwaway stack and restored and verified in
+  `provision`: verdict pass.
+- **A missing bucket** (root emptied and removed it, then the backend
+  restarted): the start refused with "The storage bucket 'evidence' does
+  not exist. The app does not create it; provisioning does: `docker
+  compose run --rm --no-deps provision` ...". `CreateBucket` appeared
+  zero times in the log. Provisioning again recreated the bucket, and
+  the backend came up healthy.
+- **Mutations, inside the container** (CLAUDE.md's rule), each red and
+  then all 23 tests green once undone:
+  - the constructor heads and creates again -> `test_constructing_the_client_makes_no_call`;
+  - the check creates a missing bucket -> `test_a_missing_bucket_..._never_created`;
+  - the verdict ignores admin actions -> `test_root_reads_unscoped_...`;
+  - the policy grants `ListBucket` -> `test_the_app_is_granted_three_object_actions_...`;
+  - provisioning creates on any head error -> `test_provisioning_raises_a_refusal_...`.
+- **Full suite** (audit coverage, floor 1500): 2317 passed, 64 skipped.
+  The five extra skips are the new compose tests, which skip inside the
+  image; all 21 compose tests pass against the checkout, as CI runs them.
+  Ruff is clean.
+- **Frontend** (unchanged by this slice): `tsc -b` and the build passed.
+  vitest passed 617 of 617 three times. A fourth run, the first, had one
+  failure I did not capture, and it has not recurred.
+
+**Stack B, live's move rehearsed:**
+- **At `main`:** `generate-env.sh` copied root into the app's keys, and
+  an object was written under root.
+- **This branch, deployed as `deploy.sh` does** (build, `provision`,
+  `up --no-deps`): `provision` said "the app's storage keys are MinIO's
+  root, so no account was made". `/health` read `unscoped: the app's
+  storage account administers the object store`, actions
+  `admin:*, kms:*, s3:*`. That is the alarm, on a real MinIO.
+- **The move, step by step as `docs/deployment.md` writes it:**
+  snapshot, keep `.env` (0600), empty the two lines, `generate-env.sh`
+  (it printed only the two names), provision ("reads scoped"), recreate
+  `backend` and `worker`. `/health` then read `scoped`.
+- **The object written under root at `main`:** `get_bytes`,
+  `stream_bytes` and presigned GET all returned it under the new
+  account. Upload and delete were OK; `create_bucket` and listing were
+  refused. Root's values are not in the app's environment. A snapshot
+  after the move ran in `provision`.
+- **The way back** (`.env` restored, recreate) read `unscoped` again.
+  **Forward again** read `scoped`: provisioning is idempotent, "policy
+  already attached".
+- **Found by B:** root's reading listed the app's three actions as
+  `missing`, because `s3:*` named none of them. `missing` now honours
+  wildcards, and the root test asserts `missing == []`.
+
+**Teardown:** both stacks' compose bind paths were unchanged, live's
+containers were unchanged, and the clones were removed, except for what
+the bench should not have left:
+- `/var/lib/wingrc-snapshots/wingrc_verify_s3a`: two snapshots of bench
+  data, written there because `snapshot.sh` reads `WINGRC_SNAPSHOT_DIR`
+  from the shell, not `.env`, and I had not exported it;
+- `/home/claude/bench/s3a/.bench/snapshots` and
+  `/home/claude/bench/s3b/.bench/snapshots`, which `snapshot.sh` hands to
+  the image's user (uid 10001, 0700) by design.
+
+All three need `sudo rm -rf`; none was removed through docker.
+
+LIVE_MIGRATION
 
 ### Live cannot say who signed in from where -- recorded 2026-11-17; urgent the day there are two users
 
@@ -17410,7 +17629,9 @@ result are the new work.
     whole file is read.
   - `await file.read()` did the same before the first change, so this is
     not new.
-- **Two first uploads into a fresh bucket race.** Below the memory read:
+- **Two first uploads into a fresh bucket race.** ✅ Closed 2026-11-23
+  by "The app reaches MinIO as root": the app no longer creates its
+  bucket, so no request can race to. Below the memory read:
   it reaches only a fresh install's first concurrent uploads, and a
   retry recovers it. `MinIOClient` runs `_ensure_bucket()` on every
   request, as a head then a create. Two

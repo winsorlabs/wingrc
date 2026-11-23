@@ -42,6 +42,7 @@ admin calls only).
 """
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import threading
@@ -89,6 +90,9 @@ def access_verdict(policy: dict | None, bucket: str) -> dict:
     administers = False
     beyond: list[str] = []
     granted: set[str] = set()
+    # What the account can do, wildcards included, for "missing": root's
+    # s3:* on arn:aws:s3:::* grants every app action without naming one.
+    covered: set[str] = set()
     for st in _as_list((policy or {}).get("Statement")):
         if not isinstance(st, dict) or st.get("Effect") != "Allow":
             continue
@@ -96,6 +100,11 @@ def access_verdict(policy: dict | None, bucket: str) -> dict:
             beyond.append("a NotAction or NotResource statement")
             continue
         resources = _as_list(st.get("Resource")) or ["*"]
+        for want in APP_ACTIONS:
+            if any(fnmatch.fnmatchcase(want, a) for a in _as_list(st.get("Action"))) and any(
+                fnmatch.fnmatchcase(wanted, r) for r in resources
+            ):
+                covered.add(want)
         for a in _as_list(st.get("Action")):
             actions.add(a)
             if a == "*" or a.startswith("admin:"):
@@ -106,7 +115,7 @@ def access_verdict(policy: dict | None, bucket: str) -> dict:
                     granted.add(a)
                 else:
                     beyond.append(f"{a} on {r}")
-    missing = [a for a in APP_ACTIONS if a not in granted]
+    missing = [a for a in APP_ACTIONS if a not in granted and a not in covered]
     if administers:
         access = (
             "unscoped: the app's storage account administers the object store "

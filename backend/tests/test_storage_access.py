@@ -74,6 +74,7 @@ def test_root_reads_unscoped_and_says_it_administers_the_store():
     """MinIO's accountinfo for root, as measured: admin:*, kms:*, s3:*."""
     v = access_verdict(ROOT, BUCKET)
     assert v["administers"] is True
+    assert v["missing"] == [], "s3:* on arn:aws:s3:::* covers the app's actions"
     assert v["access"].startswith(
         "unscoped: the app's storage account administers the object store"
     )
