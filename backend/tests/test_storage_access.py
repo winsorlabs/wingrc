@@ -74,23 +74,27 @@ def test_root_reads_unscoped_and_says_it_administers_the_store():
     """MinIO's accountinfo for root, as measured: admin:*, kms:*, s3:*."""
     v = access_verdict(ROOT, BUCKET)
     assert v["administers"] is True
-    assert v["access"].startswith("unscoped: the app's storage account administers the object store")
+    assert v["access"].startswith(
+        "unscoped: the app's storage account administers the object store"
+    )
     assert "Object storage account" in v["access"]
 
 
-@pytest.mark.parametrize(("statement", "named"), [
-    ({"Action": ["s3:*"], "Resource": ["arn:aws:s3:::evidence/*"]}, "s3:* on arn:aws:s3:::evidence/*"),
-    ({"Action": ["s3:GetObject"], "Resource": ["arn:aws:s3:::*"]}, "s3:GetObject on arn:aws:s3:::*"),
-    ({"Action": ["s3:ListBucket"], "Resource": ["arn:aws:s3:::evidence"]}, "s3:ListBucket on arn:aws:s3:::evidence"),
-    ({"Action": ["s3:CreateBucket"], "Resource": ["arn:aws:s3:::*"]}, "s3:CreateBucket on arn:aws:s3:::*"),
-    ({"Action": "s3:GetObject", "Resource": "arn:aws:s3:::other/*"}, "s3:GetObject on arn:aws:s3:::other/*"),
+@pytest.mark.parametrize(("action", "resource"), [
+    ("s3:*", "arn:aws:s3:::evidence/*"),
+    ("s3:GetObject", "arn:aws:s3:::*"),
+    ("s3:ListBucket", "arn:aws:s3:::evidence"),
+    ("s3:CreateBucket", "arn:aws:s3:::*"),
+    ("s3:GetObject", "arn:aws:s3:::other/*"),
 ])
-def test_anything_beyond_the_three_on_this_bucket_reads_unscoped_and_is_named(statement, named):
+def test_anything_beyond_the_three_on_this_bucket_reads_unscoped_and_is_named(action, resource):
     policy = app_policy(BUCKET)
-    policy["Statement"].append({"Effect": "Allow", **statement})
+    policy["Statement"].append({"Effect": "Allow", "Action": action, "Resource": resource})
     v = access_verdict(policy, BUCKET)
-    assert v["access"].startswith("unscoped: the app's storage account is granted more than it uses")
-    assert named in v["beyond_the_app"]
+    assert v["access"].startswith(
+        "unscoped: the app's storage account is granted more than it uses"
+    )
+    assert f"{action} on {resource}" in v["beyond_the_app"]
 
 
 def test_a_missing_action_reads_incomplete():
@@ -109,7 +113,9 @@ def test_a_deny_is_not_read_as_a_grant():
 
 def test_a_not_action_statement_reads_unscoped():
     policy = app_policy(BUCKET)
-    policy["Statement"].append({"Effect": "Allow", "NotAction": ["s3:PutObject"], "Resource": ["*"]})
+    policy["Statement"].append(
+        {"Effect": "Allow", "NotAction": ["s3:PutObject"], "Resource": ["*"]}
+    )
     assert access_verdict(policy, BUCKET)["access"].startswith("unscoped:")
 
 
@@ -161,7 +167,9 @@ def test_constructing_the_client_makes_no_call():
 
     with mock.patch("boto3.client", side_effect=track):
         _client()
-    assert made, "fixture must build its boto3 clients through boto3.client, or this test proves nothing"
+    assert made, (
+        "fixture must build its boto3 clients through boto3.client, or this test proves nothing"
+    )
     for s in made:
         s.assert_no_pending_responses()
 

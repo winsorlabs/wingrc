@@ -52,8 +52,8 @@ password manager off this host before you rely on the deployment.**
 | `WINGRC_ENVIRONMENT` | `production` or `development`; nothing else is accepted. `production` puts `Secure` on every cookie. Use it for any deployment served over HTTPS. | **No: set it yourself.** It is a decision, not a secret. |
 | `POSTGRES_PASSWORD` | The database owner's password. The owner owns every table and bypasses row-level security. Postgres reads it only when its volume is first initialised. **URL-safe characters only** (letters, digits, `-`, `_`): compose places it in a connection URL. | Yes |
 | `WINGRC_APP_DB_PASSWORD` | The password of `wingrc_app`, the role requests are served as. Row-level security applies to it, which is what keeps one tenant's rows from another's in the database itself. The backend sets the role's password to this value whenever it starts and finds the role cannot connect, so changing it here and redeploying changes it. URL-safe characters only. | Yes |
-| `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | MinIO's root credentials. Also read at first start. | Yes |
-| `WINGRC_STORAGE_ACCESS_KEY`, `WINGRC_STORAGE_SECRET_KEY` | The backend's storage credentials. Today they must equal MinIO's root pair. | Yes, copied from the root pair |
+| `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | MinIO's root credentials. Also read at first start. Only `minio` and the one-shot `provision` container hold them (see "Provisioning"). | Yes |
+| `WINGRC_STORAGE_ACCESS_KEY`, `WINGRC_STORAGE_SECRET_KEY` | The app's own storage account, which provisioning makes. It may read, write and delete the bucket's objects and nothing else. It must not be MinIO's root pair. Until 2026-11-23 it had to be. | Yes: `wingrc-app` and a random secret |
 | `WINGRC_AUTH_FLOW_SECRET` | Signs the sign-in state cookies. At least 32 characters; the backend refuses sign-in without a usable one. Changing it only fails sign-ins in progress, never a session. | Yes |
 | `WINGRC_CREDENTIAL_ENCRYPTION_KEYS` | Encrypts stored integration credentials (Liongard, SMTP, the AI provider) at rest, as `label:fernetkey`. **Lose it and every stored credential is lost**; a database backup does not include it. Rotate with `wingrc rotate-credential-keys`. | Yes |
 
@@ -150,7 +150,22 @@ answers on, and **`database_role.row_level_security` must read
 docker compose exec -T backend python -c "import json,urllib.request; print(json.load(urllib.request.urlopen('http://localhost:8000/health'))['database_role'])"
 ```
 
-Anything else reads `bypassed:` and names why. Then load the control
+Anything else reads `bypassed:` and names why.
+
+Before the backend started, compose ran the one-shot `provision`
+container. It made the storage bucket and the app's storage account, and
+exited (see "Provisioning"). `/health` reports that account too, and
+**`storage_account.access` must read `scoped`**:
+
+```bash
+docker compose exec -T backend python -c "import json,urllib.request; print(json.load(urllib.request.urlopen('http://localhost:8000/health'))['storage_account'])"
+```
+
+`unscoped:` says what the account is granted beyond the app's needs.
+The backend refuses to start without its bucket, and the refusal names
+`provision`; it never creates the bucket itself.
+
+Then load the control
 catalog and create the first administrator. Both run as the owner,
 because there is no organization yet for row-level security to scope
 to (see "The CLI runs as the app role", below):
@@ -584,7 +599,18 @@ in `.env` only has to agree with it.
 
 See the item in `docs/roadmap.md`, "The compose file ships default
 credentials", for the procedure as tested. Keep `MINIO_ROOT_USER` and
-change only the password. Set `MINIO_ROOT_PASSWORD` and
+change only the password.
+
+**Once the app has its own account** ("Moving a deployment off MinIO's
+root", below), only `minio` and `provision` use root. Set
+`MINIO_ROOT_PASSWORD`, then recreate `minio` and `nginx`. The app's keys
+do not change and the app keeps serving:
+
+```bash
+docker compose up -d --no-deps --force-recreate minio nginx
+```
+
+**On a deployment still on root,** set `MINIO_ROOT_PASSWORD` and
 `WINGRC_STORAGE_SECRET_KEY` to the same new value, then recreate them
 together:
 
@@ -778,8 +804,12 @@ the restore refuses.
 `wingrc snapshot-restore` writes only to an **empty** database and an empty
 bucket. It refuses anything else, so it cannot overwrite data. To recover:
 
-1. Bring up fresh volumes.
-2. Run `snapshot-restore`, then `snapshot-verify`.
+1. Bring up fresh volumes, and run provisioning so the bucket and the
+   app's account exist: `docker compose run --rm --no-deps provision`.
+2. Run `snapshot-restore`, then `snapshot-verify`, in the same container,
+   because both list the bucket and the app's account may not:
+   `docker compose run --rm --no-deps provision wingrc snapshot-restore /snapshots/<id>`
+   (`deploy/restore-test.sh` does exactly this).
 3. The backend's start sets `wingrc_app`'s password again. It is a
    cluster role, not in the dump; the restore creates the role without
    one, as migration 0016 does, and the start sets it from
@@ -827,6 +857,102 @@ of one commit:
 
 `docs/roadmap.md`'s item R says which of these it covers and which it
 does not.
+
+## Provisioning
+
+Compose's `provision` service is the one container that holds
+privileged credentials. It runs, does what no serving container may do,
+and exits, so no long-lived process holds them:
+
+- `docker compose up` runs it before the backend: the backend has
+  `depends_on: provision: condition: service_completed_successfully`.
+- `deploy/deploy.sh` runs it explicitly with
+  `docker compose run --rm --no-deps -T provision`, because its own
+  `up --no-deps` skips dependencies. A failure stops the deploy before
+  any container is recreated.
+- `deploy/snapshot.sh` and `deploy/restore-test.sh` run their snapshot
+  commands in it, because a snapshot lists the bucket.
+
+Today it holds MinIO's root (`x-provision-env`). The database owner's
+URL is meant to move into it from the serving containers' environment.
+That has not happened yet: `WINGRC_MIGRATION_DATABASE_URL` is still in
+`x-backend-env` (`app/provision.py`; `docs/roadmap.md`, "The app reaches
+MinIO as root").
+
+### Object storage account
+
+Provisioning (`app/provision.py`) does three things:
+- it creates the bucket if it is missing;
+- it creates or updates the app's account from `WINGRC_STORAGE_ACCESS_KEY`
+  and `WINGRC_STORAGE_SECRET_KEY`, with the policy `wingrc-app`;
+- it reads the account back and fails unless it is scoped.
+
+The policy is worked out from `app/storage.py` method by method
+(`app/storage_access.py`):
+
+| Action, on `arn:aws:s3:::<bucket>/*` only | Used by |
+|---|---|
+| `s3:PutObject` | `upload_file` |
+| `s3:GetObject` | `get_bytes`, `stream_bytes`, `open_object`, `presigned_url` (the browser's GET carries the signer's rights), the start's bucket check |
+| `s3:DeleteObject` | `delete_file` |
+
+The account gets nothing on the bucket itself (no listing), no other
+bucket, and no admin call. Listing is used only by snapshots, which run
+in `provision`.
+
+`/health`'s `storage_account` is what MinIO says the account is granted,
+read from MinIO's `accountinfo` call, which any account may make about
+itself:
+- `actions`;
+- `administers`;
+- `beyond_the_app`;
+- `missing`;
+- `access`: `scoped`, or `unscoped: ...` saying why.
+
+**A deployment still on root reads `unscoped: the app's storage account
+administers the object store`.** Nothing is broken when it does: the
+app works. The point is that it says so.
+
+To **rotate** the app's secret: put a new `WINGRC_STORAGE_SECRET_KEY` in
+`.env`, run provisioning, then recreate `backend` and `worker`. Provisioning
+replaces the account's secret, and the old one stops working at once, so
+the app cannot reach storage until it is recreated.
+
+### Moving a deployment off MinIO's root
+
+For a deployment whose `WINGRC_STORAGE_ACCESS_KEY` and `_SECRET_KEY` are
+MinIO's root pair. Every installation the guide described before
+2026-11-23 is one. It changes credentials only: no object is moved or
+rewritten. An object written under root stays readable, because a
+policy grants actions on keys, not on who wrote them. Nothing below
+prints a key's value.
+
+1. **Snapshot:** `deploy/snapshot.sh`.
+2. **Keep the current `.env`** for the way back:
+   `cp -p .env .env.pre-storage-account`. It holds root's pair in the
+   app's lines. It is mode 0600, like `.env`.
+3. **Empty the app's two lines, and let `generate-env.sh` fill them**
+   with `wingrc-app` and a new random secret:
+   ```bash
+   sed -i 's/^WINGRC_STORAGE_ACCESS_KEY=.*/WINGRC_STORAGE_ACCESS_KEY=/; s/^WINGRC_STORAGE_SECRET_KEY=.*/WINGRC_STORAGE_SECRET_KEY=/' .env
+   deploy/generate-env.sh
+   ```
+   It prints only the two names.
+4. **Provision:** `docker compose run --rm --no-deps -T provision`. It
+   ends with `the app's account reads scoped`. The app is still on root
+   and still serving.
+5. **Recreate the app:** `docker compose up -d --no-deps backend worker`.
+   Leave `minio` and `nginx` alone.
+6. **Check:**
+   - `/health`'s `storage_account.access` reads `scoped`;
+   - an object stored before the move opens, both as an evidence
+     download and as the org logo;
+   - an upload and a delete work.
+
+**The way back:** `cp -p .env.pre-storage-account .env`, then
+`docker compose up -d --no-deps backend worker`. Root was never changed,
+so it still works. The app's account can stay in MinIO unused, or be
+removed with root.
 
 ## Database roles: which credential does what
 

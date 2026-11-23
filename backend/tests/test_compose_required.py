@@ -143,7 +143,8 @@ def test_deploy_runs_provision_before_recreating_the_app():
     if not script.exists():
         pytest.skip("deploy/ is outside this tree (the backend image); CI runs this")
     lines = script.read_text(encoding="utf-8").splitlines()
-    run = next(i for i, ln in enumerate(lines) if ln.startswith("docker compose run --rm --no-deps -T provision"))
+    provision = "docker compose run --rm --no-deps -T provision"
+    run = next(i for i, ln in enumerate(lines) if ln.startswith(provision))
     up = next(i for i, ln in enumerate(lines) if ln.startswith("docker compose up -d --no-deps"))
     assert run < up
 

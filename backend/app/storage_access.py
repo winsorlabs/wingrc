@@ -184,7 +184,9 @@ def health_reading() -> dict:
 
     s = get_settings()
     if not s.storage_endpoint:
-        return {"access": "not configured: WINGRC_STORAGE_ENDPOINT is unset, so uploads are discarded"}
+        return {
+            "access": "not configured: WINGRC_STORAGE_ENDPOINT is unset, so uploads are discarded"
+        }
     now = time.monotonic()
     with _lock:
         hit = _cache.get("reading")
