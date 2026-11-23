@@ -79,6 +79,9 @@ def test_the_reading_is_taken_from_the_connection_not_the_configuration(db_sessi
 
 @pytest.mark.integration
 def test_health_reports_the_role_it_answers_on(db_session):
+    """The suite's requests run as wingrc_app (conftest._app_session SETs the
+    role for each request), so /health reads enforced, while the test body,
+    on the owner, reads bypassed: the reading is the request's own."""
     from app.db import get_session
     from app.main import app
     from tests.conftest import _app_session
@@ -88,11 +91,16 @@ def test_health_reports_the_role_it_answers_on(db_session):
         body = TestClient(app).get("/health").json()
     finally:
         app.dependency_overrides.clear()
-    role = body["database_role"]
-    assert role["role"] == db_session.execute(text("SELECT current_user")).scalar()
-    assert role["row_level_security"].startswith("bypassed:"), (
-        "the suite connects as the owner, so this must read bypassed", role
+    assert db_session.execute(text("SELECT current_user")).scalar() != APP_ROLE, (
+        "fixture's own connection must be the owner, or this test proves nothing"
     )
+    assert body["database_role"] == {
+        "role": APP_ROLE,
+        "superuser": False,
+        "bypassrls": False,
+        "owner_of_rls_tables": 0,
+        "row_level_security": "enforced",
+    }
 
 
 # --- what the app role can and cannot read --------------------------------

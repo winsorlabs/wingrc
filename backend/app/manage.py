@@ -3,8 +3,11 @@
 Used for first-boot bootstrap and other privileged operations that
 run outside the HTTP request cycle.
 
-Usage (in container):
-    python -m app.manage bootstrap-admin \\
+Usage (in container, as the owner: docs/deployment.md, step 4). The
+Typer app has one command, so it is invoked without its name;
+`wingrc-admin bootstrap-admin ...` is refused as an extra argument
+(found on the bench, 2026-11-23):
+    WINGRC_DATABASE_URL="$WINGRC_MIGRATION_DATABASE_URL" wingrc-admin \\
         --org "Winsor Labs" \\
         --email admin@example.com \\
         --display-name "Admin User" \\

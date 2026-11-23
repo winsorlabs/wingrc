@@ -149,6 +149,9 @@ class HealthProbeSession:
         def all(self):
             return list(self._value)
 
+        def one(self):
+            return self._value
+
     def execute(self, statement, *_args, **_kwargs):
         sql = str(statement)
         if "pg_stat_clear_snapshot" in sql:
@@ -159,6 +162,13 @@ class HealthProbeSession:
             from app.main import _expected_migration_head
 
             return self._Result(_expected_migration_head())
+        if "pg_roles" in sql:
+            # app_role.ROLE_SQL, answered as the role a deployment should be.
+            from types import SimpleNamespace
+
+            return self._Result(SimpleNamespace(
+                role="wingrc_app", superuser=False, bypassrls=False, owner_skips=0
+            ))
         if "SELECT 1" in sql:
             return self._Result(1)
         raise AssertionError(
