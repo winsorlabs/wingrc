@@ -15113,6 +15113,68 @@ response carries nothing of the exception.
 failed (it was not burned: the 500 came before `invite_token_hash` was
 cleared). Then run the offboarding walk from step 1.
 
+**Walked on live 2026-11-20, on `a206e96`: every step passed.** The
+token that answered 500 redeemed unchanged; the account enrolled and
+signed in. Deactivate showed the badge and Reactivate. The right
+password answered "Account deactivated" with no enrolment or code
+screen, and a wrong one "Invalid credentials". Reactivate, then a normal
+sign-in with the code. One `user.reactivate` row. A pending invite
+deactivated and reactivated reads "Awaiting enrolment". The walk found
+three screens that show access without showing whether it is real:
+"The access screens did not say whether the access was real", below.
+
+### The access screens did not say whether the access was real ✅ DONE (2026-11-20, bench-verified; migration 0078; branch `access-shows-status`)
+
+Found on Jarrod's offboarding walk, three instances of one problem: a
+screen that shows access without showing whether it can be used.
+
+**1. Administration › User Directory showed no account status.** It is
+the cross-org access review, where someone answers "who has access to
+this organization". A deactivated user read exactly as an active one:
+Rob Tinfoil, deactivated, still showed MSP Admin on Acme MSP, Fasano
+Dev, Test Customer A and Winsorlabs, and the three anonymized users had
+live "Grant access…" buttons. `auth.all_users_directory()` returned
+memberships and `deleted_at`, nothing about sign-in.
+- Migration 0078 adds `is_active`, `deactivated_at` and `login_method`
+  to it, the fields `lib/userStatus.ts` reads. The directory now has a
+  Status column with the per-org tab's words, and a line under a
+  non-active account's memberships saying they cannot be used.
+- `accountStatus` reads Anonymized first. Anonymize requires an
+  inactive account, so an anonymized row read as Deactivated or Awaiting
+  enrolment on the per-org tab too.
+- An anonymized row offers no grant, and `grant_membership` refuses one
+  with 409, so the hidden button is not the only thing holding it.
+  A deactivated account can still be granted access, which it can use
+  once reactivated; nobody asked otherwise.
+
+**2. Deactivation is global and was confirmed as if it were not.**
+`is_active` and `deactivated_at` are on the user, so deactivating from
+Acme MSP's Users tab removed Rob's access to four organizations. That is
+right; the confirmation said only "Deactivate?".
+- `GET /orgs/{org}/users/{id}/access` returns the account's memberships
+  in every org (read through `all_users_directory()`, since the others
+  are outside the request's RLS scope) and `reactivates_to`.
+- Deactivate's confirmation names them: "…ends their access to 4
+  organizations: Acme MSP, Fasano Dev, Test Customer A, Winsorlabs. The
+  memberships are kept, so Reactivate restores them." Reactivate, which
+  had no confirmation, now has one and says what it restores, or that
+  the account returns to Awaiting enrolment.
+- `reactivates_to` is computed by `has_completed_sign_up`, the rule
+  PATCH applies, and a test checks the answer against what PATCH then
+  does. If the lookup fails, the sentence says the action reaches every
+  organization and names no count.
+
+**3. The audit log could not tell an offboarded account's sign-in from
+a typo.** Both were `auth.login.failed`, apart only in Details.
+- A refused sign-in, SSO callback or enrolment by a deactivated account
+  is now `auth.login.refused_deactivated`. A wrong password on the same
+  account stays `auth.login.failed`, because the state is told only to
+  someone whose credential checked out.
+- Rows from before keep `auth.login.failed` with reason `deactivated`;
+  a record is not rewritten. The audit list shows the reason under the
+  action for login failures, and marks both forms "Sign-in by a
+  deactivated account", so the walk's own row on live reads correctly.
+
 ### The bundled breached-password list does not exist -- queued 2026-11-20; the decision is what to bundle, the silent failure is fixed
 
 **What was found.** `auth._load_common_passwords` reads

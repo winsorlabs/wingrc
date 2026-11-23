@@ -36,6 +36,9 @@ function makeUser(overrides: Partial<UserDirectoryEntry> = {}): UserDirectoryEnt
     home_org_id: "org1",
     home_org_name: "Acme Corp",
     deleted_at: null,
+    is_active: true,
+    deactivated_at: null,
+    login_method: "local",
     memberships: [{ org_id: "org1", org_name: "Acme Corp", role: "msp_admin" }],
     ...overrides,
   };
@@ -66,6 +69,50 @@ describe("UserDirectoryPanel — directory", () => {
     await screen.findByText("Alice Admin");
     expect(screen.getByText(/Acme Corp: MSP Admin/)).toBeTruthy();
     expect(screen.getByText(/Widgets Inc: MSP Engineer/)).toBeTruthy();
+  });
+
+  it("says which accounts can use the access they hold, and offers no grant to an anonymized one", async () => {
+    const access = [
+      { org_id: "org1", org_name: "Acme Corp", role: "msp_admin" },
+      { org_id: "org2", org_name: "Widgets Inc", role: "msp_admin" },
+    ];
+    vi.mocked(api.listUserDirectory).mockResolvedValue([
+      makeUser({ id: "u1", display_name: "Alice Active", memberships: access }),
+      makeUser({
+        id: "u2",
+        display_name: "Rob Offboarded",
+        is_active: false,
+        deactivated_at: "2026-11-20T10:00:00Z",
+        memberships: access,
+      }),
+      makeUser({ id: "u3", display_name: "Ivy Invited", is_active: false, memberships: access }),
+      makeUser({
+        id: "u4",
+        display_name: "Anon",
+        is_active: false,
+        deactivated_at: "2026-11-01T10:00:00Z",
+        deleted_at: "2026-11-02T10:00:00Z",
+        memberships: access,
+      }),
+    ]);
+    vi.mocked(api.getOrgs).mockResolvedValue(ORGS);
+    vi.mocked(api.getMspOrg).mockResolvedValue(null);
+
+    render(<UserDirectoryPanel />);
+
+    const text = async (name: string) =>
+      ((await screen.findByText(name)).closest("tr") as HTMLElement).textContent ?? "";
+
+    expect(await text("Alice Active")).toContain("Active");
+    expect(await text("Alice Active")).not.toContain("Cannot sign in");
+    expect(await text("Rob Offboarded")).toContain("Deactivated");
+    expect(await text("Rob Offboarded")).toContain("Cannot sign in while deactivated");
+    expect(await text("Ivy Invited")).toContain("Awaiting enrolment");
+    expect(await text("Ivy Invited")).toContain("Not usable until they finish signing up");
+    expect(await text("Anon")).toContain("Anonymized");
+    expect(await text("Anon")).not.toContain("Deactivated");
+    expect(await text("Anon")).not.toContain("Grant access");
+    expect(await text("Rob Offboarded")).toContain("Grant access");
   });
 
   it("a fresh deployment with no MSP org designated shows a clear prompt, not an error", async () => {

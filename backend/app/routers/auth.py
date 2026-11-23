@@ -78,15 +78,23 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 # The same words session resolution uses for an inactive account.
 DEACTIVATED = "Account deactivated"
+DEACTIVATED_ATTEMPT = "auth.login.refused_deactivated"
 
 
 def _log_deactivated_attempt(db: Session, user: User, method: str) -> None:
     """Record a sign-in an offboarded account attempted, so an administrator
-    reading the user's history sees that someone still holds a credential."""
+    reading the user's history sees that someone still holds a credential.
+
+    Its own action, not auth.login.failed: on a compliance audit log an
+    attempt to use an offboarded account is the event someone looks for,
+    and as auth.login.failed it read the same as a typo in the list
+    (Jarrod's offboarding walk, 2026-11-20). Rows written before then keep
+    auth.login.failed with reason "deactivated"; the audit list shows the
+    reason for those."""
     log_event(
         db,
         org_id=user.home_org_id,
-        action="auth.login.failed",
+        action=DEACTIVATED_ATTEMPT,
         entity_type="user",
         entity_id=user.id,
         context={"reason": "deactivated", "method": method},

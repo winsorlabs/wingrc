@@ -608,7 +608,7 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
 | `backend/app/snapshots.py` | Local snapshots (item S): the database and the object store as one set, with a manifest. **Not a backup**: same host as the data. A database restored without its objects renders every attachment present with no bytes, and row counts and SPRS pass on it, so `snapshot-verify` fetches every object a row names. A restore goes only into an empty database and bucket. The Fernet key is not in a snapshot, so nothing restores credentials without it. The age reader counts only sets with a manifest, and msp_admin's banner (`SnapshotBanner.tsx`, the TLS banner's path) fires past 50 hours or on none. `deploy/restore-test.sh` is the test and its mutation check; `docs/deployment.md`, "Local snapshots", is the operator's page |
 | `backend/app/audit.py` | `log_event()` — writes `AuditLog` rows; also the actor-resolution helpers both audit views share |
 | `backend/app/rls.py` | The only place `app.current_org` is written, plus the `after_begin` hook that makes it survive a commit — read before touching anything org-scoped |
-| `backend/app/migrations/` | Alembic migrations (currently 0001–0077) |
+| `backend/app/migrations/` | Alembic migrations (currently 0001–0078) |
 | `backend/baselines/` | YAML product baselines (`rocketcyber.yaml`, …) — not repo-root `baselines/`; `seeds/baselines.py:_BASELINES_DIR` resolves here, and a stale repo-root duplicate that drifted out of sync with a real coverage_basis reclassification was removed 2026-09-19 (see `docs/roadmap.md`'s tenant lifecycle consolidation pass entry) |
 | `docs/fips.md` | FIPS 140-2/140-3 crypto boundary documentation |
 | `docs/architecture.md` | Authoritative architecture description (the five layers) — companion to this file's terse session version |
@@ -924,10 +924,17 @@ clears it, audited as `user.reactivate`, and it makes `is_active` true
 only on an account that has finished signing up
 (`users.has_completed_sign_up`). Otherwise the account goes back to
 awaiting enrolment. Login, the Entra callback and
-enrolment refuse while it is set. Every path that sets a user inactive
-revokes their sessions, because an inactive account can become active
-again (`tests/test_offboarding.py`; `docs/roadmap.md`, "A deactivated user
-could sign back in").
+enrolment refuse while it is set, audited as
+`auth.login.refused_deactivated`, never `auth.login.failed`. Every path
+that sets a user inactive revokes their sessions, because an inactive
+account can become active again (`tests/test_offboarding.py`;
+`docs/roadmap.md`, "A deactivated user could sign back in").
+**Deactivation reaches every org the account is a member of**, so a
+screen that shows access shows the account's status beside it (the User
+Directory reads it from `auth.all_users_directory()`), and the
+Deactivate and Reactivate confirmations name the orgs from
+`GET …/users/{id}/access` (`docs/roadmap.md`, "The access screens did
+not say whether the access was real").
 
 **Always set the org through `rls.set_current_org(session, org_id)` — never
 write `app.current_org` directly.** That GUC is transaction-scoped, so a
