@@ -5,9 +5,14 @@
 #      0016 creates wingrc_app with no password;
 #   2. set wingrc_app's password from WINGRC_DATABASE_URL, as the owner,
 #      only if the app role cannot already connect;
-#   3. serve, as the app role.
+#   3. check the storage bucket exists and this account may read it, and
+#      refuse to serve otherwise, naming provisioning (app/storage.py). The
+#      app never creates the bucket: compose's `provision` service does,
+#      before this container starts;
+#   4. serve, as the app role.
 # Extra arguments go to uvicorn (docker-compose.override.yml passes --reload).
 set -eu
 alembic upgrade head
 python -m app.app_role
+python -m app.storage
 exec uvicorn app.main:app --host 0.0.0.0 --port 8000 "$@"

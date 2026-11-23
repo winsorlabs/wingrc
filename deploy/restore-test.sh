@@ -83,6 +83,10 @@ services:
     image: ${project}-backend:latest
     pull_policy: never
     build: !reset null
+  provision:
+    image: ${project}-backend:latest
+    pull_policy: never
+    build: !reset null
 EOF
 tc() {
   WINGRC_SNAPSHOT_DIR="$dir" docker compose -p "$test_project" \
@@ -139,6 +143,11 @@ case "$mutation" in
 esac
 
 tc up -d --wait db minio > "$record/up.log" 2>&1
+# The throwaway store is empty: provisioning makes its bucket and the app's
+# account, as on a fresh install. The restore and checks below then run in
+# `provision` too, because they list the bucket, which the app's account
+# may not (app/storage_access.py).
+tc run --rm --no-deps -T provision > "$record/provision.txt" 2>&1
 # The key values this stack runs with, kept in this shell for the final grep
 # and never printed.
 keys="$(tc config --format json | python3 -c '
@@ -152,17 +161,17 @@ for entry in (env.get("WINGRC_CREDENTIAL_ENCRYPTION_KEYS") or "").split(","):
 restore_args=()
 [ "$mutation" = empty-objects ] && restore_args=(--skip-objects)
 if [ "$mutation" = not-empty ]; then
-  cli backend wingrc snapshot-restore "$target" > "$record/restore-first.txt" 2>&1
+  cli provision wingrc snapshot-restore "$target" > "$record/restore-first.txt" 2>&1
 fi
 restore_rc=0
-cli backend wingrc snapshot-restore "$target" "${restore_args[@]}" > "$record/restore.txt" 2>&1 \
+cli provision wingrc snapshot-restore "$target" "${restore_args[@]}" > "$record/restore.txt" 2>&1 \
   || restore_rc=$?
 cat "$record/restore.txt"
 
 verify_rc=skipped
 probe_rc=none
 if [ "$restore_rc" -eq 0 ]; then
-  py() { cli backend python -c "$1" >> "$record/mutation.txt" 2>&1; }
+  py() { cli provision python -c "$1" >> "$record/mutation.txt" 2>&1; }
   sql() { tc exec -T db psql -v ON_ERROR_STOP=1 -U wingrc -d wingrc -c "$1" >> "$record/mutation.txt" 2>&1; }
   pick='from app.storage import get_storage_client as g; s = g(); k = next(k for k, _ in s.list_objects() if "/evidence/" in k)'
   case "$mutation" in
@@ -177,12 +186,12 @@ if [ "$restore_rc" -eq 0 ]; then
   if [ "$mutation" = wrong-key ]; then
     # Generated here and never printed; it reaches the container through the
     # environment compose interpolates, not a command line.
-    wrong="$(cli backend python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+    wrong="$(cli provision python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
     keys="$keys"$'\n'"$wrong"
     WINGRC_CREDENTIAL_ENCRYPTION_KEYS="wrong:$wrong" \
-      cli backend wingrc snapshot-verify "$target" > "$record/verify.txt" 2>&1 || verify_rc=$?
+      cli provision wingrc snapshot-verify "$target" > "$record/verify.txt" 2>&1 || verify_rc=$?
   else
-    cli backend wingrc snapshot-verify "$target" > "$record/verify.txt" 2>&1 || verify_rc=$?
+    cli provision wingrc snapshot-verify "$target" > "$record/verify.txt" 2>&1 || verify_rc=$?
   fi
   cat "$record/verify.txt"
   if [ -n "$probe" ]; then

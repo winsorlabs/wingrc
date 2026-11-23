@@ -60,9 +60,13 @@ x-backend-env: &backend-env
   # Without it, presigned URLs contain the internal 'minio' hostname
   # which browsers can't resolve.
   WINGRC_STORAGE_PUBLIC_ENDPOINT: ${WINGRC_STORAGE_PUBLIC_ENDPOINT:-}
-  # The backend's MinIO credentials. Required, no default: they were
-  # literals here, so the guide's instruction to set them in .env could not
-  # take effect.
+  # The app's object-storage account: scoped to the bucket's objects
+  # (Get, Put, Delete; app/storage_access.py), made by the `provision`
+  # service below, never MinIO's root. Required, no default: they were
+  # literals here until 2026-11-17. Until 2026-11-23 they had to equal
+  # MinIO's root, because the app created its own bucket; a deployment
+  # whose .env still says so starts, and /health reads storage_account
+  # unscoped (docs/deployment.md, "Object storage account").
   WINGRC_STORAGE_ACCESS_KEY: ${WINGRC_STORAGE_ACCESS_KEY:?WINGRC_STORAGE_ACCESS_KEY is required -- set it in .env, see docs/deployment.md}
   WINGRC_STORAGE_SECRET_KEY: ${WINGRC_STORAGE_SECRET_KEY:?WINGRC_STORAGE_SECRET_KEY is required -- set it in .env, see docs/deployment.md}
   # The HMAC key for the signed sign-in state cookies (auth.py). Required,
@@ -81,6 +85,18 @@ x-backend-env: &backend-env
   # The default must equal config.py's (tests/test_snapshots.py).
   WINGRC_SNAPSHOT_MAX_AGE_HOURS: ${WINGRC_SNAPSHOT_MAX_AGE_HOURS:-50}
   PYTHONPATH: /app
+
+# The provisioning container's environment: the app's, with MinIO's root
+# in place of the app's storage keys, and the app's keys passed on for the
+# account it makes. Only `provision` carries it, and `provision` exits
+# before the app starts. The database owner's URL is meant to move here
+# from x-backend-env (app/provision.py says how).
+x-provision-env: &provision-env
+  <<: *backend-env
+  WINGRC_STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required -- set it in .env, see docs/deployment.md}
+  WINGRC_STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required -- set it in .env, see docs/deployment.md}
+  WINGRC_PROVISION_APP_ACCESS_KEY: ${WINGRC_STORAGE_ACCESS_KEY:?WINGRC_STORAGE_ACCESS_KEY is required -- set it in .env, see docs/deployment.md}
+  WINGRC_PROVISION_APP_SECRET_KEY: ${WINGRC_STORAGE_SECRET_KEY:?WINGRC_STORAGE_SECRET_KEY is required -- set it in .env, see docs/deployment.md}
 
 services:
   db:
@@ -126,6 +142,40 @@ services:
       MINIO_SERVER_URL: ${MINIO_SERVER_URL:-}
     volumes:
       - minio_data:/data
+    # So `provision` can wait on it: provisioning's first call is to MinIO.
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Provisioning: the one container that holds privileged credentials. It
+  # runs, does what the serving containers must not be able to do, and
+  # exits, so no long-lived process carries those credentials. Today:
+  # MinIO's root, to create the bucket and the app's scoped account
+  # (app/provision.py). `docker compose up` runs it before the backend
+  # (depends_on below); deploy.sh runs it explicitly, because its
+  # `up --no-deps` skips dependencies. Snapshots run in it too
+  # (deploy/snapshot.sh), since they list the bucket, which the app's
+  # account may not. Same image as the backend.
+  provision:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      args:
+        WINGRC_BUILD_SHA: ${WINGRC_BUILD_SHA:-unknown}
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment: *provision-env
+    volumes:
+      # The backend's snapshot mount, read-only: restore-test.sh restores
+      # and verifies from /snapshots in this container.
+      - ${WINGRC_SNAPSHOT_DIR:-/var/lib/wingrc-snapshots/${COMPOSE_PROJECT_NAME}}:/snapshots:ro
+    healthcheck:
+      disable: true
+    command: python -m app.provision
 
   # Runs the code baked into the image, never a host checkout. Until
   # 2026-10-08 this bind-mounted ./backend over /app and ran uvicorn
@@ -170,6 +220,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      # The bucket and the app's account exist before the app starts; the
+      # start checks the bucket and refuses without it (backend/start.sh).
+      provision:
+        condition: service_completed_successfully
     environment: *backend-env
     volumes:
       # reset-dev's pre-flight pg_dump (cli.py) writes here -- a named
