@@ -119,7 +119,9 @@ app.current_org = ...` before each org's portion, exactly like a request
 handler does -- never a blanket bypass, and never `BYPASSRLS` granted to
 any role for this. Nothing in this module grants broader database access
 than a CLI command already has today (both connect via the same
-`db.py:SessionLocal`, the owner role) -- this design is what keeps that
+`db.py:SessionLocal`, as `WINGRC_DATABASE_URL`'s role: wingrc_app, by
+compose's default since 2026-11-23 and on live since 2026-09-29; this
+said "the owner role" until then) -- this design is what keeps that
 true as new jobs are added, not a new privilege boundary being introduced
 alongside them.
 """

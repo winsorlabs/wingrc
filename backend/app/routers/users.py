@@ -317,6 +317,25 @@ def grant_membership(
             status_code=409,
             detail="This user has been permanently anonymized and cannot be granted access",
         )
+    # A deactivated account gets no new access (Jarrod, 2026-11-23). The
+    # directory shows status beside memberships, so a grant here would be
+    # access that reads as real and is not. Pre-staging access for someone
+    # about to return is reactivate, grant, and deactivate again if needed:
+    # three audited steps instead of one silent one (docs/roadmap.md, "A
+    # deactivated account could still be granted access"). Read through
+    # the directory's definer function (0078), for the reason the lookup
+    # above is: the target is usually homed in an org RLS hides here.
+    if db.execute(
+        text("SELECT deactivated_at FROM auth.all_users_directory() WHERE id = :u"),
+        {"u": body.user_id},
+    ).scalar() is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This account is deactivated. Reactivate it before granting it "
+                "access to another organization."
+            ),
+        )
 
     granted = _grant(db, user_id=body.user_id, org_id=org_id, role=body.role)
     log_event(

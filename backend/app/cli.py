@@ -67,7 +67,7 @@ def _reset_dev_guard_error(raw_env: str | None) -> str | None:
 
 _OWNER_OVERRIDE = (
     'Run it as the owner: WINGRC_DATABASE_URL="$WINGRC_MIGRATION_DATABASE_URL" wingrc ...'
-    " (docs/deployment.md, \"The CLI runs as the app role on a cut-over deployment\")."
+    " (docs/deployment.md, \"The CLI runs as the app role\")."
 )
 
 

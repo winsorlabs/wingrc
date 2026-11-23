@@ -13337,7 +13337,8 @@ first.
   role". It has been untrue of live since the 2026-09-29 cutover: they
   connect as `wingrc_app`. That is seven weeks before it was noticed
   (2026-11-18, "A fresh install runs the app as a superuser"). It is
-  still true of a fresh install, which is its own defect.
+  still true of a fresh install, which is its own defect. **Fixed
+  2026-11-23,** with that defect.
 - **`backend/app/health.py`'s docstring** says the nginx build header "is
   present only when the request came through nginx". A forged direct call
   disproves it (recorded 2026-10-28, in "`/health` reports a commit per
@@ -15175,6 +15176,55 @@ a typo.** Both were `auth.login.failed`, apart only in Details.
   action for login failures, and marks both forms "Sign-in by a
   deactivated account", so the walk's own row on live reads correctly.
 
+### A deactivated account could still be granted access ✅ DONE (2026-11-23, bench-verified; migration 0079; branch `app-role-by-default`)
+
+**Jarrod's decision (2026-11-23): refuse a grant of org access to a
+deactivated account.** The reason is the one #141 was built on: the
+directory shows status beside the org chips, so if a deactivated account
+keeps accumulating grants, the screen shows "Deactivated" beside access
+that reads as real, and the reader is back to not knowing what is true.
+
+**The case for allowing it, and why it is answered:** pre-staging access
+for someone about to be reactivated. That workflow already exists:
+reactivate, grant, deactivate again if needed. Three actions, each
+audited and each visible, instead of one silent one. Nothing is lost by
+requiring it to be explicit. Do not re-open this without a case the
+three steps cannot serve.
+
+**Two paths granted access, and both now refuse:**
+- **`grant_membership`** answers 409: "This account is deactivated.
+  Reactivate it before granting it access to another organization." It
+  reads `deactivated_at` through `auth.all_users_directory()`, because
+  the target is usually homed in an org RLS hides from the request. The
+  directory shows "Reactivate before granting access." in place of the
+  button. An account awaiting enrolment (inactive, not deactivated) can
+  still be granted access.
+- **Creating an org** grants every MSP admin and engineer a membership
+  (`org_membership.provision_new_org_memberships`) through
+  `auth.msp_role_users()`, which read neither `deactivated_at` nor
+  `deleted_at`. So a new org gave a deactivated MSP admin, and an
+  anonymized one, access, with no audit row naming them. Found by
+  searching for every grant path, not only the button. Migration 0079
+  adds both filters.
+
+**Live, read before the change (as the owner, read-only):** of 7
+accounts, 3 are deactivated and 3 anonymized. Three memberships postdate
+their account's offboarding: anonymized users' memberships in Acme MSP
+dated 2026-08-07. That is migration 0023's backfill (its create date,
+five rows that day), which copied every user's home org, not a grant.
+No account holds a membership in an org created after it was
+offboarded. The check returned rows, so its zero for org-creation grants
+is not an empty filter's.
+
+**Verified on the bench** (the previous entry's runs), each red and
+then green once undone:
+- the 409 removed -> `test_a_deactivated_account_cannot_be_granted_access`;
+- 0079's filter removed, with the test database rebuilt from the
+  mutated chain ->
+  `test_a_new_org_grants_no_access_to_deactivated_or_anonymized_msp_accounts`;
+- the directory offering Grant on a deactivated row -> the directory
+  test.
+
 ### The bundled breached-password list does not exist -- queued 2026-11-20; the decision is what to bundle, the silent failure is fixed
 
 **What was found.** `auth._load_common_passwords` reads
@@ -15236,7 +15286,13 @@ starts from an invite, not a seeded oid, and a first run against a real
 tenant (the callback has never had one; see "A deactivated user could
 sign back in").
 
-### A fresh install runs the app as a superuser, so row-level security is off -- queued 2026-11-18 (the brief's finding), after the deactivated-account slice, before "The app reaches MinIO as root"
+### A fresh install runs the app as a superuser, so row-level security is off ✅ DONE (2026-11-23, bench-verified; branch `app-role-by-default`) -- queued 2026-11-18 (the brief's finding)
+
+**Done 2026-11-23; what was built is at the end of this entry, under
+"What was built". The fix as planned below was narrowed: the one-shot
+provisioning service is not built, and the backend still holds the
+owner's URL. That half stays queued with "The app reaches MinIO as
+root".**
 
 **The defect.** `docker-compose.yml`'s `WINGRC_DATABASE_URL` defaults to
 the owner, `wingrc`, built from `POSTGRES_PASSWORD`. The comment beside
@@ -15394,6 +15450,125 @@ radius. Both after the deactivated-account slice (done 2026-11-20),
 so this one is next. The
 move for an existing deployment is a migration-day step like #108's, and
 live needs only the environment part: it already serves as `wingrc_app`.
+
+**What was built (2026-11-23).** Jarrod's brief asked for the default,
+the ordering argued out, the upgrade note written before the change, and
+above all a reading on `/health`.
+
+- **The finding, in one line:** every policy from 0001 on, and 0077's
+  WR001, were inert on a fresh install, because the app served as a
+  superuser, while live had been fine since 2026-09-29 because its `.env`
+  names `wingrc_app`. Nothing reported either state. The first evidence
+  of live's cutover anyone had was a policy raising (#139).
+- **Compose's defaults.** `WINGRC_DATABASE_URL` defaults to `wingrc_app`
+  with a required `WINGRC_APP_DB_PASSWORD` (`${VAR:?}`, no default, the
+  same decision as `POSTGRES_PASSWORD` and `WINGRC_ENVIRONMENT`).
+  `WINGRC_MIGRATION_DATABASE_URL` defaults to the owner from
+  `POSTGRES_PASSWORD`. `deploy/generate-env.sh` fills the new one.
+  `tests/test_compose_required.py` holds all three.
+- **Where the password is set: the backend's start.** `backend/start.sh`
+  runs migrations as the owner, then `python -m app.app_role`, then
+  uvicorn. The order is forced: 0016 creates the role with no password,
+  only the owner can `ALTER ROLE`, and the app must not serve before the
+  role authenticates. The step connects as the app first and writes only
+  if that fails, sending a SCRAM verifier computed by libpq, never the
+  plaintext. It acts only on `wingrc_app`. Rejected, with reasons in
+  `app/app_role.py`:
+  - **A migration that reads the variable:** a migration runs once, so a
+    changed password or a restored snapshot (whose role has no password,
+    and whose schema is already at head) would never get one. It would
+    also put the secret into `alembic upgrade --sql` output.
+  - **A documented command:** a step owed again after every restore and
+    rotation, and the guide already had one nobody could follow: no page
+    in `docs/` said how to set this password.
+  - **A one-shot compose service holding the owner's URL:** the right end
+    state, not built here, because deploy.sh, the snapshot scripts and the
+    CLI's owner override all read the owner's URL from the backend's
+    environment. Queued with MinIO's entry; `app_role.main` moves into it
+    unchanged.
+- **`/health`'s `database_role`**, read from the connection answering the
+  request (`app_role.ROLE_SQL`): `role`, `superuser`, `bypassrls`,
+  `owner_of_rls_tables` (RLS tables without FORCE whose owner's
+  privileges the role holds), and `row_level_security`: `enforced`, or
+  `bypassed: <role> is a superuser` (or has BYPASSRLS, or owns N tables),
+  saying the database does not keep tenants apart on that deployment.
+  Reported, not a readiness condition, like the breached-password list:
+  a deployment may serve as the owner on purpose, and a restart changes
+  nothing. deploy.sh prints the body, so every deploy shows it.
+- **The upgrade note, written before the change** (`docs/deployment.md`,
+  "A deployment still serving as the owner"): such a deployment does not
+  start with this compose file. Compose refuses, naming
+  `WINGRC_APP_DB_PASSWORD`. That is deliberate: the alternative is to
+  keep serving as the owner silently. The move is snapshot,
+  `generate-env.sh` (fills only that variable), `deploy.sh`, and the CLI
+  then needs the owner override. To stay on the owner on purpose, set
+  `WINGRC_DATABASE_URL` to it, and `/health` says so.
+- **Live is not touched:** its `.env` sets both URLs, and compose never
+  evaluates a default whose variable is set, nested `:?` included
+  (measured on wl-util-1, Compose v5.7.0: `OUTER` set and `INNER` unset
+  resolved to `OUTER`; both unset refused naming `INNER`). Live's reading
+  before the deploy, through the backend's own `SessionLocal`:
+  `wingrc_app`, not a superuser, no BYPASSRLS, owns no RLS table.
+- **The guide gained the first-run commands it never had.** Step 4 now
+  says to check `/health` reads `enforced`, then `seed-catalog` and
+  `wingrc-admin` with the owner override. `manage.py`'s usage said
+  `wingrc-admin bootstrap-admin`, which the single-command Typer app
+  refuses as an extra argument; found on the bench.
+- **Fixed on the way:** `scheduler.py`'s "the owner role" (listed in
+  "Docstrings' universal claims"), `env.py`'s "consumed here and nowhere
+  else" (the snapshot commands read it too), `config.py`'s "today both
+  are the owner".
+
+**Verified on the bench** (`wingrc_verify_r` at `6db293d` and
+`wingrc_verify_r2` at `32a278d`, each a fresh clone set up by the guide's
+step 1 as written):
+- **Each required variable emptied in turn,** `docker compose config`
+  refused naming it, all nine. A `.env` from before this change (no
+  `WINGRC_APP_DB_PASSWORD`, no URL) refused naming
+  `WINGRC_APP_DB_PASSWORD`. Live's shape (both URLs set, no new variable)
+  resolved to the two URLs given.
+- **From empty volumes,** the backend logged `wingrc_app could not
+  connect (... password authentication failed ...); set its password`,
+  came up healthy, and `/health` read `wingrc_app`, `enforced`, migration
+  0079. After a restart: `wingrc_app authenticates: nothing set.`
+- **With the step removed from `start.sh`,** from empty volumes: the
+  backend stayed `unhealthy` and `/health` answered 503
+  `unreachable: OperationalError`. deploy.sh would have failed there.
+- **Real connections, not a shared session** (two orgs committed through
+  an owner engine first, then the app's own `SessionLocal`):
+  - as the app role with org A set, A's row read and B's returned
+    nothing;
+  - as the app role with no org, the read raised WR001;
+  - as the owner with no org, B's row read, which is the old default's
+    behaviour, and why the WR001 test passes vacuously there. The suite
+    holds the same three in `tests/test_app_role.py`.
+- **The CLI:** `sprs-rescore` as the app role refused, naming the
+  override; with it, it ran (0 assessments, dry run). `seed-catalog` and
+  `wingrc-admin` with the override, as the guide's step 4 now writes
+  them: exit 0, and the new admin signed in through the app. `wingrc-admin`
+  as the app role failed with a database error, exit 1, nothing
+  committed. `seed-catalog` as the app role, run after the catalog was
+  seeded, exited 0: the guide's list of commands that need the owner
+  includes it, and that was not shown here.
+- **Full suite** (audit coverage on, floor 1500): **2291 passed, 59
+  skipped**. The first run had 13 failures, all from the slice's own
+  tests: conftest's `HealthProbeSession` did not answer the new query,
+  and my `/health` test assumed requests run as the owner, where
+  `_app_session` runs them as `wingrc_app`. Ruff clean. The suite changes
+  `wingrc_app`'s password and puts the verifier back; the bench app read
+  `enforced` after it, through a new connection.
+- **Frontend:** 617 tests passed in 58 files; `tsc -b` and the build
+  passed.
+- **Mutations,** each red and then green once undone:
+  - compose's default user put back to `wingrc` ->
+    `test_requests_are_served_as_the_app_role_by_default`;
+  - the step's `ALTER ROLE` made a no-op ->
+    `test_the_start_sets_the_app_roles_password_once_and_then_leaves_it`;
+  - the reading ignoring a superuser ->
+    `test_a_superuser_reads_as_bypassed_and_says_so`;
+  - the grant and org-creation mutations are in the next entry.
+- **Teardown:** compose bind paths unchanged, live's containers
+  unchanged, both clones removed, nothing root-owned left.
 
 ### The app reaches MinIO as root -- queued 2026-11-18 (the brief's finding), after the deactivated-account slice
 
@@ -18458,6 +18633,14 @@ moves. If the score changes, `wingrc sprs-rescore` is the path for
 stored scores.
 
 ### The bench runs as the owner, so it cannot see an RLS defect -- recorded 2026-11-10
+
+**Half fixed 2026-11-23:** a bench clone set up by the guide now serves
+and runs its CLI as `wingrc_app`, because that is compose's default ("A
+fresh install runs the app as a superuser"). Its test suite still
+connects as the owner (`WINGRC_TEST_DATABASE_URL` is built from the
+owner's URL, and test bodies run as it), so the suite is what still
+cannot show this class. Requests inside the suite run as `wingrc_app`
+(`conftest._app_session`).
 
 **What the bench is.** A bench clone's `.env` sets no database URL, so
 its backend, worker and CLI take `docker-compose.yml`'s default,

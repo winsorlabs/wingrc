@@ -5,29 +5,34 @@
 # can't drift apart the way docs/deployment.md's own §7 warns an update
 # procedure can if only one of them gets remembered.
 x-backend-env: &backend-env
-  # Overridable from the host .env so the wingrc_app cutover is a config
-  # change rather than an edit to this file. The default is the owning role,
-  # built from POSTGRES_PASSWORD, because a fresh install has no wingrc_app
-  # password yet. There is no shippable default for a credential, so no
-  # password is written in this file (docs/roadmap.md, "The compose file
-  # ships default credentials").
-  WINGRC_DATABASE_URL: ${WINGRC_DATABASE_URL:-postgresql+psycopg://wingrc:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required -- set it in .env, see docs/deployment.md}@db:5432/wingrc}
+  # The role requests are served as: wingrc_app, which is not a superuser,
+  # owns no table and has no BYPASSRLS, so row-level security applies to
+  # it. WINGRC_APP_DB_PASSWORD is required, with no default
+  # (deploy/generate-env.sh fills it); the backend's start sets the role's
+  # password to it (backend/start.sh, app/app_role.py).
+  #
+  # Until 2026-11-23 the default was the owner, `wingrc`, a superuser,
+  # because a fresh install had no wingrc_app password. Postgres skips
+  # every policy for a superuser, so on a fresh install every policy and
+  # migration 0077's WR001 were inert, and nothing said so. Live was not
+  # affected: its .env sets this URL outright, which compose reads instead
+  # of the default without evaluating the default at all (measured
+  # 2026-11-23). /health's `database_role` reports which role a deployment
+  # serves as (docs/roadmap.md, "A fresh install runs the app as a
+  # superuser").
+  WINGRC_DATABASE_URL: ${WINGRC_DATABASE_URL:-postgresql+psycopg://wingrc_app:${WINGRC_APP_DB_PASSWORD:?WINGRC_APP_DB_PASSWORD is required -- set it in .env, see docs/deployment.md}@db:5432/wingrc}
   # No WINGRC_TEST_DATABASE_URL here (removed 2026-11-18): it carried the
   # owner's password, a superuser, into every deployment's backend and
   # worker, and nothing at runtime reads it. A test run inside a container
   # passes it for that run (docs/bench-stack-verification.md, step 4).
   # tests/test_compose_required.py holds this.
-  # Connection `alembic upgrade head` uses, and nothing else. Unset here on
-  # purpose: WINGRC_DATABASE_URL above is still the owning role, which can
-  # run DDL, so migrations work without it today.
-  #
-  # It becomes REQUIRED when WINGRC_DATABASE_URL is pointed at `wingrc_app`
-  # (the RLS-enforced, no-DDL runtime role) -- at that point migrations and
-  # request handling need different privileges and can no longer share one
-  # string. Leaving it unset then is not silent: app/migrations/env.py
-  # checks the connected role can create objects and exits naming this
-  # variable. See docs/deployment.md.
-  WINGRC_MIGRATION_DATABASE_URL: ${WINGRC_MIGRATION_DATABASE_URL:-}
+  # The owner, for `alembic upgrade head`, for setting wingrc_app's
+  # password as the backend starts, and for the snapshot commands and the
+  # CLI's owner override (docs/deployment.md, "Database roles"). Built
+  # from POSTGRES_PASSWORD unless set. The backend still holds it; moving
+  # it into a one-shot provisioning step is queued with "The app reaches
+  # MinIO as root" (docs/roadmap.md).
+  WINGRC_MIGRATION_DATABASE_URL: ${WINGRC_MIGRATION_DATABASE_URL:-postgresql+psycopg://wingrc:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required -- set it in .env, see docs/deployment.md}@db:5432/wingrc}
   # Required, no default: "production" or "development" (config.py
   # refuses anything else). It decides the Secure flag on every cookie
   # (auth.py) and whether `wingrc reset-dev` may run (cli.py). Until

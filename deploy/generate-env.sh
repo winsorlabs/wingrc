@@ -5,9 +5,11 @@
 #   deploy/generate-env.sh [path/to/.env]    # default: .env beside compose
 #
 # For a fresh install (cp .env.example .env, then this) and for a bench
-# stack. It never changes a value already set, so running it on an existing
-# deployment fills nothing: an existing deployment moves off a default by
-# docs/deployment.md, "Moving off a default credential", not by this.
+# stack. It never changes a value already set, so on an existing deployment
+# it fills only what a newer compose file requires and the .env lacks
+# (WINGRC_APP_DB_PASSWORD, from 2026-11-23): docs/deployment.md, "Serving
+# as the app role". An existing deployment moves off a default by
+# "Moving off a default credential", not by this.
 #
 # WINGRC_ENVIRONMENT is not a secret and is not generated: it is required,
 # and its value is a decision (production or development).
@@ -45,6 +47,9 @@ def fernet():
 # keys must equal MinIO's root credentials (the backend uses them).
 GENERATED = {
     "POSTGRES_PASSWORD": token,
+    # wingrc_app's: the role requests are served as. The backend's start
+    # sets the role's password to it (backend/start.sh).
+    "WINGRC_APP_DB_PASSWORD": token,
     "MINIO_ROOT_USER": lambda: "wingrc",
     "MINIO_ROOT_PASSWORD": token,
     "WINGRC_AUTH_FLOW_SECRET": lambda: token(48),

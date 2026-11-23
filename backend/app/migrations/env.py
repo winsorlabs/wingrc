@@ -9,9 +9,13 @@ ability to bypass RLS. Those are different privileges, so once the app
 cuts over they cannot be the same connection string --
 `alembic upgrade head` would fail on the first `CREATE TABLE`.
 
-`WINGRC_MIGRATION_DATABASE_URL` is that second string, consumed here and
-nowhere else. It is optional, and unset is the correct configuration today
-because `WINGRC_DATABASE_URL` still points at the owner.
+`WINGRC_MIGRATION_DATABASE_URL` is that second string. Compose sets it to
+the owner by default since 2026-11-23, when its default for
+`WINGRC_DATABASE_URL` became `wingrc_app`. Besides migrations, the
+backend's start uses it to set `wingrc_app`'s password (`app/app_role.py`),
+and the snapshot commands and the CLI's owner override read it. Unset, it
+falls back to `WINGRC_DATABASE_URL`, and the guard below names it if that
+role cannot migrate.
 
 Two guards make a wrong configuration loud rather than quiet, which is the
 point -- a migration silently running as the wrong role, or against the
