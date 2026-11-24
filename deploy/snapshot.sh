@@ -19,11 +19,14 @@ project="$(docker compose config --format json \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')"
 dir="${WINGRC_SNAPSHOT_DIR:-/var/lib/wingrc-snapshots/$project}"
 
+# Both runs use the `provision` service, not `backend`: a snapshot lists
+# the bucket, which the app's scoped account may not (app/storage_access.py),
+# and `provision` holds MinIO's root for the length of the run and exits.
 # Docker creates the directory as root. Hand it to the image's user and
 # close it: 0700, so only that uid and root read the dumps, which hold
 # every tenant's records in plaintext. On this host the docker group is
 # root-equivalent, so its members can read them too.
-docker compose run --rm --no-deps -T --user root -v "$dir:/snapshots-rw" --entrypoint sh backend \
+docker compose run --rm --no-deps -T --user root -v "$dir:/snapshots-rw" --entrypoint sh provision \
   -c 'chown wingrc:wingrc /snapshots-rw && chmod 0700 /snapshots-rw'
 # Retention and the cap come from the environment when set (by name, so
 # compose passes the value); backend/app/config.py has the defaults.
@@ -31,5 +34,5 @@ settings=()
 for v in WINGRC_SNAPSHOT_KEEP WINGRC_SNAPSHOT_MAX_TOTAL_BYTES WINGRC_SNAPSHOT_MIN_FREE_FRACTION; do
   if [ -n "${!v:-}" ]; then settings+=(-e "$v"); fi
 done
-docker compose run --rm --no-deps -T "${settings[@]}" -v "$dir:/snapshots-rw" backend \
+docker compose run --rm --no-deps -T "${settings[@]}" -v "$dir:/snapshots-rw" provision \
   wingrc snapshot-create --dir /snapshots-rw

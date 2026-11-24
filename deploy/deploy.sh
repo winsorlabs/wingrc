@@ -44,7 +44,12 @@ git checkout --quiet --detach "$sha"
 echo "deploying $sha"
 
 export WINGRC_BUILD_SHA="$sha"
-docker compose build backend worker nginx
+docker compose build backend worker nginx provision
+# Provisioning first, and explicitly: the `up` below is --no-deps, so the
+# backend's depends_on on `provision` never runs it. It holds MinIO's root,
+# makes the bucket and the app's scoped account, and exits; a failure stops
+# the deploy here, with the old containers still serving (app/provision.py).
+docker compose run --rm --no-deps -T provision
 # --no-deps is not optional: see docs/deployment.md (it once recreated db).
 docker compose up -d --no-deps backend worker nginx
 

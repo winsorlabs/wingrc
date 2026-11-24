@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from . import app_role, snapshots
+from . import app_role, snapshots, storage_access
 from . import health as component_health
 from .audit import set_current_ip
 from .auth import CurrentUser, common_password_list_problem, get_client_ip, get_current_user
@@ -223,6 +223,15 @@ def health(request: Request, response: Response, db: Session = Depends(get_sessi
     deployment served as; live's cutover was visible only when a policy
     raised (docs/roadmap.md, "A fresh install runs the app as a
     superuser").
+
+    **`storage_account` says what the app's object-storage account may
+    do** (`storage_access.account_reading`): the actions MinIO says it is
+    granted, whether it administers the store, anything granted beyond
+    the app's three object actions on its bucket, and `access`: `scoped`,
+    or `unscoped: ...` naming why. Reported, never a readiness condition,
+    for the same reasons, and read at most every five minutes. Until
+    2026-11-23 the app reached MinIO as root and nothing said so
+    (docs/roadmap.md, "The app reaches MinIO as root").
     """
     observed = {
         "backend": [os.environ.get("WINGRC_BUILD_SHA", component_health.UNKNOWN)],
@@ -298,6 +307,7 @@ def health(request: Request, response: Response, db: Session = Depends(get_sessi
     detail["database_role"] = app_role.row_level_security(
         role.role, role.superuser, role.bypassrls, role.owner_skips
     )
+    detail["storage_account"] = storage_access.health_reading()
     status, why = component_health.deployment_verdict(observed, why_unknown)
     detail["status"] = status
     if why is not None:

@@ -151,8 +151,28 @@ class NullStorageClient(StorageClient):
         return False
 
 
+class StorageNotReady(RuntimeError):
+    """The bucket cannot be used: missing, unreadable, or unreachable. The
+    message names the cause and the provisioning step."""
+
+
+# A key nothing writes. Reading it tells "bucket missing" from "bucket
+# there" with only s3:GetObject: MinIO answers NoSuchKey or NoSuchBucket
+# (measured 2026-11-23; storage_access.py).
+_CHECK_KEY = ".wingrc/start-check-never-written"
+_PROVISION = "`docker compose run --rm --no-deps provision` (docs/deployment.md, \"Provisioning\")"
+
+
 class MinIOClient(StorageClient):
-    """S3-compatible client via boto3.  Auto-creates the bucket on first use.
+    """S3-compatible client via boto3.
+
+    It never creates the bucket. Until 2026-11-23 the constructor did
+    (head, then create on any error), which is why the app had to hold
+    MinIO's root credentials: no scoped account can be granted bucket
+    creation. Provisioning creates it (app/provision.py), the start checks
+    it (`check_bucket`), and constructing a client makes no call at all
+    (tests/test_storage_access.py). The policy the app's account is
+    granted, method by method, is in storage_access.py.
 
     Two boto3 clients are created when public_endpoint is set:
       _s3      — internal endpoint; used for upload/delete (backend→MinIO traffic)
@@ -195,13 +215,39 @@ class MinIOClient(StorageClient):
             if public_endpoint
             else self._s3
         )
-        self._ensure_bucket()
 
-    def _ensure_bucket(self) -> None:
+    def check_bucket(self) -> None:
+        """Raise StorageNotReady unless the bucket exists and this account
+        may read it. Never creates it. Each error says which: until
+        2026-11-23 any failure of the head led to a create, so a scoped
+        account on a missing bucket would have reported `CreateBucket
+        AccessDenied`, for a call the operator never made."""
+        from botocore.exceptions import BotoCoreError, ClientError
+
         try:
-            self._s3.head_bucket(Bucket=self._bucket)
-        except Exception:
-            self._s3.create_bucket(Bucket=self._bucket)
+            self._s3.get_object(Bucket=self._bucket, Key=_CHECK_KEY)
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code")
+            if code == "NoSuchKey":
+                return
+            if code == "NoSuchBucket":
+                raise StorageNotReady(
+                    f"The storage bucket {self._bucket!r} does not exist. The app does "
+                    f"not create it; provisioning does: {_PROVISION}."
+                ) from None
+            if code in ("AccessDenied", "403"):
+                raise StorageNotReady(
+                    f"The storage account may not read bucket {self._bucket!r} "
+                    f"(GetObject: AccessDenied). Provisioning grants it: {_PROVISION}."
+                ) from None
+            raise StorageNotReady(
+                f"Checking bucket {self._bucket!r} failed: {code}."
+            ) from None
+        except BotoCoreError as e:
+            raise StorageNotReady(
+                f"Could not reach the object store to check bucket {self._bucket!r} "
+                f"({type(e).__name__})."
+            ) from None
 
     def upload_file(self, key: str, data: bytes, content_type: str) -> None:
         self._s3.put_object(
@@ -293,3 +339,21 @@ def _build_client() -> StorageClient:
 def get_storage_client() -> StorageClient:
     """FastAPI dependency.  Override in tests via dependency_overrides."""
     return _build_client()
+
+
+def main() -> None:
+    """The backend's start (start.sh): refuse to serve without a usable
+    bucket, naming why. Nothing to check when no endpoint is set."""
+    client = _build_client()
+    if not isinstance(client, MinIOClient):
+        print("storage: no endpoint set, uploads are discarded; nothing to check.")
+        return
+    try:
+        client.check_bucket()
+    except StorageNotReady as e:
+        raise SystemExit(f"storage: {e}") from None
+    print(f"storage: bucket {client.bucket!r} is there and readable.")
+
+
+if __name__ == "__main__":
+    main()

@@ -105,3 +105,66 @@ def test_no_test_database_url_in_any_service(compose):
 def test_no_old_default_survives_anywhere_in_the_file(compose, literal):
     _, text = compose
     assert literal not in text
+
+
+# --- The app's storage account is not MinIO's root (2026-11-23) ---
+
+
+def test_only_provision_holds_minios_root(compose):
+    """Root reaches MinIO and the one-shot `provision` container, and no
+    serving container: the app's storage keys are its own account's."""
+    doc, _ = compose
+    prov = doc["services"]["provision"]["environment"]
+    assert prov["WINGRC_STORAGE_ACCESS_KEY"].startswith("${MINIO_ROOT_USER:?")
+    assert prov["WINGRC_STORAGE_SECRET_KEY"].startswith("${MINIO_ROOT_PASSWORD:?")
+    assert prov["WINGRC_PROVISION_APP_ACCESS_KEY"].startswith("${WINGRC_STORAGE_ACCESS_KEY:?")
+    assert prov["WINGRC_PROVISION_APP_SECRET_KEY"].startswith("${WINGRC_STORAGE_SECRET_KEY:?")
+    for name in ("backend", "worker"):
+        env = doc["services"][name]["environment"]
+        assert env["WINGRC_STORAGE_ACCESS_KEY"].startswith("${WINGRC_STORAGE_ACCESS_KEY:?"), name
+        assert "MINIO_ROOT" not in str(env), name
+        assert not any(k.startswith("WINGRC_PROVISION_") for k in env), name
+
+
+def test_provision_runs_once_and_before_the_backend(compose):
+    doc, _ = compose
+    prov = doc["services"]["provision"]
+    assert prov["restart"] == "no"
+    assert prov["command"] == "python -m app.provision"
+    assert doc["services"]["backend"]["depends_on"]["provision"] == {
+        "condition": "service_completed_successfully"
+    }
+
+
+def test_deploy_runs_provision_before_recreating_the_app():
+    """deploy.sh's `up` is --no-deps, so the backend's depends_on never
+    runs provisioning there; deploy.sh has to."""
+    script = COMPOSE.parent / "deploy" / "deploy.sh"
+    if not script.exists():
+        pytest.skip("deploy/ is outside this tree (the backend image); CI runs this")
+    lines = script.read_text(encoding="utf-8").splitlines()
+    provision = "docker compose run --rm --no-deps -T provision"
+    run = next(i for i, ln in enumerate(lines) if ln.startswith(provision))
+    up = next(i for i, ln in enumerate(lines) if ln.startswith("docker compose up -d --no-deps"))
+    assert run < up
+
+
+def test_snapshots_run_in_provision_not_the_backend():
+    """A snapshot lists the bucket, which the app's account may not."""
+    script = COMPOSE.parent / "deploy" / "snapshot.sh"
+    if not script.exists():
+        pytest.skip("deploy/ is outside this tree (the backend image); CI runs this")
+    runs = [ln for ln in script.read_text(encoding="utf-8").splitlines()
+            if ln.startswith("docker compose run")]
+    assert len(runs) == 2, runs
+    assert all(ln.rstrip(" \\").endswith(" provision") for ln in runs), runs
+
+
+def test_generate_env_makes_the_app_its_own_storage_account():
+    script = COMPOSE.parent / "deploy" / "generate-env.sh"
+    if not script.exists():
+        pytest.skip("deploy/ is outside this tree (the backend image); CI runs this")
+    text = script.read_text(encoding="utf-8")
+    assert '"WINGRC_STORAGE_ACCESS_KEY": lambda: "wingrc-app"' in text
+    assert '"WINGRC_STORAGE_SECRET_KEY": token' in text
+    assert '"MINIO_ROOT_USER")' not in text, "the storage keys must not be copied from root"

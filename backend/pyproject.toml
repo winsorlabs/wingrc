@@ -29,6 +29,13 @@ dependencies = [
     # bounds the divergence risk of rendering the same untrusted body in
     # two places -- see markdown_doc.py's own docstring.
     "markdown-it-py>=4.0",
+    # MinIO's admin API, for provisioning only (app/provision.py): making
+    # the app's scoped account and its policy. Admin calls carry encrypted
+    # payloads, which is why it brings argon2-cffi and pycryptodome; the
+    # serving process never imports it (storage_access.py reads its
+    # account with a plain signed GET). A FIPS profile has to check that
+    # MinIO's FIPS build accepts the SDK's key derivation (docs/fips.md).
+    "minio>=7.2",
 ]
 
 [project.optional-dependencies]

@@ -191,8 +191,16 @@ bench work.
    ```bash
    docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
      -v "$PWD:/repo" -w /repo/frontend node:24-alpine \
-     sh -c 'npm install && npm test && npm run build'
+     sh -c 'npm install > install.log 2>&1 && npm test > vitest.log 2>&1; echo "vitest exit $?"; npm run build > build.log 2>&1; echo "build exit $?"'
+   grep -E "FAIL|Test Files|Tests " frontend/vitest.log
    ```
+
+   **The run goes to a file before anything reads it** (2026-11-24).
+   Twice a vitest failure was seen only as a summary line, because the
+   command was piped through a filter that kept the summary and cut the
+   `FAIL` lines, and neither failure came back (`docs/roadmap.md`, "One
+   unexplained frontend failure, kept as a data point"). A `grep` of the
+   log afterwards loses nothing; a `grep` of the stream loses the rest.
 
    The image runs as root by default, so `node_modules` and `dist` came out
    root-owned. `claude` cannot remove them, so each bench left Jarrod a
@@ -241,6 +249,9 @@ bench work.
    is to hand is not one. `docs/roadmap.md`'s "What claude can do on
    wl-util-1" has the rule. A snapshot holds the bench's data, so leaving
    one for Jarrod costs nothing but the ask.
+   **What claude cannot clear is one command for Jarrod:** see "After a
+   bench cycle" below.
+
    **A helper container from an image that declares a `VOLUME`
    (`postgres:18` does) leaves an anonymous volume unless it is run with
    `--rm`.** `docker run -d` followed by `docker rm -f` without `-v` leaves
@@ -248,3 +259,33 @@ bench work.
    and unused; the before-and-after volume list is what caught them.
    Compare the whole `docker volume ls` before and after, not only the
    bench project's names.
+
+## After a bench cycle: the one cleanup command
+
+Some of what a bench leaves on wl-util-1 is not `claude`'s to remove.
+Rather than a list after each cycle, Jarrod runs one command on
+wl-util-1, from live's checkout once it carries the script:
+
+```bash
+scripts/bench-cleanup.sh --dry-run     # lists what it would do; no sudo needed
+sudo scripts/bench-cleanup.sh          # does it
+```
+
+It covers two places, and nothing else:
+
+| Path | Who owns it, and why | What the command does |
+|---|---|---|
+| `/var/lib/wingrc-snapshots/wingrc_verify_*` | Root made the directory: compose's bind source and `snapshot.sh`'s default when a bench did not export `WINGRC_SNAPSHOT_DIR` into its clone. If the bench took a snapshot, `snapshot.sh` then gave it to uid 10001, the image's `wingrc` user (no name on the host), at 0700, because a dump holds every tenant's records. `claude` cannot write `/var/lib/wingrc-snapshots`. | **Removes it.** It is bench data. Never `wingrc` (live's) or any name not starting `wingrc_verify_`. |
+| Under `/home/claude/bench`, every topmost entry `claude` does not own | Uid 10001: a clone's `.bench/snapshots` after a snapshot, for the same reason as above. Root: `node_modules`, `dist`, logs and screenshots that a container run as root wrote into a clone, before step 5 ran the frontend as `claude` (2026-11-19). | **Hands it back to `claude`** (`chown -R`), and removes nothing: some are a bench's only copy of its output. `claude` then removes what it should, in its own directory, unaided. |
+
+The first dry run, 2026-11-24, listed 274 entries: 1 under `/var/lib`,
+and 273 under the bench home, 4 of them uid 10001's (two snapshot
+directories, and two output folders of 2026-11-12's bench) and 269
+root's, from benches dated 2026-09-16 to 2026-11-19.
+
+It skips anything a running container mounts, so a bench still running
+is left alone, and it never follows a symlink. It is not a boundary
+against `claude`, whose `docker` group is root-equivalent here already:
+it is the permission, used by the person who holds it, in place of
+`claude` using the capability. `tests/test_bench_cleanup.py` holds live's
+directory, another project's, a symlink and a mounted path.
