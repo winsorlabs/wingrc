@@ -15899,10 +15899,102 @@ the bench should not have left:
   `/home/claude/bench/s3b/.bench/snapshots`, which `snapshot.sh` hands to
   the image's user (uid 10001, 0700) by design.
 
-All three need `sudo rm -rf`; none was removed through docker.
+All three need `sudo`; none was removed through docker. Since 2026-11-24
+that is one command, `sudo scripts/bench-cleanup.sh`, which covers them.
+
+**Bench C, 2026-11-24: snapshots restored, not just taken (Jarrod's
+question before the merge).** This slice moved snapshots into
+`provision` in the same change that alters the storage credentials, and
+a snapshot is what a failed deploy would be recovered from. Stack A's
+restore test had restored one snapshot taken by the new path. What had
+not been restored was the set this deploy would actually reach for:
+the one taken *before* it, by `main`'s path in `backend`, restored
+after it, by this branch's path. Stack C (`wingrc_verify_s3c`, a fresh
+clone set up by guide step 1) was built in live's shape: `main`
+(`c9e3828`) on root, two orgs whose logos were written under root. Six
+restores, every one passing:
+
+| # | Snapshot | Taken by | Restored by | Result |
+|---|---|---|---|---|
+| 1 | S1, before the deploy | `main`'s `snapshot.sh`, in `backend` | the branch's restore test | pass |
+| 2 | S2, after the deploy | the branch's, in `provision` | the branch's restore test | pass |
+| 3 | S1 | `main`'s | **the recovery procedure in place** (`docs/deployment.md`, "Recovering"): volumes wiped, `provision`, `snapshot-restore` and `snapshot-verify` in `provision`, backend started | pass; `/health` `unscoped` (root, as before the move); both logos read back matching |
+| 4 | S3, after the move | the branch's | restore test, then **recovery in place**, which re-provisions the scoped account from `.env` | pass; `/health` `scoped`; both logos match |
+| 5 | S1 again | `main`'s, before the deploy | **recovery in place into the moved deployment** | pass; `scoped`; both logos match |
+| 6 | S4, after rolling code back to `main` with `.env` restored | `main`'s | `main`'s restore test | pass |
+
+Each verify read: schema head, row counts (63 tables, 10 rows), the
+bytes of each object a row names, and the object set, all `PASS`.
+`SPRS` and `credentials` read `NOT RUN`: the stack had no assessment
+and no stored credential. Live's data has both, which is why the
+landing order now runs the restore test on live (below).
+
+**Rolling the code back to `main` after the move:** with `.env` still
+moved, `main`'s backend started and `/health` read healthy. That is a
+trap, read from `main`'s code and not measured: `main` builds its
+storage client on first use and `_ensure_bucket` then calls
+`create_bucket`, which the scoped account is refused. So every upload,
+download and logo would fail behind a healthy `/health`, and `main`'s
+`snapshot.sh`, which lists the bucket from `backend`, would fail too.
+With `.env` restored first (the guide's way back), `main` served both
+logos, and its snapshot restored (row 6). `docs/deployment.md`'s way
+back now says to restore `.env` before any code rollback.
+
+The teardown left one thing: Stack C's `.bench/snapshots`, uid 10001,
+which `scripts/bench-cleanup.sh` covers (`docs/bench-stack-verification.md`,
+"After a bench cycle").
 
 **Live:** the deploy and the move are separate steps, each with its own
 snapshot. Neither has run yet; both are recorded here when they have.
+**Between them, the restore test runs on live** twice: on the snapshot
+taken before the deploy (by `main`'s path), and on one taken just after
+it by `provision`. Both pass before the move begins. That is the
+backstop proven on live's own data, SPRS and credentials included,
+before the change that may need it.
+
+### A deployment that stays on root is told only by /health -- recorded 2026-11-24 (Jarrod's question on #146)
+
+**What it does today.** `storage_account: unscoped` is reported, and
+never a readiness condition:
+- `/health`'s `status` stays `ok` and the HTTP status 200;
+- `deploy/health-gate.sh` reads the top-level `status` and the
+  components, so the deploy passes. `tests/test_health_gate.py` holds a
+  body with the storage account unscoped, the database role bypassing
+  RLS and the breached-password list missing, and the gate passes it.
+
+**Why not a readiness condition.** A restart fixes none of the three,
+and a failing `/health` restarts the container in a loop. And a gate
+that refused an unscoped account would refuse live's deploy of #146
+itself, which has to land before live can move.
+
+**Who is told, then, and it is not enough.** Three places, all read
+only by whoever runs a deploy, at the moment of the deploy:
+- `provision` prints "the app's storage keys are MinIO's root, so no
+  account was made", on every deploy;
+- `deploy.sh` prints the `/health` body before "deployed";
+- the backend's start log.
+
+Nobody else is ever told: not msp_admin, and nobody between deploys. A
+deployment that stays on root forever says so in a JSON body and a log
+line, which is the failure this slice set out to end. The
+breached-password list is the same shape. When it is missing, an error
+line goes in the start log and a field in `/health`, and nothing else.
+`database_role` is the third.
+
+**Proposed, as the next slice after the move:** the snapshot banner's
+path (`SnapshotBanner.tsx`), which exists for the same reason, since
+`/health` is read only at a deploy:
+- one msp_admin-only answer listing the deployment's standing problems,
+  each in the banner's words: who acts, and the operator's page. They
+  are the storage account not `scoped` (or `unknown`), the database
+  role not `enforced`, and the breached-password list missing;
+- a banner on every screen until they clear;
+- `deploy.sh` closes with one `WARNING:` line per problem after
+  "deployed", so the deploy record shows them by name, not only inside
+  a printed body.
+
+Not built in #146, so that what Jarrod reviewed is what merges. On live
+it would fire only between the deploy and the move.
 
 ### Live cannot say who signed in from where -- recorded 2026-11-17; urgent the day there are two users
 
@@ -18542,6 +18634,25 @@ reported `Test Files 2 failed | 42 passed (44)` and `Tests 2 failed |
   2>&1`, then read the log), and add that run here as the second data
   point. Compare the file, the test and whether it was the first run
   after `npm install`.
+
+**The second data point, 2026-11-23, and its output was cut the same
+way.** At 22:13 UTC, on the bench (`~/bench/s3a`, a fresh clone of
+`storage-scoped-account`, `node:24-alpine`), the first `npm test` after
+`npm install` reported `Test Files 1 failed | 57 passed (58)` and
+`Tests 1 failed | 616 passed (617)`. The slice changed no frontend file.
+- **Not named:** the file and the test. The command was the bench
+  guide's step 5 piped through `grep -E "Test Files|Tests "`, which kept
+  the two summary lines and cut every `FAIL` line. The instruction above
+  ("keep the whole output") was in this file and was not followed.
+- **What is known:** three runs after it, in the same tree without a
+  reinstall, each passed 617 of 617.
+- **What the two have in common:** each was the first run after a fresh
+  `npm install` in a new clone, on `node:24-alpine`, on wl-util-1. That
+  is two points, and both are the first run, which is also the only run
+  that pays the install's cold caches. It is a lead, not a cause.
+- **So the bench guide's step 5 now writes the run to a file before
+  anything reads it** (`vitest.log`), and the summary is read from the
+  file. A third data point will carry its name.
 
 **The output was not kept, and that has happened before.**
 - **2026-10-27, Q.0's load bench.** A run produced an HTTP 500. By the

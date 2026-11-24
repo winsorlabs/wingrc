@@ -954,6 +954,12 @@ prints a key's value.
 so it still works. The app's account can stay in MinIO unused, or be
 removed with root.
 
+**Restore `.env` before rolling the code back** past this change. Older
+code creates its bucket on first use and lists it for snapshots, and the
+app's account may do neither. With `.env` still moved, that code starts
+and `/health` reads healthy while every upload, download and logo fails
+(`docs/roadmap.md`, "The app reaches MinIO as root", Bench C).
+
 ## Database roles: which credential does what
 
 A WinGRC deployment uses the database in three different capacities, and

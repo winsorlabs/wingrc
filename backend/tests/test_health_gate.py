@@ -93,6 +93,21 @@ def test_accepts_only_ok_with_every_component_on_the_commit():
     assert _gate(json.dumps(_body("ok")), sha=OLD) == 1
 
 
+def test_a_deployment_still_on_minios_root_deploys():
+    """Decided 2026-11-24: an unscoped storage account, like database_role
+    and the breached-password list, is reported and never gates a deploy.
+    A restart fixes none of them, and live has to deploy the code that
+    makes the scoped account before it can move to it (docs/roadmap.md,
+    "A deployment that stays on root is told only by /health")."""
+    unscoped = {"access": "unscoped: the app's storage account administers the object store",
+                "administers": True}
+    body = _body("ok", storage_account=unscoped,
+                 database_role={"role": "wingrc", "superuser": True,
+                                "row_level_security": "bypassed: wingrc is a superuser"},
+                 breached_password_list="missing")
+    assert _gate(json.dumps(body)) == 0
+
+
 @pytest.mark.parametrize(
     "stdin",
     [
