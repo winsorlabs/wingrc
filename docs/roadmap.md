@@ -15295,6 +15295,38 @@ and anonymizing left every membership in place.
   `cli:memberships-revoke-anonymized` (system) and the reason given.
   They sit beside the one earlier revoke in that log (2026-09-12, by
   an admin).
+- **What "backfill rows, not grants" rests on (Jarrod asked, at #144's
+  merge).** The revoke rows' reason states it as fact, and those rows
+  cannot change. This is the evidence, and the one part that is
+  inference.
+  - **Read before the revoke (2026-11-23, as the owner):** all three
+    rows had `created_at` on 2026-08-07. Only the date was read, not
+    the time. Five membership rows in the whole table were created that
+    day, and five users existed before it.
+  - **0023 inserts one row per user, unaudited:** `INSERT INTO
+    org_membership ... SELECT gen_random_uuid(), id, org_id, role, now()
+    FROM "user"`. It was authored 2026-08-07 (`c8af6343`, Create Date
+    2026-08-07).
+  - **Read after the revoke:** the two surviving 2026-08-07 rows, Jarrod
+    Winsor's and Test Customer's on Acme MSP, share one `created_at` to
+    the microsecond: `2026-08-07T10:55:20.887878+00:00`. `now()` is
+    fixed per transaction, so those two came from one statement.
+  - **No grant event names them.** I read every org's log: no
+    `org_membership.*` row names any of the three except the three
+    revokes. The earliest `org_membership.*` row in the whole log is
+    2026-09-12, and the grant route that writes `org_membership.grant`
+    landed 2026-09-11 (`305828e8`, M.8). No grant through the app could
+    have made a row on 2026-08-07. The org-creation path predates that
+    too, but Acme MSP was created 2026-07-06.
+  - **The inference:** that the three revoked rows carry that same
+    microsecond timestamp. Their times were never read, and the rows are
+    gone. Snapshot `20261123T205808Z`, taken before the deploy, holds
+    them. It is under `/var/lib/wingrc-snapshots/wingrc/`, which the
+    `claude` account may not read, and I did not read it through docker.
+    Five rows on the day 0023 was written, matching the five users of the
+    time, with two of them proved to be one statement and no other path
+    able to write them, make it very likely. It is not shown. Reading
+    the three timestamps from that snapshot would close it.
 - **The walk had a wrong premise.** #142's and #143's walk steps assumed
   Rob Tinfoil reads Deactivated. On live, nobody reads plain
   Deactivated: #141's walk deactivated and reactivated Rob and Jarrod
