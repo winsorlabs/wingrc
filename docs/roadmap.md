@@ -15256,6 +15256,83 @@ and anonymizing left every membership in place.
   row, so RLS applies to them rather than being stepped past. The
   request runs as `wingrc_app` in the suite (`conftest._app_session`),
   so the test of a second org's revoke is a test of that.
+- **Why revoking access already held is safe: the history is in the
+  audit log, not in the membership rows.** `org_membership` answers one
+  question, who has access now, and a row for an account that can never
+  sign in answers it wrongly. The record of who had access, when, and
+  who ended it is each org's audit log. Every revoke writes an
+  `org_membership.revoke` row there, with the role that was held and the
+  actor, beside the account's own `user.deactivate` and `user.anonymize`
+  rows, which stay untouched (ADR 0006). So the access list stops
+  being wrong without the record being lost. The grant itself was never
+  an audited event for these three: migration 0023's backfill made the
+  rows, so the revoke row is the first entry in the log that names them.
+- **Checked before applying: nothing a deliverable renders reads
+  membership.** `bundle_service.py`, which renders the bundle and the
+  SSP PDF, never queries `user` or `org_membership`. Personnel there
+  comes from `contact`. Review-cycle reviewers are copied when a cycle
+  opens, from `auth.org_reviewer_candidates()`, which already requires
+  `is_active`, so an anonymized account was never one, and a revoke does
+  not touch reviewer rows already copied. A bundle or SSP for Acme MSP
+  reads the same before and after.
+- **Live, 2026-11-23, after deploying #142 and #143 (`fe50dca`):** the
+  dry run, as `wingrc_app` with no override, listed exactly three rows,
+  all on Acme MSP: `4cc667f6` customer_poc, `c15bc9ab` c3pao_assessor,
+  `e2d47b9b` c3pao_assessor. The directory read alongside it showed
+  seven accounts: those three anonymized, and four not anonymized, none
+  of them listed. Applied only after Jarrod read the list.
+- **Applied, 2026-11-23 21:15 UTC:** "Revoked 3 membership(s) on 3
+  anonymized account(s)", exit 0. A second run: "Nothing to do". The
+  directory afterwards: the three anonymized accounts hold no
+  memberships. The four others are unchanged:
+  - Jarrod Winsor and Rob Tinfoil, `msp_admin` on Acme MSP, Fasano Dev,
+    Test Customer A and Winsorlabs;
+  - Test Customer and Jarrod Test 2, `customer_poc` on Acme MSP.
+
+  Acme MSP's log has three new `org_membership.revoke` rows, one per
+  account, carrying the role each held (`customer_poc`,
+  `c3pao_assessor`, `c3pao_assessor`). Each names the actor
+  `cli:memberships-revoke-anonymized` (system) and the reason given.
+  They sit beside the one earlier revoke in that log (2026-09-12, by
+  an admin).
+- **What "backfill rows, not grants" rests on (Jarrod asked, at #144's
+  merge).** The revoke rows' reason states it as fact, and those rows
+  cannot change. This is the evidence, and the one part that is
+  inference.
+  - **Read before the revoke (2026-11-23, as the owner):** all three
+    rows had `created_at` on 2026-08-07. Only the date was read, not
+    the time. Five membership rows in the whole table were created that
+    day, and five users existed before it.
+  - **0023 inserts one row per user, unaudited:** `INSERT INTO
+    org_membership ... SELECT gen_random_uuid(), id, org_id, role, now()
+    FROM "user"`. It was authored 2026-08-07 (`c8af6343`, Create Date
+    2026-08-07).
+  - **Read after the revoke:** the two surviving 2026-08-07 rows, Jarrod
+    Winsor's and Test Customer's on Acme MSP, share one `created_at` to
+    the microsecond: `2026-08-07T10:55:20.887878+00:00`. `now()` is
+    fixed per transaction, so those two came from one statement.
+  - **No grant event names them.** I read every org's log: no
+    `org_membership.*` row names any of the three except the three
+    revokes. The earliest `org_membership.*` row in the whole log is
+    2026-09-12, and the grant route that writes `org_membership.grant`
+    landed 2026-09-11 (`305828e8`, M.8). No grant through the app could
+    have made a row on 2026-08-07. The org-creation path predates that
+    too, but Acme MSP was created 2026-07-06.
+  - **The inference:** that the three revoked rows carry that same
+    microsecond timestamp. Their times were never read, and the rows are
+    gone. Snapshot `20261123T205808Z`, taken before the deploy, holds
+    them. It is under `/var/lib/wingrc-snapshots/wingrc/`, which the
+    `claude` account may not read, and I did not read it through docker.
+    Five rows on the day 0023 was written, matching the five users of the
+    time, with two of them proved to be one statement and no other path
+    able to write them, make it very likely. It is not shown. Reading
+    the three timestamps from that snapshot would close it.
+- **The walk had a wrong premise.** #142's and #143's walk steps assumed
+  Rob Tinfoil reads Deactivated. On live, nobody reads plain
+  Deactivated: #141's walk deactivated and reactivated Rob and Jarrod
+  Test 2 on 2026-11-20. The "3 deactivated" in the read before 0079
+  were the three anonymized accounts, which are deactivated too. Those
+  steps need an account deactivated first (Jarrod Test 2).
 
 ### The bundled breached-password list does not exist -- queued 2026-11-20; the decision is what to bundle, the silent failure is fixed
 

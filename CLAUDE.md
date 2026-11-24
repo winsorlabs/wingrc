@@ -207,6 +207,18 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   wrote, an exit status. A check that cannot tell itself apart from what
   it is checking is not a check (`docs/roadmap.md`'s item W keeps the
   TLS-specific record).
+- **A bench mutation is made inside the container, never in the host
+  clone** (2026-11-23). The image bakes the backend's code in, and the
+  clone is not mounted. A mutation edited in the clone leaves the code
+  under test unchanged, so the test "passes" against code it never
+  changed, which certifies the test while testing nothing. #143's first
+  bench run reported two mutations green that way. Edit the file with
+  `docker compose exec` (the `mut`/`undo` helper in the bench scripts
+  writes `<file>.orig` and moves it back), and check the run printed
+  that it mutated. The rule is to mutate in the container, not to
+  remember which paths are mounted: what is mounted changes, and
+  `docker-compose.override.yml` changes it per checkout. The same shape
+  as the process grep above: a check that cannot fail.
 - **Read a structured format by parsing it, never by matching its
   text** (proposed 2026-11-06). JSON is read with a JSON parser, and a
   tool's report from its machine output (Trivy's `--format json`), not
