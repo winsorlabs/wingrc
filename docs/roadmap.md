@@ -16022,12 +16022,34 @@ which `scripts/bench-cleanup.sh` covers (`docs/bench-stack-verification.md`,
 "After a bench cycle").
 
 **Live:** the deploy and the move are separate steps, each with its own
-snapshot. Neither has run yet; both are recorded here when they have.
-**Between them, the restore test runs on live** twice: on the snapshot
-taken before the deploy (by `main`'s path), and on one taken just after
-it by `provision`. Both pass before the move begins. That is the
-backstop proven on live's own data, SPRS and credentials included,
+snapshot. **Between them, the restore test runs on live** twice: on the
+snapshot taken before the deploy (by `main`'s path), and on one taken
+just after it by `provision`. Both pass before the move begins. That is
+the backstop proven on live's own data, SPRS and credentials included,
 before the change that may need it.
+
+**The deploy, 2026-11-25 (UTC), `ce947d1`** (#146, with #144 and #145),
+from `fe50dca`:
+- **01:33, the pre-deploy snapshot**, by `main`'s `snapshot.sh` in
+  `backend`: `20261125T013317Z`, 63 tables, 6224 rows, 35 objects,
+  14,262,636 bytes. 14 kept; `20261119T161156Z` rotated out.
+- **01:34, deployed.** `provision` printed "bucket 'evidence' exists"
+  and "the app's storage keys are MinIO's root, so no account was made".
+  `/health`: `status` `ok`, all three components on `ce947d1`,
+  `storage_account.access` `unscoped: … administers the object store`,
+  `administers` true, `actions` `admin:*`, `kms:*`, `s3:*`. The gate
+  passed it on its second try (the first: worker `unknown`), as decided.
+  Record: `~claude/wingrc-deploys/20261125T013411Z-ce947d143a81`.
+- **01:34, restore test of the pre-deploy snapshot** by this branch's
+  path: schema, row counts (63 tables, 6224 rows), SPRS (3 assessments),
+  object bytes (23 keys a row names; 12 objects no row names, the same
+  count as 2026-11-03's open read, not compared key by key), object set (35), credentials (3, key label
+  `prod-wl-util-1-2026-09-11`), all `PASS`; verdict pass.
+- **01:34, a snapshot through `provision`**: `20261125T013456Z`, the
+  same counts and bytes; `20261119T211704Z` rotated out. **01:35, its
+  restore test**: the same six `PASS` lines; verdict pass.
+
+The move has not run yet.
 
 ### A deployment that stays on root is told only by /health -- recorded 2026-11-24 (Jarrod's question on #146)
 
@@ -18730,6 +18752,27 @@ way.** At 22:13 UTC, on the bench (`~/bench/s3a`, a fresh clone of
 - **So the bench guide's step 5 now writes the run to a file before
   anything reads it** (`vitest.log`), and the summary is read from the
   file. A third data point will carry its name.
+
+**The hypothesis to test next time (Jarrod, 2026-11-24): the first
+vitest run after a fresh `npm install` in a new clone can fail one test,
+and the runs after it pass.** Two points are not a cause, but they are
+enough to state one that the next occurrence can confirm or rule out,
+rather than adding a third unexplained line:
+- **Every bench records which run it was.** Step 5's `vitest.log` is
+  the first run after the install by construction. If it fails, run
+  `npm test` once more in the same tree, to `vitest-2.log`, before
+  anything else.
+- **It is confirmed** by a failure in the first run that the second run
+  passes. Then read the `FAIL` lines for the mechanism, starting with a
+  timeout (`Test timed out in 5000ms`): the first run is the one that
+  transforms every file with cold caches, so a test near its time limit
+  is the likeliest shape.
+- **It is ruled out** by a failure in any run that is not the first
+  after an install, or by one that fails again on the second run. Then
+  the "first run" link was a coincidence, and the entry says so.
+- **A failure that is a timeout is fixed by the test, not by retrying
+  it:** raise that test's limit or remove what makes it slow. A retry
+  would hide the next one.
 
 **The output was not kept, and that has happened before.**
 - **2026-10-27, Q.0's load bench.** A run produced an HTTP 500. By the

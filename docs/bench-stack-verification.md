@@ -202,6 +202,17 @@ bench work.
    unexplained frontend failure, kept as a data point"). A `grep` of the
    log afterwards loses nothing; a `grep` of the stream loses the rest.
 
+   **If `vitest.log` shows a failure, run the tests once more before
+   anything else**, to a second file, and keep both:
+   ```bash
+   docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+     -v "$PWD:/repo" -w /repo/frontend node:24-alpine \
+     sh -c 'npm test > vitest-2.log 2>&1; echo "vitest exit $?"'
+   ```
+   That run is the test of the roadmap's hypothesis: the first run after
+   a fresh install fails a test that the second run passes. Record both
+   logs' `FAIL` lines in that entry, whichever way it comes out.
+
    The image runs as root by default, so `node_modules` and `dist` came out
    root-owned. `claude` cannot remove them, so each bench left Jarrod a
    `sudo` cleanup, twice by 2026-11-19, `/home/claude/bench/t1fe` the
