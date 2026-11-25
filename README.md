@@ -45,7 +45,7 @@ React 19 (Vite) · FastAPI (Python 3.13) · PostgreSQL 18 + pgvector · SQLAlche
 ```bash
 cp .env.example .env && chmod 600 .env
 sed -i 's/^WINGRC_ENVIRONMENT=$/WINGRC_ENVIRONMENT=development/' .env
-deploy/generate-env.sh            # fills every required secret; prints names only
+deploy/generate-env.sh --fresh    # fills every required secret; prints names only
 docker compose up --build         # Postgres 18 + MinIO + API + frontend
 # API:        http://localhost:8000/health
 # API docs:   http://localhost:8000/docs

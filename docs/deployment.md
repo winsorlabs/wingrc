@@ -11,6 +11,15 @@ organizations they serve) — not shared multi-tenant infrastructure. Each
 deployment gets its own hostname and TLS configuration, which is what this
 guide sets up.
 
+**Every step that changes something says what it prints** (2026-11-25).
+Read the output against it before the next step. If it differs, stop:
+the step did something other than what the guide meant. In live's move
+off MinIO's root, `generate-env.sh` was expected to print two names and
+printed three, and that line is what stopped the move before a restart
+(`docs/roadmap.md`, "The app reaches MinIO as root", the move). A step
+that says only what to run cannot be checked by the person running it.
+A step added to this guide says what it prints.
+
 ## Prerequisites
 
 - A Ubuntu server (local or cloud — your choice) with **Docker**, **Docker
@@ -30,8 +39,11 @@ git clone <this-repo-url> wingrc
 cd wingrc
 cp .env.example .env
 chmod 600 .env
-deploy/generate-env.sh
+deploy/generate-env.sh --fresh
 ```
+
+It prints `would fill:` with the eight secrets in the table below, each
+`(empty)`, then `filled:` with the same eight names, and never a value.
 
 **Keep `.env` at mode 600, or 640 with a group only operators are in.** It
 holds every credential below, and it never goes in git.
@@ -42,10 +54,15 @@ carry were public, so a deployment that kept one ran on a credential
 anyone could read (`docs/roadmap.md`, "The compose file ships default
 credentials").
 
-`deploy/generate-env.sh` fills each secret below that is empty with a
-fresh random value and prints only the names it filled, never a value. It
-never changes a value already set. **Copy each generated value into a
-password manager off this host before you rely on the deployment.**
+`deploy/generate-env.sh` fills the secrets it is told to, each with a
+fresh random value: `--fresh` for all of them, on a new `.env` only, or
+the names, on an existing one. Before it writes, it prints what it will
+fill and whether each is absent or empty; `--dry-run` stops there. It
+never prints a value, and it refuses a name that already has one. Until
+2026-11-25, run with no arguments, it filled every empty secret it
+knew, which on an existing deployment can be one nobody asked for.
+**Copy each generated value into a password manager off this host
+before you rely on the deployment.**
 
 | Variable | What it is | Generated |
 |---|---|---|
@@ -576,7 +593,8 @@ in `.env` only has to agree with it.
 
 1. **Set `POSTGRES_PASSWORD` to a new value in `.env`, and put the same
    value in `WINGRC_MIGRATION_DATABASE_URL`, if it is set.** Rewrite the
-   file in place (`deploy/generate-env.sh` does this for an empty value).
+   file in place (`deploy/generate-env.sh POSTGRES_PASSWORD` does this
+   for an empty value).
    `sed -i` replaces the file and makes it yours.
 2. **Change the role**, through psql's stdin, over the container's local
    socket:
@@ -929,15 +947,37 @@ prints a key's value.
 
 1. **Snapshot:** `deploy/snapshot.sh`.
 2. **Keep the current `.env`** for the way back:
-   `cp -p .env .env.pre-storage-account`. It holds root's pair in the
-   app's lines. It is mode 0600, like `.env`.
-3. **Empty the app's two lines, and let `generate-env.sh` fill them**
-   with `wingrc-app` and a new random secret:
+   `cp -p .env .env.pre-storage-account.bak`. It holds every credential,
+   root's pair in the app's lines among them, with `.env`'s mode. Check
+   that git ignores it before going on:
+   `git check-ignore .env.pre-storage-account.bak` prints the name. If
+   it prints nothing, stop: the copy would sit untracked in the working
+   tree, one `git add -A` from a commit. (Until 2026-11-25 this step
+   said `.env.pre-storage-account`, which `.gitignore` did not cover.)
+3. **Empty the app's two lines, and fill exactly those two** with
+   `wingrc-app` and a new random secret:
    ```bash
    sed -i 's/^WINGRC_STORAGE_ACCESS_KEY=.*/WINGRC_STORAGE_ACCESS_KEY=/; s/^WINGRC_STORAGE_SECRET_KEY=.*/WINGRC_STORAGE_SECRET_KEY=/' .env
-   deploy/generate-env.sh
+   deploy/generate-env.sh WINGRC_STORAGE_ACCESS_KEY WINGRC_STORAGE_SECRET_KEY
    ```
-   It prints only the two names.
+   It prints, and nothing else:
+   ```
+   would fill: WINGRC_STORAGE_ACCESS_KEY (empty), WINGRC_STORAGE_SECRET_KEY (empty)
+   filled: WINGRC_STORAGE_ACCESS_KEY WINGRC_STORAGE_SECRET_KEY
+   ```
+   Then compare the two files by name, never by value:
+   ```bash
+   diff .env.pre-storage-account.bak .env | grep -E '^[<>]' | sed 's/=.*//'
+   ```
+   It prints these four lines and no others. Any other name is a line
+   this step was not meant to change: put that one line back before
+   going on.
+   ```
+   < WINGRC_STORAGE_ACCESS_KEY
+   < WINGRC_STORAGE_SECRET_KEY
+   > WINGRC_STORAGE_ACCESS_KEY
+   > WINGRC_STORAGE_SECRET_KEY
+   ```
 4. **Provision:** `docker compose run --rm --no-deps -T provision`. It
    ends with `the app's account reads scoped`. The app is still on root
    and still serving.
@@ -949,7 +989,7 @@ prints a key's value.
      download and as the org logo;
    - an upload and a delete work.
 
-**The way back:** `cp -p .env.pre-storage-account .env`, then
+**The way back:** `cp -p .env.pre-storage-account.bak .env`, then
 `docker compose up -d --no-deps backend worker`. Root was never changed,
 so it still works. The app's account can stay in MinIO unused, or be
 removed with root.
@@ -1033,9 +1073,9 @@ That refusal is deliberate. The alternative was to keep serving as the
 owner without a word, which is what the old default did. To move:
 
 1. **Take a snapshot** (`deploy/snapshot.sh`).
-2. **`deploy/generate-env.sh`.** On an existing `.env` it fills only what
-   is missing, which here is `WINGRC_APP_DB_PASSWORD`, and prints that
-   name.
+2. **`deploy/generate-env.sh WINGRC_APP_DB_PASSWORD`.** It prints
+   `would fill: WINGRC_APP_DB_PASSWORD (absent)` (or `(empty)`), then
+   `filled: WINGRC_APP_DB_PASSWORD`.
 3. **`deploy/deploy.sh`.** The backend's start sets `wingrc_app`'s
    password, then serves as it. The deploy's `/health` body must show
    `"row_level_security": "enforced"`.
@@ -1054,8 +1094,11 @@ another tenant's rows.
 
 A deployment that already sets `WINGRC_DATABASE_URL` to `wingrc_app` (live
 does) needs no change: compose reads the URL and never evaluates the
-default it replaces (measured 2026-11-23). `generate-env.sh` would add an
-unused `WINGRC_APP_DB_PASSWORD` there; it does no harm.
+default it replaces (measured 2026-11-23). Do not fill
+`WINGRC_APP_DB_PASSWORD` there: nothing reads it, and a value nobody
+reads looks like the app's password to the next person. Before
+2026-11-25 `generate-env.sh` filled it unasked, which is how live's
+`.env` briefly held one during the move off MinIO's root.
 
 ### The CLI runs as the app role
 

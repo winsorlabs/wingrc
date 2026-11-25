@@ -17,6 +17,11 @@ migration, on `main` unverified. They were fixed forward rather than
 reverted, but the exception doesn't apply going forward now that access is
 resolved — see below.)
 
+**Every step that changes something says what it prints** (2026-11-25),
+as `docs/deployment.md` says for a deployment: read the output against
+it before the next step, and stop when it differs. A verification step
+added here says what it prints.
+
 ## What "isolated" means
 
 - Its own Docker Compose project name (`docker compose -p wingrc_verify_<date>`
@@ -93,8 +98,11 @@ bench work.
    ```bash
    cp .env.example .env && chmod 600 .env
    sed -i 's/^WINGRC_ENVIRONMENT=$/WINGRC_ENVIRONMENT=development/' .env
-   deploy/generate-env.sh
+   deploy/generate-env.sh --fresh
    ```
+
+   It prints `would fill:` with eight names, each `(empty)`, then
+   `filled:` with the same eight.
 
    Then point the snapshot directory into the clone, before the first
    `up`:

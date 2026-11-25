@@ -16049,7 +16049,68 @@ from `fe50dca`:
   same counts and bytes; `20261119T211704Z` rotated out. **01:35, its
   restore test**: the same six `PASS` lines; verdict pass.
 
-The move has not run yet.
+**The move, 2026-11-25.** Live now reaches MinIO as its own account.
+Two things went wrong in the written procedure first, and Jarrod caught
+both before anything restarted.
+- **The backup's name was not ignored by git.** Step 2 said
+  `cp -p .env .env.pre-storage-account`. `.gitignore` had `.env.*.bak`
+  and `.env.bak`, and its comment said they were there for exactly this
+  kind of file, so the intent was right and the name missed it. Run as
+  written, it would have left live's MinIO root pair, the database
+  owner's password and the Fernet key in an untracked file in a public
+  repo's working tree. Jarrod checked the name with `git check-ignore`,
+  which printed nothing, and used `.env.pre-storage-account.bak`.
+  `.gitignore` now ignores `.env.*` except `.env.example`, and
+  `tests/test_env_names_ignored.py` runs `git check-ignore` over every
+  `.env` name and every `cp .env` target in tracked files.
+- **`generate-env.sh` filled three secrets, not the two the step named.**
+  Run with no arguments, it filled every empty secret it knew, and live's
+  `.env` had no `WINGRC_APP_DB_PASSWORD` line at all, because live sets
+  `WINGRC_DATABASE_URL` outright. It printed
+  `filled: WINGRC_APP_DB_PASSWORD WINGRC_STORAGE_ACCESS_KEY
+  WINGRC_STORAGE_SECRET_KEY`, and the step had said "it prints only the
+  two names", so Jarrod stopped. `docs/deployment.md`'s "Serving as the app role"
+  had already said the script "would add an unused
+  `WINGRC_APP_DB_PASSWORD`" on a deployment like live's; the move's
+  procedure did not carry it. **Nothing read the new value**, checked
+  before any restart without printing one: compose's resolved
+  `WINGRC_DATABASE_URL` was identical to the running backend's and the
+  worker's, and did not contain it. `app_role.py` takes the password
+  from that URL and changes it only when the URL cannot connect.
+  **Recovery, line by line:** Claude first said to blank the line, on the
+  premise that it had been empty; a names-only diff against the backup
+  showed it had been absent, so the line was deleted instead. Then the
+  diff showed only the two storage keys. **`generate-env.sh` now requires
+  the names it fills** (`--fresh` for all of them, refused on an `.env`
+  that has any) and prints what it will fill, absent or empty, before it
+  writes; `--dry-run` stops there (`tests/test_generate_env.py`, which
+  has live's `.env` at the move in shape).
+- **What caught the second was a line saying what the step prints.**
+  Both guides now say every step that changes something says what it
+  prints, and to stop when the output differs.
+
+Then the steps as written, each checked by Claude on the host rather
+than from a pasted result:
+- **18:38 UTC, snapshot** `20261125T183848Z`: 63 tables, 6244 rows, 35
+  objects (the restore-tested set of 01:34 was 17 hours old).
+- **`provision`:** "bucket 'evidence' exists", "app account set; policy
+  'wingrc-app' attached", "the app's account reads scoped".
+- **`docker compose up -d --no-deps backend worker`:** backend healthy;
+  its start logged "wingrc_app authenticates: nothing set" and "bucket
+  'evidence' is there and readable". `minio` and `nginx` not touched.
+- **Checks, by name only:** `/health` `status` `ok`, all three on
+  `ce947d1`, `storage_account.access` `scoped`, actions `s3:DeleteObject`,
+  `s3:GetObject`, `s3:PutObject`, `administers` false. The oldest
+  evidence object a row names (2026-09-09, written under root) read back
+  as the app's account: 228,666 bytes, SHA-256 matching the row's.
+  Root's password is in no variable of the backend or the worker, and
+  neither app key equals root's. Root's user is a six-character name,
+  not a secret; a first substring check flagged every variable that
+  contains it (URLs, and the app's key `wingrc-app`), and was re-run
+  comparing the password and exact values.
+
+The live walk is in #146's body. `.env.pre-storage-account.bak` stays on
+the host for the way back until Jarrod removes it.
 
 ### A deployment that stays on root is told only by /health -- recorded 2026-11-24 (Jarrod's question on #146)
 
