@@ -6,6 +6,7 @@ import type { SnapshotStatus } from "../types";
 // cron that stops leaves nothing behind to say so, and /health is read
 // only at a deploy. msp_admin only, on every screen, until a snapshot
 // newer than the limit exists. The banner's style is the TLS banner's.
+// The rule all three alarm banners follow is CLAUDE.md's "Banners".
 
 const REFRESH_MS = 60 * 60 * 1000;
 

@@ -24,11 +24,12 @@ import { ListLibraryPanel } from "./components/ListLibraryPanel";
 import { SideNav } from "./components/SideNav";
 import { SprsSubmissionsPanel } from "./components/SprsSubmissionsPanel";
 import { SystemDescriptionForm } from "./components/SystemDescriptionForm";
+import { DeploymentBanner } from "./components/DeploymentBanner";
 import { SnapshotBanner } from "./components/SnapshotBanner";
 import { TlsExpiryBanner } from "./components/TlsExpiryBanner";
 import { UsersPanel } from "./components/UsersPanel";
 import { useAuth } from "./hooks/useAuth";
-import { canDefineLists, canImportSsp, canSeeApiTokens, canSeeAuditLog, canSeeEmail, canSeeIntegrations, canSeeScheduledJobs, canSeeToolsLibrary, canSeeUserDirectory, canSeeUsers } from "./lib/roles";
+import { canDefineLists, canImportSsp, canSeeBanners, canSeeApiTokens, canSeeAuditLog, canSeeEmail, canSeeIntegrations, canSeeScheduledJobs, canSeeToolsLibrary, canSeeUserDirectory, canSeeUsers } from "./lib/roles";
 import type { Assessment, OnboardingStatus, Org } from "./types";
 
 // "admin" is the deployment-tier area (Integrations today; G.9/G.11 land
@@ -231,8 +232,9 @@ export function App() {
       {!canWrite && (
         <div className="read-only-banner">Read-only access — assessor role.</div>
       )}
-      {canSeeScheduledJobs(user.role) && <TlsExpiryBanner />}
-      {canSeeScheduledJobs(user.role) && <SnapshotBanner />}
+      {canSeeBanners(user.role) && <TlsExpiryBanner />}
+      {canSeeBanners(user.role) && <SnapshotBanner />}
+      {canSeeBanners(user.role) && <DeploymentBanner />}
 
       {screen === "orgs" && (
         <OrgPicker

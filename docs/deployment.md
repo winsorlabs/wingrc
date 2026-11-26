@@ -1013,6 +1013,57 @@ itself:
 administers the object store`.** Nothing is broken when it does: the
 app works. The point is that it says so.
 
+**`/health`'s `storage` says whether storage works, as the app's own
+account** (since 2026-11-25). It makes the backend start's check: a GET
+of a key that is never written, which answers `NoSuchKey` when the keys
+sign, the bucket exists and reads are granted. It is bounded to 3
+seconds and one attempt, and read at most every 15 seconds.
+- **`ok`.**
+- **`failed: ...`,** saying why:
+  - the bucket does not exist;
+  - the account may not read it;
+  - the store cannot be reached.
+
+  **A failure sets the top-level `status` to `error` and keeps HTTP
+  200,** so `deploy.sh` refuses the deploy and the container is not
+  restarted. A restart fixes nothing about unreachable storage, and
+  would take down a backend still serving everything else.
+- **`not configured: ...`,** when no endpoint is set.
+
+**Anything reading `/health` parses the body and reads the top-level
+`status`.** An uptime monitor that checks only for a 200, or for the text
+`"status":"ok"`, reports a deployment without storage as up. The deploy
+gate's own grep passed split deploys until 2026-11-06.
+
+### What /health warns about, and who is told
+
+`/health`'s `warnings` lists what is wrong and someone can fix
+(`backend/app/deployment_checks.py`):
+
+| `key` | When | Who fixes it |
+|---|---|---|
+| `storage_unreachable` | `storage` is `failed: ...` | the operator ("Provisioning") |
+| `storage_account` | `storage_account.access` is `unscoped` or `incomplete` | the operator ("Moving a deployment off MinIO's root") |
+| `database_role` | `database_role.row_level_security` is not `enforced` | the operator ("Database roles") |
+| `breached_password_list` | the list did not ship with this build | a WinGRC release |
+
+**A check this deployment cannot answer is never a warning.**
+`storage_account`'s `unknown: ...` is an example: a store that is not
+MinIO cannot be asked. It stays a field, because a warning that can
+never clear on a correct configuration teaches people to ignore all of
+them.
+
+The same list reaches three places:
+- **msp_admin's red banner**, on every screen, beside the TLS and
+  snapshot banners. It cannot be dismissed. It is recomputed on load and
+  hourly, so a line shows whenever its condition holds and goes when it
+  is fixed. consultant_admin, c3pao_assessor and customers do not see
+  it: these are facts about the hosting, not the customer's compliance.
+- **`deploy.sh`,** which prints a `WARNING: <key>: <detail>` line for
+  each after the gate accepts, and keeps them in the deploy record. Only
+  `storage_unreachable` fails a deploy, through `status`.
+- **The `/health` body** itself.
+
 To **rotate** the app's secret: put a new `WINGRC_STORAGE_SECRET_KEY` in
 `.env`, run provisioning, then recreate `backend` and `worker`. Provisioning
 replaces the account's secret, and the old one stops working at once, so

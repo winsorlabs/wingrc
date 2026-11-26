@@ -16218,6 +16218,45 @@ path (`SnapshotBanner.tsx`), which exists for the same reason, since
 Not built in #146, so that what Jarrod reviewed is what merges. On live
 it would fire only between the deploy and the move.
 
+**Built 2026-11-25 (branch `health-storage-probe`), with Jarrod's
+answers to the design.**
+- **The probe.** `/health`'s `storage` is the start's bucket check, made
+  as the app's account: a GET of a never-written key, where `NoSuchKey`
+  means the keys sign, the bucket exists and reads are granted.
+  - It is bounded to 3 s and one attempt, and cached 15 s. botocore's
+    defaults are 60 s connect and read with retries, and `/health`
+    holds a threadpool token while it waits.
+  - The first version set `max_attempts: 1`. botocore reads that as one
+    retry on top of the first try, two attempts in all, and the test
+    reading the client's config caught it (`total_max_attempts: 1`).
+  - **A failure sets `status` to `error` and keeps HTTP 200** (Jarrod: a
+    restart fixes nothing about unreachable storage and would take down
+    a backend still serving everything else). It is the one deployment
+    reading that gates a deploy. The docstring and the guide say what
+    follows: every consumer parses the body, and an uptime monitor that
+    checks for a 200 reports no storage as up.
+- **`deployment_checks.warnings()`** decides what is wrong and fixable.
+  `/health`'s `warnings`, msp_admin's banner
+  (`GET /admin/scheduled-jobs/deployment-warnings`, `DeploymentBanner.tsx`)
+  and `deploy.sh`'s `WARNING:` lines (`deploy/health-warnings.sh`, after
+  the gate accepts, kept in the record) read that one function.
+- **What this entry proposed, changed by Jarrod:** `unknown` is not a
+  line. A store that is not MinIO can never answer the account check, so
+  the line would never clear on a correct configuration. It stays a
+  `/health` field. **The banner's invariant is absolute:** if it shows,
+  something is wrong and someone can fix it. CLAUDE.md's "Banners" now
+  writes the rule down for all three banners: msp_admin only (its own
+  `BANNER_ROLES`, so widening Scheduled Jobs cannot widen it), every
+  screen, not dismissible, recomputed on load and hourly. consultant_admin
+  and c3pao_assessor are excluded by decision: these are facts about the
+  MSP's hosting, not the customer's compliance posture.
+- **What live will show from the deploy: one line,** the breached-password
+  list. It has never shipped ("The bundled breached-password list does not
+  exist"). It is wrong and fixable, by a release rather than the operator,
+  and the line says so. It clears only when a list ships, so the banner's
+  own argument, that a line nobody clears teaches people to ignore the
+  banner, makes shipping the list the next slice.
+
 ### Live cannot say who signed in from where -- recorded 2026-11-17; urgent the day there are two users
 
 **Found answering whether #106's forged-cookie route was used.** For the

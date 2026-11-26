@@ -328,6 +328,30 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   them (a bundle's folder is dated; look its pages up per zip). Three
   red runs and three latent failures had this shape (`docs/roadmap.md`'s
   clock-granularity sweep entry).
+- **Banners: the alarm banners follow one rule** (Jarrod, 2026-11-25).
+  There are three: TLS expiry, local snapshots, and deployment warnings
+  (`deployment_checks.py`). The TLS and snapshot banners followed an
+  unwritten version of this rule before it was written. A new alarm
+  banner follows it too.
+  - **Who sees it:** msp_admin only (`lib/roles.ts`'s `BANNER_ROLES`,
+    its own set). The banners are facts about the MSP's hosting, not a
+    customer's compliance posture, so consultant_admin and c3pao_assessor
+    do not see them, and neither does a customer. Each endpoint has a
+    test refusing the other roles.
+  - **Where:** every screen.
+  - **Dismissal:** none. No button hides a line, and no setting
+    acknowledges one.
+  - **When it is read:** recomputed on load and hourly. Nothing is
+    stored, so nothing has to bring a line back: it shows whenever the
+    condition holds.
+  - **What may be a line: something wrong that someone can fix.** A check
+    a correct configuration cannot answer is a `/health` field, never a
+    line. Example: `storage_account`'s `unknown`, on a store that is not
+    MinIO. A line that can never clear is a permanent banner, and one
+    permanent line teaches people to ignore all of them. The line says
+    who acts and names the page.
+  - **Not covered:** the assessor's "Read-only access" strip is a role
+    notice, not an alarm, and is outside this rule.
 - **When removing or changing a side effect, find what reads it as a
   record.** A document version's "what was this approved for" was only
   ever the links publish made, so removing auto-linking (item X) would

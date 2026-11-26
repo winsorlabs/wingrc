@@ -247,3 +247,31 @@ def test_snapshot_status_fresh_or_not_mounted_is_quiet(admin_client, monkeypatch
     _snapshot_dir(monkeypatch, tmp_path / "absent")
     body = admin_client.get(_SNAP_URL).json()
     assert body["status"] == "not configured" and body["attention"] is False
+
+
+# --- the deployment warnings banner (deployment_checks.py) -----------------
+
+_DEPLOY_URL = "/admin/scheduled-jobs/deployment-warnings"
+
+
+@pytest.mark.parametrize(
+    "role", ["msp_engineer", "consultant_admin", "c3pao_assessor", "customer_poc"]
+)
+def test_deployment_warnings_are_msp_admin_only(db_session, role):
+    """Jarrod, 2026-11-25: facts about the MSP's hosting, not a customer's
+    compliance posture, so consultant_admin and c3pao_assessor do not see
+    them."""
+    assert _client_as(db_session, role).get(_DEPLOY_URL).status_code == 403
+
+
+def test_deployment_warnings_are_the_health_list(admin_client, monkeypatch):
+    from app import deployment_checks, storage_access
+
+    monkeypatch.setattr(deployment_checks, "storage_probe", lambda: "failed: no bucket")
+    monkeypatch.setattr(storage_access, "health_reading",
+                        lambda: {"access": "unknown: accountinfo answered HTTP 501"})
+    r = admin_client.get(_DEPLOY_URL)
+    assert r.status_code == 200, r.text
+    keys = [w["key"] for w in r.json()["warnings"]]
+    assert keys[0] == "storage_unreachable"
+    assert "storage_account" not in keys, "an unanswerable account check is never a warning"
