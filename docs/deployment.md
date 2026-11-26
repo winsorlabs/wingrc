@@ -620,13 +620,92 @@ credentials", for the procedure as tested. Keep `MINIO_ROOT_USER` and
 change only the password.
 
 **Once the app has its own account** ("Moving a deployment off MinIO's
-root", below), only `minio` and `provision` use root. Set
-`MINIO_ROOT_PASSWORD`, then recreate `minio` and `nginx`. The app's keys
-do not change and the app keeps serving:
+root", below), only `minio` and `provision` use root. The app's keys do
+not change. Storage is unreachable for the seconds `minio` takes to
+restart, and nginx's recreate drops open connections. Tested on live's
+image (`RELEASE.2025-09-07`) on 2026-11-25: an IAM user, its policy and
+an object written before the change all survived it, the old password
+was refused and the new one accepted (`docs/roadmap.md`, "Rotating
+MinIO's root password after the move").
 
-```bash
-docker compose up -d --no-deps --force-recreate minio nginx
-```
+**Before you start:**
+
+- `/health`'s `storage_account.access` reads `scoped`. If it reads
+  `root`, the app is still on root: follow "On a deployment still on
+  root", below, instead.
+- **No `.env` copy made before the change remains on the host.** A copy
+  still holds the old root password, so restoring it after this
+  procedure would restore a password MinIO no longer accepts. `ls .env.*`
+  lists only files you can account for. `.env.pre-storage-account.bak`
+  is deleted first (its condition is under the move's way back, below).
+
+**The steps.** Nothing here prints a value.
+
+1. **Snapshot:** `deploy/snapshot.sh`. It ends with a line
+   `snapshot <id>: … tables, … rows, … objects`. Note the id.
+2. **Hold the old password in the shell, unprinted,** so step 6 can show
+   MinIO refusing it. `export` gives it to `docker compose exec -e` by
+   name, so it never appears on a command line:
+   ```bash
+   export MC_HOST_old="http://$(grep '^MINIO_ROOT_USER=' .env | cut -d= -f2-):$(grep '^MINIO_ROOT_PASSWORD=' .env | cut -d= -f2-)@localhost:9000"
+   ```
+3. **Empty the line and fill exactly that one:**
+   ```bash
+   sed -i 's/^MINIO_ROOT_PASSWORD=.*/MINIO_ROOT_PASSWORD=/' .env
+   deploy/generate-env.sh MINIO_ROOT_PASSWORD
+   ```
+   It prints, and nothing else:
+   ```
+   would fill: MINIO_ROOT_PASSWORD (empty)
+   filled: MINIO_ROOT_PASSWORD
+   ```
+   `sed -i` replaces the file and makes it yours. Give it back its
+   owner and mode (`640`) if they changed.
+4. **What the recreate would change**, by name, against the running
+   containers:
+   ```bash
+   deploy/env-diff.sh backend worker minio nginx
+   ```
+   It prints these four lines and no others:
+   ```
+   backend: no change
+   worker: no change
+   minio: MINIO_ROOT_PASSWORD
+   nginx: no change
+   ```
+   A name on `backend` or `worker` means the app is still on root, or
+   another line changed: stop and put it back. Exit status 1 is expected
+   here, because something does change.
+5. **Recreate `minio` and `nginx`, then provision:**
+   ```bash
+   docker compose up -d --no-deps --force-recreate minio nginx
+   docker compose run --rm --no-deps -T provision
+   ```
+   `up` does not pull, so `minio` comes back on the image it ran
+   (`docker compose images minio` shows the same id as before). nginx is
+   in it because it resolves `minio` once, at start; see "On a deployment
+   still on root". Provision signs in as root with the new password and
+   ends with `the app's account reads scoped`.
+6. **Check:**
+   - `deploy/env-diff.sh backend worker minio nginx` prints `no change`
+     for all four;
+   - the old password is refused:
+     `docker compose exec -T -e MC_HOST_old minio mc ls old/ >/dev/null 2>&1 && echo ACCEPTED || echo refused`
+     prints `refused`. Then `unset MC_HOST_old`;
+   - `/health` reads `ok` with `storage_account.access: scoped`;
+   - `deploy/restore-test.sh <id from step 1>` ends `verdict:  pass`. That
+     snapshot was taken under the old password and restores under the
+     new one;
+   - in the browser, an org logo shows and an evidence file downloads.
+
+**There is no way back, and none is needed.** The old password is the
+thing being retired. If `minio` will not start, read
+`docker compose logs minio`: the password is in `.env` and nothing else
+reads it. If provision cannot find the app's account, it recreates the
+user and its policy from `.env`, which still holds the app's keys.
+
+The nightly snapshot reads `.env` when it runs, so the next one uses
+the new password. Check its age on msp_admin's banner the next day.
 
 **On a deployment still on root,** set `MINIO_ROOT_PASSWORD` and
 `WINGRC_STORAGE_SECRET_KEY` to the same new value, then recreate them
@@ -714,9 +793,12 @@ whoever runs it. Under `su` or `sudo -s` that is root's, and `$HOME`
 then sends the log to `/root`. Root needs no more than the docker group
 gives, and it would run a script that others may be able to write.
 Afterwards, `crontab -l` as the account should print the line. On
-dev.wingrc.us the line sat in root's crontab from 2026-11-03 to
-2026-11-18, and nobody noticed, because the job ran
-(`docs/roadmap.md`, item S).
+dev.wingrc.us the line has sat in root's crontab since 2026-11-03, and
+nobody noticed for two weeks, because the job ran. Moving it was
+decided on 2026-11-18 and has not been done: on 2026-11-25
+`/home/wladmin/wingrc-snapshots.log`, which the first run from
+wladmin's crontab would create, did not exist (`docs/roadmap.md`,
+item S).
 
 **The stale limit and the retention count assume that schedule is daily,
 and nothing connects them to it.** The limit is a constant, 50 hours, not
@@ -993,6 +1075,14 @@ prints a key's value.
 `docker compose up -d --no-deps backend worker`. Root was never changed,
 so it still works. The app's account can stay in MinIO unused, or be
 removed with root.
+
+**Delete the copy when the walk passes:** once the release's live walk
+(upload, download and delete of evidence; an object stored before the
+move, as a download and as the logo; `/health` reading `scoped`) has
+passed, run `rm .env.pre-storage-account.bak`. Rotate MinIO's root
+password after that, never before ("MinIO's root password", above):
+the rotation makes this way back restore a password MinIO refuses. On
+dev.wingrc.us the condition is #146's walk.
 
 **Restore `.env` before rolling the code back** past this change. Older
 code creates its bucket on first use and lists it for snapshots, and the

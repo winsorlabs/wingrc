@@ -16109,8 +16109,70 @@ than from a pasted result:
   contains it (URLs, and the app's key `wingrc-app`), and was re-run
   comparing the password and exact values.
 
-The live walk is in #146's body. `.env.pre-storage-account.bak` stays on
-the host for the way back until Jarrod removes it.
+The live walk is in #146's body. **`.env.pre-storage-account.bak` is
+deleted when that walk passes** (Jarrod, 2026-11-25). Until then it is
+the way back. It is not kept "until someone removes it": every item this
+project has left to intent is still on the host.
+
+**Rotating MinIO's root password after the move (2026-11-25).** Root's
+password was in the backend's and worker's environment from install
+until the move, so it is the most exposed secret on the host, and
+nothing serving requests needs it now. Jarrod asked for it to be rotated.
+- **Order: after `.env.pre-storage-account.bak` is deleted, not before.**
+  The copy holds the old root password. After a rotation, its way back
+  would restore a password MinIO refuses, so rotating first would leave
+  the walk without a working way back. The walk is the same day, so the
+  wait is hours.
+- **What could break, and the bench that answered it.** Since the move,
+  MinIO's IAM store holds a user (`wingrc-app`) and its policy. On
+  2026-11-18 it held only its format file, so that rotation never tested
+  them. MinIO's documentation says to keep the root user and change only
+  the password. On wl-util-1, in a throwaway container of live's image
+  (`14cea493d9a3`, `RELEASE.2025-09-07`) on its own volume:
+  - created a bucket, the policy and the user, as live's provision does,
+    and the user wrote an object;
+  - recreated with a new root password on the same volume.
+
+  After the recreate:
+  - the old password was refused and the new one accepted;
+  - the user and its attached policy were there;
+  - the object written before read back with the same SHA-256;
+  - the user wrote and deleted, and listing was refused, as the policy
+    says.
+
+  My first run reported the write refused. The test object had lived in
+  the removed container's `/tmp`, so the run had no file to write;
+  recreated, the write was accepted. Container and volume were removed
+  (counted: 0 and 0).
+- **No `.env` copy for the names-only check.** The move compared `.env`
+  with its backup; for a rotation that backup would itself be a second
+  live copy of the new credentials. `deploy/env-diff.sh SERVICE...`
+  instead compares compose's resolved environment with each running
+  container's and prints names only.
+  - On live, read-only: `no change` for `backend`, `worker`, `minio` and
+    `nginx`.
+  - With `MINIO_ROOT_PASSWORD` overridden in the shell, only
+    `minio: MINIO_ROOT_PASSWORD`. That also shows neither app container
+    holds root's password.
+  - With `WINGRC_STORAGE_SECRET_KEY` overridden: `backend:` that name.
+  - The step that shows the old password refused passes it to
+    `docker compose exec -e` by name, from the shell, never on a command
+    line. Checked on live with the current password (accepted), a wrong
+    one (refused) and the name unset (refused).
+- **The procedure** is `docs/deployment.md`, "MinIO's root password",
+  with each step's output. `minio` and `nginx` are recreated by hand,
+  which `deploy.sh` cannot do. That is the hand step 2026-11-18 also
+  needed, and `deploy.sh`'s named-service recreate is still not built.
+
+**Left on the host, each with the condition that removes it**
+(2026-11-25):
+
+| Item | Removed when | By |
+|---|---|---|
+| `.env.pre-storage-account.bak` | #146's walk passes | Jarrod |
+| MinIO root's old password | the rotation above, right after the copy is deleted | Claude runs, Jarrod's `.env` edit |
+| Bench stacks and directories on wl-util-1 | `scripts/bench-cleanup.sh`: a dry run, then the sudo run | Jarrod |
+| The snapshot line in root's crontab | moved to wladmin's (decided 2026-11-18, not done). Done when `/home/wladmin/wingrc-snapshots.log` gets a 03:17 run and root's log gets no new one. It did not exist on 2026-11-25 | Jarrod (root) |
 
 ### A deployment that stays on root is told only by /health -- recorded 2026-11-24 (Jarrod's question on #146)
 
