@@ -1016,7 +1016,7 @@ app works. The point is that it says so.
 **`/health`'s `storage` says whether storage works, as the app's own
 account** (since 2026-11-25). It makes the backend start's check: a GET
 of a key that is never written, which answers `NoSuchKey` when the keys
-sign, the bucket exists and reads are granted. It is bounded to 3
+sign, the bucket exists and reads are granted. It is bounded to 2
 seconds and one attempt, and read at most every 15 seconds.
 - **`ok`.**
 - **`failed: ...`,** saying why:

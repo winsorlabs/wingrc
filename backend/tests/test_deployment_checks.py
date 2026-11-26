@@ -190,3 +190,20 @@ def test_working_storage_leaves_status_to_the_components(health_probe_client, mo
     assert body["storage"] == "ok"
     assert body["status"] == "incomplete", "a direct call has no nginx or worker"
     assert "storage_unreachable" not in [w["key"] for w in body["warnings"]]
+
+
+def test_a_failed_probe_skips_the_account_reading(health_probe_client, monkeypatch):
+    """The account call has its own 5 s timeout; after a failed probe it
+    would push /health past deploy.sh's 3 s curl and the 3 s HEALTHCHECK."""
+    from app import storage_access
+
+    def _must_not_be_called():
+        raise AssertionError("account read after a failed probe")
+
+    monkeypatch.setattr(deployment_checks, "storage_probe", lambda: "failed: unreachable")
+    monkeypatch.setattr(storage_access, "health_reading", _must_not_be_called)
+    body = health_probe_client.get("/health").json()
+    assert body["storage_account"]["access"].startswith("unknown")
+    assert [w["key"] for w in body["warnings"]][0] == "storage_unreachable"
+    assert "storage_account" not in [w["key"] for w in body["warnings"]]
+    assert deployment_checks.PROBE_TIMEOUT < 3

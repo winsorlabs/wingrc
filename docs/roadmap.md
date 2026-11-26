@@ -16223,9 +16223,14 @@ answers to the design.**
 - **The probe.** `/health`'s `storage` is the start's bucket check, made
   as the app's account: a GET of a never-written key, where `NoSuchKey`
   means the keys sign, the bucket exists and reads are granted.
-  - It is bounded to 3 s and one attempt, and cached 15 s. botocore's
+  - It is bounded to 2 s and one attempt, and cached 15 s. botocore's
     defaults are 60 s connect and read with retries, and `/health`
-    holds a threadpool token while it waits.
+    holds a threadpool token while it waits. 2 s, not 3, because
+    `deploy.sh` asks with `curl --max-time 3` and the image's
+    HEALTHCHECK times out at 3 s: a slower probe would come back as no
+    body, and the gate's refusal would lose the reason. For the same
+    reason a failed probe skips the account reading (its own 5 s
+    timeout), which then reads `unknown`, never a second line.
   - The first version set `max_attempts: 1`. botocore reads that as one
     retry on top of the first try, two attempts in all, and the test
     reading the client's config caught it (`total_max_attempts: 1`).

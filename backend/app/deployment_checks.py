@@ -36,7 +36,9 @@ from __future__ import annotations
 import threading
 import time
 
-PROBE_TIMEOUT = 3.0
+# Under deploy.sh's `curl --max-time 3` and the image's 3 s HEALTHCHECK, so a
+# failed probe still comes back as a body that names it, not as no body.
+PROBE_TIMEOUT = 2.0
 PROBE_TTL = 15.0
 
 _cache: dict[str, tuple[float, str]] = {}
@@ -118,11 +120,19 @@ def readings(db) -> dict:
     from .auth import common_password_list_problem
 
     role = db.execute(app_role.ROLE_SQL).one()
+    storage = storage_probe()
+    # The account reading has its own 5 s timeout. After a failed probe it
+    # would only add that wait, on a store already known not to answer.
+    account = (
+        {"access": "unknown: not read, because the storage check failed"}
+        if storage_failed(storage)
+        else storage_access.health_reading()
+    )
     return {
         "breached_password_list": common_password_list_problem() or "ok",
         "database_role": app_role.row_level_security(
             role.role, role.superuser, role.bypassrls, role.owner_skips
         ),
-        "storage_account": storage_access.health_reading(),
-        "storage": storage_probe(),
+        "storage_account": account,
+        "storage": storage,
     }
