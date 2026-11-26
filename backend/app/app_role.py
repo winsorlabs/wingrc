@@ -89,7 +89,8 @@ def ensure_app_role_password(app_url: str, owner_url: str | None) -> str:
     if not app.password:
         raise SystemExit(
             f"WINGRC_DATABASE_URL names {APP_ROLE} with no password. Set "
-            "WINGRC_APP_DB_PASSWORD in .env (deploy/generate-env.sh fills it)."
+            "WINGRC_APP_DB_PASSWORD in .env "
+            "(deploy/generate-env.sh WINGRC_APP_DB_PASSWORD fills it)."
         )
 
     first = _authenticates(app_url)

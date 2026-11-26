@@ -28,13 +28,17 @@ frontend/dist/
 *.xlsx
 !samples/*.xlsx
 
-# Deployment-host credential material. .env is already ignored above; these
-# are the files the wingrc_app cutover leaves beside it on a deployment host
-# (the generated role password, and the pre-cutover .env backup). Neither
-# should ever be committable by an accidental `git add -A` on that host.
+# Deployment-host credential material. .env is already ignored above. Every
+# copy of it is too, by any name: until 2026-11-25 these lines were
+# `.env.*.bak` and `.env.bak`, and the move off MinIO's root told the
+# operator to keep `.env.pre-storage-account`, which neither matched. Jarrod
+# caught it with git check-ignore before running it. The one tracked file
+# with this prefix is the template. tests/test_env_names_ignored.py runs
+# git check-ignore over every .env name and `cp .env` target in tracked
+# files. .wingrc_app_pw is the cutover's generated role password.
 .wingrc_app_pw
-.env.*.bak
-.env.bak
+.env.*
+!.env.example
 
 # Bench/CI credential material, as defence rather than because a token is in
 # use. Reading CI status needs no credential at all: this repo is public, so

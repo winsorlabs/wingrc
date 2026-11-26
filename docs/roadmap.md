@@ -16022,12 +16022,95 @@ which `scripts/bench-cleanup.sh` covers (`docs/bench-stack-verification.md`,
 "After a bench cycle").
 
 **Live:** the deploy and the move are separate steps, each with its own
-snapshot. Neither has run yet; both are recorded here when they have.
-**Between them, the restore test runs on live** twice: on the snapshot
-taken before the deploy (by `main`'s path), and on one taken just after
-it by `provision`. Both pass before the move begins. That is the
-backstop proven on live's own data, SPRS and credentials included,
+snapshot. **Between them, the restore test runs on live** twice: on the
+snapshot taken before the deploy (by `main`'s path), and on one taken
+just after it by `provision`. Both pass before the move begins. That is
+the backstop proven on live's own data, SPRS and credentials included,
 before the change that may need it.
+
+**The deploy, 2026-11-25 (UTC), `ce947d1`** (#146, with #144 and #145),
+from `fe50dca`:
+- **01:33, the pre-deploy snapshot**, by `main`'s `snapshot.sh` in
+  `backend`: `20261125T013317Z`, 63 tables, 6224 rows, 35 objects,
+  14,262,636 bytes. 14 kept; `20261119T161156Z` rotated out.
+- **01:34, deployed.** `provision` printed "bucket 'evidence' exists"
+  and "the app's storage keys are MinIO's root, so no account was made".
+  `/health`: `status` `ok`, all three components on `ce947d1`,
+  `storage_account.access` `unscoped: … administers the object store`,
+  `administers` true, `actions` `admin:*`, `kms:*`, `s3:*`. The gate
+  passed it on its second try (the first: worker `unknown`), as decided.
+  Record: `~claude/wingrc-deploys/20261125T013411Z-ce947d143a81`.
+- **01:34, restore test of the pre-deploy snapshot** by this branch's
+  path: schema, row counts (63 tables, 6224 rows), SPRS (3 assessments),
+  object bytes (23 keys a row names; 12 objects no row names, the same
+  count as 2026-11-03's open read, not compared key by key), object set (35), credentials (3, key label
+  `prod-wl-util-1-2026-09-11`), all `PASS`; verdict pass.
+- **01:34, a snapshot through `provision`**: `20261125T013456Z`, the
+  same counts and bytes; `20261119T211704Z` rotated out. **01:35, its
+  restore test**: the same six `PASS` lines; verdict pass.
+
+**The move, 2026-11-25.** Live now reaches MinIO as its own account.
+Two things went wrong in the written procedure first, and Jarrod caught
+both before anything restarted.
+- **The backup's name was not ignored by git.** Step 2 said
+  `cp -p .env .env.pre-storage-account`. `.gitignore` had `.env.*.bak`
+  and `.env.bak`, and its comment said they were there for exactly this
+  kind of file, so the intent was right and the name missed it. Run as
+  written, it would have left live's MinIO root pair, the database
+  owner's password and the Fernet key in an untracked file in a public
+  repo's working tree. Jarrod checked the name with `git check-ignore`,
+  which printed nothing, and used `.env.pre-storage-account.bak`.
+  `.gitignore` now ignores `.env.*` except `.env.example`, and
+  `tests/test_env_names_ignored.py` runs `git check-ignore` over every
+  `.env` name and every `cp .env` target in tracked files.
+- **`generate-env.sh` filled three secrets, not the two the step named.**
+  Run with no arguments, it filled every empty secret it knew, and live's
+  `.env` had no `WINGRC_APP_DB_PASSWORD` line at all, because live sets
+  `WINGRC_DATABASE_URL` outright. It printed
+  `filled: WINGRC_APP_DB_PASSWORD WINGRC_STORAGE_ACCESS_KEY
+  WINGRC_STORAGE_SECRET_KEY`, and the step had said "it prints only the
+  two names", so Jarrod stopped. `docs/deployment.md`'s "Serving as the app role"
+  had already said the script "would add an unused
+  `WINGRC_APP_DB_PASSWORD`" on a deployment like live's; the move's
+  procedure did not carry it. **Nothing read the new value**, checked
+  before any restart without printing one: compose's resolved
+  `WINGRC_DATABASE_URL` was identical to the running backend's and the
+  worker's, and did not contain it. `app_role.py` takes the password
+  from that URL and changes it only when the URL cannot connect.
+  **Recovery, line by line:** Claude first said to blank the line, on the
+  premise that it had been empty; a names-only diff against the backup
+  showed it had been absent, so the line was deleted instead. Then the
+  diff showed only the two storage keys. **`generate-env.sh` now requires
+  the names it fills** (`--fresh` for all of them, refused on an `.env`
+  that has any) and prints what it will fill, absent or empty, before it
+  writes; `--dry-run` stops there (`tests/test_generate_env.py`, which
+  has live's `.env` at the move in shape).
+- **What caught the second was a line saying what the step prints.**
+  Both guides now say every step that changes something says what it
+  prints, and to stop when the output differs.
+
+Then the steps as written, each checked by Claude on the host rather
+than from a pasted result:
+- **18:38 UTC, snapshot** `20261125T183848Z`: 63 tables, 6244 rows, 35
+  objects (the restore-tested set of 01:34 was 17 hours old).
+- **`provision`:** "bucket 'evidence' exists", "app account set; policy
+  'wingrc-app' attached", "the app's account reads scoped".
+- **`docker compose up -d --no-deps backend worker`:** backend healthy;
+  its start logged "wingrc_app authenticates: nothing set" and "bucket
+  'evidence' is there and readable". `minio` and `nginx` not touched.
+- **Checks, by name only:** `/health` `status` `ok`, all three on
+  `ce947d1`, `storage_account.access` `scoped`, actions `s3:DeleteObject`,
+  `s3:GetObject`, `s3:PutObject`, `administers` false. The oldest
+  evidence object a row names (2026-09-09, written under root) read back
+  as the app's account: 228,666 bytes, SHA-256 matching the row's.
+  Root's password is in no variable of the backend or the worker, and
+  neither app key equals root's. Root's user is a six-character name,
+  not a secret; a first substring check flagged every variable that
+  contains it (URLs, and the app's key `wingrc-app`), and was re-run
+  comparing the password and exact values.
+
+The live walk is in #146's body. `.env.pre-storage-account.bak` stays on
+the host for the way back until Jarrod removes it.
 
 ### A deployment that stays on root is told only by /health -- recorded 2026-11-24 (Jarrod's question on #146)
 
@@ -18730,6 +18813,27 @@ way.** At 22:13 UTC, on the bench (`~/bench/s3a`, a fresh clone of
 - **So the bench guide's step 5 now writes the run to a file before
   anything reads it** (`vitest.log`), and the summary is read from the
   file. A third data point will carry its name.
+
+**The hypothesis to test next time (Jarrod, 2026-11-24): the first
+vitest run after a fresh `npm install` in a new clone can fail one test,
+and the runs after it pass.** Two points are not a cause, but they are
+enough to state one that the next occurrence can confirm or rule out,
+rather than adding a third unexplained line:
+- **Every bench records which run it was.** Step 5's `vitest.log` is
+  the first run after the install by construction. If it fails, run
+  `npm test` once more in the same tree, to `vitest-2.log`, before
+  anything else.
+- **It is confirmed** by a failure in the first run that the second run
+  passes. Then read the `FAIL` lines for the mechanism, starting with a
+  timeout (`Test timed out in 5000ms`): the first run is the one that
+  transforms every file with cold caches, so a test near its time limit
+  is the likeliest shape.
+- **It is ruled out** by a failure in any run that is not the first
+  after an install, or by one that fails again on the second run. Then
+  the "first run" link was a coincidence, and the entry says so.
+- **A failure that is a timeout is fixed by the test, not by retrying
+  it:** raise that test's limit or remove what makes it slow. A retry
+  would hide the next one.
 
 **The output was not kept, and that has happened before.**
 - **2026-10-27, Q.0's load bench.** A run produced an HTTP 500. By the

@@ -17,6 +17,11 @@ migration, on `main` unverified. They were fixed forward rather than
 reverted, but the exception doesn't apply going forward now that access is
 resolved — see below.)
 
+**Every step that changes something says what it prints** (2026-11-25),
+as `docs/deployment.md` says for a deployment: read the output against
+it before the next step, and stop when it differs. A verification step
+added here says what it prints.
+
 ## What "isolated" means
 
 - Its own Docker Compose project name (`docker compose -p wingrc_verify_<date>`
@@ -93,8 +98,11 @@ bench work.
    ```bash
    cp .env.example .env && chmod 600 .env
    sed -i 's/^WINGRC_ENVIRONMENT=$/WINGRC_ENVIRONMENT=development/' .env
-   deploy/generate-env.sh
+   deploy/generate-env.sh --fresh
    ```
+
+   It prints `would fill:` with eight names, each `(empty)`, then
+   `filled:` with the same eight.
 
    Then point the snapshot directory into the clone, before the first
    `up`:
@@ -201,6 +209,17 @@ bench work.
    `FAIL` lines, and neither failure came back (`docs/roadmap.md`, "One
    unexplained frontend failure, kept as a data point"). A `grep` of the
    log afterwards loses nothing; a `grep` of the stream loses the rest.
+
+   **If `vitest.log` shows a failure, run the tests once more before
+   anything else**, to a second file, and keep both:
+   ```bash
+   docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+     -v "$PWD:/repo" -w /repo/frontend node:24-alpine \
+     sh -c 'npm test > vitest-2.log 2>&1; echo "vitest exit $?"'
+   ```
+   That run is the test of the roadmap's hypothesis: the first run after
+   a fresh install fails a test that the second run passes. Record both
+   logs' `FAIL` lines in that entry, whichever way it comes out.
 
    The image runs as root by default, so `node_modules` and `dist` came out
    root-owned. `claude` cannot remove them, so each bench left Jarrod a

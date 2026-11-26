@@ -8,7 +8,7 @@ x-backend-env: &backend-env
   # The role requests are served as: wingrc_app, which is not a superuser,
   # owns no table and has no BYPASSRLS, so row-level security applies to
   # it. WINGRC_APP_DB_PASSWORD is required, with no default
-  # (deploy/generate-env.sh fills it); the backend's start sets the role's
+  # (deploy/generate-env.sh fills it when named); the backend's start sets the role's
   # password to it (backend/start.sh, app/app_role.py).
   #
   # Until 2026-11-23 the default was the owner, `wingrc`, a superuser,
