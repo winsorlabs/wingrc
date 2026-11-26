@@ -16261,6 +16261,30 @@ answers to the design.**
   and the line says so. It clears only when a list ships, so the banner's
   own argument, that a line nobody clears teaches people to ignore the
   banner, makes shipping the list the next slice.
+- **Bench, 2026-11-26 01:28 to 01:37 UTC, wl-util-1** (`0eb7429`, project
+  `wingrc_verify_hsp`). Each `/health` call was timed from inside the
+  backend:
+  - **Storage working:** 200, `storage` `ok`, account `scoped`, 0.02 s.
+    One warning, `breached_password_list`, which `health-warnings.sh`
+    printed as its one `WARNING:` line.
+  - **MinIO stopped,** so its name no longer resolves: 200, `status`
+    `error`, `storage` `failed: ... (EndpointConnectionError)`, 0.02 s.
+    The account read `unknown: not read` and was not a second warning.
+    The gate refused with `status error: ...; storage failed: ...`, and
+    `health-warnings.sh` printed both lines.
+  - **MinIO started again:** back to `ok` once the 15 s cache ran out.
+  - **MinIO paused,** so it accepts the connection and never answers:
+    2.02 s, `failed: ... (ReadTimeoutError)`. That is the read bound,
+    under the 3 s that `deploy.sh`'s curl and the HEALTHCHECK allow.
+  - **Mutation, made in the container** (`storage.py`'s bound disabled,
+    then a restart, which keeps the container's files): the same paused
+    MinIO held `/health` past the caller's 60 s timeout. Restored and
+    restarted: `ok`, 0.03 s.
+  - **Full backend suite against a database:** 2344 passed. ruff clean.
+  - **Frontend:** vitest 59 files and 624 tests passed on the first run
+    after the install; the build passed.
+  - **Teardown:** no bind path or volume left behind. Live's five
+    containers were unchanged before and after.
 
 ### Live cannot say who signed in from where -- recorded 2026-11-17; urgent the day there are two users
 
@@ -18940,6 +18964,16 @@ rather than adding a third unexplained line:
 - **A failure that is a timeout is fixed by the test, not by retrying
   it:** raise that test's limit or remove what makes it slow. A retry
   would hide the next one.
+
+**The runs since, each the first after a fresh install:**
+
+| Date | Bench | First run | Second run |
+|---|---|---|---|
+| 2026-11-26 | `health-storage-probe`, `0eb7429` | 59 files, 624 tests passed | not run (nothing failed) |
+
+A first run that passes neither confirms nor rules out the hypothesis.
+The hypothesis says a first run *can* fail, not that it always does.
+Each such run is a row, so the rate shows over time.
 
 **The output was not kept, and that has happened before.**
 - **2026-10-27, Q.0's load bench.** A run produced an HTTP 500. By the
