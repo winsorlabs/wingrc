@@ -6,8 +6,10 @@ import type { DeploymentWarning } from "../types";
 // and snapshot banners' path and under the same rule (CLAUDE.md,
 // "Banners"): msp_admin only, every screen, not dismissible, recomputed on
 // load and hourly, and a line shows only when something is wrong and
-// someone can fix it. A check the deployment cannot answer is never a
-// line: the server leaves it out of the list.
+// the operator can fix it. The server leaves out a check the deployment
+// cannot answer, and the missing breached-password list, which only a
+// release fixes (deployment_checks.banner_warnings; /health and deploy.sh
+// still name it).
 //
 // The server sends fields and /health's sentence; the sentence here is the
 // banner's own, saying who acts and where the page is.
@@ -65,12 +67,6 @@ export function deploymentBannerLines(warnings: DeploymentWarning[]): string[] {
         return storageAccountLine(w);
       case "database_role":
         return databaseRoleLine(w);
-      case "breached_password_list":
-        return (
-          "This build has no breached-password list, so where HIBP cannot be reached no new " +
-          "password is checked against known breaches. It ships with a WinGRC release; the " +
-          "server cannot add it."
-        );
       default:
         // A key this build does not know: still something wrong, so say it.
         return w.detail;

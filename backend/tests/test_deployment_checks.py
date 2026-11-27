@@ -94,6 +94,33 @@ def test_all_four_come_in_a_fixed_order_with_the_banners_fields():
     json.dumps(out)
 
 
+ALL_FOUR = dict(
+    storage="failed: x",
+    storage_account={"access": "unscoped: y", "administers": True},
+    database_role={**ENFORCED, "role": "wingrc", "superuser": True,
+                   "row_level_security": "bypassed: z"},
+    breached_password_list="missing: w",
+)
+
+
+def test_the_banner_carries_only_what_the_operator_can_fix():
+    """Jarrod, 2026-11-27: a missing bundled list is fixed by a release, and
+    the operator's only move is to turn pwned_passwords_check off. It stays
+    in /health and deploy.sh, and is never a banner line."""
+    assert [w["key"] for w in deployment_checks.banner_warnings(**ALL_FOUR)] == [
+        "storage_unreachable", "storage_account", "database_role",
+    ]
+    assert "breached_password_list" in [w["key"] for w in warnings(**ALL_FOUR)], (
+        "fixture must raise the list's warning in the full list or this test proves nothing"
+    )
+
+
+def test_a_missing_list_alone_leaves_the_banner_empty():
+    found = dict(storage="ok", storage_account=SCOPED, database_role=ENFORCED,
+                 breached_password_list="missing: w")
+    assert deployment_checks.banner_warnings(**found) == []
+
+
 # --- the probe -----------------------------------------------------------
 
 

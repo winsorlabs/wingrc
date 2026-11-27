@@ -344,12 +344,18 @@ deploy to Docker / Azure Container Apps / GCC High / air-gapped.
   - **When it is read:** recomputed on load and hourly. Nothing is
     stored, so nothing has to bring a line back: it shows whenever the
     condition holds.
-  - **What may be a line: something wrong that someone can fix.** A check
-    a correct configuration cannot answer is a `/health` field, never a
-    line. Example: `storage_account`'s `unknown`, on a store that is not
+  - **What may be a line: something wrong that the operator can fix.** A
+    check a correct configuration cannot answer is a `/health` field, never
+    a line. Example: `storage_account`'s `unknown`, on a store that is not
     MinIO. A line that can never clear is a permanent banner, and one
     permanent line teaches people to ignore all of them. The line says
     who acts and names the page.
+  - **Not something only a release fixes, and not something the operator
+    could clear only by disabling a control** (Jarrod, 2026-11-27). The
+    missing breached-password list is both: a release ships it, and the
+    operator's one move is turning `pwned_passwords_check` off. It stays
+    in `/health` and `deploy.sh`'s `WARNING:` lines, read by the operator
+    when they could act (`deployment_checks.NOT_FOR_BANNER`).
   - **Not covered:** the assessor's "Read-only access" strip is a role
     notice, not an alarm, and is outside this rule.
 - **When removing or changing a side effect, find what reads it as a

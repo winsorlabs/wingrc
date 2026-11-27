@@ -275,3 +275,23 @@ def test_deployment_warnings_are_the_health_list(admin_client, monkeypatch):
     keys = [w["key"] for w in r.json()["warnings"]]
     assert keys[0] == "storage_unreachable"
     assert "storage_account" not in keys, "an unanswerable account check is never a warning"
+
+
+def test_deployment_warnings_leave_out_the_breached_password_list(admin_client, monkeypatch):
+    """Jarrod, 2026-11-27: the operator cannot fix a missing bundled list,
+    so live's banner reads an empty list while /health still names it."""
+    from app import app_role, auth, deployment_checks, storage_access
+
+    # The suite connects as the owner; pin the role reading to a correct one.
+    monkeypatch.setattr(app_role, "row_level_security",
+                        lambda *a: {"role": "wingrc_app", "row_level_security": "enforced"})
+    monkeypatch.setattr(deployment_checks, "storage_probe", lambda: "ok")
+    monkeypatch.setattr(storage_access, "health_reading", lambda: {"access": "scoped"})
+    monkeypatch.setattr(auth, "common_password_list_problem", lambda: "missing: no list")
+    health = admin_client.get("/health").json()
+    assert [w["key"] for w in health["warnings"]] == ["breached_password_list"], (
+        "fixture must leave only the list's warning in /health or this test proves nothing"
+    )
+    r = admin_client.get(_DEPLOY_URL)
+    assert r.status_code == 200, r.text
+    assert r.json() == {"warnings": []}

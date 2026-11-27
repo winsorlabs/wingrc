@@ -1045,7 +1045,7 @@ gate's own grep passed split deploys until 2026-11-06.
 | `storage_unreachable` | `storage` is `failed: ...` | the operator ("Provisioning") |
 | `storage_account` | `storage_account.access` is `unscoped` or `incomplete` | the operator ("Moving a deployment off MinIO's root") |
 | `database_role` | `database_role.row_level_security` is not `enforced` | the operator ("Database roles") |
-| `breached_password_list` | the list did not ship with this build | a WinGRC release |
+| `breached_password_list` | the list did not ship with this build | a WinGRC release, so it is not a banner line |
 
 **A check this deployment cannot answer is never a warning.**
 `storage_account`'s `unknown: ...` is an example: a store that is not
@@ -1059,6 +1059,13 @@ The same list reaches three places:
   hourly, so a line shows whenever its condition holds and goes when it
   is fixed. consultant_admin, c3pao_assessor and customers do not see
   it: these are facts about the hosting, not the customer's compliance.
+  **The banner leaves out `breached_password_list`.** The operator
+  cannot fix it: a release ships the list, and the only thing an
+  operator could do is turn `pwned_passwords_check` off, disabling a
+  control to clear a warning. With no list shipped and everything else
+  correct, the banner is empty and
+  `GET /api/admin/scheduled-jobs/deployment-warnings` answers
+  `{"warnings":[]}`.
 - **`deploy.sh`,** which prints a `WARNING: <key>: <detail>` line for
   each after the gate accepts, and keeps them in the deploy record. Only
   `storage_unreachable` fails a deploy, through `status`.

@@ -16261,6 +16261,16 @@ answers to the design.**
   and the line says so. It clears only when a list ships, so the banner's
   own argument, that a line nobody clears teaches people to ignore the
   banner, makes shipping the list the next slice.
+  **Superseded before the deploy (Jarrod, 2026-11-27): the list is not a
+  banner line.** By the rule, it does not qualify: the operator cannot
+  fix it, and their only move is turning `pwned_passwords_check` off,
+  disabling a control to clear a warning. It stays in `/health` and in
+  `deploy.sh`'s `WARNING:` lines, where the reader is the operator when
+  they could act. `deployment_checks.banner_warnings` drops
+  `NOT_FOR_BANNER`, and CLAUDE.md's rule now says a line is something
+  the operator can fix, not something only a release fixes or the
+  operator clears by disabling a control. Live's banner is empty on day
+  one, which is the true state.
 - **Bench, 2026-11-26 01:28 to 01:37 UTC, wl-util-1** (`0eb7429`, project
   `wingrc_verify_hsp`). Each `/health` call was timed from inside the
   backend:
