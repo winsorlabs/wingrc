@@ -1045,7 +1045,7 @@ gate's own grep passed split deploys until 2026-11-06.
 | `storage_unreachable` | `storage` is `failed: ...` | the operator ("Provisioning") |
 | `storage_account` | `storage_account.access` is `unscoped` or `incomplete` | the operator ("Moving a deployment off MinIO's root") |
 | `database_role` | `database_role.row_level_security` is not `enforced` | the operator ("Database roles") |
-| `breached_password_list` | the list did not ship with this build | a WinGRC release, so it is not a banner line |
+| `breached_password_list` | the bundled list is `missing`, `empty` or `stale` (below) | a WinGRC release, so it is not a banner line |
 
 **A check this deployment cannot answer is never a warning.**
 `storage_account`'s `unknown: ...` is an example: a store that is not
@@ -1062,14 +1062,68 @@ The same list reaches three places:
   **The banner leaves out `breached_password_list`.** The operator
   cannot fix it: a release ships the list, and the only thing an
   operator could do is turn `pwned_passwords_check` off, disabling a
-  control to clear a warning. With no list shipped and everything else
-  correct, the banner is empty and
-  `GET /api/admin/scheduled-jobs/deployment-warnings` answers
+  control to clear a warning. With everything correct, the banner is
+  empty and `GET /api/admin/scheduled-jobs/deployment-warnings` answers
   `{"warnings":[]}`.
 - **`deploy.sh`,** which prints a `WARNING: <key>: <detail>` line for
   each after the gate accepts, and keeps them in the deploy record. Only
   `storage_unreachable` fails a deploy, through `status`.
 - **The `/health` body** itself.
+
+### The breached-password list
+
+A new password is refused if it is in a known breach. Two checks ask:
+- **The HIBP k-anonymity lookup.** It sends the first five hex digits of
+  the password's SHA-1, never the password. When HIBP cannot be reached
+  it passes the password, so on an air-gapped or GCC High deployment it
+  checks nothing.
+- **The bundled list,** `backend/app/data/breached_passwords.txt`, in
+  the image since 2026-11-27. It is the only check that works offline.
+
+**What the bundled list is.** 122,473 entries: every password 15 to
+128 characters long in SecLists' `Pwdb_top-10000000.txt`, a compilation
+of the ten million most common passwords from leaked credentials. The
+length bounds are the password policy's. A shorter password is refused
+before the list is asked, and 99.5% of the top million passwords are
+shorter than 15.
+
+**It holds keys, not passwords:** the first 16 hex digits of SHA-256
+over the lowercased password. That keeps leaked strings out of the
+repository and the image. It does not make them secret, since anyone
+with the source list can compute the same keys.
+
+**Reproducing it.** The file's header names the source at a fixed
+SecLists commit and the source's SHA-256. From a checkout, with the
+backend's Python:
+```
+cd backend
+python -m app.breached_passwords --check
+```
+This downloads the pinned source, refuses it unless its SHA-256
+matches, rebuilds the file, and prints `reproduced: identical` (exit 0)
+only if the bytes match the committed file. With no network, pass
+`--source PATH` to a copy of the source.
+
+**`/health`'s `breached_password_list`** is `ok`, or says why the list
+checks nothing:
+- `missing: ...`, the file is absent;
+- `empty: ...`, it holds no keys;
+- `stale: ...`, it was made by a different key version from the one this
+  build reads, so its keys would match nothing.
+
+Each is a `WARNING:` line on every deploy. None is fixed on the host:
+the list ships with a WinGRC release. Turning `pwned_passwords_check`
+off silences the warning by turning off both checks.
+
+**Not offered: the full HIBP corpus offline** (Jarrod, 2026-11-27). It
+is about 2.2 billion SHA-1 hashes, roughly 40 GB in binary form. That is
+too much to ask of a self-hosting MSP for what it adds above the
+15-character floor. Hashes cannot be filtered by length, so most of the
+corpus is passwords the policy already refuses. It would also make a
+missing list something the operator could fix, which would put it back
+on the banner. It is revisited if a customer requires offline coverage
+equivalent to HIBP (`docs/roadmap.md`, "The bundled breached-password
+list does not exist").
 
 To **rotate** the app's secret: put a new `WINGRC_STORAGE_SECRET_KEY` in
 `.env`, run provisioning, then recreate `backend` and `worker`. Provisioning

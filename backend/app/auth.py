@@ -31,7 +31,6 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 import secrets
 import time
 import urllib.request
@@ -45,6 +44,7 @@ from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
+from . import breached_passwords
 from .audit import set_current_actor
 from .config import get_settings
 from .db import get_session
@@ -147,35 +147,51 @@ def validate_password_policy(password: str) -> list[str]:
     return errors
 
 
-COMMON_PASSWORDS_PATH = os.path.join(os.path.dirname(__file__), "data", "common_passwords.txt")
+COMMON_PASSWORDS_PATH = breached_passwords.PATH
 
 
 def common_password_list_problem() -> str | None:
     """Why the bundled breached-password list checks nothing, or None.
 
-    The list has never existed: no `app/data/` was ever committed, and a
-    missing file read as an empty set with nothing logged, so the local
-    check passed every password. Only the HIBP call checked, and it fails
-    open, so a deployment that cannot reach HIBP (air-gapped, GCC High) has
-    never had a breached-password check (docs/roadmap.md, "The bundled
-    breached-password list does not exist"). Logged at startup and
-    reported by /health until a list ships.
+    Until 2026-11-27 the list did not exist, and until 2026-11-20 its
+    absence read as an empty set with nothing logged, so the local check
+    passed every password. Only the HIBP call checked, and it fails open, so
+    a deployment that cannot reach HIBP (air-gapped, GCC High) had no
+    breached-password check (docs/roadmap.md, "The bundled breached-password
+    list does not exist"). Logged at startup and reported by /health.
+
+    A file that is present but holds no keys, or keys made by another
+    version of `breached_key`, checks nothing either, and says so.
     """
     if not get_settings().pwned_passwords_check:
         return None
-    if not os.path.isfile(COMMON_PASSWORDS_PATH):
+    hibp_only = (
+        "so only the HIBP lookup checks for breached passwords, and it passes "
+        "every password when HIBP cannot be reached"
+    )
+    try:
+        header, has_keys = breached_passwords.read_header(COMMON_PASSWORDS_PATH)
+    except FileNotFoundError:
+        return f"missing: {COMMON_PASSWORDS_PATH} does not exist, {hibp_only}"
+    if not has_keys:
+        return f"empty: {COMMON_PASSWORDS_PATH} holds no keys, {hibp_only}"
+    if header.get("key_version") != str(breached_passwords.KEY_VERSION):
         return (
-            f"missing: {COMMON_PASSWORDS_PATH} does not exist, so only the HIBP "
-            "lookup checks for breached passwords, and it passes every password "
-            "when HIBP cannot be reached"
+            f"stale: {COMMON_PASSWORDS_PATH} has key_version "
+            f"{header.get('key_version')!r}, this build reads "
+            f"{breached_passwords.KEY_VERSION}, {hibp_only}"
         )
     return None
 
 
 def _load_common_passwords() -> frozenset[str]:
+    """The list's keys, or an empty set (logged) when it checks nothing."""
+    problem = common_password_list_problem()
+    if problem is not None and not problem.startswith("missing"):
+        logger.error("breached-password list %s", problem)
+        return frozenset()
     try:
-        with open(COMMON_PASSWORDS_PATH) as f:
-            return frozenset(line.strip().lower() for line in f if line.strip())
+        return breached_passwords.read(COMMON_PASSWORDS_PATH)[1]
     except FileNotFoundError:
         logger.error("breached-password list %s", common_password_list_problem())
         return frozenset()
@@ -187,7 +203,8 @@ _COMMON_PASSWORDS: frozenset[str] | None = None
 def check_pwned_password(password: str) -> bool:
     """True if the password appears in known breach lists.
 
-    Checks a bundled local list first (instant, no network), then queries
+    Checks the bundled list first (app/breached_passwords.py: instant, no
+    network, and the only check where HIBP cannot be reached), then queries
     the Pwned Passwords k-anonymity API. Only the first 5 hex chars of the
     SHA-1 hash are sent — the password itself is never transmitted.
 
@@ -202,7 +219,7 @@ def check_pwned_password(password: str) -> bool:
 
     if _COMMON_PASSWORDS is None:
         _COMMON_PASSWORDS = _load_common_passwords()
-    if password.lower() in _COMMON_PASSWORDS:
+    if breached_passwords.breached_key(password) in _COMMON_PASSWORDS:
         return True
 
     try:
