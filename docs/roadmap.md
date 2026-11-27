@@ -15334,7 +15334,10 @@ and anonymizing left every membership in place.
   were the three anonymized accounts, which are deactivated too. Those
   steps need an account deactivated first (Jarrod Test 2).
 
-### The bundled breached-password list does not exist -- queued 2026-11-20; the decision is what to bundle, the silent failure is fixed
+### The bundled breached-password list does not exist ✅ DONE (2026-11-27, branch `breached-password-list`) -- queued 2026-11-20
+
+**Done 2026-11-27: a list ships, and it refuses what it lists.** What was
+decided and built is at the end of this entry, under "Built".
 
 **What was found.** `auth._load_common_passwords` reads
 `app/data/common_passwords.txt`. That file has never been committed: no
@@ -15369,6 +15372,65 @@ restart does not ship one (`test_breached_password_list.py`).
 
 Until it is decided, an air-gapped deployment's password policy is
 length and composition only, and the startup error and `/health` say so.
+
+**Measured 2026-11-27, before deciding.** The 15-character minimum
+decides most of it:
+- **SecLists' Pwdb top 1M:** 5,434 of its 1,000,000 entries are 15
+  characters or longer (0.5%).
+- **The NCSC top 100k:** 359 of 99,840.
+- **Pwdb top 10M:** 122,473 distinct keys after lowercasing, 2.0 MB.
+- **HIBP:** three range samples averaged about 2,200 hashes per prefix.
+  Across 1,048,576 prefixes that is about 2.2 billion SHA-1 hashes,
+  about 85 GB as text. Hashes cannot be filtered by length, so a top-N
+  slice small enough for the image is mostly passwords the policy
+  already refuses.
+
+**Decided (Jarrod, 2026-11-27).**
+- **Option 1, built: the 15-to-128-character entries of Pwdb top 10M,
+  committed as keys rather than plaintext.** 122,000 real leaked
+  passwords in a public repository for a compliance product would trip
+  secret scanners and corporate clone policies. Keys also avoid the
+  question of whether the MIT grant on a compilation reaches the
+  strings themselves. Neither SecLists' licence nor the unverified
+  CC BY on HIBP's data is relied on: the file is keys plus a documented,
+  reproducible provenance.
+- **Option 2, not built: the full HIBP corpus supplied by the operator
+  and mounted.** About 40 GB in binary form is too much to ask of a
+  self-hosting MSP, and it adds little once the 15-character floor
+  applies. It would also turn a missing list into something the
+  operator can fix, which puts it back on the banner and reopens the
+  rule just closed. **Trigger:** a customer requiring offline coverage
+  equivalent to HIBP.
+- **Not considered further:** a top-N slice of HIBP in the image, for
+  the length reason above.
+
+**Built 2026-11-27.**
+- **`app/breached_passwords.py` holds the key function, the reader and
+  the generator.** `breached_key` (the first 16 hex digits of SHA-256
+  over the lowercased password) is what `build` writes and what
+  `auth.check_pwned_password` looks up. One function in one module, so
+  generation and lookup cannot hash different strings. Jarrod named
+  that as the failure to guard against: a case mismatch would never
+  match and would look exactly like a working check.
+- **Reproducible:** `python -m app.breached_passwords --check` downloads
+  the source at SecLists commit `12274c98`, refuses it unless its
+  SHA-256 is `18dc49ca...`, rebuilds, and compares byte for byte. The
+  file's header carries the URL, the SHA-256 and the filter. Reproduced
+  from the pinned URL on 2026-11-27.
+- **`/health` reports `missing`, `empty` or `stale`** (another key
+  version), each with no list read. The check reads only the header and
+  the first key, about 0.3 ms, because `/health` asks on every
+  healthcheck.
+- **Tests prove it with a known positive, never a count.**
+  - `manchesterunited` is in the source in lowercase. Typed as
+    `mAnChEsTeRuNiTeD`, it is refused through `/auth/change-password`
+    with HIBP made unreachable.
+  - `manchesterunitex`, in neither the source nor the file, is accepted.
+  - A source of the test's own, mixed case with CRLF, goes through
+    `build`, and a third casing is refused.
+- **Mutations, run locally:** dropping `.lower()` from `breached_key`,
+  and restoring the old plaintext lookup, each turned the positive
+  tests red. The bench mutation inside the container is in the PR.
 
 ### An invited SSO account can never sign in for the first time -- queued 2026-11-20, found while testing the deactivated-account slice; not reached on live, where SSO is not configured
 
