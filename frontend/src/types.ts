@@ -1300,7 +1300,7 @@ export interface SnapshotStatus {
 // fixable. `detail` is /health's sentence; the banner writes its own from
 // the fields.
 export interface DeploymentWarning {
-  key: "storage_unreachable" | "storage_account" | "database_role" | "breached_password_list";
+  key: "storage_unreachable" | "storage_account" | "database_role";
   detail: string;
   administers?: boolean | null;
   beyond_the_app?: string[] | null;

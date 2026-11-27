@@ -27,7 +27,6 @@ describe("deploymentBannerLines", () => {
       w({ key: "storage_unreachable", detail: "failed: The storage bucket 'evidence' does not exist." }),
       w({ key: "storage_account", administers: true }),
       w({ key: "database_role", role: "wingrc", superuser: true }),
-      w({ key: "breached_password_list", detail: "missing: x" }),
     ]);
     expect(lines).toEqual([
       "The app cannot use its object storage: The storage bucket 'evidence' does not exist. Uploads, " +
@@ -38,8 +37,6 @@ describe("deploymentBannerLines", () => {
       "The app connects to the database as wingrc, a superuser, so the database does not keep tenants apart; " +
         "only the application's checks do. Whoever runs this server should fix it. The operator's page is " +
         '"Database roles: which credential does what" in docs/deployment.md.',
-      "This build has no breached-password list, so where HIBP cannot be reached no new password is checked " +
-        "against known breaches. It ships with a WinGRC release; the server cannot add it.",
     ]);
   });
 
@@ -72,10 +69,10 @@ describe("DeploymentBanner", () => {
 
   it("renders an alert, with no way to dismiss it", async () => {
     vi.mocked(api.getDeploymentWarnings).mockResolvedValue({
-      warnings: [w({ key: "breached_password_list", detail: "missing" })],
+      warnings: [w({ key: "database_role", role: "wingrc", superuser: true })],
     });
     render(<DeploymentBanner />);
-    expect((await screen.findByRole("alert")).textContent).toContain("no breached-password list");
+    expect((await screen.findByRole("alert")).textContent).toContain("does not keep tenants apart");
     expect(screen.queryByRole("button")).toBeNull();
   });
 });

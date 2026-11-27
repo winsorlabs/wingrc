@@ -147,7 +147,7 @@ class SnapshotStatusOut(BaseModel):
 
 
 class DeploymentWarningOut(BaseModel):
-    key: str  # storage_unreachable | storage_account | database_role | breached_password_list
+    key: str  # storage_unreachable | storage_account | database_role
     detail: str
     administers: bool | None = None
     beyond_the_app: list[str] | None = None
@@ -164,14 +164,15 @@ class DeploymentWarningsOut(BaseModel):
 
 @router.get("/deployment-warnings", response_model=DeploymentWarningsOut)
 def deployment_warnings(db: Session = Depends(get_session)) -> DeploymentWarningsOut:
-    """The third banner's data (deployment_checks.py): the same list
-    /health's `warnings` carries and deploy.sh prints. msp_admin only, like
-    the other two: these are facts about the MSP's hosting, not a
-    customer's compliance posture, so consultant_admin and c3pao_assessor
-    do not see them (Jarrod, 2026-11-25)."""
+    """The third banner's data (deployment_checks.py): the list /health's
+    `warnings` carries and deploy.sh prints, less what the operator cannot
+    fix (`banner_warnings`; Jarrod, 2026-11-27). msp_admin only, like the
+    other two: these are facts about the MSP's hosting, not a customer's
+    compliance posture, so consultant_admin and c3pao_assessor do not see
+    them (Jarrod, 2026-11-25)."""
     found = deployment_checks.readings(db)
     return DeploymentWarningsOut(
-        warnings=[DeploymentWarningOut(**w) for w in deployment_checks.warnings(**found)]
+        warnings=[DeploymentWarningOut(**w) for w in deployment_checks.banner_warnings(**found)]
     )
 
 

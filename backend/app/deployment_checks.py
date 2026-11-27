@@ -8,9 +8,19 @@ process can serve a request:
 - whether the database keeps tenants apart (`database_role`);
 - whether the breached-password list shipped (`breached_password_list`).
 
-`warnings()` turns those readings into the list that msp_admin's banner,
-`/health`'s `warnings` field and `deploy.sh`'s `WARNING:` lines all show.
-They read this one function, so the three cannot disagree.
+`warnings()` turns those readings into the list that `/health`'s
+`warnings` field and `deploy.sh`'s `WARNING:` lines show. msp_admin's
+banner shows `banner_warnings()`, the same list less `NOT_FOR_BANNER`.
+They read this one function, so they cannot disagree about a condition,
+only about who is told.
+
+**What reaches the banner: what the operator can fix** (Jarrod,
+2026-11-27). `breached_password_list` does not: a missing bundled list is
+fixed by a WinGRC release, and the only thing an operator can do about it
+is turn `pwned_passwords_check` off, which disables a security control to
+clear a warning. It stays in `/health` and `deploy.sh`, where the reader
+is the operator at the moment they could act on it.
+`tests/test_deployment_checks.py` writes out the banner's keys.
 
 **The banner's rule** (Jarrod, 2026-11-25; CLAUDE.md, "Banners"): a line
 shows only when something is wrong and someone can fix it. A reading that
@@ -111,6 +121,15 @@ def warnings(*, storage: str, storage_account: dict, database_role: dict,
     if breached_password_list != "ok":
         out.append({"key": "breached_password_list", "detail": breached_password_list})
     return out
+
+
+# Warnings the operator cannot fix (the module docstring says why).
+NOT_FOR_BANNER = frozenset({"breached_password_list"})
+
+
+def banner_warnings(**found) -> list[dict]:
+    """msp_admin's banner: `warnings()` less what the operator cannot fix."""
+    return [w for w in warnings(**found) if w["key"] not in NOT_FOR_BANNER]
 
 
 def readings(db) -> dict:
