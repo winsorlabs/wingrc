@@ -189,10 +189,20 @@ class MinIOClient(StorageClient):
         bucket: str,
         region: str,
         public_endpoint: str | None = None,
+        timeout: float | None = None,
     ) -> None:
         import boto3  # lazy — only installed when storage is configured
         from botocore.client import Config
 
+        # A bound for a caller that must answer quickly (/health's probe,
+        # deployment_checks.py): one attempt, connect and read each capped.
+        # botocore's defaults are 60 s each with retries, and /health holds
+        # one of the threadpool's 40 tokens while it waits.
+        bounded = (
+            dict(connect_timeout=timeout, read_timeout=timeout, retries={"total_max_attempts": 1})
+            if timeout is not None
+            else {}
+        )
         self._bucket = bucket
         client_kwargs: dict = dict(
             aws_access_key_id=access_key,
@@ -207,6 +217,7 @@ class MinIOClient(StorageClient):
                 # not for plain put_object / delete_object against MinIO).
                 request_checksum_calculation="when_required",
                 response_checksum_validation="when_required",
+                **bounded,
             ),
         )
         self._s3 = boto3.client("s3", endpoint_url=endpoint, **client_kwargs)

@@ -82,6 +82,7 @@ record_deploy() {
     echo "deployed: $(date -u +%Y-%m-%dT%H:%M:%SZ) by $(id -un)"
     echo "health:   $1"
     printf '%s\n' "$waited" | sed 's/^/wait:     /'
+    [ -z "${warned:-}" ] || printf '%s\n' "$warned"
     for svc in backend worker nginx; do
       # The image IDs are what tell a changed base from a new advisory when
       # two records' scans differ, so a failed lookup says so, not blank.
@@ -134,6 +135,10 @@ for try in $(seq 60); do
     waited+="try $try, $((SECONDS - start))s: accepted"
     echo "$body"
     echo "deployed $sha"
+    # What is wrong and fixable (deploy/health-warnings.sh); never a reason
+    # to fail a deploy that the gate accepted.
+    warned="$(printf '%s' "$body" | bash deploy/health-warnings.sh || echo "WARNING: health: health-warnings.sh failed")"
+    [ -z "$warned" ] || echo "$warned"
     record_deploy "$body"
     exit 0
   fi

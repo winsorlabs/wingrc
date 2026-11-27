@@ -16218,6 +16218,74 @@ path (`SnapshotBanner.tsx`), which exists for the same reason, since
 Not built in #146, so that what Jarrod reviewed is what merges. On live
 it would fire only between the deploy and the move.
 
+**Built 2026-11-25 (branch `health-storage-probe`), with Jarrod's
+answers to the design.**
+- **The probe.** `/health`'s `storage` is the start's bucket check, made
+  as the app's account: a GET of a never-written key, where `NoSuchKey`
+  means the keys sign, the bucket exists and reads are granted.
+  - It is bounded to 2 s and one attempt, and cached 15 s. botocore's
+    defaults are 60 s connect and read with retries, and `/health`
+    holds a threadpool token while it waits. 2 s, not 3, because
+    `deploy.sh` asks with `curl --max-time 3` and the image's
+    HEALTHCHECK times out at 3 s: a slower probe would come back as no
+    body, and the gate's refusal would lose the reason. For the same
+    reason a failed probe skips the account reading (its own 5 s
+    timeout), which then reads `unknown`, never a second line.
+  - The first version set `max_attempts: 1`. botocore reads that as one
+    retry on top of the first try, two attempts in all, and the test
+    reading the client's config caught it (`total_max_attempts: 1`).
+  - **A failure sets `status` to `error` and keeps HTTP 200** (Jarrod: a
+    restart fixes nothing about unreachable storage and would take down
+    a backend still serving everything else). It is the one deployment
+    reading that gates a deploy. The docstring and the guide say what
+    follows: every consumer parses the body, and an uptime monitor that
+    checks for a 200 reports no storage as up.
+- **`deployment_checks.warnings()`** decides what is wrong and fixable.
+  `/health`'s `warnings`, msp_admin's banner
+  (`GET /admin/scheduled-jobs/deployment-warnings`, `DeploymentBanner.tsx`)
+  and `deploy.sh`'s `WARNING:` lines (`deploy/health-warnings.sh`, after
+  the gate accepts, kept in the record) read that one function.
+- **What this entry proposed, changed by Jarrod:** `unknown` is not a
+  line. A store that is not MinIO can never answer the account check, so
+  the line would never clear on a correct configuration. It stays a
+  `/health` field. **The banner's invariant is absolute:** if it shows,
+  something is wrong and someone can fix it. CLAUDE.md's "Banners" now
+  writes the rule down for all three banners: msp_admin only (its own
+  `BANNER_ROLES`, so widening Scheduled Jobs cannot widen it), every
+  screen, not dismissible, recomputed on load and hourly. consultant_admin
+  and c3pao_assessor are excluded by decision: these are facts about the
+  MSP's hosting, not the customer's compliance posture.
+- **What live will show from the deploy: one line,** the breached-password
+  list. It has never shipped ("The bundled breached-password list does not
+  exist"). It is wrong and fixable, by a release rather than the operator,
+  and the line says so. It clears only when a list ships, so the banner's
+  own argument, that a line nobody clears teaches people to ignore the
+  banner, makes shipping the list the next slice.
+- **Bench, 2026-11-26 01:28 to 01:37 UTC, wl-util-1** (`0eb7429`, project
+  `wingrc_verify_hsp`). Each `/health` call was timed from inside the
+  backend:
+  - **Storage working:** 200, `storage` `ok`, account `scoped`, 0.02 s.
+    One warning, `breached_password_list`, which `health-warnings.sh`
+    printed as its one `WARNING:` line.
+  - **MinIO stopped,** so its name no longer resolves: 200, `status`
+    `error`, `storage` `failed: ... (EndpointConnectionError)`, 0.02 s.
+    The account read `unknown: not read` and was not a second warning.
+    The gate refused with `status error: ...; storage failed: ...`, and
+    `health-warnings.sh` printed both lines.
+  - **MinIO started again:** back to `ok` once the 15 s cache ran out.
+  - **MinIO paused,** so it accepts the connection and never answers:
+    2.02 s, `failed: ... (ReadTimeoutError)`. That is the read bound,
+    under the 3 s that `deploy.sh`'s curl and the HEALTHCHECK allow.
+  - **Mutation, made in the container** (`storage.py`'s bound disabled,
+    then a restart, which keeps the container's files): the same paused
+    MinIO held `/health` past the caller's 60 s timeout. Restored and
+    restarted: `ok`, 0.03 s.
+  - **Full backend suite against a database:** 2344 passed. ruff clean.
+  - **Frontend:** vitest 59 files and 624 tests passed on the first run
+    after the install; the build passed.
+  - **Teardown:** no bind path or volume left behind. Live's five
+    containers were unchanged before and after.
+
 ### Live cannot say who signed in from where -- recorded 2026-11-17; urgent the day there are two users
 
 **Found answering whether #106's forged-cookie route was used.** For the
@@ -18896,6 +18964,16 @@ rather than adding a third unexplained line:
 - **A failure that is a timeout is fixed by the test, not by retrying
   it:** raise that test's limit or remove what makes it slow. A retry
   would hide the next one.
+
+**The runs since, each the first after a fresh install:**
+
+| Date | Bench | First run | Second run |
+|---|---|---|---|
+| 2026-11-26 | `health-storage-probe`, `0eb7429` | 59 files, 624 tests passed | not run (nothing failed) |
+
+A first run that passes neither confirms nor rules out the hypothesis.
+The hypothesis says a first run *can* fail, not that it always does.
+Each such run is a row, so the rate shows over time.
 
 **The output was not kept, and that has happened before.**
 - **2026-10-27, Q.0's load bench.** A run produced an HTTP 500. By the

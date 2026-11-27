@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from . import app_role, snapshots, storage_access
+from . import deployment_checks, snapshots
 from . import health as component_health
 from .audit import set_current_ip
 from .auth import CurrentUser, common_password_list_problem, get_client_ip, get_current_user
@@ -232,6 +232,23 @@ def health(request: Request, response: Response, db: Session = Depends(get_sessi
     for the same reasons, and read at most every five minutes. Until
     2026-11-23 the app reached MinIO as root and nothing said so
     (docs/roadmap.md, "The app reaches MinIO as root").
+
+    **`storage` says whether storage works, as the app's own account**
+    (`deployment_checks.storage_probe`, 2026-11-25). It is the one
+    deployment reading that changes `status`: a failure sets it to
+    `error`, so `deploy/health-gate.sh` refuses the deploy. The HTTP code
+    stays 200, because a restart fixes nothing about unreachable storage
+    and would take down a backend still serving everything else.
+    `warnings` lists which readings are wrong and fixable, the list
+    msp_admin's banner shows.
+
+    **So a 200 can carry `status: error`, and every consumer must parse
+    the body and read the top-level `status`, never match its text or
+    trust the code.** The deploy gate grepped for `"status":"ok"` until
+    2026-11-06, and a nested `status` in the snapshots block passed every
+    deploy (`tests/test_health_gate.py`). The same holds for any uptime
+    monitor pointed here later: one that checks only for a 200 reports a
+    deployment with no storage as up.
     """
     observed = {
         "backend": [os.environ.get("WINGRC_BUILD_SHA", component_health.UNKNOWN)],
@@ -300,15 +317,14 @@ def health(request: Request, response: Response, db: Session = Depends(get_sessi
             }
 
     detail["database"] = "ok"
-    # Reported, never a readiness condition: a restart does not ship the
-    # list, and deploy.sh prints this body, so every deploy shows it.
-    detail["breached_password_list"] = common_password_list_problem() or "ok"
-    role = db.execute(app_role.ROLE_SQL).one()
-    detail["database_role"] = app_role.row_level_security(
-        role.role, role.superuser, role.bypassrls, role.owner_skips
-    )
-    detail["storage_account"] = storage_access.health_reading()
+    # deployment_checks.py decides which of these are wrong; the banner and
+    # deploy.sh read the same list.
+    found = deployment_checks.readings(db)
+    detail.update(found)
+    detail["warnings"] = deployment_checks.warnings(**found)
     status, why = component_health.deployment_verdict(observed, why_unknown)
+    if deployment_checks.storage_failed(found["storage"]):
+        status = "error"
     detail["status"] = status
     if why is not None:
         detail["detail"] = why

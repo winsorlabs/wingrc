@@ -6,6 +6,7 @@ import type { TlsCert, TlsExpiry } from "../types";
 // (DNS-01 by hand, deploy/tls/renew.sh), and the July certificate lapsed
 // with nothing saying so. msp_admin only, on every screen, until it is
 // fixed -- including when the check itself has stopped running.
+// The rule all three alarm banners follow is CLAUDE.md's "Banners".
 
 const REFRESH_MS = 60 * 60 * 1000;
 

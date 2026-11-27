@@ -1296,6 +1296,25 @@ export interface SnapshotStatus {
   detail: string | null;
 }
 
+// backend/app/deployment_checks.py: what is wrong with the deployment and
+// fixable. `detail` is /health's sentence; the banner writes its own from
+// the fields.
+export interface DeploymentWarning {
+  key: "storage_unreachable" | "storage_account" | "database_role" | "breached_password_list";
+  detail: string;
+  administers?: boolean | null;
+  beyond_the_app?: string[] | null;
+  missing?: string[] | null;
+  role?: string | null;
+  superuser?: boolean | null;
+  bypassrls?: boolean | null;
+  owner_of_rls_tables?: number | null;
+}
+
+export interface DeploymentWarnings {
+  warnings: DeploymentWarning[];
+}
+
 export interface MembershipGrantResult {
   user_id: string;
   org_id: string;

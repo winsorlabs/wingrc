@@ -176,6 +176,18 @@ export function canSeeUserDirectory(role: string | null | undefined): boolean {
 // per-org sync jobs.
 export const SCHEDULED_JOBS_ROLES = new Set(["msp_admin"]);
 
+// Who sees the alarm banners (TLS, snapshots, deployment warnings), on
+// every screen. Their own set, not SCHEDULED_JOBS_ROLES, so widening that
+// screen cannot widen the banners without a decision. msp_admin only
+// (Jarrod, 2026-11-25): the banners are facts about the MSP's hosting, not
+// a customer's compliance posture, so consultant_admin and c3pao_assessor
+// do not see them, and neither does a customer. CLAUDE.md, "Banners".
+export const BANNER_ROLES = new Set(["msp_admin"]);
+
+export function canSeeBanners(role: string | null | undefined): boolean {
+  return !!role && BANNER_ROLES.has(role);
+}
+
 export function canSeeScheduledJobs(role: string | null | undefined): boolean {
   return !!role && SCHEDULED_JOBS_ROLES.has(role);
 }

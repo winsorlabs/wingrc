@@ -11,6 +11,9 @@
 # split or incomplete deploy passed (docs/roadmap.md, "The deploy gate
 # passed what it existed to refuse"). tests/test_health_gate.py holds the
 # body that did it.
+#
+# Since 2026-11-25 a 200 can carry "status": "error": the storage probe
+# failed (backend/app/deployment_checks.py). The refusal names it.
 set -euo pipefail
 
 [ $# -eq 1 ] || { echo "usage: health-gate.sh <commit-sha> < health.json" >&2; exit 2; }
@@ -35,8 +38,10 @@ if not isinstance(components, dict):
     components = {}
 names = ("backend", "nginx", "worker")
 seen = "; ".join("%s %s" % (n, str(components.get(n, "missing"))[:12]) for n in names)
+storage = body.get("storage")
+why = "; storage %s" % storage if isinstance(storage, str) and storage.startswith("failed") else ""
 if body.get("status") != "ok":
-    refuse("status %s: %s" % (body.get("status", "missing"), seen))
+    refuse("status %s: %s%s" % (body.get("status", "missing"), seen, why))
 if not all(components.get(n) == sha for n in names):
     refuse("status ok but not all on %s: %s" % (sha[:12], seen))
 ' "$1"

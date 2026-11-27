@@ -10,6 +10,9 @@ GET /admin/scheduled-jobs  Every registered job: name, interval, last run
 GET /admin/scheduled-jobs/tls-expiry
                             The served certificates' expiry, from the last
                             successful tls_expiry_check -- the banner's data.
+GET /admin/scheduled-jobs/deployment-warnings
+                            What is wrong with the deployment and fixable
+                            (deployment_checks.py) -- the third banner.
 GET /admin/scheduled-jobs/snapshots
                             The newest local snapshot's age (snapshots.py,
                             item S) -- the same banner's second alarm. Not
@@ -36,7 +39,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import snapshots, tls_expiry
+from .. import deployment_checks, snapshots, tls_expiry
 from ..auth import require_role
 from ..config import get_settings
 from ..db import get_session
@@ -141,6 +144,35 @@ class SnapshotStatusOut(BaseModel):
     age_hours: float | None = None
     count: int | None = None
     detail: str | None = None
+
+
+class DeploymentWarningOut(BaseModel):
+    key: str  # storage_unreachable | storage_account | database_role | breached_password_list
+    detail: str
+    administers: bool | None = None
+    beyond_the_app: list[str] | None = None
+    missing: list[str] | None = None
+    role: str | None = None
+    superuser: bool | None = None
+    bypassrls: bool | None = None
+    owner_of_rls_tables: int | None = None
+
+
+class DeploymentWarningsOut(BaseModel):
+    warnings: list[DeploymentWarningOut]
+
+
+@router.get("/deployment-warnings", response_model=DeploymentWarningsOut)
+def deployment_warnings(db: Session = Depends(get_session)) -> DeploymentWarningsOut:
+    """The third banner's data (deployment_checks.py): the same list
+    /health's `warnings` carries and deploy.sh prints. msp_admin only, like
+    the other two: these are facts about the MSP's hosting, not a
+    customer's compliance posture, so consultant_admin and c3pao_assessor
+    do not see them (Jarrod, 2026-11-25)."""
+    found = deployment_checks.readings(db)
+    return DeploymentWarningsOut(
+        warnings=[DeploymentWarningOut(**w) for w in deployment_checks.warnings(**found)]
+    )
 
 
 @router.get("/snapshots", response_model=SnapshotStatusOut)
